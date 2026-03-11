@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GIOS Environmental Monitoring Platform | Portfolio</title>
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Leaflet for Map Visualization -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <!-- Chart.js for Time Series visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Google Fonts for a modern, techy look -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@400;600&family=Roboto+Mono&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="dark-theme">
+    <div id="particles-js"></div> <!-- Optional techy background -->
+    
+    <header class="glass-panel">
+        <div class="logo">
+            <span class="highlight">GIOS</span> Platform
+        </div>
+        <nav>
+            <ul>
+                <li><a href="#dashboard" class="active"><i class="fas fa-satellite"></i> Live Dashboard</a></li>
+                <li><a href="#analysis"><i class="fas fa-chart-network"></i> Analysis</a></li>
+                <li><a href="#timeseries"><i class="fas fa-chart-line"></i> Time-Series</a></li>
+                <li><a href="#algal-bloom"><i class="fas fa-water"></i> Water Health</a></li>
+                <li id="status-indicator"><span class="pulse green"></span> System Online</li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <!-- Intro / Hero Section -->
+        <section class="hero-section glass-panel">
+            <div class="hero-content">
+                <h1>Earth Observation & Intelligence</h1>
+                <p>Real-time processing of multispectral satellite imagery for environmental monitoring. Powered by FastAPI, STAC, and xarray.</p>
+                <div class="tech-stack-badges">
+                    <span class="badge">Sentinel-2</span>
+                    <span class="badge">Landsat</span>
+                    <span class="badge">Planetary Computer</span>
+                    <span class="badge">USGS Water Data</span>
+                </div>
+            </div>
+            
+            <div class="global-stats">
+                <div class="stat-box">
+                    <span class="stat-label">Scenes Processed</span>
+                    <span class="stat-value counter" data-target="1542">0</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Terabytes Analyzed</span>
+                    <span class="stat-value counter" data-target="8.4">0.0</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Active Monitors</span>
+                    <span class="stat-value counter" data-target="3">0</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Dashboard showing map and side-by-side charts -->
+        <section id="dashboard" class="dashboard-grid">
+            
+            <!-- Map Container -->
+            <div class="map-container glass-panel">
+                <div class="panel-header">
+                    <h2><i class="fas fa-globe-americas"></i> Live Spatial Data</h2>
+                    <div class="controls">
+                        <select id="map-layer-select" class="tech-select">
+                            <option value="true-color">True Color (RGB)</option>
+                            <option value="ndvi">NDVI (Vegetation Health)</option>
+                            <option value="ndwi">NDWI (Water Index)</option>
+                            <option value="temperature">NOAA Ground Temp</option>
+                        </select>
+                        <button id="refresh-map-btn" class="icon-btn"><i class="fas fa-sync-alt"></i></button>
+                    </div>
+                </div>
+                <div id="main-map" class="map-view"></div>
+                <div class="map-overlay-info">
+                    <span id="current-location-text">Tracking: San Francisco Bay Area / USGS Station</span>
+                    <span id="data-timestamp">Last imagery pass: --:--</span>
+                </div>
+            </div>
+            
+            <!-- Sidebar with live stream data -->
+            <div class="sidebar glass-panel">
+                <h2><i class="fas fa-satellite-dish"></i> Data Feed</h2>
+                
+                <div class="form-group tech-form">
+                    <label for="demo-region">Select Region to Monitor:</label>
+                    <select id="demo-region" class="tech-select">
+                        <option value="sf_bay">San Francisco Bay (Water & Urban)</option>
+                        <option value="lake_erie">Lake Erie (Algal Blooms)</option>
+                        <option value="amazon">Amazon Rainforest (Deforestation)</option>
+                    </select>
+                </div>
+
+                <div class="feed-container" id="live-feed">
+                    <div class="feed-item loading">
+                        <i class="fas fa-spinner fa-spin"></i> Awaiting telemetry...
+                    </div>
+                </div>
+                
+                <div class="action-buttons">
+                    <button id="run-demo-btn" class="tech-btn primary glow">
+                        <i class="fas fa-play"></i> Initiate Scan
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Time Series Chart Section -->
+        <section id="timeseries" class="chart-section glass-panel">
+            <div class="panel-header">
+                <h2><i class="fas fa-chart-area"></i> Temporal Analysis (30-Day Trend)</h2>
+                <div class="controls">
+                    <select id="chart-metric-select" class="tech-select">
+                        <option value="ndvi">NDVI Trend</option>
+                        <option value="ndwi">NDWI Trend</option>
+                        <option value="lst">Land Surface Temperature</option>
+                    </select>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="trendChart"></canvas>
+            </div>
+        </section>
+
+        <!-- Real USGS Data Integration -->
+        <section class="usgs-integration glass-panel">
+            <h2><i class="fas fa-water"></i> Ground-Truth Integration (USGS Water Services)</h2>
+            <p>Live water data streamed from physical sensors to validate satellite imagery.</p>
+            <div id="usgs-station-info" class="usgs-data-grid">
+                 <div class="data-card">
+                     <h4>Stream Discharge</h4>
+                     <div class="value" id="usgs-discharge">-- ft³/s</div>
+                 </div>
+                 <div class="data-card">
+                     <h4>Gage Height</h4>
+                     <div class="value" id="usgs-gage">-- ft</div>
+                 </div>
+                 <div class="data-card">
+                     <h4>Timestamp</h4>
+                     <div class="value" id="usgs-time">-- : --</div>
+                 </div>
+            </div>
+        </section>
+
+    </main>
+    <script src="script.js"></script>
+</body>
+</html>
