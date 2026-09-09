@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GIOS | Geospatial Integrated Orthomosaic Systems</title>
+    
+    <!-- Modern GIS Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Leaflet & Leaflet-Draw CSS/JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    
+    <!-- Chart.js for Multi-Temporal Time Series -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dark-ops-theme">
+
+    <!-- Top Navigation Header -->
+    <header class="app-header">
+        <div class="brand-container">
+            <div class="brand-logo">
+                <i class="fas fa-layer-group brand-icon"></i>
+                <div class="brand-text">
+                    <span class="brand-title">GIOS</span>
+                    <span class="brand-subtitle">Geospatial Integrated Orthomosaic Systems</span>
+                </div>
+            </div>
+        </div>
+
+        <nav class="nav-modules">
+            <button class="nav-tab active" data-tab="hazards"><i class="fas fa-radar"></i> Hazard Operations</button>
+            <button class="nav-tab" data-tab="orthomosaics"><i class="fas fa-map-marked-alt"></i> Orthomosaic Studio</button>
+            <button class="nav-tab" data-tab="drone"><i class="fas fa-drone"></i> Drone Multi-Scale</button>
+            <button class="nav-tab" data-tab="catalog"><i class="fas fa-database"></i> Event Catalog</button>
+        </nav>
+
+        <div class="system-status-container">
+            <div class="status-indicator online">
+                <span class="pulse-dot"></span>
+                <span class="status-label">STAC & Backend Online</span>
+            </div>
+            <button id="btn-export-dossier" class="btn-dossier"><i class="fas fa-file-export"></i> Export Briefing</button>
+        </div>
+    </header>
+
+    <!-- Main Workspace Grid -->
+    <main class="workspace-grid">
+        
+        <!-- Left Panel: Event Database & Query Control -->
+        <aside class="sidebar-control-panel">
+            
+            <div class="panel-section-header">
+                <div class="title-with-badge">
+                    <h3><i class="fas fa-bolt"></i> Active Hazard Feed</h3>
+                    <span class="badge-count" id="active-event-count">4 Active</span>
+                </div>
+                <p class="section-desc">Real-time water seepage, flood inundation, & HAB events</p>
+            </div>
+
+            <!-- Hazard Filter Pills -->
+            <div class="hazard-filter-pills">
+                <button class="pill active" data-filter="all">All</button>
+                <button class="pill" data-filter="seepage"><i class="fas fa-tint"></i> Seepage</button>
+                <button class="pill" data-filter="inundation"><i class="fas fa-water"></i> Flood</button>
+                <button class="pill" data-filter="hab"><i class="fas fa-biohazard"></i> HAB</button>
+            </div>
+
+            <!-- Event Cards Stream -->
+            <div class="event-stream" id="event-stream-container">
+                <!-- Injected via JavaScript -->
+            </div>
+
+            <!-- Custom AOI & Index Synthesis Form -->
+            <div class="custom-query-section">
+                <div class="section-header-compact">
+                    <h4><i class="fas fa-crosshairs"></i> Custom AOI & Index Engine</h4>
+                    <span class="tool-shortcut" id="aoi-status-tag">No AOI Defined</span>
+                </div>
+
+                <div class="aoi-action-buttons">
+                    <button id="btn-draw-box" class="btn-tool"><i class="fas fa-vector-square"></i> Draw Box</button>
+                    <button id="btn-draw-polygon" class="btn-tool"><i class="fas fa-draw-polygon"></i> Draw Polygon</button>
+                    <button id="btn-clear-aoi" class="btn-tool secondary"><i class="fas fa-trash-alt"></i> Clear</button>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="select-index">Spectral Metric</label>
+                        <select id="select-index" class="styled-select">
+                            <option value="ndmi" selected>NDMI (Moisture / Seepage)</option>
+                            <option value="mndwi">MNDWI (Surface Inundation)</option>
+                            <option value="ndci">NDCI (Chlorophyll-a / HAB)</option>
+                            <option value="ndvi">NDVI (Vegetation Stress)</option>
+                            <option value="lst">LST (Surface Thermal °C)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="select-sensor">Sensor Tier</label>
+                        <select id="select-sensor" class="styled-select">
+                            <option value="sentinel-2-l2a">Sentinel-2 (10m Multi)</option>
+                            <option value="landsat-c2-l2">Landsat 8/9 (30m Thermal)</option>
+                            <option value="drone-ortho">Drone (3cm Micro-Survey)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row date-row">
+                    <div class="form-group">
+                        <label for="input-start-date">Baseline (Pre-Event)</label>
+                        <input type="date" id="input-start-date" value="2026-06-01" class="styled-input">
+                    </div>
+                    <div class="form-group">
+                        <label for="input-end-date">Event Date</label>
+                        <input type="date" id="input-end-date" value="2026-08-30" class="styled-input">
+                    </div>
+                </div>
+
+                <button id="btn-run-synthesis" class="btn-primary-action">
+                    <i class="fas fa-play"></i> Synthesize Orthomosaic Cube
+                </button>
+            </div>
+
+            <!-- Activity / Processing Telemetry Log -->
+            <div class="telemetry-log-card">
+                <div class="log-header">
+                    <span><i class="fas fa-terminal"></i> Telemetry & Processing Log</span>
+                    <button id="btn-clear-log" class="text-link">Clear</button>
+                </div>
+                <div id="telemetry-feed" class="log-content">
+                    <div class="log-entry info"><span class="log-time">[INIT]</span> GIOS Platform initialized. Ready for analysis.</div>
+                </div>
+            </div>
+
+        </aside>
+
+        <!-- Right / Main View: Leaflet Orthomosaic Map -->
+        <section class="map-viewport-wrapper">
+            
+            <div id="main-map" class="map-canvas"></div>
+
+            <!-- Map Floating Toolbar -->
+            <div class="map-floating-controls">
+                <div class="control-cluster layer-switcher">
+                    <button class="layer-pill active" data-layer="true-color"><i class="fas fa-image"></i> True Color</button>
+                    <button class="layer-pill" data-layer="index-heatmap"><i class="fas fa-fire-alt"></i> Spectral Index</button>
+                    <button class="layer-pill" data-layer="drone-overlay"><i class="fas fa-drone"></i> Drone Orthomosaic</button>
+                </div>
+
+                <div class="control-cluster tool-actions">
+                    <button id="btn-toggle-split" class="icon-control-btn" title="Toggle Split Swipe Comparison">
+                        <i class="fas fa-columns"></i>
+                    </button>
+                    <button id="btn-recenter" class="icon-control-btn" title="Reset View">
+                        <i class="fas fa-compress-arrows-alt"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Active AOI / Legend Floating Overlay -->
+            <div class="floating-legend glass-card" id="spectral-legend">
+                <div class="legend-header">
+                    <span id="legend-title">NDMI (Soil Moisture & Seepage)</span>
+                    <span id="legend-units">−1.0 to +1.0</span>
+                </div>
+                <div class="legend-gradient ndmi-gradient"></div>
+                <div class="legend-labels">
+                    <span>Dry / Stressed</span>
+                    <span>Moderate</span>
+                    <span>Saturated / Seepage</span>
+                </div>
+            </div>
+
+            <!-- Map Coordinates & Spatial Scale Readout -->
+            <div class="spatial-hud-bar">
+                <span id="hud-coords"><i class="fas fa-crosshairs"></i> Lat: 37.0522° N, Lon: -121.0722° W</span>
+                <span id="hud-resolution"><i class="fas fa-cube"></i> Spatial Res: 10m Ground Sample (Sentinel-2)</span>
+                <span id="hud-aoi-area"><i class="fas fa-ruler-combined"></i> Active AOI: 42.8 km²</span>
+            </div>
+
+            <!-- Collapsible Analytics & In-Situ Ground Truth Dock -->
+            <div class="analytics-dock glass-dock" id="analytics-dock">
+                
+                <div class="dock-toggle-bar" id="dock-toggle-btn">
+                    <div class="dock-title">
+                        <i class="fas fa-chart-line"></i>
+                        <span>Integrated Hazard Analytics & Ground-Truth In-Situ Sensors</span>
+                    </div>
+                    <div class="dock-actions">
+                        <span class="badge-dock-status" id="dock-status-summary">Event Selected: San Luis Dam Embankment</span>
+                        <i class="fas fa-chevron-down dock-chevron" id="dock-chevron-icon"></i>
+                    </div>
+                </div>
+
+                <div class="dock-body" id="dock-body">
+                    
+                    <!-- Trend Chart Column -->
+                    <div class="dock-col chart-col">
+                        <div class="dock-card-header">
+                            <h5><i class="fas fa-chart-area"></i> Multi-Temporal Index Trend & Anomaly Baseline</h5>
+                            <span class="stat-tag">Z-Score Threshold: |z| > 2.0</span>
+                        </div>
+                        <div class="chart-wrapper">
+                            <canvas id="temporalTrendChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- USGS Hydro In-Situ Telemetry Column -->
+                    <div class="dock-col telemetry-col">
+                        <div class="dock-card-header">
+                            <h5><i class="fas fa-water"></i> USGS NWIS Ground Truth Telemetry</h5>
+                            <span class="station-id-tag" id="usgs-station-label">USGS Station #11262900</span>
+                        </div>
+                        
+                        <div class="hydro-telemetry-grid">
+                            <div class="telemetry-card">
+                                <span class="telemetry-param">Discharge Rate</span>
+                                <span class="telemetry-value" id="val-discharge">1,420 <small>ft³/s</small></span>
+                                <span class="telemetry-delta up"><i class="fas fa-arrow-up"></i> +18% above 30d median</span>
+                            </div>
+
+                            <div class="telemetry-card">
+                                <span class="telemetry-param">Gage Height</span>
+                                <span class="telemetry-value" id="val-gage-height">14.82 <small>ft</small></span>
+                                <span class="telemetry-delta alert"><i class="fas fa-exclamation-triangle"></i> Approaching action stage</span>
+                            </div>
+
+                            <div class="telemetry-card">
+                                <span class="telemetry-param">Antecedent Rainfall (7d)</span>
+                                <span class="telemetry-value" id="val-rainfall">4.12 <small>in</small></span>
+                                <span class="telemetry-delta neutral"><i class="fas fa-cloud-rain"></i> Heavy Storm Inflow</span>
+                            </div>
+
+                            <div class="telemetry-card">
+                                <span class="telemetry-param">Piezometric Water Temp</span>
+                                <span class="telemetry-value" id="val-temp">16.4 <small>°C</small></span>
+                                <span class="telemetry-delta neutral"><i class="fas fa-thermometer-half"></i> Baseline Stable</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quantitative Hazard Impact Summary Column -->
+                    <div class="dock-col impact-col">
+                        <div class="dock-card-header">
+                            <h5><i class="fas fa-shield-alt"></i> Hazard Risk & Anomaly Assessment</h5>
+                            <span class="severity-pill critical" id="event-severity-badge">HIGH HAZARD</span>
+                        </div>
+
+                        <div class="impact-metrics-list">
+                            <div class="impact-row">
+                                <span class="label">Saturated / Inundated Area:</span>
+                                <span class="value" id="stat-impact-area">842.6 Hectares</span>
+                            </div>
+                            <div class="impact-row">
+                                <span class="label">Peak Index Anomaly (Z-Score):</span>
+                                <span class="value text-warning" id="stat-peak-zscore">+2.84 σ (99.8th percentile)</span>
+                            </div>
+                            <div class="impact-row">
+                                <span class="label">Primary Hazard Type:</span>
+                                <span class="value" id="stat-hazard-type">Subsurface Embankment Seepage</span>
+                            </div>
+                            <div class="impact-row">
+                                <span class="label">High-Resolution Trigger:</span>
+                                <span class="value text-highlight" id="stat-drone-status">Drone LiDAR Flight Recommended</span>
+                            </div>
+                        </div>
+
+                        <button id="btn-trigger-drone-mission" class="btn-micro-survey">
+                            <i class="fas fa-drone"></i> Plan Drone Orthomosaic Mission
+                        </button>
+                    </div>
+
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- Modal for Drone Ingestion & Micro-Scale Survey -->
+    <div class="modal-backdrop" id="drone-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3><i class="fas fa-drone"></i> Drone Orthomosaic & LiDAR Ingestion Portal</h3>
+                <button class="modal-close-btn" id="btn-close-drone-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-intro">Integrate ultra-high-resolution multispectral and LiDAR orthomosaics directly over satellite baselines for localized seepage and geotechnical slope analysis.</p>
+                
+                <div class="upload-dropzone" id="drone-dropzone">
+                    <i class="fas fa-cloud-upload-alt dropzone-icon"></i>
+                    <h4>Drag & Drop Drone Orthomosaic (.tif / Cloud-Optimized GeoTIFF)</h4>
+                    <p>Supports 5-band multispectral (Red, Green, Blue, RedEdge, NIR) & LiDAR DSM/DTM</p>
+                    <input type="file" id="drone-file-input" style="display:none;" accept=".tif,.tiff,.las,.laz">
+                    <button class="btn-browse" onclick="document.getElementById('drone-file-input').click()">Browse Files</button>
+                </div>
+
+                <div class="modal-form-grid">
+                    <div class="form-group">
+                        <label>Mission Identifier</label>
+                        <input type="text" class="styled-input" id="drone-mission-name" value="San-Luis-Embankment-Seepage-01">
+                    </div>
+                    <div class="form-group">
+                        <label>Ground Sample Distance (GSD)</label>
+                        <input type="text" class="styled-input" id="drone-gsd" value="2.8 cm / pixel">
+                    </div>
+                    <div class="form-group">
+                        <label>Sensor Payload</label>
+                        <input type="text" class="styled-input" id="drone-sensor" value="MicaSense RedEdge-P + Livox LiDAR">
+                    </div>
+                    <div class="form-group">
+                        <label>Flight Altitude (AGL)</label>
+                        <input type="text" class="styled-input" id="drone-altitude" value="65 m (213 ft)">
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="btn-tool secondary" id="btn-cancel-modal">Cancel</button>
+                    <button class="btn-primary-action" id="btn-process-drone">
+                        <i class="fas fa-cog fa-spin" style="display:none;" id="drone-spinner"></i>
+                        Register & Ingest Drone Orthomosaic
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Script -->
+    <script src="app.js"></script>
+</body>
+</html>
