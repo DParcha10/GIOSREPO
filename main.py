@@ -9,6 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.api.api import api_router
+from app.database import engine, Base
+from app.api.routes import auth, iot
+from app.services import reporting
+
+# Initialize DB tables
+Base.metadata.create_all(bind=engine)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("gios")
@@ -36,7 +42,13 @@ app.add_middleware(
 
 # API Routes
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(iot.router, prefix="/api/v1")
+app.include_router(reporting.router, prefix="/api/v1")
 app.include_router(api_router)  # Unversioned for direct frontend ease
+app.include_router(auth.router)
+app.include_router(iot.router)
+app.include_router(reporting.router)
 
 @app.get("/health", tags=["System"])
 def health_check():
