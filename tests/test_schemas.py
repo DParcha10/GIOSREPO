@@ -47,6 +47,9 @@ from app.models.schemas import (
     GEEImageResponse,
     SentinelHubTileRequest,
     SentinelHubTileResponse,
+    GeoJSONFeature,
+    GeoJSONFeatureCollection,
+    VectorLayerResponse,
     SpatialBufferRequest,
     SpatialBufferResponse,
     AgentChatMessage,
@@ -649,6 +652,30 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(health.status, "healthy")
         self.assertEqual(health.version, "2.5.0")
         self.assertIn("stac_acquisition", health.active_modules)
+
+    def test_geojson_feature_collection_schemas(self):
+        """Verify GeoJSONFeature, GeoJSONFeatureCollection, and VectorLayerResponse models."""
+        feature = GeoJSONFeature(
+            type="Feature",
+            properties={"name": "San Luis Pumping Plant", "status": "operational"},
+            geometry={"type": "Point", "coordinates": [-121.06, 37.052]}
+        )
+        self.assertEqual(feature.type, "Feature")
+        self.assertEqual(feature.properties["name"], "San Luis Pumping Plant")
+
+        collection = GeoJSONFeatureCollection(
+            type="FeatureCollection",
+            features=[feature]
+        )
+        self.assertEqual(collection.type, "FeatureCollection")
+        self.assertEqual(len(collection.features), 1)
+
+        vector_layer = VectorLayerResponse(
+            type="FeatureCollection",
+            features=[feature]
+        )
+        self.assertEqual(vector_layer.type, "FeatureCollection")
+        self.assertEqual(vector_layer.features[0].geometry["coordinates"], [-121.06, 37.052])
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

@@ -17,7 +17,13 @@ import giosApi, {
   getTileUrl, 
   getDroneTileUrl, 
   probePixel, 
-  calculateZonalStats 
+  calculateZonalStats,
+  fetchHazardEvents as fetchEventsApi,
+  fetchInfrastructureLayers,
+  fetchDroneMissions as fetchDroneMissionsApi,
+  fetchTimeseriesTrend,
+  downloadPdfReport,
+  computeRegionalIndex
 } from '../api/giosApi';
 import useJarvisStore from '../store/jarvisStore';
 import {
@@ -181,6 +187,9 @@ export default function MapExplorer() {
       else if (m === 'ndvi') { setRescaleMin(0.15); setRescaleMax(0.85); }
       else if (m === 'lst') { setRescaleMin(12); setRescaleMax(42); }
       else if (m === 'nbr') { setRescaleMin(-0.1); setRescaleMax(0.65); }
+      else if (m === 'dnbr') { setRescaleMin(-0.1); setRescaleMax(0.66); }
+      else if (m === 'rdnbr') { setRescaleMin(-0.2); setRescaleMax(1.2); }
+      else if (m === 'rgb') { setRescaleMin(0); setRescaleMax(255); }
     }
   }, [selectedEvent]);
 
@@ -204,8 +213,7 @@ export default function MapExplorer() {
   // 1. Fetch live events, vector layers, and drone missions from backend with polling
   const fetchEvents = async () => {
     try {
-      const res = await giosApi.get('/api/v1/events');
-      const evts = res.data.events || [];
+      const evts = await fetchEventsApi();
       setEvents(evts);
       if (evts.length > 0) {
         const defaultEvt = activeEventId ? evts.find(e => e.id === activeEventId) || evts[0] : evts[0];
@@ -218,18 +226,18 @@ export default function MapExplorer() {
 
   const fetchVectorLayers = async () => {
     try {
-      const res = await giosApi.get('/api/v1/spatial/layers/critical_infrastructure');
-      if (res.data?.features) {
-        setVectorLayers(res.data.features);
+      const res = await fetchInfrastructureLayers('critical_infrastructure');
+      if (res?.features) {
+        setVectorLayers(res.features);
       }
     } catch (e) { console.error("Vectors failed", e); }
   };
 
   const fetchDroneMissions = async () => {
     try {
-      const res = await giosApi.get('/api/v1/drone/missions');
-      if (res.data?.missions) {
-        setDroneMissions(res.data.missions);
+      const missions = await fetchDroneMissionsApi();
+      if (missions) {
+        setDroneMissions(missions);
       }
     } catch (e) { console.error("Missions failed", e); }
   };
@@ -260,15 +268,15 @@ export default function MapExplorer() {
           selectedEvent.lat + delta
         ];
 
-        // Fetch time-series trend
-        const trendRes = await giosApi.post('/api/v1/timeseries/trend', {
+        // Fetch time-series trend using Agent 5 contract
+        const trendRes = await fetchTimeseriesTrend({
           bbox,
           index: selectedEvent.metric || 'ndmi',
           start_date: selectedEvent.start_date || '2026-08-01',
           end_date: selectedEvent.end_date || '2026-08-30'
         });
 
-        const pts = trendRes.data.data_points || [];
+        const pts = trendRes?.data_points || [];
         setTrendData({
           labels: pts.map(p => p.date ? p.date.split('-').slice(1).join('/') : ''),
           datasets: [
@@ -306,16 +314,14 @@ export default function MapExplorer() {
     fetchTelemetry();
   }, [selectedEvent]);
 
-  // Handle Export Dossier PDF
+  // Handle Export Dossier PDF using Agent 5 contract
   const handleExportDossier = async () => {
     if (!selectedEvent) return;
     setExporting(true);
     try {
       const bboxStr = `${(selectedEvent.lng - 0.02).toFixed(4)},${(selectedEvent.lat - 0.02).toFixed(4)},${(selectedEvent.lng + 0.02).toFixed(4)},${(selectedEvent.lat + 0.02).toFixed(4)}`;
-      const res = await giosApi.get(`/api/v1/reports/pdf?bbox=${bboxStr}&index_type=${selectedEvent.metric || 'ndmi'}`, {
-        responseType: 'blob'
-      });
-      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const pdfBlob = await downloadPdfReport(bboxStr, selectedEvent.metric || 'ndmi');
+      const url = window.URL.createObjectURL(new Blob([pdfBlob], { type: 'application/pdf' }));
       const link = document.createElement('a');
       link.href = url;
       link.setAttribute('download', `GIOS_Hazard_${selectedEvent.id}_Dossier.pdf`);
@@ -330,13 +336,13 @@ export default function MapExplorer() {
     }
   };
 
-  // Run On-the-Fly Spectral Analysis for Studio Tab
+  // Run On-the-Fly Spectral Analysis for Studio Tab using Agent 5 contract
   const handleRunSpectralAnalysis = async () => {
     if (!selectedEvent) return;
     setStudioLoading(true);
     try {
       const delta = 0.02;
-      const res = await giosApi.post('/api/v1/analysis/indices', {
+      const res = await computeRegionalIndex({
         bbox: [
           selectedEvent.lng - delta,
           selectedEvent.lat - delta,
@@ -347,7 +353,7 @@ export default function MapExplorer() {
         start_date: selectedEvent.start_date || '2026-08-01',
         end_date: selectedEvent.end_date || '2026-08-30'
       });
-      setStudioResult(res.data);
+      setStudioResult(res);
     } catch (err) {
       console.error(err);
     } finally {

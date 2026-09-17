@@ -38,8 +38,8 @@ export const SPECTRAL_INDICES = BASE_INDICES.map(i => {
     formula: i.formula,
     defaultMin: defMin,
     defaultMax: defMax,
-    autoMin: i.key === 'ndmi' ? 0.05 : i.key === 'ndvi' ? 0.15 : i.key === 'lst' ? 12 : defMin + 0.1,
-    autoMax: i.key === 'ndmi' ? 0.45 : i.key === 'ndvi' ? 0.85 : i.key === 'lst' ? 42 : defMax - 0.1
+    autoMin: i.key === 'ndmi' ? 0.05 : i.key === 'ndvi' ? 0.15 : i.key === 'lst' ? 12 : i.key === 'rgb' ? 10 : i.key === 'dnbr' ? 0.1 : i.key === 'rdnbr' ? 0.15 : defMin + 0.1,
+    autoMax: i.key === 'ndmi' ? 0.45 : i.key === 'ndvi' ? 0.85 : i.key === 'lst' ? 42 : i.key === 'rgb' ? 240 : i.key === 'dnbr' ? 0.66 : i.key === 'rdnbr' ? 1.2 : defMax - 0.1
   };
 });
 
@@ -151,16 +151,16 @@ export default function SpectralStudioControls({
       <div className="space-y-2 pt-1 border-t border-gray-800/60">
         <div className="flex items-center justify-between text-[10px] font-mono">
           <span className="text-gray-400 uppercase font-bold">Contrast Rescale Window</span>
-          <span className="text-teal-300 font-bold font-mono">[{rescaleMin.toFixed(2)}, {rescaleMax.toFixed(2)}]</span>
+          <span className="text-teal-300 font-bold font-mono">[{rescaleMin.toFixed(activeBand === 'rgb' ? 0 : 2)}, {rescaleMax.toFixed(activeBand === 'rgb' ? 0 : 2)}]</span>
         </div>
 
         {/* Dynamic Color Ramp Preview */}
         <div className="space-y-1">
           <div className={`h-3 w-full rounded-md shadow-inner bg-gradient-to-r ${currentColormapMeta.gradient}`}></div>
           <div className="flex justify-between text-[9px] font-mono text-gray-400">
-            <span>Min: {rescaleMin.toFixed(2)}</span>
+            <span>Min: {rescaleMin.toFixed(activeBand === 'rgb' ? 0 : 2)}</span>
             <span className="text-gray-500">Center</span>
-            <span>Max: {rescaleMax.toFixed(2)}</span>
+            <span>Max: {rescaleMax.toFixed(activeBand === 'rgb' ? 0 : 2)}</span>
           </div>
         </div>
 
@@ -169,13 +169,13 @@ export default function SpectralStudioControls({
           <div className="space-y-1">
             <div className="flex justify-between text-[9px] font-mono text-gray-400">
               <span>Cut Min</span>
-              <span className="text-white">{rescaleMin.toFixed(2)}</span>
+              <span className="text-white">{rescaleMin.toFixed(activeBand === 'rgb' ? 0 : 2)}</span>
             </div>
             <input
               type="range"
-              min={activeBand === 'lst' ? -10 : -1.0}
-              max={rescaleMax - 0.05}
-              step={0.02}
+              min={activeBand === 'lst' ? -10 : activeBand === 'rgb' ? 0 : activeBand === 'rdnbr' ? -1.0 : -1.0}
+              max={rescaleMax - (activeBand === 'rgb' ? 1 : 0.05)}
+              step={activeBand === 'rgb' ? 1 : activeBand === 'lst' ? 0.5 : 0.02}
               value={rescaleMin}
               onChange={(e) => onRescaleChange && onRescaleChange(parseFloat(e.target.value), rescaleMax)}
               className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-teal-400"
@@ -185,13 +185,13 @@ export default function SpectralStudioControls({
           <div className="space-y-1">
             <div className="flex justify-between text-[9px] font-mono text-gray-400">
               <span>Cut Max</span>
-              <span className="text-white">{rescaleMax.toFixed(2)}</span>
+              <span className="text-white">{rescaleMax.toFixed(activeBand === 'rgb' ? 0 : 2)}</span>
             </div>
             <input
               type="range"
-              min={rescaleMin + 0.05}
-              max={activeBand === 'lst' ? 60 : 1.0}
-              step={0.02}
+              min={rescaleMin + (activeBand === 'rgb' ? 1 : 0.05)}
+              max={activeBand === 'lst' ? 60 : activeBand === 'rgb' ? 255 : activeBand === 'rdnbr' ? 2.5 : 1.0}
+              step={activeBand === 'rgb' ? 1 : activeBand === 'lst' ? 0.5 : 0.02}
               value={rescaleMax}
               onChange={(e) => onRescaleChange && onRescaleChange(rescaleMin, parseFloat(e.target.value))}
               className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-teal-400"

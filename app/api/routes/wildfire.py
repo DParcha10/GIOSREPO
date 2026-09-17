@@ -63,27 +63,39 @@ def analyze_burn_severity(req: BurnSeverityApiRequest):
         arr_pre = np.asarray(pre_input, dtype=np.float32)
         arr_post = np.asarray(post_input, dtype=np.float32)
         dnbr_arr = arr_pre - arr_post
-        mean_dnbr = float(np.mean(dnbr_arr))
-        denom = np.sqrt(np.abs(arr_pre) + np.float32(1e-6))
-        rdnbr_arr = dnbr_arr / denom
-        mean_rdnbr = float(np.mean(rdnbr_arr))
+        valid_d = dnbr_arr[np.isfinite(dnbr_arr)]
+        mean_dnbr = float(np.mean(valid_d)) if len(valid_d) > 0 else 0.0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            denom = np.sqrt(np.abs(arr_pre) + np.float32(1e-6))
+            rdnbr_arr = dnbr_arr / denom
+        valid_rd = rdnbr_arr[np.isfinite(rdnbr_arr)]
+        mean_rdnbr = float(np.mean(valid_rd)) if len(valid_rd) > 0 else 0.0
         classification = index_service.classify_burn_severity(dnbr_arr)
         del arr_pre
         del arr_post
         del dnbr_arr
         del rdnbr_arr
+        del valid_d
+        del valid_rd
         gc.collect()
     elif req.nbr_values and len(req.nbr_values) > 0:
         # If legacy nbr_values passed, treat as single-scene post NBR with default pre baseline (0.35 typical green canopy)
         arr_post = np.asarray(req.nbr_values, dtype=np.float32)
         arr_pre = np.full_like(arr_post, 0.35, dtype=np.float32)
         dnbr_arr = arr_pre - arr_post
-        mean_dnbr = float(np.mean(dnbr_arr))
-        mean_rdnbr = float(np.mean(dnbr_arr / np.sqrt(np.abs(arr_pre) + np.float32(1e-6))))
+        valid_d = dnbr_arr[np.isfinite(dnbr_arr)]
+        mean_dnbr = float(np.mean(valid_d)) if len(valid_d) > 0 else 0.0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            rdnbr_arr = dnbr_arr / np.sqrt(np.abs(arr_pre) + np.float32(1e-6))
+        valid_rd = rdnbr_arr[np.isfinite(rdnbr_arr)]
+        mean_rdnbr = float(np.mean(valid_rd)) if len(valid_rd) > 0 else 0.0
         classification = index_service.classify_burn_severity(dnbr_arr)
         del arr_pre
         del arr_post
         del dnbr_arr
+        del rdnbr_arr
+        del valid_d
+        del valid_rd
         gc.collect()
     else:
         # Realistic deterministic burn scenario for the requested dates / AOI

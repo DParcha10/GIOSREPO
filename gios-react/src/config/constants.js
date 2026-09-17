@@ -272,11 +272,20 @@ export const DRONE_STATUSES = {
 };
 
 /**
+ * Proactive alert event types streamed by backend over SSE (/api/v1/agent/stream-alerts).
+ */
+export const PROACTIVE_ALERT_TYPES = {
+  JARVIS: 'jarvis_proactive_alert',
+  SATELLITE: 'satellite_anomaly_alert'
+};
+
+/**
  * Canonical GIOS API endpoint paths shared between frontend and backend.
  */
 export const API_ENDPOINTS = {
   HEALTH: '/health',
   AUTH_TOKEN: '/api/v1/auth/token',
+  AUTH_REGISTER: '/api/v1/auth/register',
   AUTH_ME: '/api/v1/auth/me',
   EVENTS: '/api/v1/events',
   EVENT_DETAIL: (id) => `/api/v1/events/${id}`,

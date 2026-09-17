@@ -6,7 +6,7 @@ from fastapi import APIRouter, Response
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 @router.get("/pdf")
-def generate_pdf_report(bbox: str, index_type: str):
+def generate_pdf_report(bbox: str, index_type: str = "ndmi"):
     """
     Generate a PDF report for environmental regulatory compliance.
     """

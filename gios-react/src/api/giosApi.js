@@ -22,6 +22,7 @@ export {
   HAZARD_SEVERITIES,
   ALERT_SEVERITIES,
   DRONE_STATUSES,
+  PROACTIVE_ALERT_TYPES,
   API_ENDPOINTS
 } from '../config/constants.js';
 
@@ -204,13 +205,30 @@ export {
  */
 
 /**
+ * @typedef {Object} GeoJSONFeature
+ * @property {'Feature'} type - GeoJSON object type
+ * @property {Object.<string, any>} properties - Feature properties and metadata
+ * @property {Object} geometry - GeoJSON geometry (Point, Polygon, etc.)
+ */
+
+/**
+ * @typedef {Object} GeoJSONFeatureCollection
+ * @property {'FeatureCollection'} type - FeatureCollection type
+ * @property {GeoJSONFeature[]} features - Array of GeoJSON features
+ */
+
+/**
+ * @typedef {GeoJSONFeatureCollection} VectorLayerResponse
+ */
+
+/**
  * @typedef {Object} SpatialBufferResponse
  * @property {string} status - Response status ("success")
  * @property {string} operation - Operation name
  * @property {number} buffer_radius_km - Radius in km
  * @property {number} area_sq_km - Buffer area in sq km
  * @property {number} area_hectares - Buffer area in hectares
- * @property {Object} geojson - GeoJSON FeatureCollection
+ * @property {GeoJSONFeatureCollection} geojson - GeoJSON FeatureCollection
  */
 
 /**
@@ -224,6 +242,20 @@ export {
  * @property {string} message - Emergency notification or briefing message
  * @property {string} timestamp - Trigger timestamp (ISO 8601)
  * @property {string} [status='active'] - Alert lifecycle state
+ */
+
+/**
+ * @typedef {Object} ProactiveJarvisAlert
+ * @property {'jarvis_proactive_alert'} type - Alert event type
+ * @property {string} message - Emergency briefing narrative
+ * @property {string} site - Monitored site name
+ * @property {Object.<string, any>} [data] - Associated sensor telemetry payload
+ */
+
+/**
+ * @typedef {Object} SatelliteAnomalyAlert
+ * @property {'satellite_anomaly_alert'} type - Alert event type
+ * @property {AlertRecord} data - Detected anomaly record
  */
 
 /**
@@ -320,6 +352,19 @@ export {
  */
 
 /**
+ * @typedef {Object} UserLoginRequest
+ * @property {string} username - User account username
+ * @property {string} password - User account password
+ */
+
+/**
+ * @typedef {Object} UserRegisterRequest
+ * @property {string} username - Desired account username
+ * @property {string} password - Account password
+ * @property {'viewer' | 'admin' | string} [role='viewer'] - Assigned user role
+ */
+
+/**
  * @typedef {Object} TokenResponse
  * @property {string} access_token - JWT Bearer access token
  * @property {string} token_type - Token authorization scheme
@@ -331,6 +376,12 @@ export {
  * @property {string} username - User login name
  * @property {string} role - Authorization role ('viewer' | 'admin')
  * @property {string} status - Authentication status ('authenticated')
+ */
+
+/**
+ * @typedef {Object} UserRegisterResponse
+ * @property {string} msg - Registration outcome message
+ * @property {string} username - Created account username
  */
 
 /**
@@ -479,6 +530,7 @@ const demoAdapter = async (config) => {
       else if (url.includes('/api/v1/iot/ingest')) data = { status: 'success', message: 'Data ingested' };
       else if (url.includes('/api/v1/iot/data')) data = [{ sensor_id: 'SENS-01', location_lat: 37.058, location_lon: -121.074, soil_moisture_pct: 22.4, temperature_c: 24.1, timestamp: new Date().toISOString() }];
       else if (url.includes('/api/v1/auth/token')) data = { access_token: 'mock-jwt-token-gios', token_type: 'bearer' };
+      else if (url.includes('/api/v1/auth/register')) data = { msg: 'User created successfully', username: 'demo_user' };
       else if (url.includes('/api/v1/auth/me')) data = { id: 1, username: 'admin', role: 'admin', status: 'authenticated' };
       else if (url.includes('/api/v1/agent/chat')) data = mockAgentChat;
       else if (url.includes('/api/v1/data/search')) data = { count: 1, scenes: [{ id: 'S2A_MSIL2A_20260820T184211', datetime: '2026-08-20T18:42:11Z', cloud_cover: 4.2, collection: 'sentinel-2-l2a', thumbnail_url: null }] };
@@ -645,10 +697,13 @@ export const fetchTimeseriesTrend = async (params) => {
 /**
  * Retrieves the catalog of active geotechnical and environmental hazard events.
  * 
+ * @param {HazardCategory|string|null} [category=null] - Optional hazard domain filter
  * @returns {Promise<Array>} List of hazard event objects
  */
-export const fetchHazardEvents = async () => {
-  const response = await giosApi.get('/api/v1/events');
+export const fetchHazardEvents = async (category = null) => {
+  const response = await giosApi.get('/api/v1/events', {
+    params: category ? { category } : {}
+  });
   return response.data.events || [];
 };
 
@@ -667,7 +722,7 @@ export const fetchEventById = async (eventId) => {
  * Retrieves critical infrastructure GIS vector layers.
  * 
  * @param {string} [layerType='critical_infrastructure'] - Layer category
- * @returns {Promise<Object>} GeoJSON FeatureCollection
+ * @returns {Promise<GeoJSONFeatureCollection>} GeoJSON FeatureCollection
  */
 export const fetchInfrastructureLayers = async (layerType = 'critical_infrastructure') => {
   const response = await giosApi.get(`/api/v1/spatial/layers/${layerType}`);
@@ -842,6 +897,21 @@ export const loginUser = async (username, password) => {
  */
 export const fetchUserProfile = async () => {
   const response = await giosApi.get('/api/v1/auth/me');
+  return response.data;
+};
+
+/**
+ * Registers a new user account.
+ * 
+ * @param {string} username - Desired account username
+ * @param {string} password - Account password
+ * @param {'viewer' | 'admin' | string} [role='viewer'] - Assigned role
+ * @returns {Promise<UserRegisterResponse>} Registration response
+ */
+export const registerUser = async (username, password, role = 'viewer') => {
+  const response = await giosApi.post('/api/v1/auth/register', null, {
+    params: { username, password, role }
+  });
   return response.data;
 };
 

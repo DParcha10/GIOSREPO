@@ -334,6 +334,18 @@ class AlertWebhookPayload(BaseModel):
     alert: AlertRecord = Field(..., description="Alert details payload")
     sent_at: str = Field(..., description="Dispatch timestamp (ISO 8601)")
 
+class ProactiveJarvisAlert(BaseModel):
+    """Proactive emergency briefing dispatched by JARVIS LLM over SSE stream."""
+    type: str = Field(default="jarvis_proactive_alert", description="Proactive alert event type")
+    message: str = Field(..., description="Emergency briefing narrative")
+    site: str = Field(..., description="Monitored site or infrastructure asset name")
+    data: Dict[str, Any] = Field(default_factory=dict, description="Associated sensor or telemetry payload")
+
+class SatelliteAnomalyAlert(BaseModel):
+    """Proactive satellite radiometric anomaly alert dispatched over SSE stream."""
+    type: str = Field(default="satellite_anomaly_alert", description="Satellite alert event type")
+    data: AlertRecord = Field(..., description="Detected radiometric anomaly record")
+
 # ============================================================================
 # SEARCH, EVENT & HEALTH SCHEMAS
 # ============================================================================
@@ -586,6 +598,17 @@ class SensorData(BaseModel):
 # ============================================================================
 # AUTHENTICATION & ACCESS CONTROL SCHEMAS
 # ============================================================================
+
+class UserLoginRequest(BaseModel):
+    """User credentials for OAuth2 authentication."""
+    username: str = Field(..., description="User account username")
+    password: str = Field(..., description="User account password")
+
+class UserRegisterRequest(BaseModel):
+    """Payload for registering a new user account."""
+    username: str = Field(..., description="Desired username")
+    password: str = Field(..., description="Account password")
+    role: str = Field(default="viewer", description="Assigned role (viewer, admin)")
 
 class TokenResponse(BaseModel):
     """OAuth2 JWT access token response."""

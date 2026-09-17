@@ -29,8 +29,10 @@ class PreprocessingService:
                 bit_mask = 0
                 for b in range(6):
                     bit_mask |= (1 << b)
-                qa_int = qa.astype(np.uint16)
+                qa_clean = np.nan_to_num(qa, nan=0)
+                qa_int = qa_clean.astype(np.uint16)
                 raw_mask = (qa_int & bit_mask) != 0
+                del qa_clean
                 del qa_int
                 if not np.any(raw_mask):
                     # Zero clouds or invalid pixels in the scene: fast bypass without allocating memory
@@ -239,6 +241,7 @@ class PreprocessingService:
                     else:
                         val = PreprocessingService.apply_landsat_calibration(dataset[var].values, is_thermal=False)
                     dataset[var] = (dataset[var].dims, np.asarray(val, dtype=np.float32))
+                    del val
                 elif is_sentinel:
                     val = PreprocessingService.apply_sentinel_offset(
                         dataset[var].values,
@@ -246,6 +249,7 @@ class PreprocessingService:
                         acquisition_date=acquisition_date
                     )
                     dataset[var] = (dataset[var].dims, np.asarray(val, dtype=np.float32))
+                    del val
             gc.collect()
             return dataset
 

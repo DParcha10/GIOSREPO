@@ -229,16 +229,19 @@ class DataAcquisitionService:
                 collection=collection
             )
 
-        # Apply cloud & invalid pixel masking
-        if apply_mask:
-            if "sentinel" in collection.lower():
-                ds = preprocessing_service.mask_sentinel_scl(ds, dilation_iterations=1)
-            elif "landsat" in collection.lower():
-                ds = preprocessing_service.mask_landsat_qa(ds, dilation_iterations=1)
+        # Apply cloud & invalid pixel masking and calibration under warning catch
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+            warnings.filterwarnings("ignore", message=r".*Dataset has no geotransform.*")
+            if apply_mask:
+                if "sentinel" in collection.lower():
+                    ds = preprocessing_service.mask_sentinel_scl(ds, dilation_iterations=1)
+                elif "landsat" in collection.lower():
+                    ds = preprocessing_service.mask_landsat_qa(ds, dilation_iterations=1)
 
-        # Apply radiometric calibration & offset
-        if apply_calibration:
-            ds = preprocessing_service.normalise_reflectance(ds, collection=collection)
+            # Apply radiometric calibration & offset
+            if apply_calibration:
+                ds = preprocessing_service.normalise_reflectance(ds, collection=collection)
 
         # Trigger garbage collection for intermediate chunk memory
         gc.collect()
@@ -282,7 +285,12 @@ class DataAcquisitionService:
         for band in bands:
             b_clean = band.upper()
             if is_sentinel:
-                if b_clean in {"B02", "BLUE"}:
+                if b_clean in {"SCL"}:
+                    raw = np.full((ny, nx), 4, dtype=np.uint8)  # Class 4 = Vegetation
+                    raw[0:4, 0:4] = 9  # High probability cloud in corner to verify dilation
+                    data_vars[band] = (["y", "x"], raw)
+                    continue
+                elif b_clean in {"B02", "BLUE"}:
                     raw = 1200 + gradient * 400
                 elif b_clean in {"B03", "GREEN"}:
                     raw = 1350 + gradient * 500
@@ -296,13 +304,9 @@ class DataAcquisitionService:
                     raw = 2200 + gradient * 800
                 elif b_clean in {"B12", "SWIR2"}:
                     raw = 1500 + gradient * 600
-                elif b_clean in {"SCL"}:
-                    raw = np.full((ny, nx), 4, dtype=np.uint8)  # Class 4 = Vegetation
-                    raw[0:4, 0:4] = 9  # High probability cloud in corner to verify dilation
-                    data_vars[band] = (["y", "x"], raw)
                 else:
                     raw = 1500 + gradient * 500
-                    data_vars[band] = (["y", "x"], raw.astype(np.float32))
+                data_vars[band] = (["y", "x"], raw.astype(np.float32))
             else:
                 # Landsat C2 L2 DN
                 b_low = band.lower()

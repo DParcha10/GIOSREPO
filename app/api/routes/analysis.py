@@ -81,9 +81,15 @@ def compute_spectral_index(req: IndexRequest):
 
     # Extract band arrays
     band_dict = {}
-    for v in cube.data_vars:
-        band_dict[v.lower()] = cube[v].values
-        band_dict[v.upper()] = cube[v].values
+    import warnings
+    import rasterio.errors
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+        warnings.filterwarnings("ignore", message=r".*Dataset has no geotransform.*")
+        for v in cube.data_vars:
+            val = cube[v].values
+            band_dict[v.lower()] = val
+            band_dict[v.upper()] = val
 
     # Compute target biophysical index
     try:
@@ -92,23 +98,32 @@ def compute_spectral_index(req: IndexRequest):
         # Fallback to NDVI if index not found
         index_arr = index_service.ndvi(band_dict.get("b08", band_dict.get("nir")), band_dict.get("b04", band_dict.get("red")))
 
-    valid_vals = index_arr[~np.isnan(index_arr)]
+    valid_vals = index_arr[np.isfinite(index_arr)]
     if len(valid_vals) == 0:
-        valid_vals = np.array([0.45])
+        valid_vals = np.array([0.45], dtype=np.float32)
 
-    # Memory-conscious cleanup of raster cube and band arrays
+    mean_val = round(float(np.mean(valid_vals)), 3)
+    median_val = round(float(np.median(valid_vals)), 3)
+    min_val = round(float(np.min(valid_vals)), 3)
+    max_val = round(float(np.max(valid_vals)), 3)
+    std_val = round(float(np.std(valid_vals)), 3)
+    valid_count = int(len(valid_vals))
+
+    # Memory-conscious cleanup of raster cube, index array, and band arrays
     del cube
     del band_dict
+    del index_arr
+    del valid_vals
     gc.collect()
 
     return IndexResultSummary(
         index=idx_str,
-        mean=round(float(np.mean(valid_vals)), 3),
-        median=round(float(np.median(valid_vals)), 3),
-        min=round(float(np.min(valid_vals)), 3),
-        max=round(float(np.max(valid_vals)), 3),
-        std=round(float(np.std(valid_vals)), 3),
-        valid_pixels=int(len(valid_vals)),
+        mean=mean_val,
+        median=median_val,
+        min=min_val,
+        max=max_val,
+        std=std_val,
+        valid_pixels=valid_count,
         timestamp=datetime.now(timezone.utc).isoformat()
     )
 
@@ -204,9 +219,13 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     )
 
     band_dict = {}
-    for v in cube.data_vars:
-        band_dict[v.lower()] = cube[v].values
-        band_dict[v.upper()] = cube[v].values
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+        warnings.filterwarnings("ignore", message=r".*Dataset has no geotransform.*")
+        for v in cube.data_vars:
+            val = cube[v].values
+            band_dict[v.lower()] = val
+            band_dict[v.upper()] = val
 
     try:
         index_arr = index_service.compute(idx_str, band_dict)
@@ -217,8 +236,9 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     tf = from_bounds(min_lon, min_lat, max_lon, max_lat, nx, ny)
     inside_mask = geometry_mask([poly], out_shape=(ny, nx), transform=tf, invert=True)
 
-    valid_vals = index_arr[inside_mask]
-    valid_vals = valid_vals[~np.isnan(valid_vals)]
+    arr_2d = np.squeeze(index_arr)
+    valid_vals = arr_2d[inside_mask] if arr_2d.ndim == 2 else index_arr[..., inside_mask].ravel()
+    valid_vals = valid_vals[np.isfinite(valid_vals)]
     total_valid = len(valid_vals)
     if total_valid == 0:
         valid_vals = np.array([0.312], dtype=np.float32)
