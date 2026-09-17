@@ -51,7 +51,15 @@ from app.models.schemas import (
     MapAction,
     NavigationAction,
     AgentChatResponse,
-    EventCreateRequest
+    EventCreateRequest,
+    BurnSeverityApiRequest,
+    DroneRegisterRequest,
+    DroneScheduleMissionRequest,
+    SensorData,
+    TokenResponse,
+    UserResponse,
+    UserRegisterResponse,
+    ReportPdfParams
 )
 from app.config import settings
 
@@ -413,6 +421,72 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(evt_req.category, HazardCategory.SEEPAGE)
         self.assertEqual(evt_req.severity, HazardSeverity.CRITICAL)
         self.assertEqual(evt_req.metric, SpectralIndex.NDMI)
+
+    def test_burn_severity_api_request_compatibility(self):
+        """Verify BurnSeverityApiRequest and BurnSeverityRequest alias with paired NBR values."""
+        req = BurnSeverityApiRequest(
+            aoi_id="AOI-TEST",
+            post_event_date="2026-08-20",
+            nbr_pre=0.55,
+            nbr_post=0.15
+        )
+        self.assertEqual(req.aoi_id, "AOI-TEST")
+        self.assertEqual(req.nbr_pre, 0.55)
+        self.assertEqual(req.nbr_post, 0.15)
+
+    def test_drone_flight_and_registration_requests(self):
+        """Verify DroneRegisterRequest and DroneScheduleMissionRequest schemas."""
+        reg_req = DroneRegisterRequest(
+            file_path="data/drone_orthos/san_luis_dam.tif",
+            mission_name="San Luis Ortho Survey",
+            sensor_payload="RGB + Multispectral RedEdge",
+            ortho_id="ORTHO-001"
+        )
+        self.assertEqual(reg_req.ortho_id, "ORTHO-001")
+        self.assertEqual(reg_req.mission_name, "San Luis Ortho Survey")
+
+        sched_req = DroneScheduleMissionRequest(
+            event_id="EVT-01",
+            lat=37.058,
+            lng=-121.074,
+            radius_km=2.5
+        )
+        self.assertEqual(sched_req.event_id, "EVT-01")
+        self.assertEqual(sched_req.radius_km, 2.5)
+
+    def test_iot_sensor_data_schema(self):
+        """Verify in-situ IoT sensor telemetry schema."""
+        sensor = SensorData(
+            sensor_id="PIEZOMETER-04",
+            location_lat=37.0582,
+            location_lon=-121.0744,
+            soil_moisture_pct=31.8,
+            temperature_c=22.4
+        )
+        self.assertEqual(sensor.sensor_id, "PIEZOMETER-04")
+        self.assertEqual(sensor.soil_moisture_pct, 31.8)
+        self.assertIsNotNone(sensor.timestamp)
+
+    def test_auth_and_user_response_schemas(self):
+        """Verify authentication TokenResponse, UserResponse, and UserRegisterResponse schemas."""
+        token = TokenResponse(access_token="eyJhbGciOi...", token_type="bearer")
+        self.assertEqual(token.token_type, "bearer")
+
+        user = UserResponse(id=1, username="admin", role="admin", status="authenticated")
+        self.assertEqual(user.username, "admin")
+        self.assertEqual(user.role, "admin")
+
+        reg_resp = UserRegisterResponse(msg="User created successfully", username="operator1")
+        self.assertEqual(reg_resp.username, "operator1")
+
+    def test_report_pdf_params_schema(self):
+        """Verify ReportPdfParams schema for environmental compliance reporting."""
+        report = ReportPdfParams(
+            bbox="-121.08,37.05,-121.06,37.065",
+            index_type="ndmi"
+        )
+        self.assertEqual(report.index_type, "ndmi")
+        self.assertIn("-121.08", report.bbox)
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

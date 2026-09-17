@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Activity, ShieldCheck, ShieldAlert, Cpu } from 'lucide-react';
-import giosApi from '../api/giosApi';
+import { getHealthStatus } from '../api/giosApi';
 import DecryptedText from './ReactBits/DecryptedText';
 
 export default function SystemStatus() {
@@ -9,8 +9,8 @@ export default function SystemStatus() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const response = await giosApi.get('/health');
-        if (response.data.status === 'ok' || response.status === 200) {
+        const data = await getHealthStatus();
+        if (data.status === 'ok' || data.status === 'healthy') {
           setStatus('ONLINE');
         } else {
           setStatus('UNSTABLE');

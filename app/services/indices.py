@@ -8,56 +8,56 @@ class IndexComputationService:
     @staticmethod
     def ndvi(nir: Any, red: Any) -> Any:
         """Normalized Difference Vegetation Index — vegetation vigour & biomass."""
-        nir_arr = np.asarray(nir, dtype=float)
-        red_arr = np.asarray(red, dtype=float)
+        nir_arr = np.asarray(nir, dtype=np.float32)
+        red_arr = np.asarray(red, dtype=np.float32)
         denom = nir_arr + red_arr
         return np.where(np.abs(denom) < IndexComputationService.EPSILON, np.nan, (nir_arr - red_arr) / denom)
 
     @staticmethod
     def ndmi(nir: Any, swir1: Any) -> Any:
         """Normalized Difference Moisture Index — canopy & soil moisture / embankment seepage."""
-        nir_arr = np.asarray(nir, dtype=float)
-        swir_arr = np.asarray(swir1, dtype=float)
+        nir_arr = np.asarray(nir, dtype=np.float32)
+        swir_arr = np.asarray(swir1, dtype=np.float32)
         denom = nir_arr + swir_arr
         return np.where(np.abs(denom) < IndexComputationService.EPSILON, np.nan, (nir_arr - swir_arr) / denom)
 
     @staticmethod
     def ndci(red_edge1: Any, red: Any) -> Any:
         """Normalized Difference Chlorophyll Index — Cyanobacteria & Algal Blooms."""
-        re_arr = np.asarray(red_edge1, dtype=float)
-        red_arr = np.asarray(red, dtype=float)
+        re_arr = np.asarray(red_edge1, dtype=np.float32)
+        red_arr = np.asarray(red, dtype=np.float32)
         denom = re_arr + red_arr
         return np.where(np.abs(denom) < IndexComputationService.EPSILON, np.nan, (re_arr - red_arr) / denom)
 
     @staticmethod
     def mndwi(green: Any, swir1: Any) -> Any:
         """Modified Normalized Difference Water Index — surface inundation & flood extent."""
-        green_arr = np.asarray(green, dtype=float)
-        swir_arr = np.asarray(swir1, dtype=float)
+        green_arr = np.asarray(green, dtype=np.float32)
+        swir_arr = np.asarray(swir1, dtype=np.float32)
         denom = green_arr + swir_arr
         return np.where(np.abs(denom) < IndexComputationService.EPSILON, np.nan, (green_arr - swir_arr) / denom)
 
     @staticmethod
     def nbr(nir: Any, swir2: Any) -> Any:
         """Normalized Burn Ratio — wildfire extent & burn assessment."""
-        nir_arr = np.asarray(nir, dtype=float)
-        swir_arr = np.asarray(swir2, dtype=float)
+        nir_arr = np.asarray(nir, dtype=np.float32)
+        swir_arr = np.asarray(swir2, dtype=np.float32)
         denom = nir_arr + swir_arr
         return np.where(np.abs(denom) < IndexComputationService.EPSILON, np.nan, (nir_arr - swir_arr) / denom)
 
     @staticmethod
     def dnbr(nbr_pre: Any, nbr_post: Any) -> Any:
         """Differenced Normalized Burn Ratio (delta-NBR = NBR_pre - NBR_post)."""
-        pre_arr = np.asarray(nbr_pre, dtype=float)
-        post_arr = np.asarray(nbr_post, dtype=float)
+        pre_arr = np.asarray(nbr_pre, dtype=np.float32)
+        post_arr = np.asarray(nbr_post, dtype=np.float32)
         return pre_arr - post_arr
 
     @staticmethod
     def rdnbr(dnbr_val: Any, nbr_pre: Any) -> Any:
         """Relativized Differenced Normalized Burn Ratio (RdNBR = dNBR / sqrt(|NBR_pre|))."""
-        d_arr = np.asarray(dnbr_val, dtype=float)
-        pre_arr = np.asarray(nbr_pre, dtype=float)
-        denom = np.sqrt(np.abs(pre_arr) + 1e-6)
+        d_arr = np.asarray(dnbr_val, dtype=np.float32)
+        pre_arr = np.asarray(nbr_pre, dtype=np.float32)
+        denom = np.sqrt(np.abs(pre_arr) + np.float32(1e-6))
         return d_arr / denom
 
     @staticmethod
@@ -132,19 +132,20 @@ class IndexComputationService:
     @staticmethod
     def evi(nir: Any, red: Any, blue: Any) -> Any:
         """Enhanced Vegetation Index — atmospheric and soil corrected vegetation metric."""
-        nir_arr = np.asarray(nir, dtype=float)
-        red_arr = np.asarray(red, dtype=float)
-        blue_arr = np.asarray(blue, dtype=float)
-        denom = nir_arr + 6.0 * red_arr - 7.5 * blue_arr + 1.0 + IndexComputationService.EPSILON
-        return 2.5 * (nir_arr - red_arr) / denom
+        nir_arr = np.asarray(nir, dtype=np.float32)
+        red_arr = np.asarray(red, dtype=np.float32)
+        blue_arr = np.asarray(blue, dtype=np.float32)
+        denom = nir_arr + np.float32(6.0) * red_arr - np.float32(7.5) * blue_arr + np.float32(1.0) + np.float32(IndexComputationService.EPSILON)
+        return np.float32(2.5) * (nir_arr - red_arr) / denom
 
     @staticmethod
     def savi(nir: Any, red: Any, l: float = 0.5) -> Any:
         """Soil Adjusted Vegetation Index."""
-        nir_arr = np.asarray(nir, dtype=float)
-        red_arr = np.asarray(red, dtype=float)
-        denom = nir_arr + red_arr + l + IndexComputationService.EPSILON
-        return ((nir_arr - red_arr) / denom) * (1.0 + l)
+        nir_arr = np.asarray(nir, dtype=np.float32)
+        red_arr = np.asarray(red, dtype=np.float32)
+        l_f = np.float32(l)
+        denom = nir_arr + red_arr + l_f + np.float32(IndexComputationService.EPSILON)
+        return ((nir_arr - red_arr) / denom) * (np.float32(1.0) + l_f)
 
     @staticmethod
     def lst(thermal_input: Any) -> Any:
@@ -152,13 +153,13 @@ class IndexComputationService:
         - If input is raw DN (> 1000): converts DN * 0.00341802 + 149.0 - 273.15
         - If input is already calibrated to Celsius: preserves values.
         """
-        arr = np.asarray(thermal_input, dtype=float)
+        arr = np.asarray(thermal_input, dtype=np.float32)
         # Check if values are raw DN (e.g., Landsat Band 10 typically 20,000 - 60,000)
         # Values in Celsius typically range from -60 to +80
         mask_raw_dn = np.nanmean(arr) > 1000.0 if arr.size > 0 else False
         if mask_raw_dn:
-            kelvin = arr * 0.00341802 + 149.0
-            return kelvin - 273.15
+            kelvin = arr * np.float32(0.00341802) + np.float32(149.0)
+            return kelvin - np.float32(273.15)
         return arr
 
     @classmethod

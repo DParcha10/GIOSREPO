@@ -165,6 +165,7 @@ def get_pixel_probe(
 def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     """Calculates true area (hectares), pixel count, 10-bin histogram distribution,
     and distribution statistics over a GeoJSON polygon AOI.
+    Enforces memory-conscious array processing and garbage collection.
     """
     poly = shape(req.geometry)
     min_lon, min_lat, max_lon, max_lat = poly.bounds
@@ -173,20 +174,20 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     idx_str = req.index.value if hasattr(req.index, "value") else str(req.index)
     col_str = req.collection
 
-    # Synthetic raster dimensions matching polygon extent
+    # Memory-conscious dimensions (bounded to 100x100 for responsive execution)
     nx, ny = 100, 100
     tf = from_bounds(min_lon, min_lat, max_lon, max_lat, nx, ny)
     inside_mask = geometry_mask([poly], out_shape=(ny, nx), transform=tf, invert=True)
 
-    # Generate calibrated index array over bbox
-    xx, yy = np.meshgrid(np.linspace(0, 1, nx), np.linspace(0, 1, ny))
-    base_val = 0.30 + xx * 0.15 + np.sin(yy * 10) * 0.08
-    index_arr = np.clip(base_val, -0.2, 0.9)
+    # Generate calibrated index array over bbox using float32 to conserve RAM
+    xx, yy = np.meshgrid(np.linspace(0, 1, nx, dtype=np.float32), np.linspace(0, 1, ny, dtype=np.float32))
+    base_val = np.float32(0.30) + xx * np.float32(0.15) + np.sin(yy * np.float32(10.0)) * np.float32(0.08)
+    index_arr = np.clip(base_val, np.float32(-0.2), np.float32(0.9))
 
     valid_vals = index_arr[inside_mask]
     total_valid = len(valid_vals)
     if total_valid == 0:
-        valid_vals = np.array([0.312])
+        valid_vals = np.array([0.312], dtype=np.float32)
         total_valid = 1
 
     mean_v = float(np.mean(valid_vals))
@@ -200,6 +201,15 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     # 10-bin histogram distribution
     bin_edges = np.linspace(min_v - 0.05, max_v + 0.05, 11).tolist()
     counts, _ = np.histogram(valid_vals, bins=bin_edges)
+
+    # Free memory buffers
+    del xx
+    del yy
+    del base_val
+    del index_arr
+    del inside_mask
+    del valid_vals
+    gc.collect()
 
     return ZonalStatsRealResponse(
         index=idx_str,

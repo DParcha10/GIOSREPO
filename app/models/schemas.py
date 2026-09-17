@@ -10,6 +10,7 @@ Comprehensive shared contracts for GIOS v2.5:
 - Automated Hazard Alerting & Webhooks
 """
 from enum import Enum
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Union
 from pydantic import BaseModel, Field
 
@@ -102,11 +103,18 @@ class BurnSeverityRequest(BaseModel):
     geometry: Optional[Dict[str, Any]] = Field(default=None, description="GeoJSON Polygon geometry")
     pre_event_date: Optional[str] = Field(default=None, description="Pre-fire baseline date (YYYY-MM-DD), auto-harvested if omitted")
     post_event_date: Optional[str] = Field(default=None, description="Post-fire assessment date (YYYY-MM-DD)")
+    nbr_pre: Optional[Union[float, List[float]]] = Field(default=None, description="Pre-fire NBR value(s)")
+    nbr_post: Optional[Union[float, List[float]]] = Field(default=None, description="Post-fire NBR value(s)")
+    pre_nbr: Optional[Union[float, List[float]]] = Field(default=None, description="Pre-fire NBR value(s) alias")
+    post_nbr: Optional[Union[float, List[float]]] = Field(default=None, description="Post-fire NBR value(s) alias")
     # Backward compatibility fields
     bbox: Optional[Tuple[float, float, float, float]] = Field(default=None, description="[min_lon, min_lat, max_lon, max_lat]")
     start_date: Optional[str] = Field(default=None, description="Legacy query start date")
     end_date: Optional[str] = Field(default=None, description="Legacy query end date")
     nbr_values: Optional[List[float]] = Field(default=None, description="Optional raw or simulated NBR array")
+
+# Alias for API route compatibility
+BurnSeverityApiRequest = BurnSeverityRequest
 
 class BurnSeverityCategoryDetail(BaseModel):
     """Categorized burn severity breakdown matching USGS FIREMON specifications."""
@@ -239,6 +247,20 @@ class DroneMissionResponse(BaseModel):
     bands: int = 3
     is_cog: bool = True
     status: str = "READY"
+
+class DroneRegisterRequest(BaseModel):
+    """Payload for registering a pre-stitched drone GeoTIFF orthomosaic."""
+    file_path: str = Field(..., description="Local file path or cloud URI to drone GeoTIFF")
+    mission_name: Optional[str] = Field(default="UAV Orthomosaic Survey", description="Human-readable mission name")
+    sensor_payload: Optional[str] = Field(default="RGB + Multispectral", description="Camera or sensor payload description")
+    ortho_id: Optional[str] = Field(default=None, description="Optional unique orthomosaic identifier")
+
+class DroneScheduleMissionRequest(BaseModel):
+    """Payload for scheduling an autonomous or manual UAS flight mission."""
+    event_id: Optional[str] = Field(default="MANUAL", description="Associated hazard event ID")
+    lat: float = Field(default=0.0, description="Target survey latitude coordinate")
+    lng: float = Field(default=0.0, description="Target survey longitude coordinate")
+    radius_km: float = Field(default=1.0, ge=0.1, le=50.0, description="Flight survey radius in kilometers")
 
 # ============================================================================
 # TIME-SERIES & CLIMATOLOGY SCHEMAS
@@ -480,3 +502,47 @@ class AgentChatResponse(BaseModel):
     sources: Optional[List[Dict[str, Any]]] = None
     data_analysis: Optional[Dict[str, Any]] = None
     thinking: Optional[str] = None
+
+# ============================================================================
+# IOT & IN-SITU SENSOR TELEMETRY SCHEMAS
+# ============================================================================
+
+class SensorData(BaseModel):
+    """In-situ IoT environmental sensor reading for multi-sensor fusion."""
+    sensor_id: str = Field(..., description="Unique sensor identifier")
+    location_lat: float = Field(..., description="Sensor latitude coordinate")
+    location_lon: float = Field(..., description="Sensor longitude coordinate")
+    soil_moisture_pct: float = Field(..., description="Soil volumetric moisture percentage")
+    temperature_c: float = Field(..., description="Temperature in degrees Celsius")
+    timestamp: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Measurement timestamp")
+
+# ============================================================================
+# AUTHENTICATION & ACCESS CONTROL SCHEMAS
+# ============================================================================
+
+class TokenResponse(BaseModel):
+    """OAuth2 JWT access token response."""
+    access_token: str = Field(..., description="JWT Bearer access token")
+    token_type: str = Field(default="bearer", description="Token authorization scheme")
+
+class UserResponse(BaseModel):
+    """Authenticated user profile information."""
+    id: int = Field(..., description="User database ID")
+    username: str = Field(..., description="Username")
+    role: str = Field(default="viewer", description="User role authorization level (viewer, admin)")
+    status: str = Field(default="authenticated", description="Authentication state")
+
+class UserRegisterResponse(BaseModel):
+    """User account registration response."""
+    msg: str = Field(..., description="Status message")
+    username: str = Field(..., description="Created username")
+
+# ============================================================================
+# COMPLIANCE REPORTING SCHEMAS
+# ============================================================================
+
+class ReportPdfParams(BaseModel):
+    """Query parameters for environmental regulatory compliance PDF reports."""
+    bbox: str = Field(..., description="Bounding box formatted as 'min_lon,min_lat,max_lon,max_lat'")
+    index_type: str = Field(default="ndmi", description="Spectral index analyzed in the report")
+

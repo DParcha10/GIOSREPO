@@ -15,28 +15,34 @@ export default function Dashboard() {
   });
   const [loading, setLoading] = useState(true);
 
-  const fetchQuakeData = async () => {
-    try {
-      const res = await axios.get('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson');
-      const features = res.data.features;
-      const mags = features.map(f => f.properties.mag).filter(m => m !== null);
-      const maxMag = mags.length > 0 ? Math.max(...mags).toFixed(1) : 0;
-      
-      setStats({
-        totalQuakes: features.length,
-        maxMag: maxMag,
-        recent: features.slice(0, 8),
-      });
-      setLoading(false);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
   useEffect(() => {
-    fetchQuakeData();
-    const interval = setInterval(fetchQuakeData, 60000);
-    return () => clearInterval(interval);
+    let isMounted = true;
+    const loadQuakeData = async () => {
+      try {
+        const res = await axios.get('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson');
+        const features = res.data.features;
+        const mags = features.map(f => f.properties.mag).filter(m => m !== null);
+        const maxMag = mags.length > 0 ? Math.max(...mags).toFixed(1) : 0;
+        
+        if (isMounted) {
+          setStats({
+            totalQuakes: features.length,
+            maxMag: maxMag,
+            recent: features.slice(0, 8),
+          });
+          setLoading(false);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    loadQuakeData();
+    const interval = setInterval(loadQuakeData, 60000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   return (

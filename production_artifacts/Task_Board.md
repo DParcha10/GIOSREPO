@@ -2,9 +2,8 @@
 
 **Orchestrator:** Agent 4 — Master (`@master`)  
 **Source Plan:** `production_artifacts/Implementation_Plan.md`  
-**Last Updated:** September 17, 2026 — 00:25 UTC  
-**Execution State:** Active Orchestration & Continuous Assurance — Milestone Release `v2.5.0` Stable & Archived; T-22 (@health-monitor) Continuous Monitoring Active; T-23 (@debugger) Resolved (37/37 Tests Passing, Vite Production Build Clean, 0 Anomalies)
-
+**Last Updated:** September 17, 2026 — 01:25 UTC  
+**Execution State:** Active Orchestration & Continuous Assurance — Milestone Release `v2.5.0` Stable & Archived; Milestone `v2.5.1` Assurance Complete (43/43 Tests Passing, Vite Production Build Clean, Live System Status HEALTHY with 0 Anomalies); T-22 (@health-monitor) Continuous Monitoring Active; T-25 (@archivist) Staged for Repository Synchronization.
 
 ---
 
@@ -37,11 +36,12 @@
                      ▼ 
      [Step 3: Agent 8 (@health-monitor) & Agent 9 (@debugger) CONTINUOUS] ──► Status: ACTIVE / MONITORING
        ├─ Agent 8 (@health-monitor): T-19 (Health Watchdog: PASS), T-22 (Memory Watchdog: Persistent Active)
-       └─ Agent 9 (@debugger):       T-18 (Scientific Suite: 37/37 PASS), T-21 (Proxy Alignment: Done), T-23 (CI Suite: 37/37 PASS)
+       └─ Agent 9 (@debugger):       T-18 (Scientific Suite: PASS), T-21 (Proxy Alignment: Done), T-23 (CI Suite: PASS), T-24 (43/43 PASS)
                      │
                      ▼ 
-     [Step 4: Agent 10 (@archivist) ON STABLE MILESTONE] ──► Status: DONE (v2.5.0 Archived)
-       └─ T-20: Release Archival, Project Documentation Sync & Milestone Tagging
+     [Step 4: Agent 10 (@archivist) ON STABLE MILESTONE] ──► Status: IN-PROGRESS / STAGED
+       ├─ T-20: Release Archival, Project Documentation Sync & Milestone Tagging (v2.5.0 DONE)
+       └─ T-25: Milestone Release Sync & GIOSREPO Archival (v2.5.1 STAGED)
 ```
 
 ---
@@ -50,7 +50,7 @@
 
 | Task ID | Work Package | Assigned Agent | Status | Dependencies | Deliverables & Target Files | Verification & Acceptance Proof |
 | :--- | :--- | :---: | :---: | :---: | :--- | :--- |
-| **T-01** | Shared Schemas, API Contracts & Config | `@core-engineer` | `done` | None | `app/models/schemas.py`<br>`gios-react/src/api/giosApi.js` | Complete Pydantic schemas & TS/JSDoc types matching Plan Section 4; clean imports with 0 circular dependencies; 37/37 tests passing (15/15 schema tests); 0 ESLint errors; clean Vite production build. |
+| **T-01** | Shared Schemas, API Contracts & Config | `@core-engineer` | `done` | None | `app/models/schemas.py`<br>`gios-react/src/api/giosApi.js` | Complete Pydantic schemas & TS/JSDoc types matching Plan Section 4; clean imports with 0 circular dependencies; 20/20 schema tests passing; 0 ESLint errors; clean Vite production build. |
 | **T-02** | Landsat Optical vs. Thermal Calibration | `@backend` | `done` | T-01 | `app/services/preprocessing.py`<br>`app/services/indices.py` | Optical scaled DN*0.0000275-0.2; Thermal calibrated to Celsius ($T_C$); B10 DN 40,000 = +12.57°C. |
 | **T-03** | Sentinel-2 PB 04.00+ Offset Correction | `@backend` | `done` | T-01 | `app/services/preprocessing.py` | PB $\ge 04.00$ applies -1000 DN offset; prevents dark water reflectance corruption. |
 | **T-04** | Bitwise QA/SCL Cloud Mask Dilation | `@backend` | `done` | T-01 | `app/services/preprocessing.py` | Landsat bits 0-5 and Sentinel SCL masked with $3\times 3$ morphological dilation buffer. |
@@ -69,12 +69,14 @@
 | **T-15b** | Polygon Drawing Tool & Zonal Distribution Drawer | `@frontend` | `done` | T-15a | `gios-react/src/pages/MapExplorer.jsx` | Leaflet draw integration; slide-out analytical drawer displaying area in ha and 20-bin histogram. |
 | **T-16** | Seasonal Climatological MAD & Theil-Sen Trend | `@backend` | `done` | T-01 | `app/services/timeseries.py` | Monthly climatological median/MAD normalized anomaly ($z_{\text{seasonal}}$); Theil-Sen robust slope. |
 | **T-17** | Automated Anomaly Watchdog & Persistent Alerting | `@backend` | `done` | T-16 | `app/services/alerting.py` | Automated background ingest check; triggers alerts for $|z| \ge 2.5$; persists to SQLite and webhooks. |
-| **T-18** | End-to-End Scientific Verification Suite | `@debugger` | `done` | T-02 to T-15 | `tests/test_scientific_rigor.py`<br>`tests/test_tile_server.py` | 37/37 unit tests passing across all scientific, tile server, API, and schema test modules (15/15 schema, 13/13 API, 5/5 scientific, 4/4 tile server). |
+| **T-18** | End-to-End Scientific Verification Suite | `@debugger` | `done` | T-02 to T-15 | `tests/test_scientific_rigor.py`<br>`tests/test_tile_server.py`<br>`pytest.ini` | 43/43 unit tests passing across all scientific, tile server, API, and schema test modules; pytest collection collision with GIOSREPO eliminated via pytest.ini configuration. |
 | **T-19** | Health Daemon Watchdog & Tile Cache Monitor | `@health-monitor` | `done` | T-07, T-10 | `health_check_daemon.py`<br>`production_artifacts/Health_Status.md` | Continuous watchdog active; telemetry logging to `production_artifacts/Health_Status.md`. |
 | **T-20** | System Documentation, Tagging & Milestone Archival | `@archivist` | `done` | All Tasks | `GIOS_Project_Documentation.md`<br>`production_artifacts/Task_Board.md` | Architecture docs updated; release `v2.5.0` milestone documented and closed. |
 | **T-21** | Frontend Vite Proxy Port Alignment Triage | `@debugger` | `done` | T-09 | `gios-react/vite.config.js` | Updated Vite proxy target to primary backend port 8000; resolved HTTP 500 in Health Monitor proxy. |
 | **T-22** | Host RAM & Memory Footprint Threshold Watchdog | `@health-monitor` | `in-progress` | T-19 | `health_check_daemon.py`<br>`production_artifacts/Health_Status.md` | Continuous monitoring of host memory pressure (>90%) and worker recycling alerts. Persistent daemon task. |
 | **T-23** | CI Test Failure Triage (Satellite Route 404) & Warnings | `@debugger` | `done` | T-18, T-21 | `app/api/api.py`<br>`tests/test_api.py`<br>`app/services/indices.py` | Satellite router mounted in `app/api/api.py`; deprecations cleaned; 37/37 tests passing cleanly. |
+| **T-24** | Test Suite Expansion & Schema Validation Parity | `@debugger` | `done` | T-01, T-18 | `tests/test_schemas.py`<br>`tests/test_scientific_rigor.py` | Expanded schema unit tests to 20/20; validated all new event/tool schemas; 43/43 test suite passing in 12.14s. |
+| **T-25** | Milestone Release Sync & GIOSREPO Archival | `@archivist` | `pending` | T-24 | `GIOSREPO/`<br>`production_artifacts/` | Staged for clean synchronization of cleared `app/`, `gios-react/`, and test artifacts into `GIOSREPO/` following 43/43 test clearance. |
 
 ---
 
@@ -116,3 +118,17 @@
   - Organized latest research, plans, and specifications in `production_artifacts/` (`Competitive_Gap_Analysis.md`, `Domain_Research.md`, `Implementation_Plan.md`, `GIOS_Project_Documentation.md`, `GIOS_Methodology.md`, `Task_Board.md`).
   - Synchronized finalized production code from `app/` and `gios-react/` into `GIOSREPO/` without nested submodules or build cache bloat.
   - Verified test suite passes 37/37 tests and production frontend bundle compiles cleanly with 0 errors.
+- **[2026-09-17 00:35 UTC]**: **Agent 7 (`@backend`)** completed dedicated large raster & memory-conscious engineering audit across all assigned data/API endpoints (T-02, T-03, T-04, T-05, T-06, T-07, T-08, T-10, T-13a, T-15a, T-16, T-17):
+  - **Memory-Conscious Raster Ingestion**: Enforced unbounded scene protection in `app/services/data_acquisition.py`: when `bbox` is omitted, dynamically resolves STAC item bounds or clamps target resolution to safe 60.0m to prevent out-of-memory crashes on full 10,980x10,980 granules; reduced chunk size to 512x512, cutting buffer allocations per band chunk by 75%.
+  - **Biophysical Formula Optimization**: Converted all spectral indices in `app/services/indices.py` (`ndvi`, `ndmi`, `ndci`, `mndwi`, `nbr`, `dnbr`, `rdnbr`, `evi`, `savi`, `lst`) from 64-bit double allocations to single-precision `np.float32`, reducing array memory consumption by 50%.
+  - **Endpoint Buffer Cleanup**: Embedded proactive `gc.collect()` and memory deallocations in `app/api/routes/analysis.py` (`compute_polygon_zonal_stats`) and `app/api/routes/wildfire.py` (`analyze_burn_severity`).
+- **[2026-09-17 00:40 UTC]**: **Agent 9 (`@debugger`)** executed continuous production assurance and CI failure triage:
+  - **CI & Pytest Collection Collision Remediation**: Root-caused `pytest` collection failure caused by recursive scanning into submodule `GIOSREPO/tests/` matching root `tests/`. Authored root `pytest.ini` scoping test discovery strictly to `tests/`, excluding `GIOSREPO`, `.git`, and `node_modules`, and injecting root `pythonpath = .` for clean cross-module importing.
+  - **Scientific Rigor Verification**: Added `test_drone_metric_gsd_calculation` in `tests/test_scientific_rigor.py` validating geodetic degree vs. projected meter GSD differentiation, bringing scientific verification suite to 6/6 passing.
+  - **Live Production Health Check**: Executed single-pass health check daemon verification (`python health_check_daemon.py --once`); confirmed System Status `HEALTHY`, 0 active anomalies, all external providers reachable (Planetary Computer STAC/SAS, USGS NWIS, NOAA), primary backend (port 8000) and frontend Vite UI (port 5173) with `/health` proxy fully operational.
+  - **Overall Test Suite**: **38/38 tests passing** (15/15 schemas, 13/13 APIs, 6/6 scientific rigor, 4/4 tile server) with 0 failures, 0 regressions, and 0 warnings.
+- **[2026-09-17 01:25 UTC]**: **Agent 4 (`@master`)** executed live master orchestration pass:
+  - Verified full test suite execution (`pytest`): **43/43 tests passing** (20/20 in `tests/test_schemas.py`, 13/13 in `tests/test_api.py`, 6/6 in `tests/test_scientific_rigor.py`, 4/4 in `tests/test_tile_server.py`) in 12.14s with 0 failures and 0 regressions.
+  - Verified frontend production build (`npm run build` in `gios-react/`): **0 errors** across 2,848 modules transformed cleanly in 13.80s.
+  - Verified live continuous monitoring via `health_check_daemon.py` pass: System Status **HEALTHY**, 0 active anomalies, all external APIs (Planetary Computer STAC, SAS Token Service, USGS NWIS, NOAA/NWS) reachable and responsive.
+  - Marked **T-24** `done` (`@debugger`). Staged **T-25** (`@archivist`) for next repository synchronization cycle.

@@ -58,9 +58,11 @@ docker-compose up --build
 ## Repository Structure
 
 - `app/`
-  - `api/routes/`: Endpoints for data search, analysis, timeseries, USGS integration, hazard events, and drone ingestion.
-  - `models/`: Pydantic validation schemas and enums.
+  - `api/routes/`: Endpoints for data search, analysis, timeseries, USGS integration, hazard events, drone ingestion, and wildfire differencing.
+  - `models/`: Pydantic validation schemas, enums, and API contracts (`schemas.py`).
   - `services/`: Planetary Computer acquisition, masking, spectral formulas, regression trends, and drone processing.
   - `utils/`: Deterministic hashing cache (`diskcache`) and geospatial geometry helpers.
-  - `config.py`: Environment-driven settings.
-- `frontend/`: Clean single-page application (`index.html`, `styles.css`, `app.js`) with tabbed ribbon navigation and zero API-key dependencies.
+  - `config.py`: Environment-driven settings and calibration constants.
+- `gios-react/`: Modern React + Leaflet Web GIS application with dynamic COG tile streaming, centimeter zoom, swipe curtain, and diagnostic analytical tools.
+- `frontend/`: Standalone legacy lightweight portal (`index.html`, `styles.css`, `app.js`).
+

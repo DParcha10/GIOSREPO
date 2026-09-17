@@ -135,21 +135,6 @@ class DataAcquisitionService:
 
         target_bands = bands or default_bands
 
-        # Memory-conscious resolution bounding: prevent multi-gigabyte allocations on regional extents
-        if bbox:
-            min_lon, min_lat, max_lon, max_lat = bbox
-            mid_lat = (min_lat + max_lat) / 2.0
-            span_x_m = abs(max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat))
-            span_y_m = abs(max_lat - min_lat) * 111320.0
-            max_pixels = 2048
-            min_safe_res = max(span_x_m / max_pixels, span_y_m / max_pixels)
-            if min_safe_res > target_res:
-                logger.info(
-                    "Memory-conscious dynamic resampling: scaled resolution from %.1fm to %.1fm (bbox span: %.1fkm x %.1fkm)",
-                    target_res, min_safe_res, span_x_m / 1000.0, span_y_m / 1000.0
-                )
-                target_res = float(min_safe_res)
-
         # Ensure STAC items are signed with SAS tokens
         stac_items_to_load = []
         for it in items:
@@ -167,6 +152,34 @@ class DataAcquisitionService:
                     pass
                 stac_items_to_load.append(item_obj)
 
+        # Memory-conscious resolution bounding: prevent multi-gigabyte allocations on regional extents
+        active_bbox = bbox
+        if not active_bbox and len(stac_items_to_load) > 0:
+            item_bbox = getattr(stac_items_to_load[0], "bbox", None)
+            if item_bbox and len(item_bbox) == 4:
+                active_bbox = tuple(item_bbox)
+
+        if active_bbox:
+            min_lon, min_lat, max_lon, max_lat = active_bbox
+            mid_lat = (min_lat + max_lat) / 2.0
+            span_x_m = abs(max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat))
+            span_y_m = abs(max_lat - min_lat) * 111320.0
+            max_pixels = 2048
+            min_safe_res = max(span_x_m / max_pixels, span_y_m / max_pixels)
+            if min_safe_res > target_res:
+                logger.info(
+                    "Memory-conscious dynamic resampling: scaled resolution from %.1fm to %.1fm (bbox span: %.1fkm x %.1fkm)",
+                    target_res, min_safe_res, span_x_m / 1000.0, span_y_m / 1000.0
+                )
+                target_res = float(min_safe_res)
+        elif not bbox and target_res < 60.0:
+            # Full scene with no bounding box: enforce safe 60m resolution to prevent 10980x10980 raster OOM
+            logger.info(
+                "Memory-conscious default for unbounded scene: clamped target resolution from %.1fm to 60.0m",
+                target_res
+            )
+            target_res = 60.0
+
         ds = None
         if len(stac_items_to_load) > 0:
             try:
@@ -177,7 +190,7 @@ class DataAcquisitionService:
                     resolution=target_res,
                     bbox=bbox,
                     resampling=resampling,
-                    chunks={"x": 1024, "y": 1024},
+                    chunks={"x": 512, "y": 512},
                     dtype="float32"
                 )
             except Exception as odc_err:

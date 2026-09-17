@@ -3,17 +3,15 @@ import os
 import shutil
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Response
-from pydantic import BaseModel
 from app.services.drone_service import drone_service
-from app.models.schemas import DroneMissionResponse, DroneUploadMetadata
+from app.models.schemas import (
+    DroneMissionResponse,
+    DroneUploadMetadata,
+    DroneRegisterRequest,
+    DroneScheduleMissionRequest
+)
 
 router = APIRouter(prefix="/drone", tags=["Drone Fleet"])
-
-class DroneRegisterRequest(BaseModel):
-    file_path: str
-    mission_name: Optional[str] = "UAV Orthomosaic Survey"
-    sensor_payload: Optional[str] = "RGB + Multispectral"
-    ortho_id: Optional[str] = None
 
 @router.get("/missions")
 async def list_missions():
@@ -21,13 +19,13 @@ async def list_missions():
     return {"missions": list(drone_service.active_missions.values())}
 
 @router.post("/missions/schedule")
-async def schedule_mission(req: dict):
+async def schedule_mission(req: DroneScheduleMissionRequest):
     """Manually schedule a mission."""
     mission = drone_service.schedule_mission(
-        event_id=req.get("event_id", "MANUAL"),
-        lat=req.get("lat", 0.0),
-        lng=req.get("lng", 0.0),
-        radius_km=req.get("radius_km", 1.0)
+        event_id=req.event_id or "MANUAL",
+        lat=req.lat,
+        lng=req.lng,
+        radius_km=req.radius_km
     )
     return {"status": "success", "mission": mission}
 

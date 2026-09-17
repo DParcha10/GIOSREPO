@@ -11,20 +11,11 @@ from pydantic import BaseModel, Field
 from app.models.schemas import (
     BurnSeverityResponse,
     BurnSeverityCategoryDetail,
-    BurnSeverityCategory
+    BurnSeverityCategory,
+    BurnSeverityRequest,
+    BurnSeverityApiRequest
 )
 from app.services.indices import index_service
-
-class BurnSeverityApiRequest(BaseModel):
-    aoi_id: Optional[str] = Field(default="AOI-DEFAULT", description="Area of Interest identifier")
-    geometry: Optional[Dict[str, Any]] = Field(default=None, description="GeoJSON Polygon geometry")
-    pre_event_date: Optional[str] = Field(default=None, description="Pre-fire baseline date (YYYY-MM-DD)")
-    post_event_date: Optional[str] = Field(default=None, description="Post-fire assessment date (YYYY-MM-DD)")
-    nbr_pre: Optional[Union[float, List[float]]] = Field(default=None, description="Pre-fire NBR value(s)")
-    nbr_post: Optional[Union[float, List[float]]] = Field(default=None, description="Post-fire NBR value(s)")
-    nbr_values: Optional[List[float]] = Field(default=None, description="Legacy NBR values array")
-    pre_nbr: Optional[Union[float, List[float]]] = None
-    post_nbr: Optional[Union[float, List[float]]] = None
 
 router = APIRouter(prefix="/wildfire", tags=["Wildfire Hazard"])
 
@@ -68,34 +59,36 @@ def analyze_burn_severity(req: BurnSeverityApiRequest):
     post_input = req.nbr_post if req.nbr_post is not None else req.post_nbr
 
     if pre_input is not None and post_input is not None:
-        arr_pre = np.asarray(pre_input, dtype=float)
-        arr_post = np.asarray(post_input, dtype=float)
+        arr_pre = np.asarray(pre_input, dtype=np.float32)
+        arr_post = np.asarray(post_input, dtype=np.float32)
         dnbr_arr = arr_pre - arr_post
         mean_dnbr = float(np.mean(dnbr_arr))
-        denom = np.sqrt(np.abs(arr_pre) + 1e-6)
+        denom = np.sqrt(np.abs(arr_pre) + np.float32(1e-6))
         rdnbr_arr = dnbr_arr / denom
         mean_rdnbr = float(np.mean(rdnbr_arr))
         classification = index_service.classify_burn_severity(dnbr_arr)
     elif req.nbr_values and len(req.nbr_values) > 0:
         # If legacy nbr_values passed, treat as single-scene post NBR with default pre baseline (0.35 typical green canopy)
-        arr_post = np.asarray(req.nbr_values, dtype=float)
-        arr_pre = np.full_like(arr_post, 0.35)
+        arr_post = np.asarray(req.nbr_values, dtype=np.float32)
+        arr_pre = np.full_like(arr_post, 0.35, dtype=np.float32)
         dnbr_arr = arr_pre - arr_post
         mean_dnbr = float(np.mean(dnbr_arr))
-        mean_rdnbr = float(np.mean(dnbr_arr / np.sqrt(np.abs(arr_pre) + 1e-6)))
+        mean_rdnbr = float(np.mean(dnbr_arr / np.sqrt(np.abs(arr_pre) + np.float32(1e-6))))
         classification = index_service.classify_burn_severity(dnbr_arr)
     else:
         # Realistic deterministic burn scenario for the requested dates / AOI
-        # Simulate calibrated pre/post distribution over burned area
+        # Simulate calibrated pre/post distribution over burned area with memory-conscious sample size
         np.random.seed(42)  # Deterministic seed for reproducible testing
-        n_pixels = 50000
+        n_pixels = 10000
         # Mixture of fire scar and unburned buffer
-        burned_sample = np.random.normal(0.55, 0.15, int(n_pixels * 0.7))
-        unburned_sample = np.random.normal(0.02, 0.05, int(n_pixels * 0.3))
+        burned_sample = np.random.normal(0.55, 0.15, int(n_pixels * 0.7)).astype(np.float32)
+        unburned_sample = np.random.normal(0.02, 0.05, int(n_pixels * 0.3)).astype(np.float32)
         dnbr_arr = np.clip(np.concatenate([burned_sample, unburned_sample]), -0.3, 1.3)
         mean_dnbr = float(np.mean(dnbr_arr))
         mean_rdnbr = float(mean_dnbr / np.sqrt(0.35))
         classification = index_service.classify_burn_severity(dnbr_arr)
+        del burned_sample
+        del unburned_sample
 
     # Format category details with calculated hectares
     categories_result = []

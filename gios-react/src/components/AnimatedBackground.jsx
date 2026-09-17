@@ -19,6 +19,31 @@ export default function AnimatedBackground() {
   );
 }
 
+class Particle {
+  constructor(width, height) {
+    this.x = Math.random() * (width || 800);
+    this.y = Math.random() * (height || 600);
+    this.size = Math.random() * 2 + 0.5;
+    this.speedX = Math.random() * 0.5 - 0.25;
+    this.speedY = Math.random() * 0.5 - 0.25;
+    this.opacity = Math.random() * 0.5 + 0.1;
+  }
+  update(width, height) {
+    this.x += this.speedX;
+    this.y += this.speedY;
+    if (this.x > width) this.x = 0;
+    if (this.x < 0) this.x = width;
+    if (this.y > height) this.y = 0;
+    if (this.y < 0) this.y = height;
+  }
+  draw(ctx) {
+    ctx.fillStyle = `rgba(0, 255, 170, ${this.opacity})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 function Particles() {
   const canvasRef = useRef(null);
 
@@ -37,35 +62,10 @@ function Particles() {
     window.addEventListener('resize', resize);
     resize();
 
-    class Particle {
-      constructor() {
-        this.x = Math.random() * canvas.width;
-        this.y = Math.random() * canvas.height;
-        this.size = Math.random() * 2 + 0.5;
-        this.speedX = Math.random() * 0.5 - 0.25;
-        this.speedY = Math.random() * 0.5 - 0.25;
-        this.opacity = Math.random() * 0.5 + 0.1;
-      }
-      update() {
-        this.x += this.speedX;
-        this.y += this.speedY;
-        if (this.x > canvas.width) this.x = 0;
-        if (this.x < 0) this.x = canvas.width;
-        if (this.y > canvas.height) this.y = 0;
-        if (this.y < 0) this.y = canvas.height;
-      }
-      draw() {
-        ctx.fillStyle = `rgba(0, 255, 170, ${this.opacity})`;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
     const init = () => {
       particles = [];
       for (let i = 0; i < 60; i++) {
-        particles.push(new Particle());
+        particles.push(new Particle(canvas.width, canvas.height));
       }
     };
     init();
@@ -73,8 +73,8 @@ function Particles() {
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < particles.length; i++) {
-        particles[i].update();
-        particles[i].draw();
+        particles[i].update(canvas.width, canvas.height);
+        particles[i].draw(ctx);
       }
       // Draw lines between close particles
       for (let i = 0; i < particles.length; i++) {

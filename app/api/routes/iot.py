@@ -1,17 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from pydantic import BaseModel, Field
 from typing import List
-from datetime import datetime
+from app.models.schemas import SensorData
 
 router = APIRouter(prefix="/iot", tags=["iot"])
-
-class SensorData(BaseModel):
-    sensor_id: str
-    location_lat: float
-    location_lon: float
-    soil_moisture_pct: float
-    temperature_c: float
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 from app.services.alerting import alert_engine
 

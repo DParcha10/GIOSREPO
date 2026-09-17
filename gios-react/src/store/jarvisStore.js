@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import giosApi from '../api/giosApi';
+import { postAgentChat } from '../api/giosApi';
 
 const STORAGE_KEY_MESSAGES = 'gios_jarvis_messages';
 const STORAGE_KEY_MEMORY = 'gios_jarvis_memory';
@@ -138,13 +138,7 @@ export const useJarvisStore = create((set, get) => ({
         content: m.content
       }));
 
-      const res = await giosApi.post('/api/v1/agent/chat', {
-        message: text,
-        history: historyPayload,
-        event_id: get().activeEventId
-      });
-
-      const data = res.data;
+      const data = await postAgentChat(text, historyPayload, get().activeEventId);
 
       // Check for Memory Updates
       if (data.memory_updates && data.memory_updates.length > 0) {

@@ -288,6 +288,52 @@ export {
  * @property {string} [thinking] - Internal chain-of-thought
  */
 
+/**
+ * @typedef {Object} DroneRegisterRequest
+ * @property {string} file_path - Local file path or cloud URI to drone GeoTIFF
+ * @property {string} [mission_name='UAV Orthomosaic Survey'] - Mission identifier
+ * @property {string} [sensor_payload='RGB + Multispectral'] - Sensor or camera payload description
+ * @property {string} [ortho_id] - Optional unique orthomosaic ID
+ */
+
+/**
+ * @typedef {Object} DroneScheduleMissionRequest
+ * @property {string} [event_id='MANUAL'] - Associated hazard event ID
+ * @property {number} [lat=0.0] - Target survey latitude
+ * @property {number} [lng=0.0] - Target survey longitude
+ * @property {number} [radius_km=1.0] - Coverage radius in kilometers
+ */
+
+/**
+ * @typedef {Object} SensorData
+ * @property {string} sensor_id - Unique sensor identifier
+ * @property {number} location_lat - Sensor latitude coordinate
+ * @property {number} location_lon - Sensor longitude coordinate
+ * @property {number} soil_moisture_pct - Volumetric soil moisture percentage
+ * @property {number} temperature_c - Soil / ambient temperature in °C
+ * @property {string} [timestamp] - ISO 8601 measurement timestamp
+ */
+
+/**
+ * @typedef {Object} TokenResponse
+ * @property {string} access_token - JWT Bearer access token
+ * @property {string} token_type - Token authorization scheme
+ */
+
+/**
+ * @typedef {Object} UserResponse
+ * @property {number} id - User database ID
+ * @property {string} username - User login name
+ * @property {string} role - Authorization role ('viewer' | 'admin')
+ * @property {string} status - Authentication status ('authenticated')
+ */
+
+/**
+ * @typedef {Object} ReportPdfParams
+ * @property {string} bbox - Bounding box formatted as "min_lon,min_lat,max_lon,max_lat"
+ * @property {SpectralIndex|string} [index_type='ndmi'] - Spectral index for compliance report
+ */
+
 const isDemo = import.meta?.env?.VITE_DEMO_MODE === 'true';
 
 const demoAdapter = async (config) => {
@@ -298,7 +344,9 @@ const demoAdapter = async (config) => {
       if (url.includes('/api/v1/events')) data = mockEvents;
       else if (url.includes('/api/v1/spatial/layers')) data = mockInfrastructure;
       else if (url.includes('/api/v1/spatial/buffer')) data = { status: 'success', operation: 'spatial_buffer', buffer_radius_km: 2.0, area_sq_km: 12.57, area_hectares: 1256.64, geojson: { type: 'FeatureCollection', features: [] } };
+      else if (url.includes('/api/v1/drone/missions/schedule')) data = { status: 'success', mission: mockDroneMissions[0] };
       else if (url.includes('/api/v1/drone/missions')) data = mockDroneMissions;
+      else if (url.includes('/api/v1/drone/orthomosaics')) data = { orthomosaics: [mockDroneOrthomosaic] };
       else if (url.includes('/api/v1/drone/upload') || url.includes('/api/v1/drone/register') || url.includes('/api/v1/drone/ortho')) data = mockDroneOrthomosaic;
       else if (url.includes('/api/v1/wildfire/burn-severity')) data = mockBurnSeverity;
       else if (url.includes('/api/v1/analysis/pixel-probe')) data = mockPixelProbe;
@@ -307,6 +355,10 @@ const demoAdapter = async (config) => {
       else if (url.includes('/api/v1/integration/usgs')) data = mockUSGS;
       else if (url.includes('/api/v1/satellite/gee')) data = { provider: 'GEE', collection: 'COPERNICUS/S2_SR', time_range: { start: '2023-01-01', end: '2023-01-31' }, bbox: [-121.2, 36.95, -120.95, 37.15], preview_url: 'https://earthengine.googleapis.com/preview' };
       else if (url.includes('/api/v1/satellite/sentinel')) data = { provider: 'SentinelHub', collection: 'sentinel-2-l2a', date: '2023-01-15', bbox: [-121.2, 36.95, -120.95, 37.15], tile_url: 'https://services.sentinel-hub.com/ogc/wmts/mock' };
+      else if (url.includes('/api/v1/iot/ingest')) data = { status: 'success', message: 'Data ingested' };
+      else if (url.includes('/api/v1/iot/data')) data = [{ sensor_id: 'SENS-01', location_lat: 37.058, location_lon: -121.074, soil_moisture_pct: 22.4, temperature_c: 24.1, timestamp: new Date().toISOString() }];
+      else if (url.includes('/api/v1/auth/token')) data = { access_token: 'mock-jwt-token-gios', token_type: 'bearer' };
+      else if (url.includes('/api/v1/auth/me')) data = { id: 1, username: 'admin', role: 'admin', status: 'authenticated' };
       else if (url.includes('/api/v1/agent/chat')) data = mockAgentChat;
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
@@ -586,6 +638,101 @@ export const fetchSentinelHubTile = async (collection, date, bbox, zoom = 12) =>
  */
 export const calculateSpatialBuffer = async (params) => {
   const response = await giosApi.post('/api/v1/spatial/buffer', params);
+  return response.data;
+};
+
+/**
+ * Schedules an autonomous UAS flight mission.
+ * 
+ * @param {DroneScheduleMissionRequest} params - Mission parameters (event_id, lat, lng, radius_km)
+ * @returns {Promise<{status: string, mission: Object}>} Scheduled mission status and details
+ */
+export const scheduleDroneMission = async (params) => {
+  const response = await giosApi.post('/api/v1/drone/missions/schedule', params);
+  return response.data;
+};
+
+/**
+ * Retrieves the catalog of registered centimeter-resolution drone orthomosaics.
+ * 
+ * @returns {Promise<Array<DroneOrthomosaicMetadata>>} List of registered drone orthomosaics
+ */
+export const listDroneOrthomosaics = async () => {
+  const response = await giosApi.get('/api/v1/drone/orthomosaics');
+  return response.data.orthomosaics || [];
+};
+
+/**
+ * Registers a pre-stitched drone GeoTIFF orthomosaic by file path or cloud URI.
+ * 
+ * @param {DroneRegisterRequest} params - file_path, mission_name, sensor_payload, ortho_id
+ * @returns {Promise<DroneOrthomosaicMetadata>} Registered drone orthomosaic metadata
+ */
+export const registerDroneOrthomosaicPath = async (params) => {
+  const response = await giosApi.post('/api/v1/drone/register', params);
+  return response.data;
+};
+
+/**
+ * Ingests live in-situ IoT sensor telemetry for multi-sensor fusion.
+ * 
+ * @param {SensorData} sensorData - Sensor telemetry payload
+ * @returns {Promise<{status: string, message: string}>} Ingestion status
+ */
+export const ingestSensorData = async (sensorData) => {
+  const response = await giosApi.post('/api/v1/iot/ingest', sensorData);
+  return response.data;
+};
+
+/**
+ * Retrieves the list of ingested IoT sensor readings.
+ * 
+ * @returns {Promise<Array<SensorData>>} Ingested sensor readings
+ */
+export const fetchSensorData = async () => {
+  const response = await giosApi.get('/api/v1/iot/data');
+  return response.data;
+};
+
+/**
+ * Authenticates user credentials and acquires an OAuth2 Bearer token.
+ * 
+ * @param {string} username - User account username
+ * @param {string} password - User account password
+ * @returns {Promise<TokenResponse>} Access token response
+ */
+export const loginUser = async (username, password) => {
+  const params = new URLSearchParams();
+  params.append('username', username);
+  params.append('password', password);
+  const response = await giosApi.post('/api/v1/auth/token', params, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  });
+  return response.data;
+};
+
+/**
+ * Retrieves the currently authenticated user profile.
+ * 
+ * @returns {Promise<UserResponse>} User profile details
+ */
+export const fetchUserProfile = async () => {
+  const response = await giosApi.get('/api/v1/auth/me');
+  return response.data;
+};
+
+/**
+ * Generates an environmental regulatory compliance PDF report.
+ * 
+ * @param {string} bbox - Bounding box formatted as "min_lon,min_lat,max_lon,max_lat"
+ * @param {SpectralIndex|string} [indexType='ndmi'] - Spectral index for the report
+ * @returns {Promise<Blob>} Binary PDF Blob
+ */
+export const downloadPdfReport = async (bbox, indexType = 'ndmi') => {
+  const response = await giosApi.get('/api/v1/reports/pdf', {
+    params: { bbox, index_type: indexType },
+    responseType: 'blob'
+  });
   return response.data;
 };
 

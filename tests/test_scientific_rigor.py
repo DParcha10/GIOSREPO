@@ -15,7 +15,7 @@ import unittest
 import numpy as np
 from app.services.preprocessing import preprocessing_service, PreprocessingService
 from app.services.indices import index_service
-from app.services.drone_service import drone_service
+from app.services.drone_service import drone_service, DroneService
 from app.services.timeseries import timeseries_service
 
 class TestScientificRigor(unittest.TestCase):
@@ -114,6 +114,34 @@ class TestScientificRigor(unittest.TestCase):
         current_val = 0.40
         z_score = (current_val - median_val) / (1.4826 * mad_val)
         self.assertLess(z_score, -2.5, "Significant moisture deficit must trigger severe anomaly flag")
+
+    def test_drone_metric_gsd_calculation(self):
+        """Task T-10: Verify drone centimeter metric GSD differentiation."""
+        class MockDataset:
+            def __init__(self, res, is_geographic, bounds=None):
+                self.res = res
+                class MockCRS:
+                    def __init__(self, is_geo):
+                        self.is_geographic = is_geo
+                self.crs = MockCRS(is_geographic)
+                class MockBounds:
+                    def __init__(self, b, t):
+                        self.bottom = b
+                        self.top = t
+                self.bounds = MockBounds(bounds[0], bounds[1]) if bounds else MockBounds(37.05, 37.07)
+
+        # 1. Projected CRS (e.g. UTM with 0.028m = 2.8cm pixel resolution)
+        mock_proj = MockDataset(res=(0.028, -0.028), is_geographic=False)
+        gsd_proj = DroneService.calculate_metric_gsd(mock_proj)
+        self.assertAlmostEqual(gsd_proj, 2.80, places=2)
+
+        # 2. Geographic CRS (EPSG:4326 degrees around lat 37.06 degrees)
+        # Lat 37.06 deg: 1 deg lat ~ 111320m -> 2.8cm is ~ 2.515e-7 degrees
+        res_deg = 2.8e-2 / 111320.0
+        mock_geo = MockDataset(res=(res_deg, -res_deg), is_geographic=True, bounds=(37.05, 37.07))
+        gsd_geo = DroneService.calculate_metric_gsd(mock_geo)
+        self.assertGreater(gsd_geo, 1.0)
+        self.assertLess(gsd_geo, 10.0)
 
 if __name__ == "__main__":
     unittest.main()

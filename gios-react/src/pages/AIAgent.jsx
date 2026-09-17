@@ -130,8 +130,7 @@ export default function AIAgent() {
           <button 
             onClick={async () => {
               try {
-                const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-                await fetch(`${baseUrl}/api/v1/agent/trigger-mock-alert`, { method: 'POST' });
+                await giosApi.post('/api/v1/agent/trigger-mock-alert');
               } catch (e) {
                 console.error('Mock alert failed', e);
               }

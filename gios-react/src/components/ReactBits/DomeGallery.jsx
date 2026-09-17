@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
@@ -37,14 +37,12 @@ function GallerySphere({ textures }) {
   // Load the first texture as the initial environment map
   // For a real application, you might map multiple textures onto specific sections 
   // or swap them dynamically. Here we apply an equirectangular projection onto the inside of a sphere.
-  const texture = useTexture(textures[0] || 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/2294472375_24a3b8ef46_o.jpg');
-  
-  // Set texture mapping for inside-out viewing
-  useEffect(() => {
-    if (texture) {
-      texture.mapping = THREE.EquirectangularReflectionMapping;
+  const texture = useTexture(
+    textures[0] || 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/2294472375_24a3b8ef46_o.jpg',
+    (tex) => {
+      tex.mapping = THREE.EquirectangularReflectionMapping;
     }
-  }, [texture]);
+  );
 
   // Slowly rotate the sphere automatically
   useFrame(() => {
