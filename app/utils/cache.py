@@ -8,6 +8,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+import atexit
+
 class CacheManager:
     def __init__(self, directory: str = settings.cache_dir, default_ttl: int = settings.cache_ttl_seconds):
         self.cache = dc.Cache(directory)
@@ -34,4 +36,11 @@ class CacheManager:
     def clear(self) -> None:
         self.cache.clear()
 
+    def close(self) -> None:
+        try:
+            self.cache.close()
+        except Exception:
+            pass
+
 cache_manager = CacheManager()
+atexit.register(cache_manager.close)

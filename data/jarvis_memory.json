@@ -1,0 +1,34 @@
+{
+  "facts": [
+    "GIOS Platform v2.4 with 4 monitored hazard complexes."
+  ],
+  "user_profile": {
+    "name": "Alex and remember that spillway 3 is under repair",
+    "role": null,
+    "organization": null,
+    "preferences": []
+  },
+  "user_notes": [
+    "Operator name is Alex and remember that spillway 3 is under repair",
+    "spillway 3 is under repair"
+  ],
+  "marked_locations": [
+    "New York at (40.7128, -74.0060)"
+  ],
+  "recent_queries": [
+    "Analyze San Luis Dam Seepage",
+    "Can you mark New York on the map?",
+    "Show me the analytics charts",
+    "Take me to the telemetry dashboard",
+    "Hello, my name is Alex and remember that spillway 3 is under repair",
+    "What do you remember?",
+    "Hello",
+    "Analyze San Luis Dam Seepage",
+    "Can you mark New York on the map?",
+    "Show me the analytics charts",
+    "Take me to the telemetry dashboard",
+    "Hello, my name is Alex and remember that spillway 3 is under repair",
+    "What do you remember?",
+    "Hello"
+  ]
+}

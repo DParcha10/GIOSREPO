@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>gios-react</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      window.addEventListener('error', function(e) {
+        document.body.innerHTML += '<div style="color:red; background:black; padding:20px; font-family:monospace; position:absolute; top:0; left:0; z-index:9999; width:100%; height:100%;">' + (e.error ? e.error.stack : e.message) + '</div>';
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        document.body.innerHTML += '<div style="color:red; background:black; padding:20px; font-family:monospace; position:absolute; top:0; left:0; z-index:9999; width:100%; height:100%;">' + (e.reason ? (e.reason.stack || e.reason.message || e.reason) : 'Promise rejected') + '</div>';
+      });
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

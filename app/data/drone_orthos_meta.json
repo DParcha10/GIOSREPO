@@ -1,0 +1,21 @@
+{
+  "DRN-ORTHO-01": {
+    "ortho_id": "DRN-ORTHO-01",
+    "filename": "DRN-ORTHO-01.tif",
+    "file_path": "C:\\Users\\Dina\\GIOS\\app\\data\\drone_orthos\\DRN-ORTHO-01.tif",
+    "mission_name": "San Luis Dam Toe Micro-Inspection",
+    "crs": "EPSG:4326",
+    "bounds": [
+      -121.076,
+      37.056,
+      -121.072,
+      37.06
+    ],
+    "metric_gsd_cm": 2.8,
+    "bands": 3,
+    "width": 512,
+    "height": 512,
+    "is_cog": true,
+    "status": "READY"
+  }
+}

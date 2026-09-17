@@ -1,0 +1,32 @@
+{
+  "facts": [
+    "GIOS Platform v2.4 initialized with 4 primary monitored hazard complexes.",
+    "Default operator ID: admin."
+  ],
+  "user_profile": {
+    "name": "Alex and remember that dam spillway 3 is under repair",
+    "role": null,
+    "organization": null,
+    "preferences": []
+  },
+  "user_notes": [
+    "Operator name is Alex and remember that dam spillway 3 is under repair",
+    "Note: dam spillway 3 is under repair"
+  ],
+  "marked_locations": [
+    "San Luis Dam Embankment at (37.0582, -121.0744)",
+    "New York City, NY at (40.7128, -74.006)"
+  ],
+  "recent_queries": [
+    "Analyze San Luis Dam Seepage",
+    "Analyze San Luis Dam Seepage",
+    "Can you mark New York on the map?",
+    "Show me the analytics regression charts",
+    "Take me to the telemetry dashboard",
+    "Hello, my name is Alex and remember that dam spillway 3 is under repair",
+    "What do you remember?",
+    "can you mark the highest seepage point in the san luis dam seepage?",
+    "okay next tell me about the water flow levels and where its the highest on the map of san luis dam site",
+    "Jarvis, you don't need to say m name is jarvis everytime. okay?"
+  ]
+}
