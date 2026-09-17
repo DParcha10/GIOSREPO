@@ -38,6 +38,10 @@ from app.models.schemas import (
     HealthResponse,
     SceneMetadata,
     SearchResponse,
+    SearchParams,
+    IndexRequest,
+    IndexResultSummary,
+    EventResponse,
     USGSStationData,
     GEEImageRequest,
     GEEImageResponse,
@@ -52,10 +56,17 @@ from app.models.schemas import (
     NavigationAction,
     AgentChatResponse,
     EventCreateRequest,
+    HazardEventDetail,
     BurnSeverityApiRequest,
     DroneRegisterRequest,
     DroneScheduleMissionRequest,
+    DroneUploadResponse,
+    DroneMissionScheduleResponse,
+    DroneMissionsListResponse,
+    DroneOrthomosaicsListResponse,
     SensorData,
+    SensorIngestResponse,
+    MockAlertResponse,
     TokenResponse,
     UserResponse,
     UserRegisterResponse,
@@ -487,6 +498,157 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         )
         self.assertEqual(report.index_type, "ndmi")
         self.assertIn("-121.08", report.bbox)
+
+    def test_stac_search_and_scene_models(self):
+        """Verify SearchParams, SceneMetadata, and SearchResponse STAC models."""
+        params = SearchParams(
+            bbox=(-121.5, 37.0, -121.0, 37.5),
+            start_date="2026-08-01",
+            end_date="2026-08-30",
+            collection=SatelliteCollection.SENTINEL_2,
+            max_cloud_cover=20.0
+        )
+        self.assertEqual(params.collection, SatelliteCollection.SENTINEL_2)
+        self.assertEqual(params.max_cloud_cover, 20.0)
+
+        scene = SceneMetadata(
+            id="S2A_MSIL2A_20260820T184211",
+            datetime="2026-08-20T18:42:11Z",
+            cloud_cover=3.4,
+            collection="sentinel-2-l2a",
+            thumbnail_url="https://planetarycomputer.microsoft.com/thumb.png"
+        )
+        self.assertEqual(scene.id, "S2A_MSIL2A_20260820T184211")
+        self.assertEqual(scene.cloud_cover, 3.4)
+
+        search_resp = SearchResponse(count=1, scenes=[scene])
+        self.assertEqual(search_resp.count, 1)
+        self.assertEqual(len(search_resp.scenes), 1)
+
+    def test_index_request_and_summary_models(self):
+        """Verify IndexRequest and IndexResultSummary schemas."""
+        idx_req = IndexRequest(
+            bbox=(-121.2, 36.95, -120.95, 37.15),
+            start_date="2026-08-01",
+            end_date="2026-08-30",
+            index=SpectralIndex.NDMI,
+            collection=SatelliteCollection.SENTINEL_2,
+            resolution=10.0
+        )
+        self.assertEqual(idx_req.index, SpectralIndex.NDMI)
+        self.assertEqual(idx_req.resolution, 10.0)
+
+        idx_summary = IndexResultSummary(
+            index="ndmi",
+            mean=0.312,
+            median=0.298,
+            min=0.051,
+            max=0.684,
+            std=0.084,
+            valid_pixels=38420,
+            timestamp="2026-08-20T18:42:11Z"
+        )
+        self.assertEqual(idx_summary.index, "ndmi")
+        self.assertEqual(idx_summary.valid_pixels, 38420)
+        self.assertEqual(idx_summary.median, 0.298)
+
+    def test_health_and_event_response_models(self):
+        """Verify HealthResponse and EventResponse schemas."""
+        health = HealthResponse(
+            status="healthy",
+            version="2.5.0",
+            active_services=["tiles", "stac", "drone"]
+        )
+        self.assertEqual(health.status, "healthy")
+        self.assertEqual(health.version, "2.5.0")
+        self.assertEqual(len(health.active_services), 3)
+
+        evt_resp = EventResponse(
+            events=[{"id": "EVT-01", "title": "San Luis Seepage"}],
+            total_count=1
+        )
+        self.assertEqual(evt_resp.total_count, 1)
+
+    def test_hazard_event_detail_model(self):
+        """Verify HazardEventDetail validation and integration with EventResponse."""
+        detail = HazardEventDetail(
+            id="SEEPAGE-01",
+            title="San Luis Dam Embankment",
+            subtitle="Santa Nella, CA | Subsurface Seepage Anomaly",
+            category=HazardCategory.SEEPAGE,
+            severity=HazardSeverity.CRITICAL,
+            severity_label="HIGH HAZARD",
+            lat=37.0582,
+            lng=-121.0744,
+            zoom=14,
+            metric=SpectralIndex.NDMI,
+            sensor=SatelliteCollection.SENTINEL_2,
+            start_date="2026-06-01",
+            end_date="2026-08-30",
+            usgs_station="11262900",
+            station_name="USGS #11262900 (San Luis Creek)",
+            impact_area="34.2 Hectares",
+            peak_zscore="+2.84 σ",
+            hazard_type="Subsurface Embankment Seepage",
+            drone_status="Drone LiDAR & Multispec Recommended",
+            description="Pore-pressure and moisture anomaly detected along downstream toe."
+        )
+        self.assertEqual(detail.id, "SEEPAGE-01")
+        self.assertEqual(detail.category, HazardCategory.SEEPAGE)
+        self.assertEqual(detail.severity, HazardSeverity.CRITICAL)
+
+        resp = EventResponse(events=[detail], total_count=1)
+        self.assertEqual(resp.total_count, 1)
+        self.assertEqual(resp.events[0].id, "SEEPAGE-01")
+
+    def test_drone_response_models(self):
+        """Verify DroneUploadResponse, DroneMissionScheduleResponse, and list responses."""
+        ortho = DroneOrthomosaicMetadata(
+            ortho_id="ORTHO-01",
+            filename="ortho.tif",
+            crs="EPSG:3857",
+            bounds=(-121.1, 37.0, -121.0, 37.1),
+            metric_gsd_cm=2.8,
+            bands=3,
+            is_cog=True,
+            status="READY"
+        )
+        upload_resp = DroneUploadResponse(status="success", orthomosaic=ortho)
+        self.assertEqual(upload_resp.status, "success")
+        self.assertEqual(upload_resp.orthomosaic.metric_gsd_cm, 2.8)
+
+        mission = DroneMissionResponse(mission_id="MSN-01", status="SCHEDULED")
+        sched_resp = DroneMissionScheduleResponse(status="success", mission=mission)
+        self.assertEqual(sched_resp.status, "success")
+        self.assertEqual(sched_resp.mission.mission_id, "MSN-01")
+
+        missions_list = DroneMissionsListResponse(missions=[mission])
+        self.assertEqual(len(missions_list.missions), 1)
+
+        orthos_list = DroneOrthomosaicsListResponse(orthomosaics=[ortho])
+        self.assertEqual(len(orthos_list.orthomosaics), 1)
+
+    def test_sensor_ingest_and_mock_alert_responses(self):
+        """Verify SensorIngestResponse and MockAlertResponse schemas."""
+        sensor_resp = SensorIngestResponse(status="success", message="Telemetry recorded")
+        self.assertEqual(sensor_resp.status, "success")
+        self.assertEqual(sensor_resp.message, "Telemetry recorded")
+
+        mock_alert = MockAlertResponse(status="success", message="Dispatched")
+        self.assertEqual(mock_alert.status, "success")
+        self.assertEqual(mock_alert.message, "Dispatched")
+
+    def test_health_response_flexibility(self):
+        """Verify HealthResponse validates both basic and extended server health outputs."""
+        health = HealthResponse(
+            status="healthy",
+            platform="GIOS - Geospatial Integrated Orthomosaic Systems",
+            version="2.5.0",
+            active_modules=["stac_acquisition", "indices", "timeseries", "usgs_nwis", "drone_cogs", "event_catalog"]
+        )
+        self.assertEqual(health.status, "healthy")
+        self.assertEqual(health.version, "2.5.0")
+        self.assertIn("stac_acquisition", health.active_modules)
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

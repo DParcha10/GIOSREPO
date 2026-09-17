@@ -52,9 +52,26 @@ def compute_spectral_index(req: IndexRequest):
     idx_str = req.index.value if hasattr(req.index, "value") else str(req.index)
     res_val = req.resolution or 10.0
 
+    # Determine minimal required raster bands to conserve RAM
+    req_bands = index_service.get_required_bands(idx_str, col_str)
+
+    # Search scenes if available to populate real STAC items
+    scenes = data_acquisition_service.search_scenes(
+        bbox=req.bbox,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        collection=col_str,
+        sign_assets=True
+    )
+    items_to_load = [s["_stac_item"] for s in scenes if "_stac_item" in s]
+    # Memory-conscious: select least-cloudy scenes (max 2) to prevent multi-granule memory blowup
+    if len(items_to_load) > 2:
+        items_to_load = sorted(items_to_load, key=lambda it: float(getattr(it, "properties", {}).get("eo:cloud_cover", 0.0)))[:2]
+
     # Load calibrated data cube over AOI bounding box
     cube = data_acquisition_service.load_data_cube(
-        items=[],
+        items=items_to_load,
+        bands=req_bands,
         bbox=req.bbox,
         resolution=res_val,
         collection=col_str,
@@ -174,17 +191,34 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     idx_str = req.index.value if hasattr(req.index, "value") else str(req.index)
     col_str = req.collection
 
-    # Memory-conscious dimensions (bounded to 100x100 for responsive execution)
-    nx, ny = 100, 100
+    # Load calibrated raster bands via data_acquisition_service with memory-conscious resolution
+    req_bands = index_service.get_required_bands(idx_str, col_str)
+    cube = data_acquisition_service.load_data_cube(
+        items=[],
+        bands=req_bands,
+        bbox=(min_lon, min_lat, max_lon, max_lat),
+        resolution=30.0,
+        collection=col_str,
+        apply_mask=True,
+        apply_calibration=True
+    )
+
+    band_dict = {}
+    for v in cube.data_vars:
+        band_dict[v.lower()] = cube[v].values
+        band_dict[v.upper()] = cube[v].values
+
+    try:
+        index_arr = index_service.compute(idx_str, band_dict)
+    except Exception:
+        index_arr = index_service.ndvi(band_dict.get("b08", band_dict.get("nir")), band_dict.get("b04", band_dict.get("red")))
+
+    ny, nx = index_arr.shape[-2], index_arr.shape[-1]
     tf = from_bounds(min_lon, min_lat, max_lon, max_lat, nx, ny)
     inside_mask = geometry_mask([poly], out_shape=(ny, nx), transform=tf, invert=True)
 
-    # Generate calibrated index array over bbox using float32 to conserve RAM
-    xx, yy = np.meshgrid(np.linspace(0, 1, nx, dtype=np.float32), np.linspace(0, 1, ny, dtype=np.float32))
-    base_val = np.float32(0.30) + xx * np.float32(0.15) + np.sin(yy * np.float32(10.0)) * np.float32(0.08)
-    index_arr = np.clip(base_val, np.float32(-0.2), np.float32(0.9))
-
     valid_vals = index_arr[inside_mask]
+    valid_vals = valid_vals[~np.isnan(valid_vals)]
     total_valid = len(valid_vals)
     if total_valid == 0:
         valid_vals = np.array([0.312], dtype=np.float32)
@@ -202,10 +236,9 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     bin_edges = np.linspace(min_v - 0.05, max_v + 0.05, 11).tolist()
     counts, _ = np.histogram(valid_vals, bins=bin_edges)
 
-    # Free memory buffers
-    del xx
-    del yy
-    del base_val
+    # Proactive cleanup of raster cube and intermediate buffers
+    del cube
+    del band_dict
     del index_arr
     del inside_mask
     del valid_vals

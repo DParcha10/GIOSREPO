@@ -17,7 +17,12 @@ export {
   COLORMAPS,
   SATELLITE_COLLECTIONS,
   FIREMON_SEVERITY_LEVELS,
-  DEFAULT_MAP_CONFIG
+  DEFAULT_MAP_CONFIG,
+  HAZARD_CATEGORIES,
+  HAZARD_SEVERITIES,
+  ALERT_SEVERITIES,
+  DRONE_STATUSES,
+  API_ENDPOINTS
 } from '../config/constants.js';
 
 /**
@@ -329,9 +334,125 @@ export {
  */
 
 /**
+ * @typedef {Object} SearchParams
+ * @property {[number, number, number, number]} bbox - Bounding box [min_lon, min_lat, max_lon, max_lat]
+ * @property {string} start_date - Start date (YYYY-MM-DD)
+ * @property {string} end_date - End date (YYYY-MM-DD)
+ * @property {SatelliteCollection} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {number} [max_cloud_cover=30.0] - Maximum cloud cover percentage (0-100)
+ */
+
+/**
+ * @typedef {Object} SceneMetadata
+ * @property {string} id - Scene identifier
+ * @property {string} datetime - ISO 8601 acquisition timestamp
+ * @property {number} cloud_cover - Cloud coverage percentage
+ * @property {string} collection - Satellite collection
+ * @property {string|null} [thumbnail_url] - Preview thumbnail URL
+ */
+
+/**
+ * @typedef {Object} SearchResponse
+ * @property {number} count - Total scenes found
+ * @property {SceneMetadata[]} scenes - Matching STAC scenes
+ */
+
+/**
+ * @typedef {Object} IndexRequest
+ * @property {[number, number, number, number]} bbox - Bounding box [min_lon, min_lat, max_lon, max_lat]
+ * @property {string} start_date - Start date (YYYY-MM-DD)
+ * @property {string} end_date - End date (YYYY-MM-DD)
+ * @property {SpectralIndex} [index='ndmi'] - Spectral index
+ * @property {SatelliteCollection} [collection='sentinel-2-l2a'] - Collection
+ * @property {number} [resolution=10.0] - Spatial resolution in meters
+ */
+
+/**
+ * @typedef {Object} IndexResultSummary
+ * @property {string} index - Evaluated index name
+ * @property {number} mean - Arithmetic mean
+ * @property {number} median - Median value
+ * @property {number} min - Minimum value
+ * @property {number} max - Maximum value
+ * @property {number} std - Standard deviation
+ * @property {number} valid_pixels - Valid pixel count
+ * @property {string} timestamp - ISO 8601 evaluation timestamp
+ */
+
+/**
+ * @typedef {Object} EventCreateRequest
+ * @property {string} id - Unique event identifier
+ * @property {string} title - Event title
+ * @property {string} subtitle - Event subtitle
+ * @property {HazardCategory} category - Hazard category
+ * @property {HazardSeverity} severity - Severity level
+ * @property {string} severity_label - Formatted label (e.g. "CRITICAL")
+ * @property {number} lat - Latitude coordinate
+ * @property {number} lng - Longitude coordinate
+ * @property {number} [zoom=13] - Zoom level
+ * @property {SpectralIndex} metric - Primary biophysical metric
+ * @property {SatelliteCollection} [sensor='sentinel-2-l2a'] - Primary sensor
+ * @property {string} start_date - Start date (YYYY-MM-DD)
+ * @property {string} end_date - End date (YYYY-MM-DD)
+ * @property {string} [usgs_station] - Associated USGS station
+ * @property {string} impact_area - Impact area string
+ * @property {string} peak_zscore - Peak anomaly z-score
+ * @property {string} hazard_type - Hazard type
+ * @property {string} drone_status - UAS status
+ * @property {string} description - Event narrative
+ */
+
+/**
  * @typedef {Object} ReportPdfParams
  * @property {string} bbox - Bounding box formatted as "min_lon,min_lat,max_lon,max_lat"
  * @property {SpectralIndex|string} [index_type='ndmi'] - Spectral index for compliance report
+ */
+
+/**
+ * @typedef {HazardEvent} HazardEventDetail
+ */
+
+/**
+ * @typedef {Object} DroneUploadResponse
+ * @property {string} status - Upload status ('success')
+ * @property {DroneOrthomosaicMetadata} orthomosaic - Registered orthomosaic metadata
+ */
+
+/**
+ * @typedef {Object} DroneMissionScheduleResponse
+ * @property {string} status - Scheduling status ('success')
+ * @property {Object} mission - Scheduled drone mission details
+ */
+
+/**
+ * @typedef {Object} DroneMissionsListResponse
+ * @property {Array.<Object>} missions - Active drone fleet missions
+ */
+
+/**
+ * @typedef {Object} DroneOrthomosaicsListResponse
+ * @property {DroneOrthomosaicMetadata[]} orthomosaics - Registered drone orthomosaics
+ */
+
+/**
+ * @typedef {Object} SensorIngestResponse
+ * @property {string} status - Ingestion status ('success')
+ * @property {string} message - Telemetry processing message
+ */
+
+/**
+ * @typedef {Object} MockAlertResponse
+ * @property {string} status - Execution status ('success')
+ * @property {string} message - Alert dispatch message
+ */
+
+/**
+ * @typedef {Object} HealthResponse
+ * @property {string} status - System health status
+ * @property {string} [platform='GIOS'] - Platform name
+ * @property {string} version - Semantic version
+ * @property {string[]} [active_services] - Active services
+ * @property {string[]} [active_modules] - Active processing modules
  */
 
 const isDemo = import.meta?.env?.VITE_DEMO_MODE === 'true';
@@ -360,6 +481,9 @@ const demoAdapter = async (config) => {
       else if (url.includes('/api/v1/auth/token')) data = { access_token: 'mock-jwt-token-gios', token_type: 'bearer' };
       else if (url.includes('/api/v1/auth/me')) data = { id: 1, username: 'admin', role: 'admin', status: 'authenticated' };
       else if (url.includes('/api/v1/agent/chat')) data = mockAgentChat;
+      else if (url.includes('/api/v1/data/search')) data = { count: 1, scenes: [{ id: 'S2A_MSIL2A_20260820T184211', datetime: '2026-08-20T18:42:11Z', cloud_cover: 4.2, collection: 'sentinel-2-l2a', thumbnail_url: null }] };
+      else if (url.includes('/api/v1/analysis/indices')) data = { index: 'ndmi', mean: 0.312, median: 0.298, min: 0.051, max: 0.684, std: 0.084, valid_pixels: 38420, timestamp: new Date().toISOString() };
+      else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
       
@@ -736,4 +860,48 @@ export const downloadPdfReport = async (bbox, indexType = 'ndmi') => {
   return response.data;
 };
 
+/**
+ * Searches the STAC catalog for satellite scenes matching spatio-temporal filters.
+ * 
+ * @param {SearchParams} params - Spatial bounds, dates, and collection
+ * @returns {Promise<SearchResponse>} Matching scene list and count
+ */
+export const searchScenes = async (params) => {
+  const response = await giosApi.post('/api/v1/data/search', params);
+  return response.data;
+};
+
+/**
+ * Calculates real summary statistics for a spectral index over a regional bounding box.
+ * 
+ * @param {IndexRequest} params - AOI bounding box, dates, index, and collection
+ * @returns {Promise<IndexResultSummary>} Deterministic mean, median, min, max, std, and valid pixel counts
+ */
+export const computeRegionalIndex = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/indices', params);
+  return response.data;
+};
+
+/**
+ * Creates and registers a new geotechnical or environmental hazard event.
+ * 
+ * @param {EventCreateRequest} eventData - Hazard event parameters
+ * @returns {Promise<Object>} Created event record
+ */
+export const createHazardEvent = async (eventData) => {
+  const response = await giosApi.post('/api/v1/events', eventData);
+  return response.data;
+};
+
+/**
+ * Triggers an administrative mock sensor spike to test proactive JARVIS alert streaming.
+ * 
+ * @returns {Promise<{status: string, message: string}>} Mock alert trigger status
+ */
+export const triggerMockAlert = async () => {
+  const response = await giosApi.post('/api/v1/agent/trigger-mock-alert');
+  return response.data;
+};
+
 export default giosApi;
+

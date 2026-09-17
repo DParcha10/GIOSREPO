@@ -5,8 +5,9 @@ import {
 } from 'chart.js';
 import { Line, Bar, Doughnut, Scatter } from 'react-chartjs-2';
 import axios from 'axios';
-import giosApi from '../api/giosApi';
-import { Radar, RefreshCw, Layers } from 'lucide-react';
+import { getHealthStatus, fetchTimeseriesTrend } from '../api/giosApi';
+import { SPECTRAL_INDICES } from '../config/constants';
+import { Radar, RefreshCw } from 'lucide-react';
 import MetallicPaintText from '../components/ReactBits/MetallicPaintText';
 import TiltedCard from '../components/ReactBits/TiltedCard';
 import DecryptedText from '../components/ReactBits/DecryptedText';
@@ -19,7 +20,68 @@ export default function Analytics() {
   const [doughnutData, setDoughnutData] = useState(null);
   const [scatterData, setScatterData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [queryLoading, setQueryLoading] = useState(false);
   const [backendData, setBackendData] = useState(null);
+
+  // Time-Series Query States
+  const [queryBbox, setQueryBbox] = useState('-121.10, 37.00, -121.05, 37.05');
+  const [queryStartDate, setQueryStartDate] = useState('2026-08-01');
+  const [queryEndDate, setQueryEndDate] = useState('2026-08-30');
+  const [queryIndex, setQueryIndex] = useState('ndmi');
+
+  const handleQueryTrend = async () => {
+    try {
+      setQueryLoading(true);
+      const bboxParts = queryBbox.split(',').map(s => parseFloat(s.trim()));
+      const bbox = bboxParts.length === 4 && bboxParts.every(n => !isNaN(n)) 
+        ? bboxParts 
+        : [-121.10, 37.00, -121.05, 37.05];
+
+      const res = await fetchTimeseriesTrend({
+        bbox,
+        index: queryIndex,
+        start_date: queryStartDate,
+        end_date: queryEndDate
+      });
+
+      const pts = res.data_points || [];
+      if (pts.length > 0) {
+        const labels = pts.map(p => p.date ? p.date.split('-').slice(1).join('/') : '');
+        const values = pts.map(p => p.value);
+        const medians = pts.map(p => p.baseline_median || p.value * 0.9);
+
+        setChartData({
+          labels,
+          datasets: [
+            {
+              label: `${queryIndex.toUpperCase()} Value`,
+              data: values,
+              borderColor: 'var(--color-primary)',
+              backgroundColor: 'rgba(0, 255, 170, 0.2)',
+              tension: 0.35,
+              borderWidth: 2,
+              fill: true,
+              pointBackgroundColor: pts.map(p => p.is_anomaly ? 'var(--color-danger)' : 'var(--color-primary)'),
+              pointRadius: pts.map(p => p.is_anomaly ? 6 : 3)
+            },
+            {
+              label: 'Seasonal Climatological Baseline',
+              data: medians,
+              borderColor: 'rgba(255, 255, 255, 0.4)',
+              borderDash: [5, 5],
+              borderWidth: 1.5,
+              fill: false,
+              pointRadius: 0
+            }
+          ]
+        });
+      }
+    } catch (err) {
+      console.error('Failed to query time-series trend:', err);
+    } finally {
+      setQueryLoading(false);
+    }
+  };
 
   useEffect(() => {
     // 1. Fetch live seismic data for demo charts
@@ -78,9 +140,9 @@ export default function Analytics() {
         setLoading(false);
       });
 
-    // 2. Initial backend handshake
-    giosApi.get('/health').then(res => {
-       setBackendData(res.data);
+    // 2. Initial backend handshake using Agent 5 getHealthStatus contract
+    getHealthStatus().then(data => {
+       setBackendData(data);
     }).catch(() => console.log("Backend health query offline"));
 
   }, []);
@@ -123,28 +185,51 @@ export default function Analytics() {
       <div className="glass-panel p-4 shrink-0 flex flex-wrap gap-4 items-end">
         <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]">
           <label className="text-[10px] text-gray-400 font-mono uppercase tracking-wider font-bold">Bounding Box / Location</label>
-          <input type="text" placeholder="-121.10, 37.00, -121.05, 37.05" className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none" />
+          <input 
+            type="text" 
+            value={queryBbox} 
+            onChange={(e) => setQueryBbox(e.target.value)} 
+            placeholder="-121.10, 37.00, -121.05, 37.05" 
+            className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none" 
+          />
         </div>
         <div className="flex flex-col gap-1.5 w-36">
           <label className="text-[10px] text-gray-400 font-mono uppercase tracking-wider font-bold">Start Date</label>
-          <input type="date" className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none" />
+          <input 
+            type="date" 
+            value={queryStartDate} 
+            onChange={(e) => setQueryStartDate(e.target.value)} 
+            className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none" 
+          />
         </div>
         <div className="flex flex-col gap-1.5 w-36">
           <label className="text-[10px] text-gray-400 font-mono uppercase tracking-wider font-bold">End Date</label>
-          <input type="date" className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none" />
+          <input 
+            type="date" 
+            value={queryEndDate} 
+            onChange={(e) => setQueryEndDate(e.target.value)} 
+            className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none" 
+          />
         </div>
         <div className="flex flex-col gap-1.5 w-40">
           <label className="text-[10px] text-gray-400 font-mono uppercase tracking-wider font-bold">Index</label>
-          <select className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none">
-            <option value="ndvi">NDVI</option>
-            <option value="ndmi">NDMI</option>
-            <option value="lst">LST</option>
-            <option value="mndwi">MNDWI</option>
-            <option value="nbr">NBR</option>
+          <select 
+            value={queryIndex} 
+            onChange={(e) => setQueryIndex(e.target.value)} 
+            className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none"
+          >
+            {SPECTRAL_INDICES.filter(i => i.key !== 'rgb').map(idx => (
+              <option key={idx.key} value={idx.key}>{idx.name}</option>
+            ))}
           </select>
         </div>
-        <button className="glass-button px-5 py-1.5 text-teal-300 font-bold uppercase tracking-wider text-[11px] font-mono">
-          Query Trend
+        <button 
+          onClick={handleQueryTrend} 
+          disabled={queryLoading} 
+          className="glass-button px-5 py-1.5 text-teal-300 font-bold uppercase tracking-wider text-[11px] font-mono flex items-center gap-1.5 disabled:opacity-50"
+        >
+          {queryLoading && <RefreshCw size={12} className="animate-spin" />}
+          {queryLoading ? 'Querying...' : 'Query Trend'}
         </button>
       </div>
 

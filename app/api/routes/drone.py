@@ -8,17 +8,21 @@ from app.models.schemas import (
     DroneMissionResponse,
     DroneUploadMetadata,
     DroneRegisterRequest,
-    DroneScheduleMissionRequest
+    DroneScheduleMissionRequest,
+    DroneUploadResponse,
+    DroneMissionScheduleResponse,
+    DroneMissionsListResponse,
+    DroneOrthomosaicsListResponse
 )
 
 router = APIRouter(prefix="/drone", tags=["Drone Fleet"])
 
-@router.get("/missions")
+@router.get("/missions", response_model=DroneMissionsListResponse)
 async def list_missions():
     """List all active drone missions."""
     return {"missions": list(drone_service.active_missions.values())}
 
-@router.post("/missions/schedule")
+@router.post("/missions/schedule", response_model=DroneMissionScheduleResponse)
 async def schedule_mission(req: DroneScheduleMissionRequest):
     """Manually schedule a mission."""
     mission = drone_service.schedule_mission(
@@ -29,7 +33,7 @@ async def schedule_mission(req: DroneScheduleMissionRequest):
     )
     return {"status": "success", "mission": mission}
 
-@router.get("/orthomosaics")
+@router.get("/orthomosaics", response_model=DroneOrthomosaicsListResponse)
 async def list_orthomosaics():
     """List all registered centimeter-resolution drone orthomosaics."""
     return {"orthomosaics": list(drone_service.registered_orthos.values())}
@@ -60,7 +64,7 @@ async def register_orthomosaic(req: DroneRegisterRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/upload")
+@router.post("/upload", response_model=DroneUploadResponse)
 async def upload_drone_ortho(
     file: UploadFile = File(...),
     mission_name: str = Form("Uploaded Survey"),

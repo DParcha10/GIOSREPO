@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import giosApi from '../api/giosApi';
+import giosApi, { loginUser } from '../api/giosApi';
 
 const useAuthStore = create((set) => ({
   token: localStorage.getItem('gios_token') || null,
@@ -8,16 +8,8 @@ const useAuthStore = create((set) => ({
   login: async (username, password) => {
     try {
       set({ error: null });
-      const formData = new URLSearchParams();
-      formData.append('username', username.trim());
-      formData.append('password', password);
-
-      const response = await giosApi.post('/api/v1/auth/token', formData, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      });
-      const token = response.data.access_token;
+      const data = await loginUser(username.trim(), password);
+      const token = data.access_token;
       localStorage.setItem('gios_token', token);
       set({ token, isAuthenticated: true, error: null });
     } catch (err) {

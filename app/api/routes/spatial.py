@@ -1,7 +1,7 @@
 import math
 from fastapi import APIRouter
 from typing import Dict, Any, List, Optional
-from app.models.schemas import SpatialBufferRequest, SpatialBufferResponse
+from app.models.schemas import SpatialBufferRequest, SpatialBufferResponse, GeoJSONFeatureCollection
 
 router = APIRouter(prefix="/spatial", tags=["spatial"])
 
@@ -86,7 +86,7 @@ def generate_buffer(payload: SpatialBufferRequest):
         }
     }
 
-@router.get("/layers/{layer_id}")
+@router.get("/layers/{layer_id}", response_model=GeoJSONFeatureCollection)
 def get_vector_layer(layer_id: str):
     """
     Serves dynamic GeoJSON vector layers from the GIOS spatial database.

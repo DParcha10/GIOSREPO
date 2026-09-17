@@ -116,6 +116,30 @@ export const SPECTRAL_INDICES = [
     defaultRescale: '0,255',
     unit: 'reflectance',
     description: 'Calibrated surface reflectance composite simulating natural human eye perception.'
+  },
+  {
+    key: 'dnbr',
+    name: 'ΔNBR',
+    label: 'Differenced Normalized Burn Ratio',
+    domain: 'USGS FIREMON Burn Severity',
+    formula: 'NBR_pre - NBR_post',
+    bands: ['B08', 'B12'],
+    defaultColormap: 'turbo',
+    defaultRescale: '-0.2,0.8',
+    unit: 'dimensionless',
+    description: 'Differenced NBR assessing fire severity and biomass loss between pre- and post-fire scenes.'
+  },
+  {
+    key: 'rdnbr',
+    name: 'RdNBR',
+    label: 'Relative Differenced Normalized Burn Ratio',
+    domain: 'High-Slope Fire Severity',
+    formula: 'dNBR / sqrt(|NBR_pre|)',
+    bands: ['B08', 'B12'],
+    defaultColormap: 'turbo',
+    defaultRescale: '-0.5,1.5',
+    unit: 'dimensionless',
+    description: 'Relative differenced NBR normalized by pre-fire canopy density for steep terrain assessment.'
   }
 ];
 
@@ -206,4 +230,79 @@ export const DEFAULT_MAP_CONFIG = {
   minZoom: 2,
   maxZoom: 24,
   maxNativeZoom: 22
+};
+
+/**
+ * Geotechnical and environmental hazard categories matching backend HazardCategory enum.
+ */
+export const HAZARD_CATEGORIES = {
+  SEEPAGE: 'seepage',
+  INUNDATION: 'inundation',
+  HAB: 'hab',
+  DROUGHT: 'drought',
+  WILDFIRE: 'wildfire'
+};
+
+/**
+ * Hazard operational severity tiers matching backend HazardSeverity enum.
+ */
+export const HAZARD_SEVERITIES = {
+  CRITICAL: 'critical',
+  WARNING: 'warning',
+  MODERATE: 'moderate',
+  LOW: 'low'
+};
+
+/**
+ * Automated alert severity levels matching backend AlertSeverity enum.
+ */
+export const ALERT_SEVERITIES = {
+  CRITICAL: 'critical',
+  WARNING: 'warning',
+  INFO: 'info'
+};
+
+/**
+ * Drone orthomosaic and mission lifecycle statuses matching backend DroneStatus enum.
+ */
+export const DRONE_STATUSES = {
+  READY: 'READY',
+  PROCESSING: 'PROCESSING',
+  FAILED: 'FAILED'
+};
+
+/**
+ * Canonical GIOS API endpoint paths shared between frontend and backend.
+ */
+export const API_ENDPOINTS = {
+  HEALTH: '/health',
+  AUTH_TOKEN: '/api/v1/auth/token',
+  AUTH_ME: '/api/v1/auth/me',
+  EVENTS: '/api/v1/events',
+  EVENT_DETAIL: (id) => `/api/v1/events/${id}`,
+  ANALYSIS_INDICES: '/api/v1/analysis/indices',
+  ANALYSIS_PIXEL_PROBE: '/api/v1/analysis/pixel-probe',
+  ANALYSIS_ZONAL_STATS: '/api/v1/analysis/zonal-stats',
+  TILES_DYNAMIC: (collection, itemId, z, x, y) => `/api/v1/tiles/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  WILDFIRE_BURN_SEVERITY: '/api/v1/wildfire/burn-severity',
+  WILDFIRE_DNBR_TILE: (z, x, y) => `/api/v1/tiles/wildfire/dnbr/${z}/${x}/${y}.png`,
+  DRONE_MISSIONS: '/api/v1/drone/missions',
+  DRONE_SCHEDULE: '/api/v1/drone/missions/schedule',
+  DRONE_ORTHOMOSAICS: '/api/v1/drone/orthomosaics',
+  DRONE_REGISTER: '/api/v1/drone/register',
+  DRONE_UPLOAD: '/api/v1/drone/upload',
+  DRONE_TILE: (orthoId, z, x, y) => `/api/v1/drone/${orthoId}/tiles/${z}/${x}/${y}.png`,
+  TIMESERIES_TREND: '/api/v1/timeseries/trend',
+  AGENT_CHAT: '/api/v1/agent/chat',
+  AGENT_STREAM_ALERTS: '/api/v1/agent/stream-alerts',
+  AGENT_TRIGGER_MOCK_ALERT: '/api/v1/agent/trigger-mock-alert',
+  SPATIAL_BUFFER: '/api/v1/spatial/buffer',
+  SPATIAL_LAYERS: (layerType = 'critical_infrastructure') => `/api/v1/spatial/layers/${layerType}`,
+  REPORTS_PDF: '/api/v1/reports/pdf',
+  DATA_SEARCH: '/api/v1/data/search',
+  INTEGRATION_USGS: (siteId) => `/api/v1/integration/usgs/${siteId}`,
+  SATELLITE_GEE: '/api/v1/satellite/gee',
+  SATELLITE_SENTINEL: '/api/v1/satellite/sentinel',
+  IOT_INGEST: '/api/v1/iot/ingest',
+  IOT_DATA: '/api/v1/iot/data'
 };

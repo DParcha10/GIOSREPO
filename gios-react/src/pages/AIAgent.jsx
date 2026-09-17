@@ -6,7 +6,7 @@ import {
   MapPin, CheckCircle2, ShieldCheck, RefreshCw, Cpu, User, FileText,
   BrainCircuit, Compass, Globe, Search, ExternalLink, BarChart3, Lightbulb, AlertTriangle
 } from 'lucide-react';
-import giosApi from '../api/giosApi';
+import { downloadPdfReport, triggerMockAlert } from '../api/giosApi';
 import { useNavigate } from 'react-router-dom';
 import useJarvisStore from '../store/jarvisStore';
 import MetallicPaintText from '../components/ReactBits/MetallicPaintText';
@@ -68,10 +68,8 @@ export default function AIAgent() {
   const handleExportPDF = async (metric = 'ndmi') => {
     try {
       setExportingId(true);
-      const res = await giosApi.get(`/api/v1/reports/pdf?bbox=-121.08,37.05,-121.06,37.065&index_type=${metric}`, {
-        responseType: 'blob'
-      });
-      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const blobData = await downloadPdfReport('-121.08,37.05,-121.06,37.065', metric);
+      const url = window.URL.createObjectURL(new Blob([blobData], { type: 'application/pdf' }));
       const link = document.createElement('a');
       link.href = url;
       link.setAttribute('download', `GIOS_Executive_Dossier_${metric.toUpperCase()}.pdf`);
@@ -130,7 +128,7 @@ export default function AIAgent() {
           <button 
             onClick={async () => {
               try {
-                await giosApi.post('/api/v1/agent/trigger-mock-alert');
+                await triggerMockAlert();
               } catch (e) {
                 console.error('Mock alert failed', e);
               }

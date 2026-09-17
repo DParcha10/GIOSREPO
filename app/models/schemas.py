@@ -262,6 +262,24 @@ class DroneScheduleMissionRequest(BaseModel):
     lng: float = Field(default=0.0, description="Target survey longitude coordinate")
     radius_km: float = Field(default=1.0, ge=0.1, le=50.0, description="Flight survey radius in kilometers")
 
+class DroneUploadResponse(BaseModel):
+    """Response payload for uploaded drone orthomosaic ingestion."""
+    status: str = Field(default="success", description="Upload ingestion status")
+    orthomosaic: Union[DroneOrthomosaicMetadata, Dict[str, Any]] = Field(..., description="Registered orthomosaic metadata")
+
+class DroneMissionScheduleResponse(BaseModel):
+    """Response payload for scheduling an autonomous or manual drone mission."""
+    status: str = Field(default="success", description="Scheduling status")
+    mission: Union[DroneMissionResponse, Dict[str, Any]] = Field(..., description="Scheduled mission details")
+
+class DroneMissionsListResponse(BaseModel):
+    """List of active drone fleet missions."""
+    missions: List[Union[DroneMissionResponse, Dict[str, Any]]] = Field(default_factory=list, description="Fleet missions")
+
+class DroneOrthomosaicsListResponse(BaseModel):
+    """List of registered drone Cloud-Optimized GeoTIFFs."""
+    orthomosaics: List[Union[DroneOrthomosaicMetadata, Dict[str, Any]]] = Field(default_factory=list, description="Registered drone orthomosaics")
+
 # ============================================================================
 # TIME-SERIES & CLIMATOLOGY SCHEMAS
 # ============================================================================
@@ -345,34 +363,59 @@ class ZonalStatsRequest(BaseModel):
     end_date: str
     collection: SatelliteCollection = SatelliteCollection.SENTINEL_2
 
+class HazardEventDetail(BaseModel):
+    """Detailed record of a registered geotechnical or environmental hazard event."""
+    id: str = Field(..., description="Unique event identifier")
+    title: str = Field(..., description="Human-readable event title")
+    subtitle: str = Field(..., description="Event location or description subtitle")
+    category: HazardCategory = Field(..., description="Hazard domain classification")
+    severity: HazardSeverity = Field(..., description="Operational severity tier")
+    severity_label: str = Field(..., description="Display label for severity (e.g. HIGH HAZARD, CRITICAL)")
+    lat: float = Field(..., description="Latitude coordinate")
+    lng: float = Field(..., description="Longitude coordinate")
+    zoom: int = Field(default=13, description="Focus map zoom level")
+    metric: SpectralIndex = Field(..., description="Primary biophysical indicator metric")
+    sensor: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2, description="Primary EO sensor")
+    start_date: str = Field(..., description="Start date (YYYY-MM-DD)")
+    end_date: str = Field(..., description="End date (YYYY-MM-DD)")
+    usgs_station: Optional[str] = Field(default=None, description="Associated USGS streamgage station")
+    station_name: Optional[str] = Field(default=None, description="USGS streamgage station name")
+    impact_area: str = Field(..., description="Estimated impact area")
+    peak_zscore: str = Field(..., description="Peak anomaly z-score")
+    hazard_type: str = Field(..., description="Specific hazard classification")
+    drone_status: str = Field(default="READY", description="Associated UAS mission status")
+    description: str = Field(..., description="Detailed situation narrative")
+
 class EventCreateRequest(BaseModel):
     """Hazard event creation payload."""
-    id: str
-    title: str
-    subtitle: str
-    category: HazardCategory
-    severity: HazardSeverity
-    severity_label: str
-    lat: float
-    lng: float
-    zoom: int = 13
-    metric: SpectralIndex
-    sensor: SatelliteCollection = SatelliteCollection.SENTINEL_2
-    start_date: str
-    end_date: str
-    usgs_station: Optional[str] = None
-    station_name: Optional[str] = None
-    impact_area: str
-    peak_zscore: str
-    hazard_type: str
-    drone_status: str
-    description: str
+    id: str = Field(..., description="Unique event identifier")
+    title: str = Field(..., description="Event title")
+    subtitle: str = Field(..., description="Event subtitle")
+    category: HazardCategory = Field(..., description="Hazard domain")
+    severity: HazardSeverity = Field(..., description="Severity tier")
+    severity_label: str = Field(..., description="Severity label")
+    lat: float = Field(..., description="Latitude coordinate")
+    lng: float = Field(..., description="Longitude coordinate")
+    zoom: int = Field(default=13, description="Focus zoom level")
+    metric: SpectralIndex = Field(..., description="Biophysical metric")
+    sensor: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2, description="Sensor")
+    start_date: str = Field(..., description="Start date (YYYY-MM-DD)")
+    end_date: str = Field(..., description="End date (YYYY-MM-DD)")
+    usgs_station: Optional[str] = Field(default=None, description="Associated USGS streamgage station")
+    station_name: Optional[str] = Field(default=None, description="Station name")
+    impact_area: str = Field(..., description="Impact area")
+    peak_zscore: str = Field(..., description="Peak anomaly z-score")
+    hazard_type: str = Field(..., description="Hazard type")
+    drone_status: str = Field(default="READY", description="Drone status")
+    description: str = Field(..., description="Description")
 
 class HealthResponse(BaseModel):
     """Platform health and service availability response."""
-    status: str
-    version: str
-    active_services: List[str]
+    status: str = Field(default="healthy", description="System health status")
+    platform: Optional[str] = Field(default="GIOS", description="Platform identifier name")
+    version: str = Field(default="2.5.0", description="Semantic platform release version")
+    active_services: Optional[List[str]] = Field(default_factory=list, description="Active microservices")
+    active_modules: Optional[List[str]] = Field(default_factory=list, description="Active backend processing modules")
 
 class SceneMetadata(BaseModel):
     """STAC catalog scene metadata record."""
@@ -400,8 +443,18 @@ class IndexResultSummary(BaseModel):
 
 class EventResponse(BaseModel):
     """List of registered hazard events."""
-    events: List[Dict[str, Any]]
-    total_count: int
+    events: List[Union[HazardEventDetail, Dict[str, Any]]] = Field(default_factory=list, description="List of hazard event records")
+    total_count: int = Field(..., description="Total event count")
+
+class SensorIngestResponse(BaseModel):
+    """Response payload for IoT sensor telemetry ingestion."""
+    status: str = Field(default="success", description="Ingestion status")
+    message: str = Field(default="Data ingested", description="Ingestion status message")
+
+class MockAlertResponse(BaseModel):
+    """Response payload for administrative mock alert trigger."""
+    status: str = Field(default="success", description="Execution status")
+    message: str = Field(default="Mock alert triggered", description="Status message description")
 
 # ============================================================================
 # IN-SITU, SATELLITE INTEGRATION & SPATIAL BUFFER SCHEMAS
@@ -444,6 +497,20 @@ class SentinelHubTileResponse(BaseModel):
     bbox: Tuple[float, float, float, float] = Field(..., description="Bounding box [west, south, east, north]")
     tile_url: str = Field(..., description="Sentinel Hub OGC WMTS tile URL")
 
+class GeoJSONFeature(BaseModel):
+    """GeoJSON Feature representation for GIS vector layers."""
+    type: str = Field(default="Feature", description="GeoJSON object type")
+    properties: Dict[str, Any] = Field(default_factory=dict, description="Feature attributes and metadata properties")
+    geometry: Dict[str, Any] = Field(..., description="GeoJSON geometry object (Point, Polygon, etc.)")
+
+class GeoJSONFeatureCollection(BaseModel):
+    """GeoJSON FeatureCollection for vector GIS layer streaming and spatial buffers."""
+    type: str = Field(default="FeatureCollection", description="GeoJSON FeatureCollection type")
+    features: List[GeoJSONFeature] = Field(default_factory=list, description="Array of GeoJSON Features")
+
+# Vector layer alias
+VectorLayerResponse = GeoJSONFeatureCollection
+
 class SpatialBufferRequest(BaseModel):
     """Payload for computing geodesic spatial buffers."""
     distance_km: float = Field(default=2.0, description="Buffer distance in kilometers")
@@ -458,7 +525,7 @@ class SpatialBufferResponse(BaseModel):
     buffer_radius_km: float = Field(..., description="Buffer radius in kilometers")
     area_sq_km: float = Field(..., description="Buffer area in square kilometers")
     area_hectares: float = Field(..., description="Buffer area in hectares")
-    geojson: Dict[str, Any] = Field(..., description="GeoJSON FeatureCollection containing buffered geometry")
+    geojson: Union[GeoJSONFeatureCollection, Dict[str, Any]] = Field(..., description="GeoJSON FeatureCollection containing buffered geometry")
 
 # ============================================================================
 # AGENTIC AI CHAT SCHEMAS

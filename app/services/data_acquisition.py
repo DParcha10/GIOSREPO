@@ -7,9 +7,13 @@ import xarray as xr
 from pystac_client import Client
 import planetary_computer as pc
 import odc.stac
+import warnings
+import rasterio.errors
 from app.config import settings
 from app.utils.cache import cache_manager
 from app.services.preprocessing import preprocessing_service
+
+warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -132,9 +136,14 @@ class DataAcquisitionService:
         else:
             target_res = resolution or 30.0
             default_bands = ["blue", "green", "red", "nir08", "swir16", "swir22", "lwir11", "qa_pixel"]
-
-        target_bands = bands or default_bands
-
+        target_bands = list(bands) if bands else default_bands
+        if apply_mask:
+            if "sentinel" in collection.lower():
+                if not any(b.upper() == "SCL" for b in target_bands):
+                    target_bands.append("SCL")
+            else:
+                if not any(b.lower() in {"qa_pixel", "qa"} for b in target_bands):
+                    target_bands.append("qa_pixel")
         # Ensure STAC items are signed with SAS tokens
         stac_items_to_load = []
         for it in items:
@@ -161,9 +170,15 @@ class DataAcquisitionService:
 
         if active_bbox:
             min_lon, min_lat, max_lon, max_lat = active_bbox
-            mid_lat = (min_lat + max_lat) / 2.0
-            span_x_m = abs(max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat))
-            span_y_m = abs(max_lat - min_lat) * 111320.0
+            if abs(min_lon) > 180.0 or abs(max_lon) > 180.0:
+                # Projected coordinates already in meters (e.g. EPSG:3857)
+                span_x_m = abs(max_lon - min_lon)
+                span_y_m = abs(max_lat - min_lat)
+            else:
+                # Geographic coordinates in degrees (EPSG:4326)
+                mid_lat = (min_lat + max_lat) / 2.0
+                span_x_m = abs(max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat))
+                span_y_m = abs(max_lat - min_lat) * 111320.0
             max_pixels = 2048
             min_safe_res = max(span_x_m / max_pixels, span_y_m / max_pixels)
             if min_safe_res > target_res:
@@ -180,19 +195,27 @@ class DataAcquisitionService:
             )
             target_res = 60.0
 
+        # Memory-conscious: cap scenes to at most 2 scenes to prevent multi-granule memory blowup
+        if len(stac_items_to_load) > 2:
+            logger.info("Memory-conscious: capping scenes to load from %d to 2 scenes", len(stac_items_to_load))
+            stac_items_to_load = stac_items_to_load[-2:]
+
         ds = None
         if len(stac_items_to_load) > 0:
             try:
-                ds = odc.stac.load(
-                    stac_items_to_load,
-                    bands=target_bands,
-                    crs=crs,
-                    resolution=target_res,
-                    bbox=bbox,
-                    resampling=resampling,
-                    chunks={"x": 512, "y": 512},
-                    dtype="float32"
-                )
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+                    warnings.filterwarnings("ignore", message=r".*Dataset has no geotransform.*")
+                    ds = odc.stac.load(
+                        stac_items_to_load,
+                        bands=target_bands,
+                        crs=crs,
+                        resolution=target_res,
+                        bbox=bbox,
+                        resampling=resampling,
+                        chunks={"x": 512, "y": 512},
+                        dtype="float32"
+                    )
             except Exception as odc_err:
                 logger.warning("odc.stac.load encountered network/asset error: %s", odc_err)
                 ds = None
@@ -233,11 +256,15 @@ class DataAcquisitionService:
         """
         # Coordinate grid
         min_lon, min_lat, max_lon, max_lat = bbox
-        # Web mercator approx
-        mx_min = min_lon * 111319.49
-        my_min = min_lat * 111319.49
-        mx_max = max_lon * 111319.49
-        my_max = max_lat * 111319.49
+        # Web mercator coordinates
+        if abs(min_lon) > 180.0 or abs(max_lon) > 180.0:
+            mx_min, my_min = min_lon, min_lat
+            mx_max, my_max = max_lon, max_lat
+        else:
+            mx_min = min_lon * 111319.49
+            my_min = min_lat * 111319.49
+            mx_max = max_lon * 111319.49
+            my_max = max_lat * 111319.49
         
         # Memory-conscious grid size: limit max dimension to 256 for fast analytical execution
         nx = min(256, max(32, int(abs(mx_max - mx_min) / max(resolution, 10.0))))

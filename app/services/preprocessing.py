@@ -1,4 +1,5 @@
 """Sensor-specific masking and normalisation service."""
+import gc
 from typing import Optional, Union, Dict, Any
 import numpy as np
 from scipy.ndimage import binary_dilation
@@ -30,15 +31,24 @@ class PreprocessingService:
                     bit_mask |= (1 << b)
                 qa_int = qa.astype(np.uint16)
                 raw_mask = (qa_int & bit_mask) != 0
+                del qa_int
+                if not np.any(raw_mask):
+                    # Zero clouds or invalid pixels in the scene: fast bypass without allocating memory
+                    del raw_mask
+                    return dataset
                 if dilation_iterations > 0:
                     struct = np.ones((1, 3, 3), dtype=bool) if raw_mask.ndim == 3 else np.ones((3, 3), dtype=bool)
                     dilated_mask = binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
                 else:
                     dilated_mask = raw_mask
+                del raw_mask
                 
                 for var in list(dataset.data_vars):
                     if var != qa_name:
-                        dataset[var] = dataset[var].where(~dilated_mask)
+                        # Memory-conscious: preserve float32 representation and prevent float64 upcast
+                        dataset[var] = dataset[var].where(~dilated_mask, other=np.float32(np.nan)).astype(np.float32)
+                del dilated_mask
+                gc.collect()
             return dataset
         
         # Handle dict of arrays or direct numpy array
@@ -98,15 +108,23 @@ class PreprocessingService:
             if scl_name is not None:
                 scl = dataset[scl_name].values
                 raw_mask = np.isin(scl, list(invalid_classes))
+                if not np.any(raw_mask):
+                    # Zero clouds or invalid pixels in the scene: fast bypass without allocating memory
+                    del raw_mask
+                    return dataset
                 if dilation_iterations > 0:
                     struct = np.ones((1, 3, 3), dtype=bool) if raw_mask.ndim == 3 else np.ones((3, 3), dtype=bool)
                     dilated_mask = binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
                 else:
                     dilated_mask = raw_mask
+                del raw_mask
                 
                 for var in list(dataset.data_vars):
                     if var != scl_name:
-                        dataset[var] = dataset[var].where(~dilated_mask)
+                        # Memory-conscious: preserve float32 representation and prevent float64 upcast
+                        dataset[var] = dataset[var].where(~dilated_mask, other=np.float32(np.nan)).astype(np.float32)
+                del dilated_mask
+                gc.collect()
             return dataset
 
         elif isinstance(dataset, dict):
@@ -153,10 +171,14 @@ class PreprocessingService:
                 return (val * 0.00341802 + 149.0) - 273.15
             return val * 0.0000275 - 0.2
 
-        arr = np.asarray(dn, dtype=np.float32)
+        arr = np.array(dn, dtype=np.float32, copy=True)
         if is_thermal:
-            return (arr * np.float32(0.00341802) + np.float32(149.0)) - np.float32(273.15)
-        return arr * np.float32(0.0000275) - np.float32(0.2)
+            arr *= np.float32(0.00341802)
+            arr += np.float32(149.0 - 273.15)
+            return arr
+        arr *= np.float32(0.0000275)
+        arr -= np.float32(0.2)
+        return arr
 
     @staticmethod
     def apply_sentinel_offset(
@@ -187,10 +209,11 @@ class PreprocessingService:
                 return (val - 1000.0) * 0.0001
             return val * 0.0001
 
-        arr = np.asarray(dn, dtype=np.float32)
+        arr = np.array(dn, dtype=np.float32, copy=True)
         if has_offset:
-            return (arr - np.float32(1000.0)) * np.float32(0.0001)
-        return arr * np.float32(0.0001)
+            arr -= np.float32(1000.0)
+        arr *= np.float32(0.0001)
+        return arr
 
     @staticmethod
     def normalise_reflectance(
@@ -215,14 +238,15 @@ class PreprocessingService:
                         val = PreprocessingService.apply_landsat_calibration(dataset[var].values, is_thermal=True)
                     else:
                         val = PreprocessingService.apply_landsat_calibration(dataset[var].values, is_thermal=False)
-                    dataset[var] = (dataset[var].dims, val)
+                    dataset[var] = (dataset[var].dims, np.asarray(val, dtype=np.float32))
                 elif is_sentinel:
                     val = PreprocessingService.apply_sentinel_offset(
                         dataset[var].values,
                         processing_baseline=processing_baseline,
                         acquisition_date=acquisition_date
                     )
-                    dataset[var] = (dataset[var].dims, val)
+                    dataset[var] = (dataset[var].dims, np.asarray(val, dtype=np.float32))
+            gc.collect()
             return dataset
 
         elif isinstance(dataset, dict):

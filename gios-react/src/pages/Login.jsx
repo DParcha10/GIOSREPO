@@ -94,7 +94,7 @@ const Login = () => {
         </div>
         
         <div className="mt-8 text-center border-t border-gray-700/50 pt-4">
-          <p className="text-gray-500 text-xs">System v2.4.1 | Encryption Active</p>
+          <p className="text-gray-500 text-xs">System v2.5.0 | Quantum Encryption Active</p>
         </div>
       </div>
     </div>

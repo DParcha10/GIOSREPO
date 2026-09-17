@@ -17,6 +17,7 @@ from app.database import engine, Base, seed_default_users
 from app.api.routes import auth, iot
 from app.services import reporting
 from app.api.routes import spatial, drone, wildfire
+from app.models.schemas import HealthResponse
 
 # Initialize DB tables
 Base.metadata.create_all(bind=engine)
@@ -119,11 +120,9 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(iot.router, prefix="/api/v1")
 app.include_router(reporting.router, prefix="/api/v1")
 app.include_router(spatial.router, prefix="/api/v1")
-app.include_router(drone.router, prefix="/api/v1")
-app.include_router(wildfire.router, prefix="/api/v1")
 
 
-@app.get("/health", tags=["System"])
+@app.get("/health", response_model=HealthResponse, tags=["System"])
 @limiter.limit("10/minute")
 def health_check(request: Request):
     return {

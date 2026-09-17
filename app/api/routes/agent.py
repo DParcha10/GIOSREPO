@@ -10,7 +10,7 @@ import json
 import asyncio
 from app.models.schemas import (
     AgentChatRequest, AgentChatResponse, AgentToolAction,
-    MapAction, NavigationAction
+    MapAction, NavigationAction, MockAlertResponse
 )
 from app.services.jarvis_brain import process_message
 from app.services.alerting import alert_queue, alert_engine
@@ -131,7 +131,7 @@ async def stream_alerts():
     return EventSourceResponse(event_generator())
 
 
-@router.post("/trigger-mock-alert")
+@router.post("/trigger-mock-alert", response_model=MockAlertResponse)
 async def trigger_mock_alert():
     """Admin endpoint to mock a sensor spike for testing proactive alerts."""
     mock_data = {

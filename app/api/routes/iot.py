@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from typing import List
-from app.models.schemas import SensorData
+from app.models.schemas import SensorData, SensorIngestResponse
 
 router = APIRouter(prefix="/iot", tags=["iot"])
 
@@ -18,7 +18,7 @@ async def _check_thresholds(data: SensorData):
         }
         await alert_engine.trigger_jarvis_alert(f"IoT Sensor {data.sensor_id}", mock_data)
 
-@router.post("/ingest")
+@router.post("/ingest", response_model=SensorIngestResponse)
 async def ingest_sensor_data(data: SensorData, bg_tasks: BackgroundTasks):
     """
     Ingest live IoT sensor data for fusion with satellite imagery.

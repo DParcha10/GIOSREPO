@@ -240,9 +240,12 @@ class DroneService:
                         # Transparent tile
                         empty_arr = np.zeros((256, 256, 4), dtype=np.uint8)
                         img = Image.fromarray(empty_arr, "RGBA")
-                        buf = io.BytesIO()
-                        img.save(buf, format="PNG")
-                        return buf.getvalue()
+                        with io.BytesIO() as buf:
+                            img.save(buf, format="PNG")
+                            png_bytes = buf.getvalue()
+                        del img
+                        del empty_arr
+                        return png_bytes
 
                     # Read window
                     win = from_bounds(lon_min, lat_min, lon_max, lat_max, src.transform)
@@ -266,9 +269,15 @@ class DroneService:
                     rgba = np.dstack([rgb.astype(np.uint8), mask])
 
                     img = Image.fromarray(rgba, "RGBA")
-                    buf = io.BytesIO()
-                    img.save(buf, format="PNG")
-                    return buf.getvalue()
+                    with io.BytesIO() as buf:
+                        img.save(buf, format="PNG")
+                        png_bytes = buf.getvalue()
+                    del img
+                    del rgba
+                    del rgb
+                    del mask
+                    del tile_data
+                    return png_bytes
             except Exception as e:
                 logger.warning("Error reading drone COG tile: %s", e)
 
@@ -282,9 +291,14 @@ class DroneService:
         rgba[:, :, 3] = 230  # High opacity
 
         img = Image.fromarray(rgba, "RGBA")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
+        with io.BytesIO() as buf:
+            img.save(buf, format="PNG")
+            png_bytes = buf.getvalue()
+        del img
+        del rgba
+        del xx
+        del yy
+        return png_bytes
 
     def schedule_mission(self, event_id: str, lat: float, lng: float, radius_km: float = 1.0) -> Dict[str, Any]:
         """Generate a simulated boustrophedon flight path."""

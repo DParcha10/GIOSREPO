@@ -10,6 +10,7 @@ import jwt
 
 from app.database import get_db
 from app.models.user import User
+from app.models.schemas import TokenResponse, UserResponse, UserRegisterResponse
 
 SECRET_KEY = os.getenv("JWT_SECRET", "super-secret-gios-geospatial-intelligence-key-2026-secure")
 ALGORITHM = "HS256"
@@ -67,7 +68,7 @@ def require_admin(current_user: User = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return current_user
 
-@router.post("/token")
+@router.post("/token", response_model=TokenResponse)
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -82,7 +83,7 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.post("/register")
+@router.post("/register", response_model=UserRegisterResponse)
 def register_user(username: str, password: str, role: str = "viewer", db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.username == username).first()
     if db_user:
@@ -95,7 +96,7 @@ def register_user(username: str, password: str, role: str = "viewer", db: Sessio
     db.refresh(new_user)
     return {"msg": "User created successfully", "username": new_user.username}
 
-@router.get("/me")
+@router.get("/me", response_model=UserResponse)
 def get_user_profile(current_user: User = Depends(get_current_user)):
     return {
         "id": current_user.id,

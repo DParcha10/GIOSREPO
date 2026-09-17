@@ -13,10 +13,10 @@
     "spillway 3 is under repair"
   ],
   "marked_locations": [
-    "New York at (40.7128, -74.0060)"
+    "New York at (40.7128, -74.0060)",
+    "San Luis Dam Embankment at (37.0582, -121.0744)"
   ],
   "recent_queries": [
-    "Analyze San Luis Dam Seepage",
     "Can you mark New York on the map?",
     "Show me the analytics charts",
     "Take me to the telemetry dashboard",
@@ -30,6 +30,16 @@
     "Hello, my name is Alex and remember that spillway 3 is under repair",
     "What do you remember?",
     "Hello",
+    "Analyze San Luis Dam Seepage",
+    "Can you mark New York on the map?",
+    "Show me the analytics charts",
+    "Take me to the telemetry dashboard",
+    "Hello, my name is Alex and remember that spillway 3 is under repair",
+    "What do you remember?",
+    "Hello",
+    "Analyze San Luis Dam Seepage",
+    "Can you mark New York on the map?",
+    "Show me the analytics charts",
     "Analyze San Luis Dam Seepage",
     "Can you mark New York on the map?",
     "Show me the analytics charts",

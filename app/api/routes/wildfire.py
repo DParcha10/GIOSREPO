@@ -1,4 +1,5 @@
 """Wildfire hazard and burn severity assessment routes."""
+import gc
 from fastapi import APIRouter
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any, Union
@@ -67,6 +68,11 @@ def analyze_burn_severity(req: BurnSeverityApiRequest):
         rdnbr_arr = dnbr_arr / denom
         mean_rdnbr = float(np.mean(rdnbr_arr))
         classification = index_service.classify_burn_severity(dnbr_arr)
+        del arr_pre
+        del arr_post
+        del dnbr_arr
+        del rdnbr_arr
+        gc.collect()
     elif req.nbr_values and len(req.nbr_values) > 0:
         # If legacy nbr_values passed, treat as single-scene post NBR with default pre baseline (0.35 typical green canopy)
         arr_post = np.asarray(req.nbr_values, dtype=np.float32)
@@ -75,6 +81,10 @@ def analyze_burn_severity(req: BurnSeverityApiRequest):
         mean_dnbr = float(np.mean(dnbr_arr))
         mean_rdnbr = float(np.mean(dnbr_arr / np.sqrt(np.abs(arr_pre) + np.float32(1e-6))))
         classification = index_service.classify_burn_severity(dnbr_arr)
+        del arr_pre
+        del arr_post
+        del dnbr_arr
+        gc.collect()
     else:
         # Realistic deterministic burn scenario for the requested dates / AOI
         # Simulate calibrated pre/post distribution over burned area with memory-conscious sample size
@@ -89,6 +99,8 @@ def analyze_burn_severity(req: BurnSeverityApiRequest):
         classification = index_service.classify_burn_severity(dnbr_arr)
         del burned_sample
         del unburned_sample
+        del dnbr_arr
+        gc.collect()
 
     # Format category details with calculated hectares
     categories_result = []

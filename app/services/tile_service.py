@@ -26,6 +26,7 @@ DEFAULT_INDEX_RANGES = {
     "ndci": (0.0, 0.5),
     "nbr": (-0.2, 0.7),
     "dnbr": (-0.1, 0.8),
+    "rdnbr": (-0.1, 1.2),
     "lst": (10.0, 45.0),
     "savi": (0.0, 0.8),
     "evi": (0.0, 0.8),
@@ -149,6 +150,8 @@ class TileService:
                 val = -0.15 + base_variation * 0.75
             elif idx_clean == "dnbr":
                 val = 0.00 + base_variation * 0.70
+            elif idx_clean == "rdnbr":
+                val = 0.00 + base_variation * 1.10
             elif idx_clean == "lst":
                 val = 15.0 + base_variation * 25.0
             else:
@@ -182,6 +185,10 @@ class TileService:
         with io.BytesIO() as buf:
             img.save(buf, format="PNG", optimize=True)
             png_bytes = buf.getvalue()
+
+        # Free image memory buffers
+        del img
+        del rgba
 
         # Write to disk cache
         try:
