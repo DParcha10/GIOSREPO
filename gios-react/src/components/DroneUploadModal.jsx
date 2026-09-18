@@ -63,7 +63,8 @@ export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered })
       formData.append('flight_altitude', flightAltitude);
       formData.append('target_gsd', targetGsd);
 
-      const metadata = await registerDroneOrthomosaic(formData);
+      const res = await registerDroneOrthomosaic(formData);
+      const metadata = res?.orthomosaic || res;
       setRegisteredMetadata(metadata);
       if (onDroneRegistered) {
         onDroneRegistered(metadata);

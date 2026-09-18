@@ -16,7 +16,15 @@ export {
   SPECTRAL_INDICES,
   COLORMAPS,
   SATELLITE_COLLECTIONS,
+  COLLECTIONS,
+  SPECTRAL_INDEX_KEYS,
+  COLORMAP_KEYS,
   FIREMON_SEVERITY_LEVELS,
+  classifyDnbr,
+  getIndexMetadata,
+  getColormapMetadata,
+  listSpectralIndices,
+  listColormaps,
   DEFAULT_MAP_CONFIG,
   HAZARD_CATEGORIES,
   HAZARD_SEVERITIES,
@@ -53,10 +61,33 @@ export {
  */
 
 /**
+ * @typedef {Object} SpectralIndexMetadata
+ * @property {SpectralIndex} key - Spectral index key
+ * @property {string} name - Short index code (e.g. 'NDMI')
+ * @property {string} label - Full name
+ * @property {string} domain - Biophysical application domain
+ * @property {string} formula - Mathematical formula
+ * @property {string[]} bands - Spectral bands utilized
+ * @property {TileColormap|null} defaultColormap - Default colormap palette
+ * @property {string} defaultRescale - Default rescale min,max
+ * @property {string} unit - Measurement unit
+ * @property {string} description - Scientific and operational description
+ */
+
+/**
+ * @typedef {Object} ColormapMetadata
+ * @property {TileColormap} key - Colormap palette key
+ * @property {string} label - Display label
+ * @property {string} [description] - Palette description
+ */
+
+/**
  * @typedef {Object} DynamicTileOptions
  * @property {SpectralIndex} [index='rgb'] - Target spectral index
  * @property {string} [rescale] - Rescale range min,max (e.g. "-0.2,0.6" or "2,98")
  * @property {TileColormap} [colormap='spectral'] - Paletted colormap name
+ * @property {string} [pre] - Pre-event baseline date (YYYY-MM-DD) for differenced burn severity tiles
+ * @property {string} [post] - Post-event assessment date (YYYY-MM-DD) for differenced burn severity tiles
  */
 
 /**
@@ -245,8 +276,12 @@ export {
  */
 
 /**
+ * @typedef {'jarvis_proactive_alert' | 'satellite_anomaly_alert'} ProactiveAlertType
+ */
+
+/**
  * @typedef {Object} ProactiveJarvisAlert
- * @property {'jarvis_proactive_alert'} type - Alert event type
+ * @property {ProactiveAlertType} type - Alert event type
  * @property {string} message - Emergency briefing narrative
  * @property {string} site - Monitored site name
  * @property {Object.<string, any>} [data] - Associated sensor telemetry payload
@@ -254,7 +289,7 @@ export {
 
 /**
  * @typedef {Object} SatelliteAnomalyAlert
- * @property {'satellite_anomaly_alert'} type - Alert event type
+ * @property {ProactiveAlertType} type - Alert event type
  * @property {AlertRecord} data - Detected anomaly record
  */
 
@@ -591,6 +626,8 @@ export const getTileUrl = (collection, itemId, z, x, y, options = {}) => {
   if (options.index) params.set('index', options.index);
   if (options.rescale) params.set('rescale', options.rescale);
   if (options.colormap) params.set('colormap', options.colormap);
+  if (options.pre) params.set('pre', options.pre);
+  if (options.post) params.set('post', options.post);
   const queryStr = params.toString() ? `?${params.toString()}` : '';
   const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
   return `${base}/api/v1/tiles/${collection}/${itemId}/${z}/${x}/${y}.png${queryStr}`;
@@ -680,7 +717,7 @@ export const registerDroneOrthomosaic = async (formData) => {
   const response = await giosApi.post('/api/v1/drone/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   });
-  return response.data;
+  return response.data?.orthomosaic || response.data;
 };
 
 /**
@@ -842,6 +879,11 @@ export const listDroneOrthomosaics = async () => {
 };
 
 /**
+ * Alias for listDroneOrthomosaics to match fetch* convention.
+ */
+export const fetchDroneOrthomosaics = listDroneOrthomosaics;
+
+/**
  * Registers a pre-stitched drone GeoTIFF orthomosaic by file path or cloud URI.
  * 
  * @param {DroneRegisterRequest} params - file_path, mission_name, sensor_payload, ortho_id
@@ -971,6 +1013,16 @@ export const createHazardEvent = async (eventData) => {
 export const triggerMockAlert = async () => {
   const response = await giosApi.post('/api/v1/agent/trigger-mock-alert');
   return response.data;
+};
+
+/**
+ * Returns the fully qualified URL for the SSE proactive alert stream.
+ * 
+ * @returns {string} Fully qualified stream URL
+ */
+export const getAlertStreamUrl = () => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  return `${base}/api/v1/agent/stream-alerts`;
 };
 
 export default giosApi;

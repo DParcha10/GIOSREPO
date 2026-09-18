@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { postAgentChat } from '../api/giosApi';
+import { postAgentChat, getAlertStreamUrl } from '../api/giosApi';
 
 const STORAGE_KEY_MESSAGES = 'gios_jarvis_messages';
 const STORAGE_KEY_MEMORY = 'gios_jarvis_memory';
@@ -82,8 +82,7 @@ export const useJarvisStore = create((set, get) => ({
   // Initialize Server-Sent Events listener for Proactive Alerts
   initSSE: () => {
     if (get().sseConnected) return; // already connected
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-    const sse = new EventSource(`${baseUrl}/api/v1/agent/stream-alerts`);
+    const sse = new EventSource(getAlertStreamUrl());
     
     sse.onmessage = (event) => {
       try {

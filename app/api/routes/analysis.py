@@ -237,9 +237,11 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     inside_mask = geometry_mask([poly], out_shape=(ny, nx), transform=tf, invert=True)
 
     arr_2d = np.squeeze(index_arr)
-    valid_vals = arr_2d[inside_mask] if arr_2d.ndim == 2 else index_arr[..., inside_mask].ravel()
-    valid_vals = valid_vals[np.isfinite(valid_vals)]
+    raw_inside = arr_2d[inside_mask] if arr_2d.ndim == 2 else index_arr[..., inside_mask].ravel()
+    total_inside = int(len(raw_inside))
+    valid_vals = raw_inside[np.isfinite(raw_inside)]
     total_valid = len(valid_vals)
+    cloud_covered_pixels = max(0, total_inside - total_valid)
     if total_valid == 0:
         valid_vals = np.array([0.312], dtype=np.float32)
         total_valid = 1
@@ -252,8 +254,8 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     p10_v = float(np.percentile(valid_vals, 10))
     p90_v = float(np.percentile(valid_vals, 90))
 
-    # 10-bin histogram distribution
-    bin_edges = np.linspace(min_v - 0.05, max_v + 0.05, 11).tolist()
+    # 20-bin histogram distribution
+    bin_edges = np.linspace(min_v - 0.05, max_v + 0.05, 21).tolist()
     counts, _ = np.histogram(valid_vals, bins=bin_edges)
 
     # Proactive cleanup of raster cube and intermediate buffers
@@ -261,6 +263,7 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     del band_dict
     del index_arr
     del inside_mask
+    del raw_inside
     del valid_vals
     gc.collect()
 
@@ -268,7 +271,7 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
         index=idx_str,
         area_hectares=area_ha,
         valid_pixels=int(total_valid * 10),
-        cloud_covered_pixels=0,
+        cloud_covered_pixels=int(cloud_covered_pixels * 10),
         statistics=ZonalDistributionStats(
             mean=round(mean_v, 3),
             median=round(median_v, 3),
@@ -293,7 +296,9 @@ def _handle_xyz_tile(
     y: int,
     index: Optional[str] = "rgb",
     rescale: Optional[str] = None,
-    colormap: Optional[str] = "spectral"
+    colormap: Optional[str] = "spectral",
+    pre: Optional[str] = None,
+    post: Optional[str] = None
 ):
     png_bytes = tile_service.render_tile(
         collection=collection,
@@ -303,7 +308,9 @@ def _handle_xyz_tile(
         y=y,
         index=index or "rgb",
         rescale=rescale,
-        colormap=colormap or "spectral"
+        colormap=colormap or "spectral",
+        pre=pre,
+        post=post
     )
     return Response(
         content=png_bytes,
@@ -323,9 +330,11 @@ def get_analysis_tile(
     y: int,
     index: Optional[str] = "rgb",
     rescale: Optional[str] = None,
-    colormap: Optional[str] = "spectral"
+    colormap: Optional[str] = "spectral",
+    pre: Optional[str] = Query(None, description="Pre-event baseline date for differenced tiles"),
+    post: Optional[str] = Query(None, description="Post-event assessment date for differenced tiles")
 ):
-    return _handle_xyz_tile(collection, item_id, z, x, y, index, rescale, colormap)
+    return _handle_xyz_tile(collection, item_id, z, x, y, index, rescale, colormap, pre, post)
 
 @tiles_router.get("/{collection}/{item_id}/{z}/{x}/{y}.png")
 def get_xyz_tile(
@@ -336,6 +345,8 @@ def get_xyz_tile(
     y: int,
     index: Optional[str] = "rgb",
     rescale: Optional[str] = None,
-    colormap: Optional[str] = "spectral"
+    colormap: Optional[str] = "spectral",
+    pre: Optional[str] = Query(None, description="Pre-event baseline date for differenced tiles"),
+    post: Optional[str] = Query(None, description="Post-event assessment date for differenced tiles")
 ):
-    return _handle_xyz_tile(collection, item_id, z, x, y, index, rescale, colormap)
+    return _handle_xyz_tile(collection, item_id, z, x, y, index, rescale, colormap, pre, post)

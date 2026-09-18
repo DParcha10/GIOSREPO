@@ -18,6 +18,7 @@ from app.models.schemas import (
     DynamicTileParams,
     BurnSeverityRequest,
     BurnSeverityCategoryDetail,
+    FIREMON_THRESHOLDS,
     BurnSeverityResponse,
     PixelCoordinates,
     ClimatologicalContext,
@@ -35,6 +36,9 @@ from app.models.schemas import (
     TimeSeriesResponse,
     AlertRecord,
     AlertWebhookPayload,
+    ProactiveAlertType,
+    ProactiveJarvisAlert,
+    SatelliteAnomalyAlert,
     HealthResponse,
     SceneMetadata,
     SearchResponse,
@@ -60,6 +64,7 @@ from app.models.schemas import (
     AgentChatResponse,
     EventCreateRequest,
     HazardEventDetail,
+    HazardEvent,
     BurnSeverityApiRequest,
     DroneRegisterRequest,
     DroneScheduleMissionRequest,
@@ -70,10 +75,22 @@ from app.models.schemas import (
     SensorData,
     SensorIngestResponse,
     MockAlertResponse,
+    UserLoginRequest,
+    UserRegisterRequest,
     TokenResponse,
     UserResponse,
     UserRegisterResponse,
-    ReportPdfParams
+    ReportPdfParams,
+    SpectralIndexMetadata,
+    ColormapMetadata,
+    SPECTRAL_INDICES_METADATA,
+    COLORMAPS_METADATA,
+    get_spectral_index_metadata,
+    list_spectral_indices,
+    get_colormap_metadata,
+    list_colormaps,
+    classify_dnbr,
+    API_ROUTE_CONTRACTS
 )
 from app.config import settings
 
@@ -115,11 +132,15 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             y=3165,
             index=SpectralIndex.NDMI,
             rescale="-0.2,0.6",
-            colormap=TileColormap.SPECTRAL
+            colormap=TileColormap.SPECTRAL,
+            pre="2025-08-15",
+            post="2026-08-20"
         )
         self.assertEqual(params.z, 13)
         self.assertEqual(params.index, SpectralIndex.NDMI)
         self.assertEqual(params.colormap, TileColormap.SPECTRAL)
+        self.assertEqual(params.pre, "2025-08-15")
+        self.assertEqual(params.post, "2026-08-20")
 
     def test_contract_2_burn_severity_models(self):
         """Verify Contract 2 USGS FIREMON pre/post differenced burn severity models."""
@@ -289,6 +310,24 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             sent_at="2026-09-15T20:20:01Z"
         )
         self.assertEqual(payload.alert.id, "ALT-20260915-01")
+
+        # Verify proactive SSE streaming alert models
+        self.assertEqual(ProactiveAlertType.JARVIS.value, "jarvis_proactive_alert")
+        self.assertEqual(ProactiveAlertType.SATELLITE.value, "satellite_anomaly_alert")
+
+        jarvis_alert = ProactiveJarvisAlert(
+            message="URGENT: Discharge threshold breached at San Luis Creek.",
+            site="San Luis Dam",
+            data={"discharge_cfs": 2450.0}
+        )
+        self.assertEqual(jarvis_alert.type, ProactiveAlertType.JARVIS)
+        self.assertEqual(jarvis_alert.type, "jarvis_proactive_alert")
+        self.assertEqual(jarvis_alert.site, "San Luis Dam")
+
+        sat_alert = SatelliteAnomalyAlert(data=alert)
+        self.assertEqual(sat_alert.type, ProactiveAlertType.SATELLITE)
+        self.assertEqual(sat_alert.type, "satellite_anomaly_alert")
+        self.assertEqual(sat_alert.data.metric, "NDMI")
 
     def test_settings_config(self):
         """Verify settings loaded with modern Pydantic SettingsConfigDict and paths."""
@@ -483,6 +522,14 @@ class TestGIOSCoreSchemas(unittest.TestCase):
 
     def test_auth_and_user_response_schemas(self):
         """Verify authentication TokenResponse, UserResponse, and UserRegisterResponse schemas."""
+        login_req = UserLoginRequest(username="admin", password="secretpassword")
+        self.assertEqual(login_req.username, "admin")
+        self.assertEqual(login_req.password, "secretpassword")
+
+        reg_req = UserRegisterRequest(username="new_operator", password="securepassword123", role="viewer")
+        self.assertEqual(reg_req.username, "new_operator")
+        self.assertEqual(reg_req.role, "viewer")
+
         token = TokenResponse(access_token="eyJhbGciOi...", token_type="bearer")
         self.assertEqual(token.token_type, "bearer")
 
@@ -604,6 +651,25 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(resp.total_count, 1)
         self.assertEqual(resp.events[0].id, "SEEPAGE-01")
 
+        # Verify HazardEvent alias compatibility
+        self.assertIs(HazardEvent, HazardEventDetail)
+        aliased_event = HazardEvent(**detail.model_dump())
+        self.assertEqual(aliased_event.id, "SEEPAGE-01")
+
+    def test_firemon_thresholds_contract(self):
+        """Verify USGS FIREMON standard thresholds and severity category ordering."""
+        self.assertEqual(len(FIREMON_THRESHOLDS), 5)
+        self.assertEqual(FIREMON_THRESHOLDS[0]["category"], "High Severity")
+        self.assertEqual(FIREMON_THRESHOLDS[0]["min_dnbr"], 0.660)
+        self.assertEqual(FIREMON_THRESHOLDS[1]["category"], "Moderate-High Severity")
+        self.assertEqual(FIREMON_THRESHOLDS[1]["min_dnbr"], 0.440)
+        self.assertEqual(FIREMON_THRESHOLDS[2]["category"], "Moderate-Low Severity")
+        self.assertEqual(FIREMON_THRESHOLDS[2]["min_dnbr"], 0.270)
+        self.assertEqual(FIREMON_THRESHOLDS[3]["category"], "Low Severity")
+        self.assertEqual(FIREMON_THRESHOLDS[3]["min_dnbr"], 0.100)
+        self.assertEqual(FIREMON_THRESHOLDS[4]["category"], "Unburned / Low Change")
+        self.assertEqual(FIREMON_THRESHOLDS[4]["min_dnbr"], -0.100)
+
     def test_drone_response_models(self):
         """Verify DroneUploadResponse, DroneMissionScheduleResponse, and list responses."""
         ortho = DroneOrthomosaicMetadata(
@@ -676,6 +742,90 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         )
         self.assertEqual(vector_layer.type, "FeatureCollection")
         self.assertEqual(vector_layer.features[0].geometry["coordinates"], [-121.06, 37.052])
+
+    def test_spectral_indices_metadata_contract(self):
+        """Verify certified biophysical spectral index metadata models and catalog lookup."""
+        self.assertEqual(len(SPECTRAL_INDICES_METADATA), 11)
+        for idx in SpectralIndex:
+            self.assertIn(idx.value, SPECTRAL_INDICES_METADATA)
+            meta = SPECTRAL_INDICES_METADATA[idx.value]
+            self.assertIsInstance(meta, SpectralIndexMetadata)
+            self.assertEqual(meta.key, idx)
+            self.assertTrue(len(meta.bands) > 0)
+            self.assertTrue(len(meta.formula) > 0)
+
+        # Test lookup helper with string and enum
+        ndmi_meta = get_spectral_index_metadata("ndmi")
+        self.assertIsNotNone(ndmi_meta)
+        self.assertEqual(ndmi_meta.name, "NDMI")
+        self.assertEqual(ndmi_meta.default_colormap, TileColormap.SPECTRAL)
+        self.assertEqual(ndmi_meta.default_rescale, "-0.2,0.6")
+
+        ndvi_meta = get_spectral_index_metadata(SpectralIndex.NDVI)
+        self.assertIsNotNone(ndvi_meta)
+        self.assertEqual(ndvi_meta.name, "NDVI")
+        self.assertEqual(ndvi_meta.default_colormap, TileColormap.VIRIDIS)
+
+        self.assertIsNone(get_spectral_index_metadata("non_existent_index"))
+
+        # Test listing helper
+        all_indices = list_spectral_indices()
+        self.assertEqual(len(all_indices), 11)
+        self.assertIn("ndmi", [m.key.value for m in all_indices])
+
+    def test_colormaps_metadata_contract(self):
+        """Verify dynamic tile server colormap palette metadata and catalog lookup."""
+        self.assertEqual(len(COLORMAPS_METADATA), 8)
+        for cm in TileColormap:
+            self.assertIn(cm.value, COLORMAPS_METADATA)
+            meta = COLORMAPS_METADATA[cm.value]
+            self.assertIsInstance(meta, ColormapMetadata)
+            self.assertEqual(meta.key, cm)
+            self.assertTrue(len(meta.label) > 0)
+
+        # Test lookup helper with string and enum
+        spectral_meta = get_colormap_metadata("spectral")
+        self.assertIsNotNone(spectral_meta)
+        self.assertEqual(spectral_meta.key, TileColormap.SPECTRAL)
+
+        viridis_meta = get_colormap_metadata(TileColormap.VIRIDIS)
+        self.assertIsNotNone(viridis_meta)
+        self.assertEqual(viridis_meta.key, TileColormap.VIRIDIS)
+
+        self.assertIsNone(get_colormap_metadata("unknown_colormap"))
+
+        # Test listing helper
+        all_colormaps = list_colormaps()
+        self.assertEqual(len(all_colormaps), 8)
+        self.assertIn("spectral", [m.key.value for m in all_colormaps])
+
+    def test_classify_dnbr_scalar_parity(self):
+        """Verify scalar delta-NBR classifier parity across all USGS FIREMON thresholds."""
+        self.assertEqual(classify_dnbr(0.750)["category"], "High Severity")
+        self.assertEqual(classify_dnbr(0.660)["category"], "High Severity")
+        self.assertEqual(classify_dnbr(0.500)["category"], "Moderate-High Severity")
+        self.assertEqual(classify_dnbr(0.440)["category"], "Moderate-High Severity")
+        self.assertEqual(classify_dnbr(0.350)["category"], "Moderate-Low Severity")
+        self.assertEqual(classify_dnbr(0.270)["category"], "Moderate-Low Severity")
+        self.assertEqual(classify_dnbr(0.180)["category"], "Low Severity")
+        self.assertEqual(classify_dnbr(0.100)["category"], "Low Severity")
+        self.assertEqual(classify_dnbr(0.050)["category"], "Unburned / Low Change")
+        self.assertEqual(classify_dnbr(-0.150)["category"], "Unburned / Low Change")
+        self.assertEqual(classify_dnbr(None)["category"], "Unburned / Low Change")
+        self.assertEqual(classify_dnbr(float("nan"))["category"], "Unburned / Low Change")
+
+    def test_api_route_contracts_coverage(self):
+        """Verify canonical API route contracts dictionary matches required system routes."""
+        self.assertIn("health", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_dynamic", API_ROUTE_CONTRACTS)
+        self.assertIn("wildfire_burn_severity", API_ROUTE_CONTRACTS)
+        self.assertIn("wildfire_dnbr_tile", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_pixel_probe", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_zonal_stats", API_ROUTE_CONTRACTS)
+        self.assertIn("drone_missions", API_ROUTE_CONTRACTS)
+        self.assertIn("agent_chat", API_ROUTE_CONTRACTS)
+        self.assertIn("spatial_buffer", API_ROUTE_CONTRACTS)
+        self.assertIn("reports_pdf", API_ROUTE_CONTRACTS)
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

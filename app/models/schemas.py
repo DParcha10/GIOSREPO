@@ -9,6 +9,7 @@ Comprehensive shared contracts for GIOS v2.5:
 - Climatological MAD Seasonality & Theil-Sen Trend Analysis
 - Automated Hazard Alerting & Webhooks
 """
+import math
 from enum import Enum
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Union
@@ -78,6 +79,232 @@ class DroneStatus(str, Enum):
     PROCESSING = "PROCESSING"
     FAILED = "FAILED"
 
+class ProactiveAlertType(str, Enum):
+    """Proactive alert types streamed by backend over SSE (/api/v1/agent/stream-alerts)."""
+    JARVIS = "jarvis_proactive_alert"
+    SATELLITE = "satellite_anomaly_alert"
+
+# ============================================================================
+# SHARED METADATA MODELS & CATALOGS (BIOPHYSICAL INDICES & COLORMAPS)
+# ============================================================================
+
+class SpectralIndexMetadata(BaseModel):
+    """Certified biophysical spectral index metadata matching frontend configuration."""
+    key: SpectralIndex = Field(..., description="Spectral index identifier enum")
+    name: str = Field(..., description="Short index code (e.g. NDMI, NDVI)")
+    label: str = Field(..., description="Full descriptive name")
+    domain: str = Field(..., description="Primary hazard or biophysical domain")
+    formula: str = Field(..., description="Mathematical formulation")
+    bands: List[str] = Field(default_factory=list, description="Primary Sentinel-2 / Landsat spectral bands utilized")
+    default_colormap: Optional[TileColormap] = Field(default=None, description="Recommended default colormap palette")
+    default_rescale: str = Field(default="-1.0,1.0", description="Recommended default min,max linear rescale range")
+    unit: str = Field(default="dimensionless", description="Physical unit of measurement")
+    description: str = Field(..., description="Physical definition and hazard monitoring utility")
+
+class ColormapMetadata(BaseModel):
+    """Raster colormap palette metadata matching dynamic XYZ tile server capabilities."""
+    key: TileColormap = Field(..., description="Colormap palette identifier enum")
+    label: str = Field(..., description="Descriptive colormap name with typical application domain")
+    description: Optional[str] = Field(default=None, description="Detailed palette description")
+
+SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
+    "ndmi": SpectralIndexMetadata(
+        key=SpectralIndex.NDMI,
+        name="NDMI",
+        label="Normalized Difference Moisture Index",
+        domain="Seepage & Canopy Moisture",
+        formula="(NIR - SWIR1) / (NIR + SWIR1)",
+        bands=["B08", "B11"],
+        default_colormap=TileColormap.SPECTRAL,
+        default_rescale="-0.2,0.6",
+        unit="dimensionless",
+        description="Sensitive to water content in vegetation canopy and soil moisture along embankment toes."
+    ),
+    "ndvi": SpectralIndexMetadata(
+        key=SpectralIndex.NDVI,
+        name="NDVI",
+        label="Normalized Difference Vegetation Index",
+        domain="Vegetation Health & Biomass",
+        formula="(NIR - Red) / (NIR + Red)",
+        bands=["B08", "B04"],
+        default_colormap=TileColormap.VIRIDIS,
+        default_rescale="-0.1,0.85",
+        unit="dimensionless",
+        description="Evaluates live green plant biomass, chlorophyll density, and vegetative vigor."
+    ),
+    "mndwi": SpectralIndexMetadata(
+        key=SpectralIndex.MNDWI,
+        name="MNDWI",
+        label="Modified Normalized Difference Water Index",
+        domain="Surface Inundation & Flood Extent",
+        formula="(Green - SWIR1) / (Green + SWIR1)",
+        bands=["B03", "B11"],
+        default_colormap=TileColormap.TURBO,
+        default_rescale="-0.3,0.5",
+        unit="dimensionless",
+        description="Suppresses built-up urban features while amplifying open water bodies and flood inundation."
+    ),
+    "ndci": SpectralIndexMetadata(
+        key=SpectralIndex.NDCI,
+        name="NDCI",
+        label="Normalized Difference Chlorophyll Index",
+        domain="Harmful Algae Blooms (HAB)",
+        formula="(RedEdge1 - Red) / (RedEdge1 + Red)",
+        bands=["B05", "B04"],
+        default_colormap=TileColormap.VIRIDIS,
+        default_rescale="-0.1,0.5",
+        unit="dimensionless",
+        description="Quantifies chlorophyll-a concentration and microcystin bloom risk in inland reservoirs."
+    ),
+    "nbr": SpectralIndexMetadata(
+        key=SpectralIndex.NBR,
+        name="NBR",
+        label="Normalized Burn Ratio",
+        domain="Fire Scars & Fuel Moisture",
+        formula="(NIR - SWIR2) / (NIR + SWIR2)",
+        bands=["B08", "B12"],
+        default_colormap=TileColormap.TURBO,
+        default_rescale="-0.4,0.8",
+        unit="dimensionless",
+        description="Highlights burned areas and high-heat signatures by contrasting NIR and SWIR2 reflectance."
+    ),
+    "evi": SpectralIndexMetadata(
+        key=SpectralIndex.EVI,
+        name="EVI",
+        label="Enhanced Vegetation Index",
+        domain="Dense Canopy Vegetation",
+        formula="2.5 * (NIR - Red) / (NIR + 6*Red - 7.5*Blue + 1)",
+        bands=["B08", "B04", "B02"],
+        default_colormap=TileColormap.VIRIDIS,
+        default_rescale="-0.1,0.9",
+        unit="dimensionless",
+        description="Atmospherically corrected vegetation index that resists saturation in high-biomass regions."
+    ),
+    "savi": SpectralIndexMetadata(
+        key=SpectralIndex.SAVI,
+        name="SAVI",
+        label="Soil-Adjusted Vegetation Index",
+        domain="Arid & Sparse Vegetation",
+        formula="(1 + L) * (NIR - Red) / (NIR + Red + L)",
+        bands=["B08", "B04"],
+        default_colormap=TileColormap.VIRIDIS,
+        default_rescale="-0.1,0.8",
+        unit="dimensionless",
+        description="Incorporates a soil brightness correction factor (L=0.5) for arid soils and embankments."
+    ),
+    "lst": SpectralIndexMetadata(
+        key=SpectralIndex.LST,
+        name="LST",
+        label="Land Surface Temperature",
+        domain="Thermal & Geotechnical Hotspots",
+        formula="Landsat B10 Radiance -> Celsius",
+        bands=["B10"],
+        default_colormap=TileColormap.MAGMA,
+        default_rescale="10.0,45.0",
+        unit="°C",
+        description="Calibrated radiometric surface skin temperature in degrees Celsius from thermal infrared."
+    ),
+    "rgb": SpectralIndexMetadata(
+        key=SpectralIndex.RGB,
+        name="True Color (RGB)",
+        label="Natural Color Composite",
+        domain="Visual Baseline Inspection",
+        formula="Red (B04), Green (B03), Blue (B02)",
+        bands=["B04", "B03", "B02"],
+        default_colormap=None,
+        default_rescale="0,255",
+        unit="reflectance",
+        description="Calibrated surface reflectance composite simulating natural human eye perception."
+    ),
+    "dnbr": SpectralIndexMetadata(
+        key=SpectralIndex.DNBR,
+        name="ΔNBR",
+        label="Differenced Normalized Burn Ratio",
+        domain="USGS FIREMON Burn Severity",
+        formula="NBR_pre - NBR_post",
+        bands=["B08", "B12"],
+        default_colormap=TileColormap.TURBO,
+        default_rescale="-0.2,0.8",
+        unit="dimensionless",
+        description="Differenced NBR assessing fire severity and biomass loss between pre- and post-fire scenes."
+    ),
+    "rdnbr": SpectralIndexMetadata(
+        key=SpectralIndex.RDNBR,
+        name="RdNBR",
+        label="Relative Differenced Normalized Burn Ratio",
+        domain="High-Slope Fire Severity",
+        formula="dNBR / sqrt(|NBR_pre|)",
+        bands=["B08", "B12"],
+        default_colormap=TileColormap.TURBO,
+        default_rescale="-0.5,1.5",
+        unit="dimensionless",
+        description="Relative differenced NBR normalized by pre-fire canopy density for steep terrain assessment."
+    ),
+}
+
+COLORMAPS_METADATA: Dict[str, ColormapMetadata] = {
+    "spectral": ColormapMetadata(key=TileColormap.SPECTRAL, label="Spectral (Moisture & Hazard Detection)", description="High-contrast diverging palette for soil moisture and seepage"),
+    "viridis": ColormapMetadata(key=TileColormap.VIRIDIS, label="Viridis (Vegetation & Biophysical Health)", description="Perceptually uniform sequential palette for vegetation vigor"),
+    "turbo": ColormapMetadata(key=TileColormap.TURBO, label="Turbo (Thermal & High-Contrast Severity)", description="Rainbow alternative with improved perceptual linearity for wildfire and inundation"),
+    "rdylbu": ColormapMetadata(key=TileColormap.RDYLBU, label="Red-Yellow-Blue (Diverging Water & Drought)", description="Diverging palette for drought stress and hydrological anomalies"),
+    "terrain": ColormapMetadata(key=TileColormap.TERRAIN, label="Terrain (Topography & Physical Elevation)", description="Earth-tone palette suitable for digital elevation models and bathymetry"),
+    "magma": ColormapMetadata(key=TileColormap.MAGMA, label="Magma (Thermal Infrared & Radiation)", description="High-radiance dark-to-bright palette for Land Surface Temperature"),
+    "inferno": ColormapMetadata(key=TileColormap.INFERNO, label="Inferno (High Radiance / Active Fire)", description="Saturated thermal palette for high-intensity wildfire and hotspot tracking"),
+    "cividis": ColormapMetadata(key=TileColormap.CIVIDIS, label="Cividis (Colorblind Accessible)", description="Color-vision-deficiency optimized palette for universal accessibility"),
+}
+
+def get_spectral_index_metadata(index: Union[str, SpectralIndex]) -> Optional[SpectralIndexMetadata]:
+    """Look up full metadata specification for a spectral index."""
+    key = index.value if hasattr(index, "value") else str(index).lower().strip()
+    return SPECTRAL_INDICES_METADATA.get(key)
+
+def list_spectral_indices() -> List[SpectralIndexMetadata]:
+    """Return all certified biophysical spectral index metadata specifications."""
+    return list(SPECTRAL_INDICES_METADATA.values())
+
+def get_colormap_metadata(colormap: Union[str, TileColormap]) -> Optional[ColormapMetadata]:
+    """Look up full metadata specification for a tile colormap palette."""
+    key = colormap.value if hasattr(colormap, "value") else str(colormap).lower().strip()
+    return COLORMAPS_METADATA.get(key)
+
+def list_colormaps() -> List[ColormapMetadata]:
+    """Return all supported dynamic tile colormap metadata specifications."""
+    return list(COLORMAPS_METADATA.values())
+
+API_ROUTE_CONTRACTS: Dict[str, str] = {
+    "health": "/health",
+    "auth_token": "/api/v1/auth/token",
+    "auth_register": "/api/v1/auth/register",
+    "auth_me": "/api/v1/auth/me",
+    "events": "/api/v1/events",
+    "event_detail": "/api/v1/events/{event_id}",
+    "analysis_indices": "/api/v1/analysis/indices",
+    "analysis_pixel_probe": "/api/v1/analysis/pixel-probe",
+    "analysis_zonal_stats": "/api/v1/analysis/zonal-stats",
+    "tiles_dynamic": "/api/v1/tiles/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "wildfire_burn_severity": "/api/v1/wildfire/burn-severity",
+    "wildfire_dnbr_tile": "/api/v1/tiles/wildfire/dnbr/{z}/{x}/{y}.png",
+    "drone_missions": "/api/v1/drone/missions",
+    "drone_schedule": "/api/v1/drone/missions/schedule",
+    "drone_orthomosaics": "/api/v1/drone/orthomosaics",
+    "drone_register": "/api/v1/drone/register",
+    "drone_upload": "/api/v1/drone/upload",
+    "drone_tile": "/api/v1/drone/{ortho_id}/tiles/{z}/{x}/{y}.png",
+    "timeseries_trend": "/api/v1/timeseries/trend",
+    "agent_chat": "/api/v1/agent/chat",
+    "agent_stream_alerts": "/api/v1/agent/stream-alerts",
+    "agent_trigger_mock_alert": "/api/v1/agent/trigger-mock-alert",
+    "spatial_buffer": "/api/v1/spatial/buffer",
+    "spatial_layers": "/api/v1/spatial/layers/{layer_id}",
+    "reports_pdf": "/api/v1/reports/pdf",
+    "data_search": "/api/v1/data/search",
+    "integration_usgs": "/api/v1/integration/usgs/{site_id}",
+    "satellite_gee": "/api/v1/satellite/gee",
+    "satellite_sentinel": "/api/v1/satellite/sentinel",
+    "iot_ingest": "/api/v1/iot/ingest",
+    "iot_data": "/api/v1/iot/data",
+}
+
 # ============================================================================
 # CONTRACT 1: DYNAMIC XYZ TILE SERVER SCHEMAS
 # ============================================================================
@@ -92,6 +319,8 @@ class DynamicTileParams(BaseModel):
     index: Optional[SpectralIndex] = Field(default=SpectralIndex.RGB, description="Spectral index (e.g. ndvi, ndmi, rgb)")
     rescale: Optional[str] = Field(default=None, description="Rescale range min,max (e.g. -0.2,0.6 or 2,98)")
     colormap: Optional[TileColormap] = Field(default=TileColormap.SPECTRAL, description="Colormap palette name")
+    pre: Optional[str] = Field(default=None, description="Pre-event baseline date for differenced burn severity tiles (YYYY-MM-DD)")
+    post: Optional[str] = Field(default=None, description="Post-event assessment date for differenced burn severity tiles (YYYY-MM-DD)")
 
 # ============================================================================
 # CONTRACT 2: USGS FIREMON PRE/POST DIFFERENCED BURN SEVERITY SCHEMAS
@@ -122,6 +351,51 @@ class BurnSeverityCategoryDetail(BaseModel):
     min_dnbr: float = Field(..., description="Minimum delta-NBR threshold")
     percentage: float = Field(..., description="Percentage of affected area")
     hectares: float = Field(..., description="Area in hectares")
+
+FIREMON_THRESHOLDS: List[Dict[str, Any]] = [
+    {
+        "category": "High Severity",
+        "min_dnbr": 0.660,
+        "color": "#7f0000",
+        "description": "Deep canopy mortality, total ground char, high post-fire erosion susceptibility."
+    },
+    {
+        "category": "Moderate-High Severity",
+        "min_dnbr": 0.440,
+        "color": "#d7301f",
+        "description": "Substantial canopy scorched, understory consumed."
+    },
+    {
+        "category": "Moderate-Low Severity",
+        "min_dnbr": 0.270,
+        "color": "#fc8d59",
+        "description": "Mixed surface fire, light scorch, localized duff consumption."
+    },
+    {
+        "category": "Low Severity",
+        "min_dnbr": 0.100,
+        "color": "#fdbb84",
+        "description": "Surface char on litter, minimal crown or overstory scorch."
+    },
+    {
+        "category": "Unburned / Low Change",
+        "min_dnbr": -0.100,
+        "color": "#2ca25f",
+        "description": "No detectable fire damage or enhanced post-event vegetation regrowth."
+    },
+]
+
+def classify_dnbr(dnbr: Optional[float]) -> Dict[str, Any]:
+    """Classifies a scalar delta-NBR value according to USGS FIREMON standards.
+    Parity implementation with frontend classifyDnbr() in constants.js.
+    """
+    if dnbr is None or (isinstance(dnbr, (float, int)) and math.isnan(dnbr)):
+        return FIREMON_THRESHOLDS[-1]
+    for level in FIREMON_THRESHOLDS:
+        if dnbr >= level["min_dnbr"]:
+            return level
+    return FIREMON_THRESHOLDS[-1]
+
 
 class BurnSeverityCategory(BaseModel):
     """Legacy severity category model for backwards compatibility."""
@@ -336,14 +610,14 @@ class AlertWebhookPayload(BaseModel):
 
 class ProactiveJarvisAlert(BaseModel):
     """Proactive emergency briefing dispatched by JARVIS LLM over SSE stream."""
-    type: str = Field(default="jarvis_proactive_alert", description="Proactive alert event type")
+    type: Union[ProactiveAlertType, str] = Field(default=ProactiveAlertType.JARVIS, description="Proactive alert event type")
     message: str = Field(..., description="Emergency briefing narrative")
     site: str = Field(..., description="Monitored site or infrastructure asset name")
     data: Dict[str, Any] = Field(default_factory=dict, description="Associated sensor or telemetry payload")
 
 class SatelliteAnomalyAlert(BaseModel):
     """Proactive satellite radiometric anomaly alert dispatched over SSE stream."""
-    type: str = Field(default="satellite_anomaly_alert", description="Satellite alert event type")
+    type: Union[ProactiveAlertType, str] = Field(default=ProactiveAlertType.SATELLITE, description="Satellite alert event type")
     data: AlertRecord = Field(..., description="Detected radiometric anomaly record")
 
 # ============================================================================
@@ -397,6 +671,9 @@ class HazardEventDetail(BaseModel):
     hazard_type: str = Field(..., description="Specific hazard classification")
     drone_status: str = Field(default="READY", description="Associated UAS mission status")
     description: str = Field(..., description="Detailed situation narrative")
+
+# Alias for HazardEventDetail to match frontend JSDoc contracts
+HazardEvent = HazardEventDetail
 
 class EventCreateRequest(BaseModel):
     """Hazard event creation payload."""

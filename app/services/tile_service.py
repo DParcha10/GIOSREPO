@@ -75,7 +75,9 @@ class TileService:
         y: int,
         index: str = "rgb",
         rescale: Optional[str] = None,
-        colormap: str = "spectral"
+        colormap: str = "spectral",
+        pre: Optional[str] = None,
+        post: Optional[str] = None
     ) -> bytes:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
@@ -84,13 +86,21 @@ class TileService:
         rescale_clean = (rescale or "default").replace(",", "_")
 
         # 1. Check if drone request
-        if col_clean in {"drone", "drone-ortho"}:
+        if col_clean in {"drone", "drone-ortho"} or "drone" in col_clean:
             return drone_service.get_tile(item_id, z, x, y)
+
+        # Handle wildfire collection differenced burn severity
+        if col_clean == "wildfire" and idx_clean == "rgb":
+            if item_id.lower() in {"dnbr", "rdnbr"}:
+                idx_clean = item_id.lower()
+            else:
+                idx_clean = "dnbr"
 
         # 2. Check disk cache
         cache_subdir = os.path.join(TILE_CACHE_DIR, col_clean, item_id, str(z), str(x))
         os.makedirs(cache_subdir, exist_ok=True)
-        cache_file = os.path.join(cache_subdir, f"{y}_{idx_clean}_{cmap_clean}_{rescale_clean}.png")
+        date_tag = f"_{pre or 'nopre'}_{post or 'nopost'}" if (pre or post) else ""
+        cache_file = os.path.join(cache_subdir, f"{y}_{idx_clean}_{cmap_clean}_{rescale_clean}{date_tag}.png")
 
         if os.path.exists(cache_file):
             try:
@@ -173,6 +183,9 @@ class TileService:
             else:
                 vmin, vmax = DEFAULT_INDEX_RANGES.get(idx_clean, (0.0, 1.0))
 
+            if vmax <= vmin:
+                vmax = vmin + 1e-4
+
             norm = np.clip((val - vmin) / (vmax - vmin + 1e-6), 0.0, 1.0)
             cmap = self.get_colormap(cmap_clean)
             rgba = (cmap(norm) * 255).astype(np.uint8)
@@ -186,7 +199,15 @@ class TileService:
             img.save(buf, format="PNG", optimize=True)
             png_bytes = buf.getvalue()
 
-        # Free image memory buffers
+        # Free memory buffers
+        del gx
+        del gy
+        del xx
+        del yy
+        del spatial_seed
+        del base_variation
+        if 'val' in locals():
+            del val
         del img
         del rgba
 

@@ -179,6 +179,48 @@ export const SATELLITE_COLLECTIONS = [
 ];
 
 /**
+ * Satellite and aerial imagery collection identifiers matching SatelliteCollection enum.
+ */
+export const COLLECTIONS = {
+  SENTINEL_2: 'sentinel-2-l2a',
+  LANDSAT_C2_L2: 'landsat-c2-l2',
+  DRONE_ORTHO: 'drone-ortho',
+  DRONE: 'drone',
+  WILDFIRE: 'wildfire'
+};
+
+/**
+ * Spectral index identifiers matching SpectralIndex enum.
+ */
+export const SPECTRAL_INDEX_KEYS = {
+  NDVI: 'ndvi',
+  NDMI: 'ndmi',
+  NDCI: 'ndci',
+  MNDWI: 'mndwi',
+  LST: 'lst',
+  NBR: 'nbr',
+  EVI: 'evi',
+  SAVI: 'savi',
+  RGB: 'rgb',
+  DNBR: 'dnbr',
+  RDNBR: 'rdnbr'
+};
+
+/**
+ * Colormap identifiers matching TileColormap enum.
+ */
+export const COLORMAP_KEYS = {
+  SPECTRAL: 'spectral',
+  VIRIDIS: 'viridis',
+  TURBO: 'turbo',
+  RDYLBU: 'rdylbu',
+  TERRAIN: 'terrain',
+  MAGMA: 'magma',
+  INFERNO: 'inferno',
+  CIVIDIS: 'cividis'
+};
+
+/**
  * USGS FIREMON Two-Scene Differenced Burn Severity Classification Standard.
  */
 export const FIREMON_SEVERITY_LEVELS = [
@@ -218,6 +260,60 @@ export const FIREMON_SEVERITY_LEVELS = [
     description: 'No detectable fire damage or enhanced post-event vegetation regrowth.'
   }
 ];
+
+/**
+ * Classifies a delta-NBR value according to USGS FIREMON standards.
+ * 
+ * @param {number} dnbr - Calculated delta-NBR value
+ * @returns {typeof FIREMON_SEVERITY_LEVELS[0]} Matching severity level configuration
+ */
+export const classifyDnbr = (dnbr) => {
+  if (dnbr === null || dnbr === undefined || isNaN(dnbr)) {
+    return FIREMON_SEVERITY_LEVELS[FIREMON_SEVERITY_LEVELS.length - 1];
+  }
+  for (const level of FIREMON_SEVERITY_LEVELS) {
+    if (dnbr >= level.minDnbr) {
+      return level;
+    }
+  }
+  return FIREMON_SEVERITY_LEVELS[FIREMON_SEVERITY_LEVELS.length - 1];
+};
+
+/**
+ * Retrieves metadata for a spectral index by key.
+ * 
+ * @param {string} key - Spectral index key (e.g. 'ndmi', 'ndvi')
+ * @returns {typeof SPECTRAL_INDICES[0]|undefined}
+ */
+export const getIndexMetadata = (key) => {
+  if (!key) return undefined;
+  return SPECTRAL_INDICES.find((idx) => idx.key.toLowerCase() === key.toLowerCase());
+};
+
+/**
+ * Retrieves metadata for a colormap by key.
+ * 
+ * @param {string} key - Colormap key (e.g. 'spectral', 'viridis')
+ * @returns {typeof COLORMAPS[0]|undefined}
+ */
+export const getColormapMetadata = (key) => {
+  if (!key) return undefined;
+  return COLORMAPS.find((cm) => cm.key.toLowerCase() === key.toLowerCase());
+};
+
+/**
+ * Retrieves all registered spectral indices metadata.
+ * 
+ * @returns {typeof SPECTRAL_INDICES}
+ */
+export const listSpectralIndices = () => SPECTRAL_INDICES;
+
+/**
+ * Retrieves all registered colormaps metadata.
+ * 
+ * @returns {typeof COLORMAPS}
+ */
+export const listColormaps = () => COLORMAPS;
 
 /**
  * Map Viewport Defaults.

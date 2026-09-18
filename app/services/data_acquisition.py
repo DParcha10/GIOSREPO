@@ -21,13 +21,22 @@ class DataAcquisitionService:
     BAND_MAP = {
         "sentinel-2-l2a": {
             "blue": "B02", "green": "B03", "red": "B04",
+            "rededge": "B05", "re": "B05",
             "rededge1": "B05", "rededge2": "B06", "rededge3": "B07",
-            "nir": "B08", "swir1": "B11", "swir2": "B12", "scl": "SCL"
+            "nir": "B08", "swir1": "B11", "swir2": "B12", "scl": "SCL",
+            "b02": "B02", "b03": "B03", "b04": "B04",
+            "b05": "B05", "b06": "B06", "b07": "B07",
+            "b08": "B08", "b8a": "B8A", "b11": "B11", "b12": "B12",
+            "b2": "B02", "b3": "B03", "b4": "B04", "b5": "B05", "b8": "B08"
         },
         "landsat-c2-l2": {
+            "coastal": "coastal", "b1": "coastal",
             "blue": "blue", "green": "green", "red": "red",
             "nir": "nir08", "swir1": "swir16", "swir2": "swir22",
-            "thermal": "lwir11", "qa_pixel": "qa_pixel"
+            "thermal": "lwir11", "qa_pixel": "qa_pixel",
+            "b2": "blue", "b3": "green", "b4": "red",
+            "b5": "nir08", "b6": "swir16", "b7": "swir22",
+            "b10": "lwir11", "lwir": "lwir11", "qa": "qa_pixel"
         }
     }
 
@@ -137,6 +146,16 @@ class DataAcquisitionService:
             target_res = resolution or 30.0
             default_bands = ["blue", "green", "red", "nir08", "swir16", "swir22", "lwir11", "qa_pixel"]
         target_bands = list(bands) if bands else default_bands
+        # Map common band aliases to canonical sensor asset names
+        col_key = "sentinel-2-l2a" if "sentinel" in collection.lower() else "landsat-c2-l2"
+        mapping = self.BAND_MAP.get(col_key, {})
+        canonical_target_bands = []
+        for b in target_bands:
+            b_norm = mapping.get(b.lower(), b)
+            if b_norm not in canonical_target_bands:
+                canonical_target_bands.append(b_norm)
+        target_bands = canonical_target_bands
+
         if apply_mask:
             if "sentinel" in collection.lower():
                 if not any(b.upper() == "SCL" for b in target_bands):
@@ -153,20 +172,48 @@ class DataAcquisitionService:
                 except Exception:
                     pass
                 stac_items_to_load.append(it)
-            elif isinstance(it, dict) and "_stac_item" in it:
-                item_obj = it["_stac_item"]
-                try:
-                    pc.sign_inplace(item_obj)
-                except Exception:
-                    pass
-                stac_items_to_load.append(item_obj)
+            elif isinstance(it, dict):
+                item_obj = it.get("_stac_item")
+                if item_obj is None and "assets" in it:
+                    try:
+                        from pystac import Item
+                        item_obj = Item.from_dict(it)
+                    except Exception:
+                        item_obj = None
+                if item_obj is not None:
+                    try:
+                        pc.sign_inplace(item_obj)
+                    except Exception:
+                        pass
+                    stac_items_to_load.append(item_obj)
+
+        # Normalize bbox to standard (min_lon, min_lat, max_lon, max_lat)
+        if bbox and len(bbox) == 4:
+            b0, b1, b2, b3 = bbox
+            if b0 == b2:
+                b0 -= 0.005
+                b2 += 0.005
+            if b1 == b3:
+                b1 -= 0.005
+                b3 += 0.005
+            bbox = (
+                min(b0, b2),
+                min(b1, b3),
+                max(b0, b2),
+                max(b1, b3)
+            )
 
         # Memory-conscious resolution bounding: prevent multi-gigabyte allocations on regional extents
         active_bbox = bbox
         if not active_bbox and len(stac_items_to_load) > 0:
             item_bbox = getattr(stac_items_to_load[0], "bbox", None)
             if item_bbox and len(item_bbox) == 4:
-                active_bbox = tuple(item_bbox)
+                active_bbox = (
+                    min(item_bbox[0], item_bbox[2]),
+                    min(item_bbox[1], item_bbox[3]),
+                    max(item_bbox[0], item_bbox[2]),
+                    max(item_bbox[1], item_bbox[3])
+                )
 
         if active_bbox:
             min_lon, min_lat, max_lon, max_lat = active_bbox
@@ -211,7 +258,7 @@ class DataAcquisitionService:
                         bands=target_bands,
                         crs=crs,
                         resolution=target_res,
-                        bbox=bbox,
+                        bbox=bbox or active_bbox,
                         resampling=resampling,
                         chunks={"x": 512, "y": 512},
                         dtype="float32"
@@ -276,8 +323,8 @@ class DataAcquisitionService:
         x_coords = np.linspace(mx_min, mx_max, nx)
         y_coords = np.linspace(my_max, my_min, ny)
 
-        xx, yy = np.meshgrid(np.linspace(0, 1, nx), np.linspace(0, 1, ny))
-        gradient = xx * 0.4 + yy * 0.3
+        xx, yy = np.meshgrid(np.linspace(0, 1, nx, dtype=np.float32), np.linspace(0, 1, ny, dtype=np.float32))
+        gradient = xx * np.float32(0.4) + yy * np.float32(0.3)
 
         data_vars = {}
         is_sentinel = "sentinel" in collection.lower()
@@ -296,9 +343,9 @@ class DataAcquisitionService:
                     raw = 1350 + gradient * 500
                 elif b_clean in {"B04", "RED"}:
                     raw = 1300 + gradient * 450
-                elif b_clean in {"B05", "REDEDGE1"}:
+                elif b_clean in {"B05", "REDEDGE1", "REDEDGE", "RE"}:
                     raw = 1800 + gradient * 700
-                elif b_clean in {"B08", "NIR"}:
+                elif b_clean in {"B08", "NIR", "B8A"}:
                     raw = 3800 + gradient * 1200
                 elif b_clean in {"B11", "SWIR1"}:
                     raw = 2200 + gradient * 800
@@ -322,13 +369,15 @@ class DataAcquisitionService:
                     raw = 14000 + gradient * 4000
                 elif b_low in {"swir22", "swir2", "b7"}:
                     raw = 11000 + gradient * 3000
-                elif b_low in {"lwir11", "b10", "thermal"}:
+                elif b_low in {"lwir11", "b10", "thermal", "band10", "lwir"}:
                     raw = np.full((ny, nx), 40000.0, dtype=np.float32)  # DN 40000 = +12.57 C
                 elif b_low in {"qa_pixel", "qa"}:
                     raw = np.zeros((ny, nx), dtype=np.uint16)
                     raw[0:4, 0:4] = (1 << 3)  # Cloud bit
                     data_vars[band] = (["y", "x"], raw)
                     continue
+                elif b_low in {"coastal", "b1"}:
+                    raw = 8500 + gradient * 1500
                 else:
                     raw = 10000 + gradient * 2000
                 data_vars[band] = (["y", "x"], raw.astype(np.float32))

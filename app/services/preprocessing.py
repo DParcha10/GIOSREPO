@@ -31,7 +31,7 @@ class PreprocessingService:
                     bit_mask |= (1 << b)
                 qa_clean = np.nan_to_num(qa, nan=0)
                 qa_int = qa_clean.astype(np.uint16)
-                raw_mask = (qa_int & bit_mask) != 0
+                raw_mask = ((qa_int & bit_mask) != 0) | np.isnan(qa)
                 del qa_clean
                 del qa_int
                 if not np.any(raw_mask):
@@ -47,8 +47,12 @@ class PreprocessingService:
                 
                 for var in list(dataset.data_vars):
                     if var != qa_name:
-                        # Memory-conscious: preserve float32 representation and prevent float64 upcast
-                        dataset[var] = dataset[var].where(~dilated_mask, other=np.float32(np.nan)).astype(np.float32)
+                        # Memory-conscious: in-place array assignment avoids xarray where() float64 upcasting and extra copies
+                        arr = dataset[var].values
+                        if not arr.flags.writeable or arr.dtype != np.float32:
+                            arr = arr.astype(np.float32, copy=True)
+                        arr[dilated_mask] = np.nan
+                        dataset[var] = (dataset[var].dims, arr)
                 del dilated_mask
                 gc.collect()
             return dataset
@@ -109,7 +113,7 @@ class PreprocessingService:
                     break
             if scl_name is not None:
                 scl = dataset[scl_name].values
-                raw_mask = np.isin(scl, list(invalid_classes))
+                raw_mask = np.isin(scl, list(invalid_classes)) | np.isnan(scl)
                 if not np.any(raw_mask):
                     # Zero clouds or invalid pixels in the scene: fast bypass without allocating memory
                     del raw_mask
@@ -123,8 +127,12 @@ class PreprocessingService:
                 
                 for var in list(dataset.data_vars):
                     if var != scl_name:
-                        # Memory-conscious: preserve float32 representation and prevent float64 upcast
-                        dataset[var] = dataset[var].where(~dilated_mask, other=np.float32(np.nan)).astype(np.float32)
+                        # Memory-conscious: in-place array assignment avoids xarray where() float64 upcasting and extra copies
+                        arr = dataset[var].values
+                        if not arr.flags.writeable or arr.dtype != np.float32:
+                            arr = arr.astype(np.float32, copy=True)
+                        arr[dilated_mask] = np.nan
+                        dataset[var] = (dataset[var].dims, arr)
                 del dilated_mask
                 gc.collect()
             return dataset
@@ -159,10 +167,14 @@ class PreprocessingService:
     def is_thermal_band(var_name: str) -> bool:
         """Determines if a band identifier represents a thermal infrared band."""
         v = var_name.lower().strip()
-        return v in {"lwir11", "b10", "thermal", "band10", "lwir", "b11_landsat"} or "thermal" in v
+        return v in {"lwir11", "b10", "thermal", "band10", "lwir", "b11_landsat"} or "thermal" in v or "lwir" in v
 
     @staticmethod
-    def apply_landsat_calibration(dn: Union[float, np.ndarray], is_thermal: bool = False) -> Union[float, np.ndarray]:
+    def apply_landsat_calibration(
+        dn: Union[float, np.ndarray],
+        is_thermal: bool = False,
+        inplace: bool = False
+    ) -> Union[float, np.ndarray]:
         """Calibrate Landsat C2 L2 DN to physical units:
         - Optical: DN * 0.0000275 - 0.2 (Surface Reflectance rho in [0, 1])
         - Thermal: (DN * 0.00341802 + 149.0) - 273.15 (Celsius T_C)
@@ -173,7 +185,11 @@ class PreprocessingService:
                 return (val * 0.00341802 + 149.0) - 273.15
             return val * 0.0000275 - 0.2
 
-        arr = np.array(dn, dtype=np.float32, copy=True)
+        if inplace and isinstance(dn, np.ndarray) and dn.dtype == np.float32 and dn.flags.writeable:
+            arr = dn
+        else:
+            arr = np.array(dn, dtype=np.float32, copy=True)
+
         if is_thermal:
             arr *= np.float32(0.00341802)
             arr += np.float32(149.0 - 273.15)
@@ -186,7 +202,8 @@ class PreprocessingService:
     def apply_sentinel_offset(
         dn: Union[float, np.ndarray],
         processing_baseline: Optional[Union[float, str]] = None,
-        acquisition_date: Optional[str] = None
+        acquisition_date: Optional[str] = None,
+        inplace: bool = False
     ) -> Union[float, np.ndarray]:
         """Apply Sentinel-2 PB 04.00+ radiometric offset:
         - PB >= 04.00 (or acquisitions >= Jan 25, 2022): rho = (DN - 1000) * 0.0001
@@ -211,7 +228,11 @@ class PreprocessingService:
                 return (val - 1000.0) * 0.0001
             return val * 0.0001
 
-        arr = np.array(dn, dtype=np.float32, copy=True)
+        if inplace and isinstance(dn, np.ndarray) and dn.dtype == np.float32 and dn.flags.writeable:
+            arr = dn
+        else:
+            arr = np.array(dn, dtype=np.float32, copy=True)
+
         if has_offset:
             arr -= np.float32(1000.0)
         arr *= np.float32(0.0001)
@@ -231,22 +252,33 @@ class PreprocessingService:
         is_landsat = "landsat" in col_lower
         is_sentinel = "sentinel" in col_lower
 
+        pb = processing_baseline
+        acq_date = acquisition_date
+        if hasattr(dataset, "attrs"):
+            if pb is None:
+                pb = dataset.attrs.get("processing_baseline")
+            if acq_date is None:
+                acq_date = dataset.attrs.get("datetime") or dataset.attrs.get("acquisition_date")
+
         if hasattr(dataset, "data_vars"):
             for var in list(dataset.data_vars):
                 if var.lower() in {"qa_pixel", "scl", "qa", "pixel_qa"}:
                     continue
                 if is_landsat:
-                    if PreprocessingService.is_thermal_band(var):
-                        val = PreprocessingService.apply_landsat_calibration(dataset[var].values, is_thermal=True)
-                    else:
-                        val = PreprocessingService.apply_landsat_calibration(dataset[var].values, is_thermal=False)
+                    is_therm = PreprocessingService.is_thermal_band(var)
+                    val = PreprocessingService.apply_landsat_calibration(
+                        dataset[var].values,
+                        is_thermal=is_therm,
+                        inplace=True
+                    )
                     dataset[var] = (dataset[var].dims, np.asarray(val, dtype=np.float32))
                     del val
                 elif is_sentinel:
                     val = PreprocessingService.apply_sentinel_offset(
                         dataset[var].values,
-                        processing_baseline=processing_baseline,
-                        acquisition_date=acquisition_date
+                        processing_baseline=pb,
+                        acquisition_date=acq_date,
+                        inplace=True
                     )
                     dataset[var] = (dataset[var].dims, np.asarray(val, dtype=np.float32))
                     del val
@@ -267,8 +299,8 @@ class PreprocessingService:
                 elif is_sentinel:
                     res[k] = PreprocessingService.apply_sentinel_offset(
                         v,
-                        processing_baseline=processing_baseline,
-                        acquisition_date=acquisition_date
+                        processing_baseline=pb,
+                        acquisition_date=acq_date
                     )
                 else:
                     res[k] = v

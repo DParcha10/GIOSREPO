@@ -88,17 +88,12 @@ class IndexComputationService:
                 ]
             }
 
-        high_mask = valid >= 0.660
-        mod_high_mask = (valid >= 0.440) & (valid < 0.660)
-        mod_low_mask = (valid >= 0.270) & (valid < 0.440)
-        low_mask = (valid >= 0.100) & (valid < 0.270)
-        unburned_mask = valid < 0.100
-
-        high_count = int(np.sum(high_mask))
-        mod_high_count = int(np.sum(mod_high_mask))
-        mod_low_count = int(np.sum(mod_low_mask))
-        low_count = int(np.sum(low_mask))
-        unburned_count = int(np.sum(unburned_mask))
+        high_count = int(np.count_nonzero(valid >= 0.660))
+        mod_high_count = int(np.count_nonzero((valid >= 0.440) & (valid < 0.660)))
+        mod_low_count = int(np.count_nonzero((valid >= 0.270) & (valid < 0.440)))
+        low_count = int(np.count_nonzero((valid >= 0.100) & (valid < 0.270)))
+        unburned_count = int(np.count_nonzero(valid < 0.100))
+        del valid
 
         return {
             "categories": [
@@ -215,6 +210,11 @@ class IndexComputationService:
         elif name == "lst":
             thermal = bands.get("lwir11", bands.get("b10", bands.get("thermal", bands.get("B10"))))
             return cls.lst(thermal)
+        elif name == "rgb":
+            red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
+            green = bands.get("green", bands.get("B03", bands.get("b03", bands.get("b3", bands.get("B3")))))
+            blue = bands.get("blue", bands.get("B02", bands.get("b02", bands.get("b2", bands.get("B2")))))
+            return np.stack([red, green, blue], axis=-1)
         else:
             raise ValueError(f"Unsupported spectral index: {index_name}")
 
@@ -234,7 +234,8 @@ class IndexComputationService:
                 "rdnbr": ["B08", "B12", "SCL"],
                 "evi": ["B02", "B04", "B08", "SCL"],
                 "savi": ["B04", "B08", "SCL"],
-                "lst": ["B04", "B08", "SCL"]
+                "lst": ["B04", "B08", "SCL"],
+                "rgb": ["B02", "B03", "B04", "SCL"]
             }
             return band_map.get(idx, ["B02", "B03", "B04", "B05", "B08", "B11", "B12", "SCL"])
         else:
@@ -248,7 +249,8 @@ class IndexComputationService:
                 "rdnbr": ["nir08", "swir22", "qa_pixel"],
                 "evi": ["blue", "red", "nir08", "qa_pixel"],
                 "savi": ["red", "nir08", "qa_pixel"],
-                "lst": ["lwir11", "qa_pixel"]
+                "lst": ["lwir11", "qa_pixel"],
+                "rgb": ["blue", "green", "red", "qa_pixel"]
             }
             return band_map.get(idx, ["blue", "green", "red", "nir08", "swir16", "swir22", "lwir11", "qa_pixel"])
 

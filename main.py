@@ -123,7 +123,7 @@ app.include_router(spatial.router, prefix="/api/v1")
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
-@limiter.limit("10/minute")
+@limiter.limit("120/minute")
 def health_check(request: Request):
     return {
         "status": "healthy",
