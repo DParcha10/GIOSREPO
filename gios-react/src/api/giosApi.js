@@ -73,7 +73,30 @@ export {
   calculatePolygonCentroid,
   bboxFromPoints,
   bboxExpand,
-  generateTileCacheKey
+  generateTileCacheKey,
+  bboxIntersects,
+  bboxIntersection,
+  bboxContains,
+  bboxOverlapRatio,
+  BAND_ALIAS_MAP,
+  formatSpectralProfile,
+  SPATIAL_LOD_TIERS,
+  getSpatialLodTier,
+  getCollectionRecommendedZoom,
+  getColormapColorAtValue,
+  hazardEventToGeoJsonFeature,
+  hazardEventsToFeatureCollection,
+  generateBoustrophedonWaypoints,
+  TERRAIN_METRICS,
+  SAR_POLARIZATIONS,
+  TRANSECT_SAMPLE_METHODS,
+  samplePolylineEquidistant,
+  VOLUME_CALCULATION_MODES,
+  calculateCutFillVolumes,
+  EXPORT_RASTER_FORMATS,
+  formatExportFilename,
+  ANIMATION_PLAYBACK_MODES,
+  buildAnimationKeyframes
 } from '../config/constants.js';
 
 /**
@@ -673,6 +696,121 @@ export {
  * @property {string[]} [active_modules] - Active processing modules
  */
 
+/**
+ * @typedef {Object} TransectPoint
+ * @property {number} distance_m - Cumulative distance from start in meters
+ * @property {number} lat - Latitude in WGS84
+ * @property {number} lon - Longitude in WGS84
+ * @property {number|null} [elevation_m] - Surface elevation in meters ASL
+ * @property {number|null} [slope_deg] - Topographic slope in degrees
+ * @property {number|null} [metric_value] - Biophysical or spectral index value
+ */
+
+/**
+ * @typedef {Object} TransectProfileSummary
+ * @property {number} total_distance_m - Total length in meters
+ * @property {number|null} [min_elevation_m] - Minimum elevation in meters
+ * @property {number|null} [max_elevation_m] - Maximum elevation in meters
+ * @property {number|null} [elevation_gain_m] - Cumulative positive elevation gain
+ * @property {number|null} [elevation_loss_m] - Cumulative negative elevation drop
+ * @property {number|null} [mean_slope_deg] - Average slope in degrees
+ * @property {number|null} [max_slope_deg] - Maximum slope in degrees
+ * @property {number|null} [min_metric_value] - Minimum metric value
+ * @property {number|null} [max_metric_value] - Maximum metric value
+ */
+
+/**
+ * @typedef {Object} TransectAnalysisRequest
+ * @property {Array<[number, number]>|Object} polyline - Sequence of coordinates or GeoJSON LineString
+ * @property {string} [metric='elevation'] - Indicator metric (elevation, slope, ndmi, etc.)
+ * @property {number} [sample_count=50] - Number of equidistant sample points
+ * @property {string} [collection='cop-dem-glo-30'] - Elevation or sensor collection
+ * @property {string|null} [item_id] - Optional scene or orthomosaic ID
+ */
+
+/**
+ * @typedef {Object} TransectAnalysisResponse
+ * @property {string} metric - Analyzed indicator metric
+ * @property {number} total_distance_m - Total length in meters
+ * @property {number} sample_count - Evaluation points count
+ * @property {TransectProfileSummary} summary - Summary statistics
+ * @property {TransectPoint[]} points - Sampled profile points
+ */
+
+/**
+ * @typedef {Object} VolumetricAnalysisRequest
+ * @property {string|number[]|Object} bbox - Target AOI bounds or GeoJSON geometry
+ * @property {number} reference_elevation_m - Design datum elevation in meters
+ * @property {'cut_fill'|'reservoir_storage'|'embankment_fill'} [mode='cut_fill'] - Operational calculation mode
+ * @property {number} [grid_resolution_m=10.0] - Horizontal cell dimension in meters
+ * @property {string} [collection='cop-dem-glo-30'] - Elevation collection
+ */
+
+/**
+ * @typedef {Object} VolumetricAnalysisResponse
+ * @property {string} mode - Calculation mode
+ * @property {number} reference_elevation_m - Reference datum elevation
+ * @property {number} surface_area_m2 - Footprint area in m2
+ * @property {number} surface_area_hectares - Footprint area in hectares
+ * @property {number} cut_volume_m3 - Excavation volume in m3
+ * @property {number} fill_volume_m3 - Fill volume in m3
+ * @property {number} net_volume_m3 - Net volume (cut - fill) in m3
+ * @property {number} mean_elevation_m - Mean elevation in meters
+ * @property {number} min_elevation_m - Minimum elevation in meters
+ * @property {number} max_elevation_m - Maximum elevation in meters
+ * @property {number} [mean_depth_m] - Average depth or height relative to datum
+ * @property {number} [max_depth_m] - Maximum depth or height relative to datum
+ */
+
+/**
+ * @typedef {Object} DataExportRequest
+ * @property {string|number[]} bbox - Spatial bounds [min_lon, min_lat, max_lon, max_lat]
+ * @property {string} [collection='sentinel-2-l2a'] - Imagery or elevation collection
+ * @property {string|null} [item_id] - Specific observation ID
+ * @property {string|null} [index] - Spectral index
+ * @property {string|null} [metric] - Terrain metric
+ * @property {'geotiff'|'cog'|'png_rgba'|'geojson_vector'|'csv_tabular'} [format='geotiff'] - Export file format
+ * @property {string} [crs='EPSG:4326'] - Spatial reference system
+ * @property {number|null} [resolution_m] - Target resolution in meters
+ * @property {string|null} [rescale] - Rescale min,max
+ * @property {string|null} [colormap] - Colormap palette
+ */
+
+/**
+ * @typedef {Object} DataExportResponse
+ * @property {string} export_id - Unique export identifier
+ * @property {string} status - Processing status
+ * @property {string} format - Output format
+ * @property {string} download_url - Download URL
+ * @property {string} filename - Output filename
+ * @property {number|null} [file_size_bytes] - File size in bytes
+ * @property {string} crs - Spatial reference system
+ * @property {[number, number, number, number]} bbox - Bounding box
+ * @property {string} created_at - ISO 8601 generation timestamp
+ * @property {string} expires_at - ISO 8601 URL expiration timestamp
+ */
+
+/**
+ * @typedef {Object} AnimationKeyframe
+ * @property {number} frame_index - Sequence frame index
+ * @property {string} timestamp - Acquisition date (YYYY-MM-DD)
+ * @property {string} scene_id - Observation ID
+ * @property {number} cloud_cover - Cloud coverage percentage
+ * @property {string} tile_url - Rendered XYZ tile URL
+ * @property {string} index - Spectral index
+ * @property {string|null} [colormap] - Colormap palette
+ */
+
+/**
+ * @typedef {Object} AnimationSequenceConfig
+ * @property {string} collection - Satellite collection
+ * @property {string} start_date - Start date (YYYY-MM-DD)
+ * @property {string} end_date - End date (YYYY-MM-DD)
+ * @property {number} [fps=2.0] - Playback frame rate
+ * @property {'loop'|'ping_pong'|'step'} [playback_mode='loop'] - Playback mode
+ * @property {AnimationKeyframe[]} [frames] - Animation keyframes
+ */
+
 const isDemo = import.meta?.env?.VITE_DEMO_MODE === 'true';
 
 const demoAdapter = async (config) => {
@@ -702,6 +840,55 @@ const demoAdapter = async (config) => {
       else if (url.includes('/api/v1/agent/chat')) data = mockAgentChat;
       else if (url.includes('/api/v1/data/search')) data = { count: 1, scenes: [{ id: 'S2A_MSIL2A_20260820T184211', datetime: '2026-08-20T18:42:11Z', cloud_cover: 4.2, collection: 'sentinel-2-l2a', thumbnail_url: null }] };
       else if (url.includes('/api/v1/analysis/indices')) data = { index: 'ndmi', mean: 0.312, median: 0.298, min: 0.051, max: 0.684, std: 0.084, valid_pixels: 38420, timestamp: new Date().toISOString() };
+      else if (url.includes('/api/v1/analysis/transect')) data = {
+        metric: 'elevation',
+        total_distance_m: 1250.0,
+        sample_count: 50,
+        summary: {
+          total_distance_m: 1250.0,
+          min_elevation_m: 145.2,
+          max_elevation_m: 230.8,
+          elevation_gain_m: 85.6,
+          elevation_loss_m: 0.0,
+          mean_slope_deg: 4.8,
+          max_slope_deg: 14.2
+        },
+        points: []
+      };
+      else if (url.includes('/api/v1/analysis/volumetric')) data = {
+        mode: 'cut_fill',
+        reference_elevation_m: 200.0,
+        surface_area_m2: 125000.0,
+        surface_area_hectares: 12.5,
+        cut_volume_m3: 45000.0,
+        fill_volume_m3: 12000.0,
+        net_volume_m3: 33000.0,
+        mean_elevation_m: 204.5,
+        min_elevation_m: 188.0,
+        max_elevation_m: 235.0,
+        mean_depth_m: 6.8,
+        max_depth_m: 35.0
+      };
+      else if (url.includes('/api/v1/analysis/export')) data = {
+        export_id: 'EXP-DEMO-01',
+        status: 'ready',
+        format: 'geotiff',
+        download_url: 'http://localhost:8000/data/exports/gios_export_demo.tif',
+        filename: 'gios_sentinel-2-l2a_demo.tif',
+        file_size_bytes: 4194304,
+        crs: 'EPSG:4326',
+        bbox: [-121.2, 36.95, -120.95, 37.15],
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 86400000).toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/animation-sequence')) data = {
+        collection: 'sentinel-2-l2a',
+        start_date: '2026-06-01',
+        end_date: '2026-08-30',
+        fps: 2.0,
+        playback_mode: 'loop',
+        frames: []
+      };
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
@@ -900,6 +1087,31 @@ export const fetchHazardEvents = async (category = null) => {
  */
 export const fetchEventById = async (eventId) => {
   const response = await giosApi.get(`/api/v1/events/${eventId}`);
+  return response.data;
+};
+
+/**
+ * Retrieves the catalog of active hazard events formatted as an RFC 7946 GeoJSON FeatureCollection.
+ * 
+ * @param {HazardCategory|string|null} [category=null] - Optional hazard domain filter
+ * @returns {Promise<Object>} RFC 7946 GeoJSON FeatureCollection
+ */
+export const fetchHazardEventsGeoJson = async (category = null) => {
+  const cat = typeof category === 'object' && category !== null ? (category.key || category.value || String(category)) : category;
+  const response = await giosApi.get('/api/v1/events/geojson', {
+    params: cat ? { category: cat } : {}
+  });
+  return response.data;
+};
+
+/**
+ * Fetches single hazard event formatted as an RFC 7946 GeoJSON Feature.
+ * 
+ * @param {string} eventId - Unique event identifier
+ * @returns {Promise<Object>} RFC 7946 GeoJSON Feature
+ */
+export const fetchEventGeoJsonById = async (eventId) => {
+  const response = await giosApi.get(`/api/v1/events/${eventId}/geojson`);
   return response.data;
 };
 
@@ -1173,5 +1385,106 @@ export const getAlertStreamUrl = () => {
   return `${base}/api/v1/agent/stream-alerts`;
 };
 
+/**
+ * Computes digital elevation and terrain analysis over an AOI.
+ * 
+ * @param {Object} params - Terrain analysis parameters
+ * @param {string|number[]} params.bbox - Bounding box [min_lon, min_lat, max_lon, max_lat]
+ * @param {'elevation'|'slope'|'aspect'|'hillshade'} [params.metric='elevation'] - Terrain indicator
+ * @param {number} [params.sun_azimuth_deg=315.0] - Illumination azimuth
+ * @param {number} [params.sun_altitude_deg=45.0] - Illumination altitude
+ * @returns {Promise<Object>} Terrain analysis results and statistics
+ */
+export const calculateTerrainAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/terrain', params);
+  return response.data;
+};
+
+/**
+ * Computes Sentinel-1 SAR radar backscatter analysis over an AOI.
+ * 
+ * @param {Object} params - SAR analysis parameters
+ * @param {string|number[]} params.bbox - Bounding box [min_lon, min_lat, max_lon, max_lat]
+ * @param {'vv'|'vh'|'ratio_vh_vv'} [params.polarization='vv'] - Polarization channel
+ * @param {string} params.start_date - Start date (YYYY-MM-DD)
+ * @param {string} params.end_date - End date (YYYY-MM-DD)
+ * @returns {Promise<Object>} Calibrated radar backscatter response
+ */
+export const calculateSarAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/sar', params);
+  return response.data;
+};
+
+/**
+ * Constructs canonical XYZ tile URL for digital terrain model visualization.
+ * 
+ * @param {'elevation'|'slope'|'aspect'|'hillshade'} metric - Terrain metric
+ * @param {number|string} z - Zoom level
+ * @param {number|string} x - Tile X
+ * @param {number|string} y - Tile Y
+ * @returns {string} Formatted tile URL
+ */
+export const buildTerrainTileUrl = (metric, z, x, y) => {
+  return `/api/v1/tiles/terrain/${metric}/${z}/${x}/${y}.png`;
+};
+
+/**
+ * Constructs canonical XYZ tile URL for Sentinel-1 SAR intensity visualization.
+ * 
+ * @param {'vv'|'vh'|'ratio_vh_vv'} polarization - SAR polarization
+ * @param {number|string} z - Zoom level
+ * @param {number|string} x - Tile X
+ * @param {number|string} y - Tile Y
+ * @returns {string} Formatted tile URL
+ */
+export const buildSarTileUrl = (polarization, z, x, y) => {
+  return `/api/v1/tiles/sar/${polarization}/${z}/${x}/${y}.png`;
+};
+
+/**
+ * Computes an engineering transect cross-section profile along an embankment or hazard polyline.
+ * 
+ * @param {TransectAnalysisRequest} params - Transect polyline, metric, and sample count
+ * @returns {Promise<TransectAnalysisResponse>} Sampled cross-section profile points and summary
+ */
+export const calculateTransectAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/transect', params);
+  return response.data;
+};
+
+/**
+ * Computes digital volumetric earthwork (cut/fill) or reservoir capacity over an AOI.
+ * 
+ * @param {VolumetricAnalysisRequest} params - AOI bounds, reference datum, and mode
+ * @returns {Promise<VolumetricAnalysisResponse>} Cut, fill, and net volumetric metrics
+ */
+export const calculateVolumetricAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/volumetric', params);
+  return response.data;
+};
+
+/**
+ * Requests georeferenced raster or derived biophysical layer export.
+ * 
+ * @param {DataExportRequest} params - AOI bounds, collection, index, and format
+ * @returns {Promise<DataExportResponse>} Export task metadata and download URL
+ */
+export const requestDataExport = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/export', params);
+  return response.data;
+};
+
+/**
+ * Retrieves temporal keyframe catalog for animated multi-temporal observation sequence.
+ * 
+ * @param {Object} params - Query parameters (collection, start_date, end_date, bbox, z, x, y)
+ * @returns {Promise<AnimationSequenceConfig>} Ordered sequence keyframe catalog
+ */
+export const fetchAnimationSequence = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/animation-sequence', params);
+  return response.data;
+};
+
 export default giosApi;
+
 

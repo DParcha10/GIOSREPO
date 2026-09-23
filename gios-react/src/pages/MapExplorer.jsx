@@ -9,7 +9,7 @@ import {
   Map as MapIcon, Image as ImageIcon, Flame, LayoutDashboard, LineChart, 
   BookOpen, Bot, ShieldCheck, RefreshCw, X, Radio, Activity,
   Columns, Maximize2, Minimize2, PenTool, BarChart3, Sliders, Sparkles, CheckCircle2,
-  SlidersHorizontal, Eye, EyeOff, Compass, ZoomIn, ZoomOut
+  SlidersHorizontal, Eye, EyeOff, Compass, ZoomIn, ZoomOut, Mountain, Plane, Radar
 } from 'lucide-react';
 import useAuthStore from '../store/authStore';
 import { useNavigate, Link } from 'react-router-dom';
@@ -18,6 +18,7 @@ import giosApi, {
   probePixel, 
   calculateZonalStats,
   fetchHazardEvents as fetchEventsApi,
+  fetchHazardEventsGeoJson,
   fetchInfrastructureLayers,
   fetchDroneMissions as fetchDroneMissionsApi,
   fetchTimeseriesTrend,
@@ -35,6 +36,23 @@ import giosApi, {
   buildTileUrl,
   buildDroneTileUrl,
   buildWildfireTileUrl,
+  calculateTerrainAnalysis,
+  calculateSarAnalysis,
+  buildTerrainTileUrl,
+  buildSarTileUrl,
+  TERRAIN_METRICS,
+  SAR_POLARIZATIONS,
+  SPATIAL_LOD_TIERS,
+  getSpatialLodTier,
+  getCollectionRecommendedZoom,
+  getColormapColorAtValue,
+  generateBoustrophedonWaypoints,
+  hazardEventsToFeatureCollection,
+  formatSpectralProfile,
+  bboxIntersects,
+  bboxIntersection,
+  bboxContains,
+  bboxOverlapRatio,
   DRONE_STATUSES,
   normalizeGeojsonPolygon,
   classifyZScore,
@@ -468,18 +486,19 @@ export default function MapExplorer() {
     setDrawerOpen(true);
     setAnalyticsSubTab('zonal');
 
+    const rawGeometry = {
+      type: 'Polygon',
+      coordinates: [[
+        ...customPolygonVertices.map(v => [v[1], v[0]]),
+        [customPolygonVertices[0][1], customPolygonVertices[0][0]]
+      ]]
+    };
+    const geojsonGeometry = normalizeGeojsonPolygon(rawGeometry) || rawGeometry;
+    const centroid = calculatePolygonCentroid(geojsonGeometry);
+    const polyBbox = bboxFromPoints(customPolygonVertices, 'lat_lon');
+    const expandedBbox = bboxExpand(polyBbox, 0.1);
+
     try {
-      const rawGeometry = {
-        type: 'Polygon',
-        coordinates: [[
-          ...customPolygonVertices.map(v => [v[1], v[0]]),
-          [customPolygonVertices[0][1], customPolygonVertices[0][0]]
-        ]]
-      };
-      const geojsonGeometry = normalizeGeojsonPolygon(rawGeometry) || rawGeometry;
-      const centroid = calculatePolygonCentroid(geojsonGeometry);
-      const polyBbox = bboxFromPoints(customPolygonVertices, 'lat_lon');
-      const expandedBbox = bboxExpand(polyBbox, 0.1);
       const collection = selectedEvent?.sensor?.toLowerCase().includes('landsat') ? 'landsat-c2-l2' : 'sentinel-2-l2a';
       const itemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SEH';
 
@@ -498,9 +517,6 @@ export default function MapExplorer() {
     } catch (err) {
       const apiErr = formatApiError(err);
       console.error('Failed to calculate zonal statistics:', apiErr.detail);
-      const centroid = calculatePolygonCentroid(rawGeometry);
-      const polyBbox = bboxFromPoints(customPolygonVertices, 'lat_lon');
-      const expandedBbox = bboxExpand(polyBbox, 0.1);
       // Fallback matching contract
       setZonalStatsResult({
         index: activeSpectralIndex,
@@ -925,23 +941,50 @@ export default function MapExplorer() {
             {/* 3. T-12: Multi-Temporal Swipe Curtain Layers */}
             {curtainActive && (
               <>
-                {/* Left Optical Scene on base map pane */}
+                {/* Left Scene on base map pane */}
                 <TileLayer 
-                  key="curtain-optical-left"
-                  url={dynamicOpticalTileUrl}
+                  key={`curtain-left-${swipeComparisonMode}-${activeSpectralIndex}`}
+                  url={
+                    swipeComparisonMode === SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE
+                      ? dynamicSpectralTileUrl
+                      : swipeComparisonMode === SWIPE_COMPARISON_MODES.INDEX_VS_INDEX
+                      ? buildTileUrl(activeCollection, activeItemId, '{z}', '{x}', '{y}', { index: 'ndvi', colormap: 'viridis', rescale: '0.0,0.8' }, apiBase)
+                      : dynamicOpticalTileUrl
+                  }
                   opacity={0.95}
                   maxNativeZoom={18}
                   maxZoom={22}
                 />
-                {/* Right Anomaly Spectral Scene on curtain-pane (clipped) */}
+                {/* Right Scene on curtain-pane (clipped) */}
                 <TileLayer 
-                  key={`curtain-spectral-right-${activeSpectralIndex}-${activeColormap}-${rescaleMin}-${rescaleMax}`}
+                  key={`curtain-right-${swipeComparisonMode}-${activeSpectralIndex}-${activeColormap}-${rescaleMin}-${rescaleMax}`}
                   pane="curtain-pane"
-                  url={dynamicSpectralTileUrl}
+                  url={
+                    swipeComparisonMode === SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE
+                      ? dynamicDroneTileUrl
+                      : dynamicSpectralTileUrl
+                  }
                   opacity={layerOpacity}
-                  maxNativeZoom={18}
-                  maxZoom={22}
+                  maxNativeZoom={swipeComparisonMode === SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE ? 22 : 18}
+                  maxZoom={swipeComparisonMode === SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE ? 24 : 22}
                 />
+                {swipeComparisonMode === SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE && droneLeafletBounds && (
+                  <Polygon 
+                    positions={[
+                      droneLeafletBounds[0],
+                      [droneLeafletBounds[0][0], droneLeafletBounds[1][1]],
+                      droneLeafletBounds[1],
+                      [droneLeafletBounds[1][0], droneLeafletBounds[0][1]]
+                    ]}
+                    pathOptions={{ 
+                      color: '#a855f7', 
+                      weight: 1.5, 
+                      fillColor: '#a855f7', 
+                      fillOpacity: 0.12, 
+                      dashArray: '4, 4' 
+                    }}
+                  />
+                )}
               </>
             )}
 
@@ -1066,22 +1109,47 @@ export default function MapExplorer() {
               </CircleMarker>
             )}
 
-            {/* Vector Layer Overlays (Critical Infrastructure & Sensor Grid) */}
-            {vectorLayers.map((feat, idx) => {
+            {/* Vector Layer Overlays (Critical Infrastructure, Sensor Grid, Hazard Zones, Drone Bounds) */}
+            {spatialLayerVisible && vectorLayers.map((feat, idx) => {
               const coords = feat.geometry?.coordinates;
               if (!coords) return null;
+              const geomType = feat.geometry?.type;
+              const meta = getSpatialLayerMetadata(activeSpatialLayer);
+              const layerColor = meta?.color || 'var(--color-secondary)';
+              if (geomType === 'Polygon') {
+                const ring = coords[0] || [];
+                const positions = ring.map(pt => [pt[1], pt[0]]);
+                return (
+                  <Polygon
+                    key={`vec-poly-${idx}`}
+                    positions={positions}
+                    pathOptions={{ color: layerColor, weight: 2, fillColor: layerColor, fillOpacity: 0.25 }}
+                  >
+                    <Popup>
+                      <div className="text-black font-sans text-xs">
+                        <strong>{feat.properties?.name || 'Spatial Boundary'}</strong><br/>
+                        Layer: {meta?.label || activeSpatialLayer}<br/>
+                        Type: {feat.properties?.type || 'polygon'}
+                        {feat.properties?.area_ha && <span><br/>Area: {feat.properties.area_ha} Ha</span>}
+                      </div>
+                    </Popup>
+                  </Polygon>
+                );
+              }
               return (
                 <CircleMarker
-                  key={idx}
+                  key={`vec-pt-${idx}`}
                   center={[coords[1], coords[0]]}
                   radius={5}
-                  pathOptions={{ color: 'var(--color-secondary)', weight: 1.5, fillColor: 'var(--color-secondary)', fillOpacity: 0.8 }}
+                  pathOptions={{ color: layerColor, weight: 1.5, fillColor: layerColor, fillOpacity: 0.8 }}
                 >
                   <Popup>
                     <div className="text-black font-sans text-xs">
-                      <strong>{feat.properties?.name}</strong><br/>
-                      Type: {feat.properties?.type}<br/>
-                      Status: {feat.properties?.status}
+                      <strong>{feat.properties?.name || 'Spatial Feature'}</strong><br/>
+                      Layer: {meta?.label || activeSpatialLayer}<br/>
+                      Type: {feat.properties?.type || 'point'}<br/>
+                      Status: {feat.properties?.status || 'Active'}
+                      {feat.properties?.val && <span><br/>Value: {feat.properties.val}</span>}
                     </div>
                   </Popup>
                 </CircleMarker>
@@ -1120,12 +1188,38 @@ export default function MapExplorer() {
             sliderPos={curtainPos}
             setSliderPos={setCurtainPos}
             onClose={() => setCurtainActive(false)}
-            leftTitle="Pre-Event Baseline (Optical RGB)"
+            comparisonMode={swipeComparisonMode}
+            onComparisonModeChange={setSwipeComparisonMode}
+            leftTitle={
+              swipeComparisonMode === SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE
+                ? "Satellite Macro (10m Multi-Spectral)"
+                : swipeComparisonMode === SWIPE_COMPARISON_MODES.INDEX_VS_INDEX
+                ? "Vegetation Index (NDVI Baseline)"
+                : swipeComparisonMode === SWIPE_COMPARISON_MODES.PRE_VS_POST
+                ? "Pre-Event Historical Baseline"
+                : "Pre-Event Baseline (Optical RGB)"
+            }
             leftDate={selectedEvent?.start_date || "2025-08-15"}
             leftSensor={selectedEvent?.sensor || "Sentinel-2 L2A"}
-            rightTitle={selectedEvent ? `Post-Event ${activeSpectralIndex.toUpperCase()} ${selectedEvent.category === 'wildfire' ? 'Burn Severity' : selectedEvent.category === 'inundation' ? 'Flood Extent' : selectedEvent.category === 'hab' ? 'Algal Bloom' : 'Moisture Anomaly'}` : `Post-Event ${activeSpectralIndex.toUpperCase()} Anomaly`}
-            rightDate={selectedEvent?.end_date || "2026-08-20"}
-            rightSensor={selectedEvent?.sensor || "Sentinel-2 L2A"}
+            rightTitle={
+              swipeComparisonMode === SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE
+                ? "UAV Drone Micro (2.85cm Orthomosaic)"
+                : swipeComparisonMode === SWIPE_COMPARISON_MODES.INDEX_VS_INDEX
+                ? `Target Index (${activeSpectralIndex.toUpperCase()})`
+                : selectedEvent
+                ? `Post-Event ${activeSpectralIndex.toUpperCase()} ${selectedEvent.category === 'wildfire' ? 'Burn Severity' : selectedEvent.category === 'inundation' ? 'Flood Extent' : selectedEvent.category === 'hab' ? 'Algal Bloom' : 'Moisture Anomaly'}` 
+                : `Post-Event ${activeSpectralIndex.toUpperCase()} Anomaly`
+            }
+            rightDate={
+              swipeComparisonMode === SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE
+                ? "2026-09-01"
+                : (selectedEvent?.end_date || "2026-08-20")
+            }
+            rightSensor={
+              swipeComparisonMode === SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE
+                ? "DJI Matrice 300 RTK (2.85cm GSD)"
+                : (selectedEvent?.sensor || "Sentinel-2 L2A")
+            }
             containerRef={mapContainerRef}
           />
 
@@ -1165,6 +1259,18 @@ export default function MapExplorer() {
                     </div>
                   </div>
 
+                  {selectedEvent && (
+                    <div className="flex justify-between items-center text-[9px] font-mono bg-black/60 px-2 py-1.5 rounded border border-gray-800 text-gray-300">
+                      <span className="text-teal-300 flex items-center gap-1 font-bold">
+                        <Compass className="w-3 h-3 text-teal-400" />
+                        Epicenter: {calculateHaversineDistance(selectedEvent.lat, selectedEvent.lng, pixelProbeData.coordinates.latitude, pixelProbeData.coordinates.longitude, 'km')} km
+                      </span>
+                      <span className="text-gray-400 font-mono">
+                        Bearing: {calculateInitialBearing(selectedEvent.lat, selectedEvent.lng, pixelProbeData.coordinates.latitude, pixelProbeData.coordinates.longitude)}°
+                      </span>
+                    </div>
+                  )}
+
                   {/* Spectral Signature Bar Chart Profile */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-[10px] font-bold font-mono text-gray-400 uppercase tracking-wider">
@@ -1175,10 +1281,17 @@ export default function MapExplorer() {
                       {Object.entries(pixelProbeData.surface_reflectance || {}).map(([band, val]) => {
                         const numVal = typeof val === 'number' ? val : parseFloat(val) || 0;
                         const barHeightPct = Math.min(100, Math.max(8, Math.round(numVal * 220)));
+                        const wavelength = getBandWavelength(band);
+                        const spec = getBandSpec(band);
                         return (
-                          <div key={band} className="bg-black/50 border border-gray-800 p-1 rounded flex flex-col justify-between h-20">
-                            <span className="text-[8px] text-gray-500 uppercase block truncate">{band}</span>
-                            <div className="h-10 w-full flex items-end justify-center bg-black/40 rounded my-1 px-1">
+                          <div 
+                            key={band} 
+                            className="bg-black/50 border border-gray-800 p-1 rounded flex flex-col justify-between h-20"
+                            title={spec ? `${spec.name}: ${spec.centerWavelengthNm}nm (${spec.spectrumDomain})` : band}
+                          >
+                            <span className="text-[8px] text-gray-400 uppercase block truncate font-bold">{band}</span>
+                            {wavelength > 0 && <span className="text-[7px] text-teal-400 font-mono -mt-1 block">{wavelength}nm</span>}
+                            <div className="h-8 w-full flex items-end justify-center bg-black/40 rounded my-0.5 px-1">
                               <div 
                                 className="w-full rounded-t bg-gradient-to-t from-teal-500 to-teal-300 transition-all duration-300 shadow-[0_0_6px_rgba(0,255,170,0.3)]"
                                 style={{ height: `${barHeightPct}%` }}
@@ -1263,7 +1376,16 @@ export default function MapExplorer() {
               <div className="flex items-center gap-2 text-xs font-mono text-white">
                 <PenTool className="w-4 h-4 text-primary animate-pulse" />
                 <span>
-                  Drawing AOI Polygon: Click map to place vertices (<strong>{customPolygonVertices.length} points</strong>)
+                  Drawing AOI Polygon: Click map to place vertices (<strong>{customPolygonVertices.length} points</strong>
+                  {customPolygonVertices.length >= 2 && (
+                    <span className="text-teal-300 ml-1 font-bold">
+                      • {customPolygonVertices.reduce((acc, curr, idx, arr) => {
+                        if (idx === 0) return 0;
+                        const prev = arr[idx - 1];
+                        return acc + calculateHaversineDistance(prev[0], prev[1], curr[0], curr[1], 'km');
+                      }, 0).toFixed(2)} km perimeter
+                    </span>
+                  )})
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -1424,6 +1546,35 @@ export default function MapExplorer() {
                 <SlidersHorizontal className="w-3.5 h-3.5" />
                 <span>Symbology</span>
               </button>
+
+              {/* Spatial GIS Vector Layer Registry (T-43) */}
+              <div className="flex items-center gap-1 bg-black/40 px-2 py-0.5 rounded border border-gray-800">
+                <button
+                  onClick={() => setSpatialLayerVisible(!spatialLayerVisible)}
+                  className={`p-1 rounded transition-colors ${spatialLayerVisible ? 'text-teal-300' : 'text-gray-500'}`}
+                  title={spatialLayerVisible ? "Hide Vector Layer" : "Show Vector Layer"}
+                >
+                  {spatialLayerVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                </button>
+                <select
+                  value={activeSpatialLayer}
+                  onChange={(e) => {
+                    setActiveSpatialLayer(e.target.value);
+                    if (!spatialLayerVisible) setSpatialLayerVisible(true);
+                  }}
+                  className="bg-transparent text-[10px] font-mono font-bold uppercase text-gray-300 focus:outline-none cursor-pointer"
+                  title="Select Spatial GIS Vector Layer"
+                >
+                  {listSpatialLayerTypes().map(type => {
+                    const meta = getSpatialLayerMetadata(type);
+                    return (
+                      <option key={type} value={type} className="bg-black text-gray-200">
+                        {meta?.label || type}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
             </div>
 
             {/* T-14: Floating Symbology Controls Drawer */}
@@ -1999,6 +2150,22 @@ export default function MapExplorer() {
                               <CheckCircle2 className="w-3 h-3" /> 0% (Clear)
                             </span>
                           </div>
+                          {zonalStatsResult.centroid && (
+                            <div className="p-2.5 bg-black/40 border border-gray-800 rounded-lg flex flex-col justify-between col-span-1">
+                              <span className="text-[10px] text-gray-500 uppercase block">Polygon Centroid</span>
+                              <span className="text-[11px] font-bold text-purple-300 font-mono">
+                                {zonalStatsResult.centroid[0].toFixed(4)}°N, {zonalStatsResult.centroid[1].toFixed(4)}°W
+                              </span>
+                            </div>
+                          )}
+                          {zonalStatsResult.bbox && (
+                            <div className="p-2.5 bg-black/40 border border-gray-800 rounded-lg flex flex-col justify-between col-span-2">
+                              <span className="text-[10px] text-gray-500 uppercase block">Enclosing Bounding Box</span>
+                              <span className="text-[10px] text-gray-300 font-mono truncate" title={formatBbox(zonalStatsResult.bbox)}>
+                                [{formatBbox(zonalStatsResult.bbox)}]
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                       </div>

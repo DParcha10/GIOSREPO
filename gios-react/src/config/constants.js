@@ -273,6 +273,20 @@ export const SATELLITE_COLLECTIONS = [
     description: 'Centimeter-scale drone survey photogrammetry Cloud-Optimized GeoTIFF.',
     resolution_m: 0.028,
     revisit_days: null
+  },
+  {
+    id: 'sentinel-1-rtc',
+    label: 'Sentinel-1 SAR RTC (ESA / 10m C-Band Radar)',
+    description: 'All-weather synthetic aperture radar for cloud-penetrating moisture and flood mapping.',
+    resolution_m: 10.0,
+    revisit_days: 6.0
+  },
+  {
+    id: 'cop-dem-glo-30',
+    label: 'Copernicus DEM GLO-30 (ESA / 30m Global DEM)',
+    description: 'Digital surface elevation model for slope, aspect, and hydrological drainage analysis.',
+    resolution_m: 30.0,
+    revisit_days: null
   }
 ];
 
@@ -284,7 +298,9 @@ export const COLLECTIONS = {
   LANDSAT_C2_L2: 'landsat-c2-l2',
   DRONE_ORTHO: 'drone-ortho',
   DRONE: 'drone',
-  WILDFIRE: 'wildfire'
+  WILDFIRE: 'wildfire',
+  SENTINEL_1_RTC: 'sentinel-1-rtc',
+  COP_DEM: 'cop-dem-glo-30'
 };
 
 /**
@@ -683,7 +699,9 @@ export const API_ENDPOINTS = {
   AUTH_REGISTER: '/api/v1/auth/register',
   AUTH_ME: '/api/v1/auth/me',
   EVENTS: '/api/v1/events',
+  EVENTS_GEOJSON: '/api/v1/events/geojson',
   EVENT_DETAIL: (id) => `/api/v1/events/${id}`,
+  EVENT_GEOJSON: (id) => `/api/v1/events/${id}/geojson`,
   ANALYSIS_INDICES: '/api/v1/analysis/indices',
   ANALYSIS_PIXEL_PROBE: '/api/v1/analysis/pixel-probe',
   ANALYSIS_ZONAL_STATS: '/api/v1/analysis/zonal-stats',
@@ -708,7 +726,15 @@ export const API_ENDPOINTS = {
   SATELLITE_GEE: '/api/v1/satellite/gee',
   SATELLITE_SENTINEL: '/api/v1/satellite/sentinel',
   IOT_INGEST: '/api/v1/iot/ingest',
-  IOT_DATA: '/api/v1/iot/data'
+  IOT_DATA: '/api/v1/iot/data',
+  ANALYSIS_TERRAIN: '/api/v1/analysis/terrain',
+  ANALYSIS_SAR: '/api/v1/analysis/sar',
+  TILES_TERRAIN: (metric, z, x, y) => `/api/v1/tiles/terrain/${metric}/${z}/${x}/${y}.png`,
+  TILES_SAR: (polarization, z, x, y) => `/api/v1/tiles/sar/${polarization}/${z}/${x}/${y}.png`,
+  ANALYSIS_TRANSECT: '/api/v1/analysis/transect',
+  ANALYSIS_VOLUMETRIC: '/api/v1/analysis/volumetric',
+  ANALYSIS_EXPORT: '/api/v1/analysis/export',
+  ANALYSIS_ANIMATION_SEQUENCE: '/api/v1/analysis/animation-sequence'
 };
 
 /**
@@ -742,6 +768,10 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.layerType || params.layer_id || 'critical_infrastructure');
       case 'INTEGRATION_USGS':
         return endpoint(params.siteId || params.site_id);
+      case 'TILES_TERRAIN':
+        return endpoint(params.metric || 'elevation', params.z, params.x, params.y);
+      case 'TILES_SAR':
+        return endpoint(params.polarization || 'vv', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -1331,6 +1361,600 @@ export const generateTileCacheKey = (collection, itemId, z, x, y, options = {}) 
   if (options.post) parts.push(`post_${options.post}`);
   const raw = parts.join('_');
   return raw.replace(/[^a-zA-Z0-9._-]/g, '_');
+};
+
+/**
+ * Determines if two bounding boxes intersect.
+ * 
+ * @param {string|number[]|Object} bbox1 - First bounding box
+ * @param {string|number[]|Object} bbox2 - Second bounding box
+ * @returns {boolean} True if bounding boxes intersect
+ */
+export const bboxIntersects = (bbox1, bbox2) => {
+  const [minLon1, minLat1, maxLon1, maxLat1] = parseBbox(bbox1);
+  const [minLon2, minLat2, maxLon2, maxLat2] = parseBbox(bbox2);
+  return !(maxLon1 < minLon2 || minLon1 > maxLon2 || maxLat1 < minLat2 || minLat1 > maxLat2);
+};
+
+/**
+ * Computes the intersecting BoundingBox between two bounding boxes, or null if disjoint.
+ * 
+ * @param {string|number[]|Object} bbox1 - First bounding box
+ * @param {string|number[]|Object} bbox2 - Second bounding box
+ * @returns {[number, number, number, number]|null} Intersecting bounds or null
+ */
+export const bboxIntersection = (bbox1, bbox2) => {
+  if (!bboxIntersects(bbox1, bbox2)) return null;
+  const [minLon1, minLat1, maxLon1, maxLat1] = parseBbox(bbox1);
+  const [minLon2, minLat2, maxLon2, maxLat2] = parseBbox(bbox2);
+  return [
+    parseFloat(Math.max(minLon1, minLon2).toFixed(6)),
+    parseFloat(Math.max(minLat1, minLat2).toFixed(6)),
+    parseFloat(Math.min(maxLon1, maxLon2).toFixed(6)),
+    parseFloat(Math.min(maxLat1, maxLat2).toFixed(6))
+  ];
+};
+
+/**
+ * Determines if parentBbox completely encloses childBbox.
+ * 
+ * @param {string|number[]|Object} parentBbox - Enclosing candidate bounding box
+ * @param {string|number[]|Object} childBbox - Inner candidate bounding box
+ * @returns {boolean} True if childBbox is fully within parentBbox
+ */
+export const bboxContains = (parentBbox, childBbox) => {
+  const [pMinLon, pMinLat, pMaxLon, pMaxLat] = parseBbox(parentBbox);
+  const [cMinLon, cMinLat, cMaxLon, cMaxLat] = parseBbox(childBbox);
+  return pMinLon <= cMinLon && pMaxLon >= cMaxLon && pMinLat <= cMinLat && pMaxLat >= cMaxLat;
+};
+
+/**
+ * Calculates Intersection over Union (IoU) overlap ratio between two bounding boxes [0.0, 1.0].
+ * 
+ * @param {string|number[]|Object} bbox1 - First bounding box
+ * @param {string|number[]|Object} bbox2 - Second bounding box
+ * @returns {number} Overlap ratio in [0.0, 1.0]
+ */
+export const bboxOverlapRatio = (bbox1, bbox2) => {
+  const inter = bboxIntersection(bbox1, bbox2);
+  if (!inter) return 0.0;
+  const [iMinLon, iMinLat, iMaxLon, iMaxLat] = inter;
+  const [minLon1, minLat1, maxLon1, maxLat1] = parseBbox(bbox1);
+  const [minLon2, minLat2, maxLon2, maxLat2] = parseBbox(bbox2);
+  const interArea = (iMaxLon - iMinLon) * (iMaxLat - iMinLat);
+  const area1 = (maxLon1 - minLon1) * (maxLat1 - minLat1);
+  const area2 = (maxLon2 - minLon2) * (maxLat2 - minLat2);
+  const unionArea = area1 + area2 - interArea;
+  return unionArea > 0 ? parseFloat((interArea / unionArea).toFixed(4)) : 0.0;
+};
+
+/**
+ * Mapping of common satellite band aliases to canonical BAND_SPECS keys.
+ */
+export const BAND_ALIAS_MAP = {
+  blue: 'b02', b2: 'b02', b02: 'b02',
+  green: 'b03', b3: 'b03', b03: 'b03',
+  red: 'b04', b4: 'b04', b04: 'b04',
+  rededge1: 'b05', rededge: 'b05', b5: 'b05', b05: 'b05',
+  rededge2: 'b06', b6: 'b06', b06: 'b06',
+  rededge3: 'b07', b7: 'b07', b07: 'b07',
+  nir: 'b08', nir_broad: 'b08', b8: 'b08', b08: 'b08',
+  nir_narrow: 'b8a', b8a: 'b8a',
+  swir1: 'b11', swir16: 'b11', b11: 'b11',
+  swir2: 'b12', swir22: 'b12', b12: 'b12',
+  thermal: 'b10', tir: 'b10', lwir: 'b10', b10: 'b10'
+};
+
+/**
+ * Transforms raw surface reflectance dict into an ordered array of physical band records.
+ * Sorted in ascending wavelength order from Visible Blue to Thermal IR.
+ * 
+ * @param {Record<string, number>} surfaceReflectance - Surface reflectance per band
+ * @returns {Array<{bandKey: string, name: string, wavelengthNm: number, reflectance: number, domain: string}>}
+ */
+export const formatSpectralProfile = (surfaceReflectance) => {
+  if (!surfaceReflectance || typeof surfaceReflectance !== 'object') return [];
+  const records = [];
+  for (const [rawKey, refl] of Object.entries(surfaceReflectance)) {
+    if (refl === null || refl === undefined) continue;
+    const val = Number(refl);
+    if (isNaN(val) || !isFinite(val)) continue;
+    const canonical = BAND_ALIAS_MAP[String(rawKey).toLowerCase().trim()];
+    const spec = canonical ? getBandSpec(canonical) : null;
+    if (spec) {
+      records.push({
+        bandKey: spec.key,
+        name: spec.name,
+        wavelengthNm: spec.centerWavelengthNm,
+        reflectance: parseFloat(val.toFixed(4)),
+        domain: spec.spectrumDomain
+      });
+    } else {
+      records.push({
+        bandKey: String(rawKey),
+        name: String(rawKey).charAt(0).toUpperCase() + String(rawKey).slice(1),
+        wavelengthNm: 500.0,
+        reflectance: parseFloat(val.toFixed(4)),
+        domain: 'Custom'
+      });
+    }
+  }
+  records.sort((a, b) => a.wavelengthNm - b.wavelengthNm);
+  return records;
+};
+
+/**
+ * Multi-scale spatial Level of Detail (LOD) tiers.
+ */
+export const SPATIAL_LOD_TIERS = {
+  MACRO_REGIONAL: 'macro_regional',
+  SATELLITE_SYNOPTIC: 'satellite_synoptic',
+  SUBMETER_TRANSITION: 'submeter_transition',
+  MICRO_INSPECTION: 'micro_inspection'
+};
+
+/**
+ * Classifies a map zoom level into its operational Spatial LOD tier.
+ * 
+ * @param {number|string} zoom - Map zoom level
+ * @returns {string} Spatial LOD tier key
+ */
+export const getSpatialLodTier = (zoom) => {
+  const z = Number(zoom);
+  if (z < 10) return SPATIAL_LOD_TIERS.MACRO_REGIONAL;
+  if (z <= 15) return SPATIAL_LOD_TIERS.SATELLITE_SYNOPTIC;
+  if (z <= 18) return SPATIAL_LOD_TIERS.SUBMETER_TRANSITION;
+  return SPATIAL_LOD_TIERS.MICRO_INSPECTION;
+};
+
+/**
+ * Retrieves recommended viewing zoom range [minZoom, maxZoom] for an imagery collection.
+ * 
+ * @param {string} collection - Imagery collection ID
+ * @returns {[number, number]} [minZoom, maxZoom]
+ */
+export const getCollectionRecommendedZoom = (collection) => {
+  const col = String(collection || '').toLowerCase().trim();
+  if (col.includes('drone')) return [16, 24];
+  if (col.includes('landsat')) return [7, 15];
+  return [8, 16];
+};
+
+/**
+ * Maps a scalar value onto a colormap palette to produce an interpolated hex color string.
+ * 
+ * @param {string} colormap - Colormap palette key
+ * @param {number} value - Scalar value
+ * @param {number} [vmin=0.0] - Lower scale boundary
+ * @param {number} [vmax=1.0] - Upper scale boundary
+ * @returns {string} Hex color string '#rrggbb'
+ */
+export const getColormapColorAtValue = (colormap, value, vmin = 0.0, vmax = 1.0) => {
+  const stops = getColormapColorStops(colormap);
+  if (!stops || stops.length === 0) return '#2b83ba';
+  if (stops.length === 1) return stops[0];
+  const val = Number(value);
+  const lo = Number(vmin);
+  const hi = Number(vmax);
+  if (isNaN(val) || !isFinite(val)) return stops[0];
+  let t = hi <= lo ? 0.5 : (val - lo) / (hi - lo);
+  t = Math.max(0.0, Math.min(1.0, t));
+  const nSegments = stops.length - 1;
+  const pos = t * nSegments;
+  const idx = Math.floor(pos);
+  if (idx >= nSegments) return stops[stops.length - 1];
+  const frac = pos - idx;
+
+  const hexToRgb = (h) => {
+    const clean = h.replace('#', '');
+    return [
+      parseInt(clean.substring(0, 2), 16),
+      parseInt(clean.substring(2, 4), 16),
+      parseInt(clean.substring(4, 6), 16)
+    ];
+  };
+
+  try {
+    const [r1, g1, b1] = hexToRgb(stops[idx]);
+    const [r2, g2, b2] = hexToRgb(stops[idx + 1]);
+    const r = Math.round(r1 + (r2 - r1) * frac);
+    const g = Math.round(g1 + (g2 - g1) * frac);
+    const b = Math.round(b1 + (b2 - b1) * frac);
+    const toHex = (n) => n.toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  } catch {
+    return stops[idx];
+  }
+};
+
+/**
+ * Converts a HazardEventDetail or hazard event dict into a GeoJSON Feature.
+ * 
+ * @param {Object} event - Hazard event record
+ * @returns {Object} GeoJSON Feature with Point geometry
+ */
+export const hazardEventToGeoJsonFeature = (event) => {
+  if (!event || typeof event !== 'object') {
+    return {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [0, 0] },
+      properties: { id: 'EVT-UNKNOWN' }
+    };
+  }
+  const lat = Number(event.lat || event.latitude || 0);
+  const lng = Number(event.lng || event.longitude || 0);
+  const { lat: _lat, lng: _lng, latitude: _latitude, longitude: _longitude, ...rest } = event;
+  return {
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [lng, lat] },
+    properties: { id: event.id || 'EVT-UNKNOWN', ...rest }
+  };
+};
+
+/**
+ * Converts a sequence of hazard events into a GeoJSON FeatureCollection.
+ * 
+ * @param {Array<Object>} events - Array of hazard events
+ * @returns {Object} GeoJSON FeatureCollection
+ */
+export const hazardEventsToFeatureCollection = (events) => {
+  const feats = Array.isArray(events)
+    ? events.filter(Boolean).map(hazardEventToGeoJsonFeature)
+    : [];
+  return { type: 'FeatureCollection', features: feats };
+};
+
+/**
+ * Calculates serpentine boustrophedon (lawnmower) flight survey waypoints across a bounding box.
+ * 
+ * @param {string|number[]|Object} bbox - Survey bounding box
+ * @param {number} [flightAltitudeM=60.0] - Flight altitude Above Ground Level in meters
+ * @param {number} [overlapPct=0.75] - Lateral overlap percentage
+ * @param {number} [sensorFovDeg=70.0] - Sensor horizontal field of view
+ * @returns {Array<[number, number]>} Sequence of [lat, lon] waypoints
+ */
+export const generateBoustrophedonWaypoints = (
+  bbox,
+  flightAltitudeM = 60.0,
+  overlapPct = 0.75,
+  sensorFovDeg = 70.0
+) => {
+  const [minLon, minLat, maxLon, maxLat] = parseBbox(bbox);
+  const fovRad = (sensorFovDeg * Math.PI) / 180.0;
+  const swathWidthM = 2.0 * flightAltitudeM * Math.tan(fovRad / 2.0);
+  const clampedOverlap = Math.min(0.9, Math.max(0.1, overlapPct));
+  const laneSpacingM = swathWidthM * (1.0 - clampedOverlap);
+  let latStep = laneSpacingM / 111320.0;
+  if (latStep <= 0.00001) latStep = 0.0001;
+
+  const waypoints = [];
+  let currentLat = minLat;
+  let directionEast = true;
+
+  while (currentLat <= maxLat + (latStep * 0.5)) {
+    const latClamped = parseFloat(Math.min(maxLat, currentLat).toFixed(6));
+    if (directionEast) {
+      waypoints.push([latClamped, parseFloat(minLon.toFixed(6))]);
+      waypoints.push([latClamped, parseFloat(maxLon.toFixed(6))]);
+    } else {
+      waypoints.push([latClamped, parseFloat(maxLon.toFixed(6))]);
+      waypoints.push([latClamped, parseFloat(minLon.toFixed(6))]);
+    }
+    directionEast = !directionEast;
+    currentLat += latStep;
+  }
+  return waypoints;
+};
+
+/**
+ * Digital elevation and terrain morphology metrics.
+ */
+export const TERRAIN_METRICS = {
+  ELEVATION: 'elevation',
+  SLOPE: 'slope',
+  ASPECT: 'aspect',
+  HILLSHADE: 'hillshade'
+};
+
+/**
+ * Synthetic Aperture Radar backscatter polarizations.
+ */
+export const SAR_POLARIZATIONS = {
+  VV: 'vv',
+  VH: 'vh',
+  RATIO: 'ratio_vh_vv'
+};
+
+/**
+ * Sampling methods for linear engineering transects.
+ */
+export const TRANSECT_SAMPLE_METHODS = {
+  EQUIDISTANT_GEODESIC: 'equidistant_geodesic',
+  VERTEX_ONLY: 'vertex_only'
+};
+
+/**
+ * Generates equidistant [lat, lon] sample coordinates along an engineering transect polyline.
+ * 
+ * @param {Object|Array} polyline - GeoJSON LineString geometry or array of coordinates
+ * @param {number} [sampleCount=50] - Number of target sample points
+ * @returns {Array<[number, number]>} Ordered array of [lat, lon] sample coordinates
+ */
+export const samplePolylineEquidistant = (polyline, sampleCount = 50) => {
+  if (!polyline) return [];
+  const rawPts = [];
+  
+  if (typeof polyline === 'object' && polyline !== null) {
+    let coords = null;
+    if (polyline.type === 'Feature' && polyline.geometry && Array.isArray(polyline.geometry.coordinates)) {
+      coords = polyline.geometry.coordinates;
+    } else if (polyline.type === 'LineString' && Array.isArray(polyline.coordinates)) {
+      coords = polyline.coordinates;
+    } else if (Array.isArray(polyline.coordinates)) {
+      coords = polyline.coordinates;
+    } else if (Array.isArray(polyline)) {
+      coords = polyline;
+    }
+    
+    if (Array.isArray(coords)) {
+      for (const pt of coords) {
+        if (typeof pt === 'object' && pt !== null && !Array.isArray(pt)) {
+          const lat = Number(pt.lat ?? pt.latitude);
+          const lon = Number(pt.lon ?? pt.lng ?? pt.longitude);
+          if (!isNaN(lat) && !isNaN(lon) && isFinite(lat) && isFinite(lon)) {
+            rawPts.push([lat, lon]);
+          }
+        } else if (Array.isArray(pt) && pt.length >= 2) {
+          const v1 = Number(pt[0]);
+          const v2 = Number(pt[1]);
+          if (!isNaN(v1) && !isNaN(v2) && isFinite(v1) && isFinite(v2)) {
+            if (Math.abs(v1) > 90.0 && Math.abs(v2) <= 90.0) {
+              rawPts.push([v2, v1]);
+            } else if (Math.abs(v2) > 90.0 && Math.abs(v1) <= 90.0) {
+              rawPts.push([v1, v2]);
+            } else {
+              rawPts.push([v1, v2]);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (rawPts.length === 0) return [];
+  const targetCount = Math.max(2, parseInt(sampleCount, 10) || 50);
+  if (rawPts.length === 1) {
+    return Array(targetCount).fill(rawPts[0]);
+  }
+
+  const cumDists = [0.0];
+  for (let i = 1; i < rawPts.length; i++) {
+    const d = calculateHaversineDistance(
+      rawPts[i - 1][0], rawPts[i - 1][1],
+      rawPts[i][0], rawPts[i][1],
+      'm'
+    );
+    cumDists.push(cumDists[cumDists.length - 1] + d);
+  }
+
+  const totalDist = cumDists[cumDists.length - 1];
+  if (totalDist <= 0.0001) {
+    return Array(targetCount).fill(rawPts[0]);
+  }
+
+  const sampled = [];
+  const step = totalDist / (targetCount - 1);
+  let segIdx = 0;
+
+  for (let k = 0; k < targetCount; k++) {
+    const targetD = Math.min(totalDist, k * step);
+    while (segIdx < cumDists.length - 2 && cumDists[segIdx + 1] < targetD) {
+      segIdx++;
+    }
+    const segStartD = cumDists[segIdx];
+    const segEndD = cumDists[segIdx + 1];
+    const segLen = segEndD - segStartD;
+    const frac = segLen > 0 ? Math.max(0.0, Math.min(1.0, (targetD - segStartD) / segLen)) : 0.0;
+    const p1 = rawPts[segIdx];
+    const p2 = rawPts[segIdx + 1];
+    const lat = parseFloat((p1[0] + frac * (p2[0] - p1[0])).toFixed(6));
+    const lon = parseFloat((p1[1] + frac * (p2[1] - p1[1])).toFixed(6));
+    sampled.push([lat, lon]);
+  }
+
+  return sampled;
+};
+
+/**
+ * Volumetric calculation operational modes.
+ */
+export const VOLUME_CALCULATION_MODES = {
+  CUT_FILL: 'cut_fill',
+  RESERVOIR_STORAGE: 'reservoir_storage',
+  EMBANKMENT_FILL: 'embankment_fill'
+};
+
+/**
+ * Computes cut, fill, and net volumetric metrics over an elevation grid array.
+ * 
+ * @param {number[]} elevationGrid - Array of elevation values in meters
+ * @param {number} referenceElevationM - Reference design datum elevation in meters
+ * @param {number} [cellSizeM=10.0] - Horizontal grid cell dimension in meters
+ * @returns {Object} Volumetric summary object
+ */
+export const calculateCutFillVolumes = (elevationGrid, referenceElevationM, cellSizeM = 10.0) => {
+  if (!Array.isArray(elevationGrid) || elevationGrid.length === 0) {
+    return {
+      surface_area_m2: 0.0,
+      surface_area_hectares: 0.0,
+      cut_volume_m3: 0.0,
+      fill_volume_m3: 0.0,
+      net_volume_m3: 0.0,
+      mean_elevation_m: 0.0,
+      min_elevation_m: 0.0,
+      max_elevation_m: 0.0,
+      mean_depth_m: 0.0,
+      max_depth_m: 0.0
+    };
+  }
+
+  const validElevs = [];
+  for (const e of elevationGrid) {
+    if (e !== null && e !== undefined) {
+      const num = Number(e);
+      if (!isNaN(num) && isFinite(num)) {
+        validElevs.push(num);
+      }
+    }
+  }
+
+  if (validElevs.length === 0) {
+    return {
+      surface_area_m2: 0.0,
+      surface_area_hectares: 0.0,
+      cut_volume_m3: 0.0,
+      fill_volume_m3: 0.0,
+      net_volume_m3: 0.0,
+      mean_elevation_m: 0.0,
+      min_elevation_m: 0.0,
+      max_elevation_m: 0.0,
+      mean_depth_m: 0.0,
+      max_depth_m: 0.0
+    };
+  }
+
+  const refElev = Number(referenceElevationM) || 0.0;
+  const cellArea = Number(cellSizeM) * Number(cellSizeM);
+  let cutVol = 0.0;
+  let fillVol = 0.0;
+  const depthDiffs = [];
+
+  for (const z of validElevs) {
+    const diff = z - refElev;
+    depthDiffs.push(Math.abs(diff));
+    if (diff > 0.0) {
+      cutVol += diff * cellArea;
+    } else if (diff < 0.0) {
+      fillVol += (-diff) * cellArea;
+    }
+  }
+
+  const totalArea = validElevs.length * cellArea;
+  const meanElev = validElevs.reduce((a, b) => a + b, 0) / validElevs.length;
+  const minElev = Math.min(...validElevs);
+  const maxElev = Math.max(...validElevs);
+  const meanDepth = depthDiffs.length > 0 ? depthDiffs.reduce((a, b) => a + b, 0) / depthDiffs.length : 0.0;
+  const maxDepth = depthDiffs.length > 0 ? Math.max(...depthDiffs) : 0.0;
+
+  return {
+    surface_area_m2: parseFloat(totalArea.toFixed(2)),
+    surface_area_hectares: parseFloat((totalArea / 10000.0).toFixed(4)),
+    cut_volume_m3: parseFloat(cutVol.toFixed(2)),
+    fill_volume_m3: parseFloat(fillVol.toFixed(2)),
+    net_volume_m3: parseFloat((cutVol - fillVol).toFixed(2)),
+    mean_elevation_m: parseFloat(meanElev.toFixed(2)),
+    min_elevation_m: parseFloat(minElev.toFixed(2)),
+    max_elevation_m: parseFloat(maxElev.toFixed(2)),
+    mean_depth_m: parseFloat(meanDepth.toFixed(2)),
+    max_depth_m: parseFloat(maxDepth.toFixed(2))
+  };
+};
+
+/**
+ * Output file formats for raster export.
+ */
+export const EXPORT_RASTER_FORMATS = {
+  GEOTIFF: 'geotiff',
+  COG: 'cog',
+  PNG_RGBA: 'png_rgba',
+  GEOJSON_VECTOR: 'geojson_vector',
+  CSV_TABULAR: 'csv_tabular'
+};
+
+/**
+ * Generates standardized canonical filename for exported geospatial data files.
+ * 
+ * @param {string} collection - Imagery or elevation collection
+ * @param {string} itemId - Observation identifier
+ * @param {string} [formatType='geotiff'] - Export file format
+ * @param {string|null} [index=null] - Optional spectral index
+ * @returns {string} Standardized filename
+ */
+export const formatExportFilename = (collection, itemId, formatType = 'geotiff', index = null) => {
+  const colStr = String(collection || 'sentinel-2-l2a').toLowerCase().trim();
+  const fmtStr = String(formatType || 'geotiff').toLowerCase().trim();
+  const cleanId = String(itemId || 'export').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  const extMap = {
+    geotiff: 'tif',
+    cog: 'tif',
+    png_rgba: 'png',
+    geojson_vector: 'geojson',
+    csv_tabular: 'csv'
+  };
+  const ext = extMap[fmtStr] || 'tif';
+  let prefix = `gios_${colStr}_${cleanId}`;
+  if (index) {
+    prefix = `${prefix}_${String(index).toLowerCase().trim()}`;
+  }
+  return `${prefix}.${ext}`;
+};
+
+/**
+ * Multi-temporal animation playback modes.
+ */
+export const ANIMATION_PLAYBACK_MODES = {
+  LOOP: 'loop',
+  PING_PONG: 'ping_pong',
+  STEP: 'step'
+};
+
+/**
+ * Constructs ordered AnimationKeyframe list from STAC scenes for tile viewport (z, x, y).
+ * 
+ * @param {Array<Object>} scenes - Array of STAC scene records
+ * @param {number|string} z - Zoom level
+ * @param {number|string} x - Tile X coordinate
+ * @param {number|string} y - Tile Y coordinate
+ * @param {Object} [options={}] - Index, colormap, rescale options
+ * @returns {Array<Object>} Ordered keyframes list
+ */
+export const buildAnimationKeyframes = (scenes, z, x, y, options = {}) => {
+  if (!Array.isArray(scenes)) return [];
+  const idx = options.index || 'rgb';
+  const cm = options.colormap || null;
+  const rescale = options.rescale || null;
+
+  const sorted = [...scenes].sort((a, b) => {
+    const da = (a && a.datetime) || '';
+    const db = (b && b.datetime) || '';
+    return da.localeCompare(db);
+  });
+
+  return sorted.map((sc, idxPos) => {
+    const scId = (sc && sc.id) || `SCENE-${idxPos}`;
+    const dt = (sc && sc.datetime) || '';
+    const dateClean = dt.includes('T') ? dt.split('T')[0] : (dt || '2026-01-01');
+    const cc = (sc && sc.cloud_cover !== undefined) ? Number(sc.cloud_cover) : 0.0;
+    const coll = (sc && sc.collection) || 'sentinel-2-l2a';
+
+    const params = new URLSearchParams();
+    params.set('index', idx);
+    if (cm) params.set('colormap', cm);
+    if (rescale) params.set('rescale', rescale);
+
+    const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+    const tileUrl = `${base}/api/v1/tiles/${coll}/${scId}/${z}/${x}/${y}.png?${params.toString()}`;
+
+    return {
+      frame_index: idxPos,
+      timestamp: dateClean,
+      scene_id: String(scId),
+      cloud_cover: cc,
+      tile_url: tileUrl,
+      index: idx,
+      colormap: cm
+    };
+  });
 };
 
 

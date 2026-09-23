@@ -1,3 +1,4 @@
+import re
 """Tests for GIOS v2.5 Core Schemas, Data Models, and API Contracts.
 
 Verifies:
@@ -129,7 +130,24 @@ from app.models.schemas import (
     SwipeCurtainConfig,
     SWIPE_PRESET_RATIOS,
     get_swipe_preset_ratios,
-    generate_tile_cache_key
+    generate_tile_cache_key,
+    BAND_ALIAS_MAP,
+    SpectralBandValue,
+    format_spectral_profile,
+    SpatialLODTier,
+    ZOOM_LOD_TIERS,
+    get_spatial_lod_tier,
+    get_collection_recommended_zoom,
+    get_colormap_color_at_value,
+    hazard_event_to_geojson_feature,
+    hazard_events_to_feature_collection,
+    generate_boustrophedon_waypoints,
+    TerrainMetric,
+    TerrainAnalysisRequest,
+    TerrainAnalysisResponse,
+    SARPolarization,
+    SARAnalysisRequest,
+    SARAnalysisResponse
 )
 from app.config import settings
 
@@ -909,8 +927,8 @@ class TestGIOSCoreSchemas(unittest.TestCase):
 
     def test_satellite_collections_metadata_contract(self):
         """Verify satellite and aerial imagery collection metadata and catalog lookup."""
-        self.assertEqual(len(SATELLITE_COLLECTIONS_METADATA), 3)
-        for col_id in ["sentinel-2-l2a", "landsat-c2-l2", "drone-ortho"]:
+        self.assertEqual(len(SATELLITE_COLLECTIONS_METADATA), 5)
+        for col_id in ["sentinel-2-l2a", "landsat-c2-l2", "drone-ortho", "sentinel-1-rtc", "cop-dem-glo-30"]:
             self.assertIn(col_id, SATELLITE_COLLECTIONS_METADATA)
             meta = SATELLITE_COLLECTIONS_METADATA[col_id]
             self.assertIsInstance(meta, SatelliteCollectionMetadata)
@@ -927,12 +945,22 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertIsNotNone(landsat_meta)
         self.assertEqual(landsat_meta.resolution_m, 30.0)
 
+        s1_meta = get_satellite_collection_metadata(SatelliteCollection.SENTINEL_1_RTC)
+        self.assertIsNotNone(s1_meta)
+        self.assertEqual(s1_meta.resolution_m, 10.0)
+
+        dem_meta = get_satellite_collection_metadata(SatelliteCollection.COP_DEM)
+        self.assertIsNotNone(dem_meta)
+        self.assertEqual(dem_meta.resolution_m, 30.0)
+
         self.assertIsNone(get_satellite_collection_metadata("non_existent_collection"))
 
         # Listing helper
         all_collections = list_satellite_collections()
-        self.assertEqual(len(all_collections), 3)
+        self.assertEqual(len(all_collections), 5)
         self.assertIn("sentinel-2-l2a", [c.id.value for c in all_collections])
+        self.assertIn("sentinel-1-rtc", [c.id.value for c in all_collections])
+        self.assertIn("cop-dem-glo-30", [c.id.value for c in all_collections])
 
     def test_api_route_contracts_coverage(self):
         """Verify canonical API route contracts dictionary matches required system routes."""
@@ -1471,6 +1499,171 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         )
         self.assertIn("pre_2026-07-01", diff_key)
         self.assertIn("post_2026-08-20", diff_key)
+
+    def test_spectral_profile_formatting(self):
+        """Verify format_spectral_profile sorts bands by physical wavelength and normalizes aliases."""
+        raw_reflectance = {
+            "blue": 0.038,
+            "green": 0.052,
+            "red": 0.041,
+            "rededge1": 0.098,
+            "nir": 0.320,
+            "swir1": 0.142,
+            "swir2": 0.081,
+            "thermal": 0.210
+        }
+        profile = format_spectral_profile(raw_reflectance)
+        self.assertEqual(len(profile), 8)
+        self.assertTrue(all(isinstance(p, SpectralBandValue) for p in profile))
+        # Strictly ascending wavelengths
+        wavelengths = [p.wavelength_nm for p in profile]
+        self.assertEqual(wavelengths, sorted(wavelengths))
+        self.assertEqual(profile[0].band_key, "b02")  # 490nm Blue
+        self.assertEqual(profile[1].band_key, "b03")  # 560nm Green
+        self.assertEqual(profile[2].band_key, "b04")  # 665nm Red
+        self.assertEqual(profile[-1].band_key, "b10") # 10895nm Thermal
+
+        # Empty / None handling
+        self.assertEqual(format_spectral_profile({}), [])
+        self.assertEqual(format_spectral_profile(None), [])
+
+    def test_bounding_box_topology_operations(self):
+        """Verify BoundingBox intersects, intersection, contains_bbox, and overlap_ratio."""
+        box1 = BoundingBox(min_lon=-121.2, min_lat=36.9, max_lon=-121.0, max_lat=37.1)
+        box2 = BoundingBox(min_lon=-121.1, min_lat=37.0, max_lon=-120.9, max_lat=37.2)
+        box3 = BoundingBox(min_lon=-120.8, min_lat=37.3, max_lon=-120.7, max_lat=37.4)
+
+        # Intersection test
+        self.assertTrue(box1.intersects(box2))
+        self.assertFalse(box1.intersects(box3))
+        self.assertTrue(box1.intersects([-121.1, 37.0, -120.9, 37.2]))
+
+        # Intersection box
+        inter = box1.intersection(box2)
+        self.assertIsNotNone(inter)
+        self.assertAlmostEqual(inter.min_lon, -121.1, places=5)
+        self.assertAlmostEqual(inter.min_lat, 37.0, places=5)
+        self.assertAlmostEqual(inter.max_lon, -121.0, places=5)
+        self.assertAlmostEqual(inter.max_lat, 37.1, places=5)
+        self.assertIsNone(box1.intersection(box3))
+
+        # Containment
+        child_box = BoundingBox(min_lon=-121.15, min_lat=36.95, max_lon=-121.05, max_lat=37.05)
+        self.assertTrue(box1.contains_bbox(child_box))
+        self.assertFalse(box1.contains_bbox(box2))
+
+        # Overlap ratio (IoU)
+        iou = box1.overlap_ratio(box2)
+        self.assertTrue(0.0 < iou < 1.0)
+        self.assertEqual(box1.overlap_ratio(box3), 0.0)
+        self.assertEqual(box1.overlap_ratio(box1), 1.0)
+
+    def test_spatial_lod_tiers_and_zoom_ranges(self):
+        """Verify SpatialLODTier classification and recommended collection zoom ranges."""
+        self.assertEqual(get_spatial_lod_tier(4), SpatialLODTier.MACRO_REGIONAL)
+        self.assertEqual(get_spatial_lod_tier(9), SpatialLODTier.MACRO_REGIONAL)
+        self.assertEqual(get_spatial_lod_tier(10), SpatialLODTier.SATELLITE_SYNOPTIC)
+        self.assertEqual(get_spatial_lod_tier(13), SpatialLODTier.SATELLITE_SYNOPTIC)
+        self.assertEqual(get_spatial_lod_tier(15), SpatialLODTier.SATELLITE_SYNOPTIC)
+        self.assertEqual(get_spatial_lod_tier(16), SpatialLODTier.SUBMETER_TRANSITION)
+        self.assertEqual(get_spatial_lod_tier(18), SpatialLODTier.SUBMETER_TRANSITION)
+        self.assertEqual(get_spatial_lod_tier(19), SpatialLODTier.MICRO_INSPECTION)
+        self.assertEqual(get_spatial_lod_tier(22), SpatialLODTier.MICRO_INSPECTION)
+
+        # Collection recommended zoom
+        self.assertEqual(get_collection_recommended_zoom("drone-ortho"), (16, 24))
+        self.assertEqual(get_collection_recommended_zoom(SatelliteCollection.DRONE_ORTHO), (16, 24))
+        self.assertEqual(get_collection_recommended_zoom("landsat-c2-l2"), (7, 15))
+        self.assertEqual(get_collection_recommended_zoom("sentinel-2-l2a"), (8, 16))
+
+        # Catalog keys
+        self.assertEqual(len(ZOOM_LOD_TIERS), 4)
+        self.assertIn("macro_regional", ZOOM_LOD_TIERS)
+        self.assertIn("micro_inspection", ZOOM_LOD_TIERS)
+
+    def test_hazard_event_to_geojson_conversion(self):
+        """Verify hazard event conversion to GeoJSON Feature and FeatureCollection."""
+        event_dict = {
+            "id": "EVT-DAM-01",
+            "title": "San Luis Dam Toe Seepage",
+            "lat": 37.0582,
+            "lng": -121.0744,
+            "category": "seepage",
+            "severity": "critical",
+            "peak_zscore": "+3.42",
+            "metric": "ndmi"
+        }
+        feat = hazard_event_to_geojson_feature(event_dict)
+        self.assertEqual(feat.type, "Feature")
+        self.assertEqual(feat.geometry["type"], "Point")
+        self.assertEqual(feat.geometry["coordinates"], [-121.0744, 37.0582])
+        self.assertEqual(feat.properties["id"], "EVT-DAM-01")
+        self.assertEqual(feat.properties["severity"], "critical")
+
+        fc = hazard_events_to_feature_collection([event_dict, {"id": "EVT-02", "lat": 37.1, "lng": -121.1}])
+        self.assertEqual(fc.type, "FeatureCollection")
+        self.assertEqual(len(fc.features), 2)
+
+    def test_continuous_colormap_color_interpolation(self):
+        """Verify get_colormap_color_at_value interpolates hex colors smoothly across colormaps."""
+        hex_min = get_colormap_color_at_value("spectral", -0.2, -0.2, 0.6)
+        hex_max = get_colormap_color_at_value("spectral", 0.6, -0.2, 0.6)
+        hex_mid = get_colormap_color_at_value("spectral", 0.2, -0.2, 0.6)
+
+        self.assertTrue(re.match(r"^#[0-9a-fA-F]{6}$", hex_min))
+        self.assertTrue(re.match(r"^#[0-9a-fA-F]{6}$", hex_max))
+        self.assertTrue(re.match(r"^#[0-9a-fA-F]{6}$", hex_mid))
+        self.assertNotEqual(hex_min, hex_max)
+
+        # Fallback handling
+        self.assertTrue(re.match(r"^#[0-9a-fA-F]{6}$", get_colormap_color_at_value("unknown", 0.5)))
+        self.assertTrue(re.match(r"^#[0-9a-fA-F]{6}$", get_colormap_color_at_value("viridis", float("nan"))))
+
+    def test_boustrophedon_survey_waypoints_generator(self):
+        """Verify generate_boustrophedon_waypoints creates valid serpentine survey flight lines."""
+        bbox = (-121.08, 37.05, -121.06, 37.07)
+        waypoints = generate_boustrophedon_waypoints(bbox, flight_altitude_m=60.0, overlap_pct=0.75)
+        self.assertTrue(len(waypoints) >= 4)
+        for lat, lon in waypoints:
+            self.assertTrue(37.049 <= lat <= 37.071)
+            self.assertTrue(-121.081 <= lon <= -121.059)
+
+    def test_terrain_and_sar_analysis_contracts(self):
+        """Verify Terrain and SAR analysis models and canonical API routes."""
+        self.assertEqual(TerrainMetric.ELEVATION.value, "elevation")
+        self.assertEqual(TerrainMetric.SLOPE.value, "slope")
+        self.assertEqual(SARPolarization.VV.value, "vv")
+        self.assertEqual(SARPolarization.RATIO.value, "ratio_vh_vv")
+
+        req = TerrainAnalysisRequest(bbox=[-121.1, 37.0, -121.0, 37.1], metric=TerrainMetric.SLOPE)
+        self.assertEqual(req.metric, TerrainMetric.SLOPE)
+        self.assertEqual(req.sun_azimuth_deg, 315.0)
+
+        resp = TerrainAnalysisResponse(
+            metric="elevation",
+            min_value=120.5,
+            max_value=450.2,
+            mean_value=280.1,
+            unit="m",
+            tile_url_template="/api/v1/tiles/terrain/elevation/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.unit, "m")
+
+        sar_req = SARAnalysisRequest(
+            bbox=[-121.1, 37.0, -121.0, 37.1],
+            polarization=SARPolarization.VV,
+            start_date="2026-08-01",
+            end_date="2026-08-20"
+        )
+        self.assertEqual(sar_req.polarization, SARPolarization.VV)
+
+        # Check route resolution
+        self.assertEqual(format_api_route("analysis_terrain"), "/api/v1/analysis/terrain")
+        self.assertEqual(format_api_route("analysis_sar"), "/api/v1/analysis/sar")
+        self.assertEqual(
+            format_api_route("tiles_terrain", metric="elevation", z=13, x=1310, y=3165),
+            "/api/v1/tiles/terrain/elevation/13/1310/3165.png"
+        )
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

@@ -54,6 +54,12 @@ class DataAcquisitionService:
             "b02": "blue", "b03": "green", "b04": "red",
             "b05": "nir08", "b06": "swir16", "b07": "swir22",
             "b10": "lwir11", "b11": "lwir11", "lwir": "lwir11", "lwir11": "lwir11", "band10": "lwir11", "band11": "lwir11", "qa": "qa_pixel"
+        },
+        "cop-dem-glo-30": {
+            "elevation": "data", "dem": "data", "data": "data", "elev": "data"
+        },
+        "sentinel-1-rtc": {
+            "vv": "vv", "vh": "vh", "ratio": "vh", "ratio_vh_vv": "vh"
         }
     }
 
@@ -161,15 +167,25 @@ class DataAcquisitionService:
         if not isinstance(items, list):
             items = [items]
 
-        if "sentinel" in collection.lower():
+        col_lower = collection.lower()
+        if "sentinel-1" in col_lower or "sar" in col_lower or "rtc" in col_lower:
+            target_res = resolution or 10.0
+            default_bands = ["vv", "vh"]
+            col_key = "sentinel-1-rtc"
+        elif "dem" in col_lower or "cop" in col_lower:
+            target_res = resolution or 30.0
+            default_bands = ["data"]
+            col_key = "cop-dem-glo-30"
+        elif "sentinel" in col_lower:
             target_res = resolution or 10.0
             default_bands = ["B02", "B03", "B04", "B05", "B08", "B11", "B12", "SCL"]
+            col_key = "sentinel-2-l2a"
         else:
             target_res = resolution or 30.0
             default_bands = ["blue", "green", "red", "nir08", "swir16", "swir22", "lwir11", "qa_pixel"]
+            col_key = "landsat-c2-l2"
         target_bands = list(bands) if bands else default_bands
         # Map common band aliases to canonical sensor asset names
-        col_key = "sentinel-2-l2a" if "sentinel" in collection.lower() else "landsat-c2-l2"
         mapping = self.BAND_MAP.get(col_key, {})
         canonical_target_bands = []
         for b in target_bands:
@@ -179,10 +195,10 @@ class DataAcquisitionService:
         target_bands = canonical_target_bands
 
         if apply_mask:
-            if "sentinel" in collection.lower():
+            if col_key == "sentinel-2-l2a":
                 if not any(b.upper() == "SCL" for b in target_bands):
                     target_bands.append("SCL")
-            else:
+            elif col_key == "landsat-c2-l2":
                 if not any(b.lower() in {"qa_pixel", "qa"} for b in target_bands):
                     target_bands.append("qa_pixel")
         # Ensure STAC items are signed with SAS tokens
@@ -335,14 +351,15 @@ class DataAcquisitionService:
             warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
             warnings.filterwarnings("ignore", message=r".*Dataset has no geotransform.*")
             if apply_mask:
-                if "sentinel" in collection.lower():
+                if "sentinel" in collection.lower() and not ("sar" in collection.lower() or "rtc" in collection.lower()):
                     ds = preprocessing_service.mask_sentinel_scl(ds, dilation_iterations=1)
                 elif "landsat" in collection.lower():
                     ds = preprocessing_service.mask_landsat_qa(ds, dilation_iterations=1)
 
-            # Apply radiometric calibration & offset
+            # Apply radiometric calibration & offset for optical imagery
             if apply_calibration:
-                ds = preprocessing_service.normalise_reflectance(ds, collection=collection)
+                if ("sentinel" in collection.lower() and not ("sar" in collection.lower() or "rtc" in collection.lower())) or "landsat" in collection.lower():
+                    ds = preprocessing_service.normalise_reflectance(ds, collection=collection)
 
         # Annotate multi-spectral variables with physical band specifications
         for var_name in list(ds.data_vars):
@@ -390,12 +407,29 @@ class DataAcquisitionService:
         xx, yy = np.meshgrid(np.linspace(0, 1, nx, dtype=np.float32), np.linspace(0, 1, ny, dtype=np.float32))
         gradient = xx * np.float32(0.4) + yy * np.float32(0.3)
 
-        data_vars = {}
-        is_sentinel = "sentinel" in collection.lower()
+        col_lower = collection.lower()
+        is_sar = "sar" in col_lower or "sentinel-1" in col_lower or "rtc" in col_lower
+        is_dem = "dem" in col_lower or "cop" in col_lower
+        is_sentinel = "sentinel" in col_lower and not is_sar
 
-        for band in bands:
-            b_clean = band.upper()
-            if is_sentinel:
+        data_vars = {}
+        if is_dem:
+            for band in bands:
+                elev = 120.0 + gradient * 350.0 + np.sin(xx * 15.0) * 45.0 + np.cos(yy * 12.0) * 35.0
+                data_vars[band] = (["y", "x"], elev.astype(np.float32))
+        elif is_sar:
+            for band in bands:
+                b_low = band.lower()
+                if b_low == "vh":
+                    raw = -24.0 + gradient * 10.0 + np.sin(yy * 20.0) * 2.0
+                elif b_low in {"ratio", "ratio_vh_vv"}:
+                    raw = -7.0 + gradient * 4.0
+                else:
+                    raw = -17.0 + gradient * 11.0 + np.sin(yy * 20.0) * 2.5
+                data_vars[band] = (["y", "x"], raw.astype(np.float32))
+        elif is_sentinel:
+            for band in bands:
+                b_clean = band.upper()
                 if b_clean in {"SCL"}:
                     raw = np.full((ny, nx), 4, dtype=np.uint8)  # Class 4 = Vegetation
                     raw[0:4, 0:4] = 9  # High probability cloud in corner to verify dilation
@@ -424,8 +458,9 @@ class DataAcquisitionService:
                 else:
                     raw = 1500 + gradient * 500
                 data_vars[band] = (["y", "x"], raw.astype(np.float32))
-            else:
-                # Landsat C2 L2 DN
+        else:
+            # Landsat C2 L2 DN
+            for band in bands:
                 b_low = band.lower()
                 if b_low in {"blue", "b2", "b02"}:
                     raw = 9000 + gradient * 2000

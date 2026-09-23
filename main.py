@@ -65,6 +65,10 @@ async def data_anomaly_daemon():
             # Progress active simulated drone missions
             drone_service.simulate_missions()
             
+            # Periodic garbage collection to maintain lean memory footprint
+            import gc
+            gc.collect()
+            
             await asyncio.sleep(60) # Run every 60 seconds
         except asyncio.CancelledError:
             logger.info("Agent 2 shutting down.")

@@ -26,6 +26,8 @@ class SatelliteCollection(str, Enum):
     DRONE_ORTHO = "drone-ortho"
     DRONE = "drone"
     WILDFIRE = "wildfire"
+    SENTINEL_1_RTC = "sentinel-1-rtc"
+    COP_DEM = "cop-dem-glo-30"
 
 class SpectralIndex(str, Enum):
     """Core biophysical and environmental hazard spectral indices."""
@@ -453,6 +455,20 @@ SATELLITE_COLLECTIONS_METADATA: Dict[str, SatelliteCollectionMetadata] = {
         description="Centimeter-scale drone survey photogrammetry Cloud-Optimized GeoTIFF.",
         resolution_m=0.028,
         revisit_days=None
+    ),
+    "sentinel-1-rtc": SatelliteCollectionMetadata(
+        id=SatelliteCollection.SENTINEL_1_RTC,
+        label="Sentinel-1 SAR RTC (ESA / 10m C-Band Radar)",
+        description="All-weather synthetic aperture radar for cloud-penetrating moisture and flood mapping.",
+        resolution_m=10.0,
+        revisit_days=6.0
+    ),
+    "cop-dem-glo-30": SatelliteCollectionMetadata(
+        id=SatelliteCollection.COP_DEM,
+        label="Copernicus DEM GLO-30 (ESA / 30m Global DEM)",
+        description="Digital surface elevation model for slope, aspect, and hydrological drainage analysis.",
+        resolution_m=30.0,
+        revisit_days=None
     )
 }
 
@@ -509,6 +525,14 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "satellite_sentinel": "/api/v1/satellite/sentinel",
     "iot_ingest": "/api/v1/iot/ingest",
     "iot_data": "/api/v1/iot/data",
+    "analysis_terrain": "/api/v1/analysis/terrain",
+    "analysis_sar": "/api/v1/analysis/sar",
+    "tiles_terrain": "/api/v1/tiles/terrain/{metric}/{z}/{x}/{y}.png",
+    "tiles_sar": "/api/v1/tiles/sar/{polarization}/{z}/{x}/{y}.png",
+    "analysis_transect": "/api/v1/analysis/transect",
+    "analysis_volumetric": "/api/v1/analysis/volumetric",
+    "analysis_export": "/api/v1/analysis/export",
+    "analysis_animation_sequence": "/api/v1/analysis/animation-sequence",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -558,6 +582,65 @@ class BoundingBox(BaseModel):
             max_lon=min(180.0, round(self.max_lon + d_lon, 6)),
             max_lat=min(90.0, round(self.max_lat + d_lat, 6))
         )
+
+    def intersects(self, other: Any) -> bool:
+        """Determines if this bounding box intersects with another bounding box."""
+        if hasattr(other, "min_lon"):
+            o_min_lon, o_min_lat, o_max_lon, o_max_lat = other.min_lon, other.min_lat, other.max_lon, other.max_lat
+        elif isinstance(other, (list, tuple)) and len(other) >= 4:
+            o_min_lon, o_min_lat, o_max_lon, o_max_lat = float(other[0]), float(other[1]), float(other[2]), float(other[3])
+        else:
+            return False
+        return not (
+            self.max_lon < o_min_lon or
+            self.min_lon > o_max_lon or
+            self.max_lat < o_min_lat or
+            self.min_lat > o_max_lat
+        )
+
+    def intersection(self, other: Any) -> Optional["BoundingBox"]:
+        """Computes the intersecting BoundingBox between two bounding boxes, or None if disjoint."""
+        if not self.intersects(other):
+            return None
+        if hasattr(other, "min_lon"):
+            o_min_lon, o_min_lat, o_max_lon, o_max_lat = other.min_lon, other.min_lat, other.max_lon, other.max_lat
+        else:
+            o_min_lon, o_min_lat, o_max_lon, o_max_lat = float(other[0]), float(other[1]), float(other[2]), float(other[3])
+        return BoundingBox(
+            min_lon=round(max(self.min_lon, o_min_lon), 6),
+            min_lat=round(max(self.min_lat, o_min_lat), 6),
+            max_lon=round(min(self.max_lon, o_max_lon), 6),
+            max_lat=round(min(self.max_lat, o_max_lat), 6)
+        )
+
+    def contains_bbox(self, other: Any) -> bool:
+        """Determines if this bounding box completely encloses another bounding box."""
+        if hasattr(other, "min_lon"):
+            o_min_lon, o_min_lat, o_max_lon, o_max_lat = other.min_lon, other.min_lat, other.max_lon, other.max_lat
+        elif isinstance(other, (list, tuple)) and len(other) >= 4:
+            o_min_lon, o_min_lat, o_max_lon, o_max_lat = float(other[0]), float(other[1]), float(other[2]), float(other[3])
+        else:
+            return False
+        return (
+            self.min_lon <= o_min_lon and
+            self.max_lon >= o_max_lon and
+            self.min_lat <= o_min_lat and
+            self.max_lat >= o_max_lat
+        )
+
+    def overlap_ratio(self, other: Any) -> float:
+        """Calculates Intersection over Union (IoU) overlap ratio in range [0.0, 1.0]."""
+        inter = self.intersection(other)
+        if inter is None:
+            return 0.0
+        inter_area = (inter.max_lon - inter.min_lon) * (inter.max_lat - inter.min_lat)
+        self_area = (self.max_lon - self.min_lon) * (self.max_lat - self.min_lat)
+        if hasattr(other, "min_lon"):
+            other_area = (other.max_lon - other.min_lon) * (other.max_lat - other.min_lat)
+        else:
+            other_area = (float(other[2]) - float(other[0])) * (float(other[3]) - float(other[1]))
+        union_area = self_area + other_area - inter_area
+        return round(inter_area / union_area, 4) if union_area > 0 else 0.0
 
     @classmethod
     def from_points(cls, points: Sequence[Sequence[float]], coord_format: str = "lat_lon") -> "BoundingBox":
@@ -736,18 +819,20 @@ def tile_to_bbox(z: int, x: int, y: int) -> BoundingBox:
     )
 
 def calculate_metric_gsd(
-    altitude_m: float,
+    altitude_m: float = 60.0,
     focal_length_mm: float = 8.8,
     sensor_width_mm: float = 13.2,
-    image_width_px: int = 5472
+    image_width_px: int = 5472,
+    flight_altitude_m: Optional[float] = None
 ) -> float:
     """Calculates Ground Sample Distance (GSD) in centimeters per pixel from flight parameters.
     
     Formula: GSD (cm/px) = (altitude_m * 100 * sensor_width_mm) / (focal_length_mm * image_width_px)
     """
-    if altitude_m <= 0 or focal_length_mm <= 0 or image_width_px <= 0:
+    alt = flight_altitude_m if flight_altitude_m is not None else altitude_m
+    if alt <= 0 or focal_length_mm <= 0 or image_width_px <= 0:
         return 0.0
-    gsd_cm = (altitude_m * 100.0 * sensor_width_mm) / (focal_length_mm * image_width_px)
+    gsd_cm = (alt * 100.0 * sensor_width_mm) / (focal_length_mm * image_width_px)
     return round(gsd_cm, 3)
 
 def normalize_geojson_polygon(geometry: Any) -> Optional[Dict[str, Any]]:
@@ -899,6 +984,91 @@ def get_band_wavelength(band_key: str, default: float = 0.0) -> float:
     spec = get_band_spec(band_key)
     return spec.center_wavelength_nm if spec else default
 
+# Mapping of common satellite band aliases to canonical BAND_SPECS keys
+BAND_ALIAS_MAP: Dict[str, str] = {
+    "blue": "b02",
+    "b2": "b02",
+    "b02": "b02",
+    "green": "b03",
+    "b3": "b03",
+    "b03": "b03",
+    "red": "b04",
+    "b4": "b04",
+    "b04": "b04",
+    "rededge1": "b05",
+    "rededge": "b05",
+    "b5": "b05",
+    "b05": "b05",
+    "rededge2": "b06",
+    "b6": "b06",
+    "b06": "b06",
+    "rededge3": "b07",
+    "b7": "b07",
+    "b07": "b07",
+    "nir": "b08",
+    "nir_broad": "b08",
+    "b8": "b08",
+    "b08": "b08",
+    "nir_narrow": "b8a",
+    "b8a": "b8a",
+    "swir1": "b11",
+    "swir16": "b11",
+    "b11": "b11",
+    "swir2": "b12",
+    "swir22": "b12",
+    "b12": "b12",
+    "thermal": "b10",
+    "tir": "b10",
+    "lwir": "b10",
+    "b10": "b10",
+}
+
+class SpectralBandValue(BaseModel):
+    """Calibrated reflectance measurement for a specific physical spectral band."""
+    band_key: str = Field(..., description="Canonical band identifier code (e.g. 'b02', 'b08')")
+    name: str = Field(..., description="Human-readable band display name")
+    wavelength_nm: float = Field(..., description="Center wavelength in nanometers")
+    reflectance: float = Field(..., description="Calibrated surface reflectance [0.0, 1.0]")
+    domain: str = Field(..., description="Electromagnetic spectrum domain")
+
+def format_spectral_profile(surface_reflectance: Dict[str, float]) -> List[SpectralBandValue]:
+    """Transforms raw band reflectance dict into a sorted list of physical SpectralBandValue records.
+    Ordered in ascending wavelength order from Visible Blue (490nm) to Thermal IR (10895nm).
+    """
+    if not surface_reflectance or not isinstance(surface_reflectance, dict):
+        return []
+    records: List[SpectralBandValue] = []
+    for raw_key, refl in surface_reflectance.items():
+        if refl is None:
+            continue
+        try:
+            val = float(refl)
+            if math.isnan(val) or not math.isfinite(val):
+                continue
+        except (ValueError, TypeError):
+            continue
+
+        canonical = BAND_ALIAS_MAP.get(str(raw_key).lower().strip())
+        spec = get_band_spec(canonical) if canonical else None
+        if spec:
+            records.append(SpectralBandValue(
+                band_key=spec.key,
+                name=spec.name,
+                wavelength_nm=spec.center_wavelength_nm,
+                reflectance=round(val, 4),
+                domain=spec.spectrum_domain
+            ))
+        else:
+            records.append(SpectralBandValue(
+                band_key=str(raw_key),
+                name=str(raw_key).capitalize(),
+                wavelength_nm=500.0,
+                reflectance=round(val, 4),
+                domain="Custom"
+            ))
+    records.sort(key=lambda r: r.wavelength_nm)
+    return records
+
 # ============================================================================
 # SPATIAL GIS VECTOR LAYER SPECIFICATIONS & REGISTRY
 # ============================================================================
@@ -1028,6 +1198,158 @@ def generate_tile_cache_key(
         parts.append(f"post_{post}")
     raw = "_".join(parts)
     return "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in raw)
+
+# ============================================================================
+# MULTI-SCALE SPATIAL LEVEL OF DETAIL (LOD) & ZOOM SCAFFOLDING
+# ============================================================================
+
+class SpatialLODTier(str, Enum):
+    """Multi-scale spatial Level of Detail (LOD) tiers for hybrid satellite and drone fusion."""
+    MACRO_REGIONAL = "macro_regional"        # Zoom 0-9: 60m+ resolution
+    SATELLITE_SYNOPTIC = "satellite_synoptic" # Zoom 10-15: 10m-30m Sentinel-2 / Landsat
+    SUBMETER_TRANSITION = "submeter_transition" # Zoom 16-18: 0.5m-2.0m aerial & orthomosaic overviews
+    MICRO_INSPECTION = "micro_inspection"     # Zoom 19-24: 1cm-5cm ultra-high-resolution drone photogrammetry
+
+ZOOM_LOD_TIERS: Dict[str, Dict[str, Any]] = {
+    "macro_regional": {
+        "tier": SpatialLODTier.MACRO_REGIONAL,
+        "label": "Macro Regional Overview",
+        "zoom_range": (0, 9),
+        "typical_gsd": "60m - 500m",
+        "description": "Basin-scale overview and wide-area hazard reconnaissance."
+    },
+    "satellite_synoptic": {
+        "tier": SpatialLODTier.SATELLITE_SYNOPTIC,
+        "label": "Satellite Synoptic Monitoring",
+        "zoom_range": (10, 15),
+        "typical_gsd": "10m - 30m",
+        "description": "Multi-spectral surface reflectance and seasonal anomaly detection."
+    },
+    "submeter_transition": {
+        "tier": SpatialLODTier.SUBMETER_TRANSITION,
+        "label": "Sub-Meter Transition",
+        "zoom_range": (16, 18),
+        "typical_gsd": "0.5m - 2.0m",
+        "description": "Aerial orthomosaic overviews and structural context."
+    },
+    "micro_inspection": {
+        "tier": SpatialLODTier.MICRO_INSPECTION,
+        "label": "Micro Centimeter Inspection",
+        "zoom_range": (19, 24),
+        "typical_gsd": "1cm - 5cm",
+        "description": "Centimeter-level crack, toe seepage, and displacement photogrammetry."
+    }
+}
+
+def get_spatial_lod_tier(zoom: int) -> SpatialLODTier:
+    """Classifies a map zoom level into its operational Spatial LOD tier."""
+    z = int(zoom)
+    if z < 10:
+        return SpatialLODTier.MACRO_REGIONAL
+    elif z <= 15:
+        return SpatialLODTier.SATELLITE_SYNOPTIC
+    elif z <= 18:
+        return SpatialLODTier.SUBMETER_TRANSITION
+    return SpatialLODTier.MICRO_INSPECTION
+
+def get_collection_recommended_zoom(collection: Union[str, SatelliteCollection]) -> Tuple[int, int]:
+    """Retrieves recommended [min_zoom, max_zoom] viewing range for an imagery collection."""
+    col = collection.value if hasattr(collection, "value") else str(collection).lower().strip()
+    if "drone" in col:
+        return (16, 24)
+    elif "landsat" in col:
+        return (7, 15)
+    return (8, 16)
+
+# ============================================================================
+# CONTINUOUS COLORMAP VALUE-TO-COLOR INTERPOLATION
+# ============================================================================
+
+def get_colormap_color_at_value(
+    colormap: Union[str, TileColormap, None],
+    value: float,
+    vmin: float = 0.0,
+    vmax: float = 1.0
+) -> str:
+    """Maps a scalar value onto a colormap palette to produce an interpolated hex color string."""
+    stops = get_colormap_color_stops(colormap)
+    if not stops:
+        return "#2b83ba"
+    if len(stops) == 1:
+        return stops[0]
+
+    try:
+        val = float(value)
+        lo = float(vmin)
+        hi = float(vmax)
+        if math.isnan(val) or not math.isfinite(val):
+            return stops[0]
+        if hi <= lo:
+            t = 0.5
+        else:
+            t = max(0.0, min(1.0, (val - lo) / (hi - lo)))
+    except Exception:
+        return stops[0]
+
+    n_segments = len(stops) - 1
+    pos = t * n_segments
+    idx = int(pos)
+    if idx >= n_segments:
+        return stops[-1]
+    frac = pos - idx
+
+    def _hex_to_rgb(h: str) -> Tuple[int, int, int]:
+        c = h.lstrip("#")
+        return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
+
+    try:
+        r1, g1, b1 = _hex_to_rgb(stops[idx])
+        r2, g2, b2 = _hex_to_rgb(stops[idx + 1])
+        r = int(round(r1 + (r2 - r1) * frac))
+        g = int(round(g1 + (g2 - g1) * frac))
+        b = int(round(b1 + (b2 - b1) * frac))
+        return f"#{r:02x}{g:02x}{b:02x}"
+    except Exception:
+        return stops[idx]
+
+# ============================================================================
+# BOUSTROPHEDON SURVEY WAYPOINT GENERATOR SCAFFOLDING
+# ============================================================================
+
+def generate_boustrophedon_waypoints(
+    bbox: Union[BoundingBox, Tuple[float, float, float, float], Sequence[float], str],
+    flight_altitude_m: float = 60.0,
+    overlap_pct: float = 0.75,
+    sensor_fov_deg: float = 70.0
+) -> List[Tuple[float, float]]:
+    """Calculates serpentine boustrophedon (lawnmower) flight survey waypoints across a bounding box."""
+    b = parse_bbox(bbox)
+    min_lon, min_lat, max_lon, max_lat = b
+    
+    fov_rad = math.radians(sensor_fov_deg)
+    swath_width_m = 2.0 * flight_altitude_m * math.tan(fov_rad / 2.0)
+    lane_spacing_m = swath_width_m * (1.0 - min(0.9, max(0.1, overlap_pct)))
+    
+    lat_step = lane_spacing_m / 111320.0
+    if lat_step <= 0.00001:
+        lat_step = 0.0001
+        
+    waypoints: List[Tuple[float, float]] = []
+    current_lat = min_lat
+    direction_east = True
+    
+    while current_lat <= max_lat + (lat_step * 0.5):
+        lat_clamped = round(min(max_lat, current_lat), 6)
+        if direction_east:
+            waypoints.append((lat_clamped, round(min_lon, 6)))
+            waypoints.append((lat_clamped, round(max_lon, 6)))
+        else:
+            waypoints.append((lat_clamped, round(max_lon, 6)))
+            waypoints.append((lat_clamped, round(min_lon, 6)))
+        direction_east = not direction_east
+        current_lat += lat_step
+        
+    return waypoints
 
 # ============================================================================
 # CONTRACT 1: DYNAMIC XYZ TILE SERVER SCHEMAS
@@ -1287,6 +1609,7 @@ class PixelProbeResponse(BaseModel):
     surface_reflectance: Dict[str, float] = Field(..., description="Calibrated BOA surface reflectance per band")
     indices: Dict[str, float] = Field(..., description="Computed spectral index values at queried pixel")
     climatological_context: Union[ClimatologicalContext, Dict[str, Any]] = Field(..., description="Baseline median, seasonal z-score, anomaly flag")
+    spectral_profile: Optional[List[SpectralBandValue]] = Field(default=None, description="Physical wavelength-ordered spectral reflectance profile")
 
 # ============================================================================
 # CONTRACT 4: REAL POLYGON ZONAL STATISTICS SCHEMAS
@@ -1669,6 +1992,35 @@ class GeoJSONFeatureCollection(BaseModel):
 # Vector layer alias
 VectorLayerResponse = GeoJSONFeatureCollection
 
+# ============================================================================
+# HAZARD EVENT TO GEOJSON CONVERSION SCAFFOLDING
+# ============================================================================
+
+def hazard_event_to_geojson_feature(event: Any) -> GeoJSONFeature:
+    """Converts a HazardEventDetail or hazard event dict into a GeoJSON Feature."""
+    if hasattr(event, "model_dump"):
+        data = event.model_dump()
+    elif isinstance(event, dict):
+        data = dict(event)
+    else:
+        data = {}
+
+    lat = float(data.get("lat") or data.get("latitude") or 0.0)
+    lng = float(data.get("lng") or data.get("longitude") or 0.0)
+    evt_id = str(data.get("id") or "EVT-UNKNOWN")
+    props = {k: v for k, v in data.items() if k not in ("lat", "lng", "latitude", "longitude")}
+    props["id"] = evt_id
+    return GeoJSONFeature(
+        type="Feature",
+        geometry={"type": "Point", "coordinates": [lng, lat]},
+        properties=props
+    )
+
+def hazard_events_to_feature_collection(events: Sequence[Any]) -> GeoJSONFeatureCollection:
+    """Converts a sequence of hazard events into a GeoJSON FeatureCollection."""
+    feats = [hazard_event_to_geojson_feature(e) for e in events if e is not None]
+    return GeoJSONFeatureCollection(type="FeatureCollection", features=feats)
+
 class SpatialBufferRequest(BaseModel):
     """Payload for computing geodesic spatial buffers."""
     distance_km: float = Field(default=2.0, description="Buffer distance in kilometers")
@@ -1781,4 +2133,464 @@ class ReportPdfParams(BaseModel):
     """Query parameters for environmental regulatory compliance PDF reports."""
     bbox: str = Field(..., description="Bounding box formatted as 'min_lon,min_lat,max_lon,max_lat'")
     index_type: str = Field(default="ndmi", description="Spectral index analyzed in the report")
+
+# ============================================================================
+# TERRAIN & TOPOGRAPHY ANALYSIS SCHEMAS
+# ============================================================================
+
+class TerrainMetric(str, Enum):
+    """Digital elevation and terrain morphology metrics."""
+    ELEVATION = "elevation"
+    SLOPE = "slope"
+    ASPECT = "aspect"
+    HILLSHADE = "hillshade"
+
+class TerrainAnalysisRequest(BaseModel):
+    """Payload for digital elevation and terrain analysis over an AOI."""
+    bbox: Union[Tuple[float, float, float, float], List[float], str] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    metric: TerrainMetric = Field(default=TerrainMetric.ELEVATION, description="Terrain morphology indicator")
+    sun_azimuth_deg: float = Field(default=315.0, description="Illumination azimuth angle for hillshade [0, 360)")
+    sun_altitude_deg: float = Field(default=45.0, description="Illumination altitude angle for hillshade [0, 90]")
+
+class TerrainAnalysisResponse(BaseModel):
+    """Terrain evaluation results and distribution statistics."""
+    metric: str = Field(..., description="Analyzed terrain metric")
+    min_value: float = Field(..., description="Minimum value within AOI")
+    max_value: float = Field(..., description="Maximum value within AOI")
+    mean_value: float = Field(..., description="Mean value within AOI")
+    unit: str = Field(default="m", description="Unit of measurement (m, deg)")
+    tile_url_template: str = Field(..., description="XYZ tile template for visual elevation rendering")
+    statistics: Dict[str, float] = Field(default_factory=dict, description="Detailed statistical moments")
+
+# ============================================================================
+# SYNTHETIC APERTURE RADAR (SAR) ANALYSIS SCHEMAS
+# ============================================================================
+
+class SARPolarization(str, Enum):
+    """Synthetic Aperture Radar backscatter polarization channels."""
+    VV = "vv"
+    VH = "vh"
+    RATIO = "ratio_vh_vv"
+
+class SARAnalysisRequest(BaseModel):
+    """Payload for Sentinel-1 Synthetic Aperture Radar all-weather flood/moisture analysis."""
+    bbox: Union[Tuple[float, float, float, float], List[float], str] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    polarization: SARPolarization = Field(default=SARPolarization.VV, description="SAR polarization channel")
+    start_date: Optional[str] = Field(default=None, description="Acquisition start date (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(default=None, description="Acquisition end date (YYYY-MM-DD)")
+
+class SARAnalysisResponse(BaseModel):
+    """SAR calibrated backscatter response."""
+    polarization: str = Field(..., description="Analyzed polarization channel")
+    mean_backscatter_db: float = Field(..., description="Mean radar backscatter in decibels (dB)")
+    min_backscatter_db: float = Field(..., description="Minimum backscatter in dB")
+    max_backscatter_db: float = Field(..., description="Maximum backscatter in dB")
+    flood_inundation_hectares: Optional[float] = Field(default=None, description="Estimated dark-water flood inundation area")
+    tile_url_template: str = Field(..., description="XYZ tile template for SAR intensity rendering")
+
+# ============================================================================
+# EMBANKMENT & TOPOGRAPHIC TRANSECT CROSS-SECTION SCHEMAS & MATH
+# ============================================================================
+
+class TransectSampleMethod(str, Enum):
+    """Interpolation method for linear sampling along an engineering transect."""
+    EQUIDISTANT_GEODESIC = "equidistant_geodesic"
+    VERTEX_ONLY = "vertex_only"
+
+class TransectPoint(BaseModel):
+    """Sample point along a linear spatial transect."""
+    distance_m: float = Field(..., description="Cumulative distance from transect start in meters")
+    lat: float = Field(..., description="Latitude coordinate in WGS84 degrees")
+    lon: float = Field(..., description="Longitude coordinate in WGS84 degrees")
+    elevation_m: Optional[float] = Field(default=None, description="Surface elevation in meters Above Sea Level")
+    slope_deg: Optional[float] = Field(default=None, description="Local topographic slope in degrees")
+    metric_value: Optional[float] = Field(default=None, description="Interpolated biophysical or spectral index value")
+
+class TransectProfileSummary(BaseModel):
+    """Aggregate statistics across a spatial cross-section transect."""
+    total_distance_m: float = Field(..., description="Total length of the transect polyline in meters")
+    min_elevation_m: Optional[float] = Field(default=None, description="Minimum elevation along transect in meters")
+    max_elevation_m: Optional[float] = Field(default=None, description="Maximum elevation along transect in meters")
+    elevation_gain_m: Optional[float] = Field(default=None, description="Cumulative positive elevation gain in meters")
+    elevation_loss_m: Optional[float] = Field(default=None, description="Cumulative negative elevation drop in meters")
+    mean_slope_deg: Optional[float] = Field(default=None, description="Average terrain slope in degrees")
+    max_slope_deg: Optional[float] = Field(default=None, description="Steepest slope angle in degrees")
+    min_metric_value: Optional[float] = Field(default=None, description="Minimum spectral metric value")
+    max_metric_value: Optional[float] = Field(default=None, description="Maximum spectral metric value")
+
+class TransectAnalysisRequest(BaseModel):
+    """Request payload for extracting cross-sectional profiles along an embankment or hazard boundary."""
+    polyline: Union[List[Tuple[float, float]], List[List[float]], Dict[str, Any]] = Field(
+        ...,
+        description="Sequence of (lat, lon) coordinates or GeoJSON LineString geometry"
+    )
+    metric: Union[TerrainMetric, SpectralIndex, str] = Field(
+        default=TerrainMetric.ELEVATION,
+        description="Analyzed parameter along transect (elevation, slope, ndmi, etc.)"
+    )
+    sample_count: int = Field(default=50, ge=2, le=500, description="Number of equidistant sample points along transect")
+    collection: SatelliteCollection = Field(default=SatelliteCollection.COP_DEM, description="Primary sensor or elevation source")
+    item_id: Optional[str] = Field(default=None, description="Optional scene or orthomosaic ID")
+
+class TransectAnalysisResponse(BaseModel):
+    """Response payload for engineering transect cross-section analysis."""
+    metric: str = Field(..., description="Analyzed indicator metric")
+    total_distance_m: float = Field(..., description="Total transect length in meters")
+    sample_count: int = Field(..., description="Number of evaluation points")
+    summary: TransectProfileSummary = Field(..., description="Summary statistics across transect profile")
+    points: List[TransectPoint] = Field(default_factory=list, description="Ordered sequence of transect profile points")
+
+def sample_polyline_equidistant(
+    polyline: Any,
+    sample_count: int = 50
+) -> List[Tuple[float, float]]:
+    """Generates equidistant (lat, lon) sample coordinates along a polyline.
+    
+    Accepts GeoJSON LineString dicts, LineString Feature dicts, or sequences of coordinates.
+    Returns ordered list of (lat, lon) tuples with exact count = max(2, sample_count).
+    """
+    raw_pts: List[Tuple[float, float]] = []
+    
+    if isinstance(polyline, dict):
+        if polyline.get("type") == "Feature" and isinstance(polyline.get("geometry"), dict):
+            polyline = polyline["geometry"]
+        coords = polyline.get("coordinates") if isinstance(polyline.get("coordinates"), list) else None
+        if coords:
+            for pt in coords:
+                if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                    try:
+                        lon, lat = float(pt[0]), float(pt[1])
+                        raw_pts.append((lat, lon))
+                    except (ValueError, TypeError):
+                        continue
+    elif isinstance(polyline, (list, tuple)):
+        for pt in polyline:
+            if isinstance(pt, dict):
+                try:
+                    lat = float(pt.get("lat") or pt.get("latitude") or 0.0)
+                    lon = float(pt.get("lon") or pt.get("lng") or pt.get("longitude") or 0.0)
+                    raw_pts.append((lat, lon))
+                except (ValueError, TypeError):
+                    continue
+            elif isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                try:
+                    v1, v2 = float(pt[0]), float(pt[1])
+                    if abs(v1) > 90.0 and abs(v2) <= 90.0:
+                        raw_pts.append((v2, v1))
+                    elif abs(v2) > 90.0 and abs(v1) <= 90.0:
+                        raw_pts.append((v1, v2))
+                    else:
+                        raw_pts.append((v1, v2))
+                except (ValueError, TypeError):
+                    continue
+
+    if not raw_pts:
+        return []
+
+    target_count = max(2, int(sample_count))
+    if len(raw_pts) == 1:
+        return [raw_pts[0]] * target_count
+
+    # Calculate cumulative distances in meters
+    cum_dists = [0.0]
+    for i in range(1, len(raw_pts)):
+        d = calculate_haversine_distance(
+            raw_pts[i - 1][0], raw_pts[i - 1][1],
+            raw_pts[i][0], raw_pts[i][1],
+            unit="m"
+        )
+        cum_dists.append(cum_dists[-1] + d)
+
+    total_dist = cum_dists[-1]
+    if total_dist <= 0.0001:
+        return [raw_pts[0]] * target_count
+
+    sampled: List[Tuple[float, float]] = []
+    step = total_dist / float(target_count - 1)
+    
+    seg_idx = 0
+    for k in range(target_count):
+        target_d = min(total_dist, k * step)
+        while seg_idx < len(cum_dists) - 2 and cum_dists[seg_idx + 1] < target_d:
+            seg_idx += 1
+            
+        seg_start_d = cum_dists[seg_idx]
+        seg_end_d = cum_dists[seg_idx + 1]
+        seg_len = seg_end_d - seg_start_d
+        
+        if seg_len > 0.0:
+            frac = (target_d - seg_start_d) / seg_len
+        else:
+            frac = 0.0
+        frac = max(0.0, min(1.0, frac))
+        
+        p1 = raw_pts[seg_idx]
+        p2 = raw_pts[seg_idx + 1]
+        lat = round(p1[0] + frac * (p2[0] - p1[0]), 6)
+        lon = round(p1[1] + frac * (p2[1] - p1[1]), 6)
+        sampled.append((lat, lon))
+        
+    return sampled
+
+# ============================================================================
+# VOLUMETRIC & CUT-FILL EARTHWORK SCHEMAS & MATH
+# ============================================================================
+
+class VolumeCalculationMode(str, Enum):
+    """Operational mode for digital volumetric earthwork calculation."""
+    CUT_FILL = "cut_fill"
+    RESERVOIR_STORAGE = "reservoir_storage"
+    EMBANKMENT_FILL = "embankment_fill"
+
+class VolumetricAnalysisRequest(BaseModel):
+    """Request payload for 3D earthwork and reservoir storage volume calculation."""
+    bbox: Union[Tuple[float, float, float, float], List[float], str, Dict[str, Any]] = Field(
+        ...,
+        description="Target Area of Interest bounding box or GeoJSON Polygon"
+    )
+    reference_elevation_m: float = Field(
+        ...,
+        description="Design datum or water surface plane elevation in meters ASL"
+    )
+    mode: VolumeCalculationMode = Field(
+        default=VolumeCalculationMode.CUT_FILL,
+        description="Volumetric calculation mode"
+    )
+    grid_resolution_m: float = Field(
+        default=10.0,
+        ge=0.5,
+        le=100.0,
+        description="Grid cell resolution in meters for volume integration"
+    )
+    collection: SatelliteCollection = Field(
+        default=SatelliteCollection.COP_DEM,
+        description="Digital elevation model collection"
+    )
+
+class VolumetricAnalysisResponse(BaseModel):
+    """Response payload for volumetric earthwork integration."""
+    mode: str = Field(..., description="Volumetric analysis mode")
+    reference_elevation_m: float = Field(..., description="Reference datum elevation in meters")
+    surface_area_m2: float = Field(..., description="Surface footprint area in square meters")
+    surface_area_hectares: float = Field(..., description="Surface footprint area in hectares")
+    cut_volume_m3: float = Field(..., description="Excavation volume above reference datum in cubic meters")
+    fill_volume_m3: float = Field(..., description="Fill volume below reference datum in cubic meters")
+    net_volume_m3: float = Field(..., description="Net earthwork balance (cut - fill) in cubic meters")
+    mean_elevation_m: float = Field(..., description="Mean ground elevation in meters")
+    min_elevation_m: float = Field(..., description="Minimum ground elevation in meters")
+    max_elevation_m: float = Field(..., description="Maximum ground elevation in meters")
+    mean_depth_m: float = Field(default=0.0, description="Average depth or height relative to datum in meters")
+    max_depth_m: float = Field(default=0.0, description="Maximum depth or height relative to datum in meters")
+
+def calculate_cut_fill_volumes(
+    elevation_grid: Sequence[Any],
+    reference_elevation_m: float,
+    cell_size_m: float = 10.0
+) -> Dict[str, float]:
+    """Computes cut, fill, and net volumetric metrics over an elevation grid array."""
+    valid_elevs: List[float] = []
+    for e in elevation_grid:
+        if e is not None:
+            try:
+                val = float(e)
+                if math.isfinite(val):
+                    valid_elevs.append(val)
+            except (ValueError, TypeError):
+                continue
+
+    if not valid_elevs:
+        return {
+            "surface_area_m2": 0.0,
+            "surface_area_hectares": 0.0,
+            "cut_volume_m3": 0.0,
+            "fill_volume_m3": 0.0,
+            "net_volume_m3": 0.0,
+            "mean_elevation_m": 0.0,
+            "min_elevation_m": 0.0,
+            "max_elevation_m": 0.0,
+            "mean_depth_m": 0.0,
+            "max_depth_m": 0.0
+        }
+
+    cell_area = float(cell_size_m) * float(cell_size_m)
+    cut_vol = 0.0
+    fill_vol = 0.0
+    depth_diffs: List[float] = []
+
+    for z in valid_elevs:
+        diff = z - float(reference_elevation_m)
+        depth_diffs.append(abs(diff))
+        if diff > 0.0:
+            cut_vol += diff * cell_area
+        elif diff < 0.0:
+            fill_vol += (-diff) * cell_area
+
+    total_area = len(valid_elevs) * cell_area
+    mean_elev = sum(valid_elevs) / len(valid_elevs)
+    min_elev = min(valid_elevs)
+    max_elev = max(valid_elevs)
+    mean_depth = sum(depth_diffs) / len(depth_diffs) if depth_diffs else 0.0
+    max_depth = max(depth_diffs) if depth_diffs else 0.0
+
+    return {
+        "surface_area_m2": round(total_area, 2),
+        "surface_area_hectares": round(total_area / 10000.0, 4),
+        "cut_volume_m3": round(cut_vol, 2),
+        "fill_volume_m3": round(fill_vol, 2),
+        "net_volume_m3": round(cut_vol - fill_vol, 2),
+        "mean_elevation_m": round(mean_elev, 2),
+        "min_elevation_m": round(min_elev, 2),
+        "max_elevation_m": round(max_elev, 2),
+        "mean_depth_m": round(mean_depth, 2),
+        "max_depth_m": round(max_depth, 2)
+    }
+
+# ============================================================================
+# DATA EXPORT CONTRACTS & SPECIFICATIONS
+# ============================================================================
+
+class ExportRasterFormat(str, Enum):
+    """Supported output formats for spatial and analytical raster export."""
+    GEOTIFF = "geotiff"
+    COG = "cog"
+    PNG_RGBA = "png_rgba"
+    GEOJSON_VECTOR = "geojson_vector"
+    CSV_TABULAR = "csv_tabular"
+
+class DataExportRequest(BaseModel):
+    """Payload for exporting georeferenced raster scenes or derived biophysical layers."""
+    bbox: Union[Tuple[float, float, float, float], List[float], str] = Field(
+        ...,
+        description="Target spatial bounds [min_lon, min_lat, max_lon, max_lat]"
+    )
+    collection: SatelliteCollection = Field(
+        default=SatelliteCollection.SENTINEL_2,
+        description="Target imagery or elevation collection"
+    )
+    item_id: Optional[str] = Field(default=None, description="Specific STAC item or orthomosaic ID")
+    index: Optional[SpectralIndex] = Field(default=None, description="Optional spectral index to export")
+    metric: Optional[TerrainMetric] = Field(default=None, description="Optional terrain metric to export")
+    format: ExportRasterFormat = Field(default=ExportRasterFormat.GEOTIFF, description="Target export file format")
+    crs: str = Field(default="EPSG:4326", description="Target spatial reference coordinate system")
+    resolution_m: Optional[float] = Field(default=None, description="Target ground resolution in meters")
+    rescale: Optional[str] = Field(default=None, description="Optional display contrast rescale min,max")
+    colormap: Optional[TileColormap] = Field(default=None, description="Optional rendered colormap palette")
+
+class DataExportResponse(BaseModel):
+    """Response payload acknowledging raster export generation."""
+    export_id: str = Field(..., description="Unique export task or file identifier")
+    status: str = Field(default="ready", description="Export processing status (ready, processing)")
+    format: str = Field(..., description="Exported file format")
+    download_url: str = Field(..., description="Direct HTTP URL to retrieve the exported artifact")
+    filename: str = Field(..., description="Suggested filename for download")
+    file_size_bytes: Optional[int] = Field(default=None, description="File size in bytes if available")
+    crs: str = Field(default="EPSG:4326", description="Output spatial coordinate reference system")
+    bbox: Tuple[float, float, float, float] = Field(..., description="Georeferenced bounding box coordinates")
+    created_at: str = Field(..., description="ISO 8601 generation timestamp")
+    expires_at: str = Field(..., description="ISO 8601 URL expiration timestamp")
+
+def format_export_filename(
+    collection: Union[str, SatelliteCollection],
+    item_id: str,
+    format_type: Union[str, ExportRasterFormat] = ExportRasterFormat.GEOTIFF,
+    index: Optional[Union[str, SpectralIndex]] = None
+) -> str:
+    """Generates standardized canonical filename for exported geospatial data files."""
+    col_str = collection.value if hasattr(collection, "value") else str(collection).lower().strip()
+    fmt_str = format_type.value if hasattr(format_type, "value") else str(format_type).lower().strip()
+    clean_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(item_id).strip())
+
+    ext_map = {
+        "geotiff": "tif",
+        "cog": "tif",
+        "png_rgba": "png",
+        "geojson_vector": "geojson",
+        "csv_tabular": "csv"
+    }
+    ext = ext_map.get(fmt_str, "tif")
+
+    prefix = f"gios_{col_str}_{clean_id}"
+    if index:
+        idx_str = index.value if hasattr(index, "value") else str(index).lower().strip()
+        prefix = f"{prefix}_{idx_str}"
+
+    return f"{prefix}.{ext}"
+
+# ============================================================================
+# TEMPORAL PLAYBACK & TIME-LAPSE ANIMATION KEYFRAME SCAFFOLDING
+# ============================================================================
+
+class AnimationPlaybackMode(str, Enum):
+    """Temporal playback sequence progression modes."""
+    LOOP = "loop"
+    PING_PONG = "ping_pong"
+    STEP = "step"
+
+class AnimationKeyframe(BaseModel):
+    """Individual temporal frame in an animated satellite observation sequence."""
+    frame_index: int = Field(..., description="Zero-based sequence index")
+    timestamp: str = Field(..., description="Acquisition date (YYYY-MM-DD)")
+    scene_id: str = Field(..., description="STAC scene or observation identifier")
+    cloud_cover: float = Field(default=0.0, description="Cloud coverage percentage")
+    tile_url: str = Field(..., description="XYZ tile rendering URL for this observation")
+    index: SpectralIndex = Field(default=SpectralIndex.RGB, description="Rendered spectral index")
+    colormap: Optional[TileColormap] = Field(default=None, description="Applied colormap palette")
+
+class AnimationSequenceConfig(BaseModel):
+    """Configuration and frame catalog for multi-temporal animation playback."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2, description="Satellite collection")
+    start_date: str = Field(..., description="Sequence start date (YYYY-MM-DD)")
+    end_date: str = Field(..., description="Sequence end date (YYYY-MM-DD)")
+    fps: float = Field(default=2.0, ge=0.1, le=30.0, description="Playback frame rate in frames per second")
+    playback_mode: AnimationPlaybackMode = Field(default=AnimationPlaybackMode.LOOP, description="Animation playback mode")
+    frames: List[AnimationKeyframe] = Field(default_factory=list, description="Ordered sequence of animation keyframes")
+
+def build_animation_keyframes(
+    scenes: Sequence[Any],
+    z: int,
+    x: int,
+    y: int,
+    index: Union[SpectralIndex, str] = SpectralIndex.RGB,
+    colormap: Optional[Union[TileColormap, str]] = None,
+    rescale: Optional[str] = None
+) -> List[AnimationKeyframe]:
+    """Constructs ordered AnimationKeyframe list from STAC scenes for tile viewport (z, x, y)."""
+    idx_val = index.value if hasattr(index, "value") else str(index).lower().strip()
+    idx_enum = SpectralIndex(idx_val) if idx_val in [e.value for e in SpectralIndex] else SpectralIndex.RGB
+    cm_val = colormap.value if hasattr(colormap, "value") else (str(colormap).lower().strip() if colormap else None)
+    cm_enum = TileColormap(cm_val) if cm_val in [c.value for c in TileColormap] else None
+
+    sorted_scenes = []
+    for sc in scenes:
+        dt = getattr(sc, "datetime", None) or (sc.get("datetime") if isinstance(sc, dict) else None) or ""
+        sorted_scenes.append((dt, sc))
+    sorted_scenes.sort(key=lambda item: item[0])
+
+    frames: List[AnimationKeyframe] = []
+    for idx_pos, (dt_str, sc) in enumerate(sorted_scenes):
+        sc_id = getattr(sc, "id", None) or (sc.get("id") if isinstance(sc, dict) else None) or f"SCENE-{idx_pos}"
+        cc = getattr(sc, "cloud_cover", None) or (sc.get("cloud_cover") if isinstance(sc, dict) else None) or 0.0
+        coll = getattr(sc, "collection", None) or (sc.get("collection") if isinstance(sc, dict) else None) or "sentinel-2-l2a"
+        date_clean = dt_str.split("T")[0] if "T" in dt_str else (dt_str or "2026-01-01")
+
+        tile_url = format_api_route("tiles_dynamic", collection=coll, item_id=sc_id, z=z, x=x, y=y)
+        params = [f"index={idx_enum.value}"]
+        if cm_enum:
+            params.append(f"colormap={cm_enum.value}")
+        if rescale:
+            params.append(f"rescale={rescale}")
+        tile_url = f"{tile_url}?{'&'.join(params)}"
+
+        frames.append(AnimationKeyframe(
+            frame_index=idx_pos,
+            timestamp=date_clean,
+            scene_id=str(sc_id),
+            cloud_cover=float(cc),
+            tile_url=tile_url,
+            index=idx_enum,
+            colormap=cm_enum
+        ))
+
+    return frames
+
 

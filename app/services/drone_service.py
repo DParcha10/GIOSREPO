@@ -20,7 +20,8 @@ from app.models.schemas import (
     lat_lon_to_tile,
     calculate_haversine_distance,
     calculate_initial_bearing,
-    calculate_polygon_centroid
+    calculate_polygon_centroid,
+    generate_boustrophedon_waypoints
 )
 
 logger = logging.getLogger(__name__)
@@ -376,23 +377,18 @@ class DroneService:
         min_lat, max_lat = lat - offset, lat + offset
         min_lng, max_lng = lng - offset, lng + offset
 
-        path = []
-        num_passes = 8
-        lat_step = (max_lat - min_lat) / num_passes
-        for i in range(num_passes + 1):
-            current_lat = max_lat - (i * lat_step)
-            if i % 2 == 0:
-                path.append([current_lat, min_lng])
-                path.append([current_lat, max_lng])
-            else:
-                path.append([current_lat, max_lng])
-                path.append([current_lat, min_lng])
+        bbox = (min_lng, min_lat, max_lng, max_lat)
+        waypoints = generate_boustrophedon_waypoints(bbox, flight_altitude_m=100.0, overlap_pct=0.75)
+        path = [[round(pt[0], 6), round(pt[1], 6)] for pt in waypoints]
+        if not path or len(path) < 2:
+            path = [[lat, min_lng], [lat, max_lng]]
 
         # Planned photogrammetric metric GSD at standard survey altitude (100m AGL)
         planned_gsd = photogrammetric_metric_gsd(flight_altitude_m=100.0)
         total_flight_km = DroneService.calculate_flight_path_distance(path, unit="km")
         initial_bearing = DroneService.calculate_flight_bearing(path[0], path[1]) if len(path) >= 2 else 90.0
 
+        num_passes = max(4, len(path) // 2)
         mission = {
             "id": mission_id,
             "event_id": event_id,
@@ -402,7 +398,7 @@ class DroneService:
             "radius_km": radius_km,
             "total_distance_km": total_flight_km,
             "initial_bearing_deg": initial_bearing,
-            "estimated_time_mins": round((radius_km * 2 * num_passes) / 0.5),
+            "estimated_time_mins": max(1, round((radius_km * 2 * num_passes) / 0.5)),
             "payload": "LiDAR + Multispectral",
             "planned_gsd_cm": planned_gsd,
             "gsd_display": f"{planned_gsd:.2f} cm/px",

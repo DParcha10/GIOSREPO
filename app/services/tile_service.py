@@ -237,6 +237,43 @@ class TileService:
                 val = 0.10 + base_variation * 0.70
             elif idx_clean == "savi":
                 val = 0.10 + base_variation * 0.65
+            elif col_clean in {"terrain", "cop-dem-glo-30"}:
+                target_metric = item_id.lower() if item_id.lower() in {"elevation", "slope", "aspect", "hillshade"} else idx_clean
+                elev = 150.0 + (np.sin(xx * 30.0) * np.cos(yy * 30.0) + 1.0) * 180.0 + (xx - min_lon) / (max_lon - min_lon + 1e-6) * 120.0
+                if target_metric == "elevation":
+                    val = elev
+                elif target_metric == "slope":
+                    mid_lat = (min_lat + max_lat) / 2.0
+                    dx_m = max((max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat)) / 256.0, 1.0)
+                    dy_m = max((max_lat - min_lat) * 111320.0 / 256.0, 1.0)
+                    dz_dy, dz_dx = np.gradient(elev, dy_m, dx_m)
+                    val = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
+                elif target_metric == "aspect":
+                    mid_lat = (min_lat + max_lat) / 2.0
+                    dx_m = max((max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat)) / 256.0, 1.0)
+                    dy_m = max((max_lat - min_lat) * 111320.0 / 256.0, 1.0)
+                    dz_dy, dz_dx = np.gradient(elev, dy_m, dx_m)
+                    val = (np.degrees(np.arctan2(dz_dy, -dz_dx)) + 360.0) % 360.0
+                elif target_metric == "hillshade":
+                    mid_lat = (min_lat + max_lat) / 2.0
+                    dx_m = max((max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat)) / 256.0, 1.0)
+                    dy_m = max((max_lat - min_lat) * 111320.0 / 256.0, 1.0)
+                    dz_dy, dz_dx = np.gradient(elev, dy_m, dx_m)
+                    slope_rad = np.arctan(np.sqrt(dz_dx**2 + dz_dy**2))
+                    aspect_rad = np.arctan2(dz_dy, -dz_dx)
+                    zenith_rad = math.radians(45.0)
+                    azimuth_rad = math.radians(315.0)
+                    val = np.clip(255.0 * (math.cos(zenith_rad) * np.cos(slope_rad) + math.sin(zenith_rad) * np.sin(slope_rad) * np.cos(azimuth_rad - aspect_rad)), 0.0, 255.0)
+                else:
+                    val = elev
+            elif col_clean in {"sar", "sentinel-1-rtc", "sentinel-1"}:
+                target_pol = item_id.lower() if item_id.lower() in {"vv", "vh", "ratio", "ratio_vh_vv"} else idx_clean
+                if target_pol == "vh":
+                    val = -25.0 + base_variation * 13.0
+                elif target_pol in {"ratio", "ratio_vh_vv"}:
+                    val = -8.0 + base_variation * 6.0
+                else:
+                    val = -18.0 + base_variation * 14.0
             else:
                 val = base_variation
 
@@ -296,5 +333,47 @@ class TileService:
                 logger.warning("Could not cache tile %s: %s", f_cand, write_err)
 
         return png_bytes
+
+    def render_terrain_tile(
+        self,
+        metric: str,
+        z: int,
+        x: int,
+        y: int,
+        colormap: str = "terrain",
+        rescale: Optional[str] = None
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for digital elevation or terrain morphology."""
+        return self.render_tile(
+            collection="terrain",
+            item_id=metric,
+            z=z,
+            x=x,
+            y=y,
+            index=metric,
+            colormap=colormap,
+            rescale=rescale
+        )
+
+    def render_sar_tile(
+        self,
+        polarization: str,
+        z: int,
+        x: int,
+        y: int,
+        colormap: str = "viridis",
+        rescale: Optional[str] = None
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Sentinel-1 Synthetic Aperture Radar backscatter."""
+        return self.render_tile(
+            collection="sar",
+            item_id=polarization,
+            z=z,
+            x=x,
+            y=y,
+            index=polarization,
+            colormap=colormap,
+            rescale=rescale
+        )
 
 tile_service = TileService()

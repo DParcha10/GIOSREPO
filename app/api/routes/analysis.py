@@ -1,7 +1,7 @@
 """Analysis, Spectral Indices, Dynamic Tiles, Pixel Probe, and Zonal Statistics Routes."""
 import math
 import gc
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List, Union
 import numpy as np
 import pyproj
@@ -23,7 +23,15 @@ from app.models.schemas import (
     parse_bbox,
     BoundingBox,
     normalize_geojson_polygon,
-    classify_z_score
+    classify_z_score,
+    TerrainMetric,
+    TerrainAnalysisRequest,
+    TerrainAnalysisResponse,
+    SARPolarization,
+    SARAnalysisRequest,
+    SARAnalysisResponse,
+    format_spectral_profile,
+    format_api_route
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -206,7 +214,8 @@ def get_pixel_probe(
             "baseline_mad": seasonal_mad,
             "seasonal_z_score": z_score,
             "anomaly_flag": anomaly_flag
-        }
+        },
+        spectral_profile=format_spectral_profile(reflectance)
     )
 
 @router.post("/zonal-stats", response_model=ZonalStatsRealResponse)
@@ -367,3 +376,229 @@ def get_xyz_tile(
     post: Optional[str] = Query(None, description="Post-event assessment date for differenced tiles")
 ):
     return _handle_xyz_tile(collection, item_id, z, x, y, index, rescale, colormap, pre, post)
+
+@router.post("/terrain", response_model=TerrainAnalysisResponse)
+def analyze_terrain(req: TerrainAnalysisRequest):
+    """Calculates digital elevation and terrain morphology statistics (elevation, slope, aspect, hillshade) over an AOI."""
+    active_bbox = parse_bbox(req.bbox, default=(-121.2, 36.95, -120.95, 37.15))
+    min_lon, min_lat, max_lon, max_lat = active_bbox
+
+    metric_val = req.metric.value if hasattr(req.metric, "value") else str(req.metric).lower()
+
+    # Load Copernicus DEM or synthetic elevation grid over bounding box
+    cube = data_acquisition_service.load_data_cube(
+        items=[],
+        bands=["data"],
+        bbox=active_bbox,
+        resolution=30.0,
+        collection="cop-dem-glo-30",
+        apply_mask=False,
+        apply_calibration=False
+    )
+
+    elev_arr = None
+    for v in cube.data_vars:
+        elev_arr = cube[v].values
+        break
+    if elev_arr is None:
+        elev_arr = np.linspace(150.0, 480.0, 256, dtype=np.float32)
+
+    elev_arr = np.asarray(elev_arr, dtype=np.float32)
+    ny, nx = elev_arr.shape[-2], elev_arr.shape[-1]
+    mid_lat = (min_lat + max_lat) / 2.0
+    dx_m = max((abs(max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat))) / max(nx, 1), 1.0)
+    dy_m = max((abs(max_lat - min_lat) * 111320.0) / max(ny, 1), 1.0)
+
+    if metric_val == "slope":
+        dz_dy, dz_dx = np.gradient(elev_arr, dy_m, dx_m)
+        target_arr = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
+        unit = "deg"
+    elif metric_val == "aspect":
+        dz_dy, dz_dx = np.gradient(elev_arr, dy_m, dx_m)
+        target_arr = (np.degrees(np.arctan2(dz_dy, -dz_dx)) + 360.0) % 360.0
+        unit = "deg"
+    elif metric_val == "hillshade":
+        dz_dy, dz_dx = np.gradient(elev_arr, dy_m, dx_m)
+        slope_rad = np.arctan(np.sqrt(dz_dx**2 + dz_dy**2))
+        aspect_rad = np.arctan2(dz_dy, -dz_dx)
+        zenith_rad = math.radians(90.0 - min(89.0, max(1.0, req.sun_altitude_deg)))
+        azimuth_rad = math.radians(req.sun_azimuth_deg)
+        shaded = 255.0 * (math.cos(zenith_rad) * np.cos(slope_rad) + math.sin(zenith_rad) * np.sin(slope_rad) * np.cos(azimuth_rad - aspect_rad))
+        target_arr = np.clip(shaded, 0.0, 255.0)
+        unit = "DN"
+    else:  # elevation
+        target_arr = elev_arr
+        unit = "m"
+
+    valid_vals = target_arr[np.isfinite(target_arr)]
+    if len(valid_vals) == 0:
+        valid_vals = np.array([250.0], dtype=np.float32)
+
+    min_v = round(float(np.min(valid_vals)), 2)
+    max_v = round(float(np.max(valid_vals)), 2)
+    mean_v = round(float(np.mean(valid_vals)), 2)
+    std_v = round(float(np.std(valid_vals)), 2)
+    median_v = round(float(np.median(valid_vals)), 2)
+
+    del cube
+    del elev_arr
+    del target_arr
+    gc.collect()
+
+    tile_tmpl = f"/api/v1/tiles/terrain/{metric_val}/{{z}}/{{x}}/{{y}}.png"
+
+    return TerrainAnalysisResponse(
+        metric=metric_val,
+        min_value=min_v,
+        max_value=max_v,
+        mean_value=mean_v,
+        unit=unit,
+        tile_url_template=tile_tmpl,
+        statistics={
+            "min": min_v,
+            "max": max_v,
+            "mean": mean_v,
+            "median": median_v,
+            "std_dev": std_v
+        }
+    )
+
+@router.post("/sar", response_model=SARAnalysisResponse)
+def analyze_sar(req: SARAnalysisRequest):
+    """Calculates Sentinel-1 SAR calibrated backscatter (dB) and dark-water flood inundation area."""
+    active_bbox = parse_bbox(req.bbox, default=(-121.2, 36.95, -120.95, 37.15))
+    pol_val = req.polarization.value if hasattr(req.polarization, "value") else str(req.polarization).lower()
+    start_date = req.start_date or (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+    end_date = req.end_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Load Sentinel-1 RTC backscatter data cube
+    cube = data_acquisition_service.load_data_cube(
+        items=[],
+        bands=["vv", "vh"],
+        bbox=active_bbox,
+        resolution=10.0,
+        collection="sentinel-1-rtc",
+        apply_mask=False,
+        apply_calibration=False
+    )
+
+    vv_arr = cube["vv"].values if "vv" in cube else np.full((128, 128), -16.0, dtype=np.float32)
+    vh_arr = cube["vh"].values if "vh" in cube else np.full((128, 128), -22.0, dtype=np.float32)
+
+    if pol_val == "vh":
+        target_arr = vh_arr
+    elif pol_val in {"ratio", "ratio_vh_vv"}:
+        target_arr = vh_arr - vv_arr
+    else:  # vv
+        target_arr = vv_arr
+
+    valid_vals = target_arr[np.isfinite(target_arr)]
+    if len(valid_vals) == 0:
+        valid_vals = np.array([-16.0], dtype=np.float32)
+
+    mean_db = round(float(np.mean(valid_vals)), 2)
+    min_db = round(float(np.min(valid_vals)), 2)
+    max_db = round(float(np.max(valid_vals)), 2)
+
+    # Estimate flood inundation: specular dark water threshold <= -17.0 dB on VV
+    water_mask = (vv_arr <= -17.0) & np.isfinite(vv_arr)
+    water_fraction = float(np.mean(water_mask)) if water_mask.size > 0 else 0.0
+
+    # Calculate AOI area in hectares
+    min_lon, min_lat, max_lon, max_lat = active_bbox
+    mid_lat = (min_lat + max_lat) / 2.0
+    dx_km = abs(max_lon - min_lon) * 111.32 * math.cos(math.radians(mid_lat))
+    dy_km = abs(max_lat - min_lat) * 111.32
+    aoi_ha = dx_km * dy_km * 100.0
+    flood_ha = round(aoi_ha * water_fraction, 2)
+
+    del cube
+    del vv_arr
+    del vh_arr
+    del target_arr
+    gc.collect()
+
+    tile_tmpl = f"/api/v1/tiles/sar/{pol_val}/{{z}}/{{x}}/{{y}}.png"
+
+    return SARAnalysisResponse(
+        polarization=pol_val,
+        mean_backscatter_db=mean_db,
+        min_backscatter_db=min_db,
+        max_backscatter_db=max_db,
+        flood_inundation_hectares=flood_ha,
+        tile_url_template=tile_tmpl
+    )
+
+@tiles_router.get("/terrain/{metric}/{z}/{x}/{y}.png")
+def get_terrain_tile(
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "terrain",
+    rescale: Optional[str] = None
+):
+    png_bytes = tile_service.render_terrain_tile(
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "terrain",
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": "GIOS-TERRAIN-v2.5"
+        }
+    )
+
+@tiles_router.get("/sar/{polarization}/{z}/{x}/{y}.png")
+def get_sar_tile(
+    polarization: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "viridis",
+    rescale: Optional[str] = None
+):
+    png_bytes = tile_service.render_sar_tile(
+        polarization=polarization,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "viridis",
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": "GIOS-SAR-v2.5"
+        }
+    )
+
+@router.get("/tiles/terrain/{metric}/{z}/{x}/{y}.png")
+def get_analysis_terrain_tile(
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "terrain",
+    rescale: Optional[str] = None
+):
+    return get_terrain_tile(metric, z, x, y, colormap, rescale)
+
+@router.get("/tiles/sar/{polarization}/{z}/{x}/{y}.png")
+def get_analysis_sar_tile(
+    polarization: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "viridis",
+    rescale: Optional[str] = None
+):
+    return get_sar_tile(polarization, z, x, y, colormap, rescale)
