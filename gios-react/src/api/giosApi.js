@@ -347,6 +347,54 @@ export {
  */
 
 /**
+ * @typedef {'critical_infrastructure' | 'sensor_grid' | 'hazard_zones' | 'drone_flight_bounds'} SpatialLayerType
+ */
+
+/**
+ * @typedef {Object} SpatialLayerMetadata
+ * @property {SpatialLayerType} layerId - Unique vector layer type enum
+ * @property {string} label - Human-readable layer display title
+ * @property {string} description - Detailed content narrative
+ * @property {string} icon - Lucide icon identifier for UI rendering
+ * @property {string} color - Hex styling color
+ * @property {boolean} defaultVisible - Whether layer is displayed on initial map load
+ */
+
+/**
+ * @typedef {Object} BandSpecMetadata
+ * @property {string} key - Canonical band identifier code (e.g. 'b02', 'b08', 'b10')
+ * @property {string} name - Descriptive band name (e.g. 'Blue', 'NIR Broad', 'Thermal')
+ * @property {number} centerWavelengthNm - Center spectral wavelength in nanometers
+ * @property {number} bandwidthNm - Full width at half maximum (FWHM) in nanometers
+ * @property {number} spatialResolutionM - Native ground sampling distance in meters
+ * @property {string} spectrumDomain - Electromagnetic spectrum region
+ * @property {string} commonName - STAC common band name
+ */
+
+/**
+ * @typedef {'optical_vs_anomaly' | 'pre_vs_post' | 'satellite_vs_drone' | 'index_vs_index'} SwipeComparisonMode
+ */
+
+/**
+ * @typedef {Object} SwipePaneLayer
+ * @property {string} title - Display title for pane header
+ * @property {SatelliteCollection} collection - Imagery collection
+ * @property {string|null} [item_id] - Scene or orthomosaic ID
+ * @property {string} date - Acquisition date (YYYY-MM-DD)
+ * @property {string} [sensor='Sentinel-2 L2A'] - Sensor label
+ * @property {SpectralIndex} [index='rgb'] - Spectral index
+ * @property {TileColormap|null} [colormap] - Tile colormap
+ */
+
+/**
+ * @typedef {Object} SwipeCurtainConfig
+ * @property {SwipeComparisonMode} mode - Comparison mode
+ * @property {number} slider_pos - Curtain split percentage [2.0, 98.0]
+ * @property {SwipePaneLayer} left_layer - Baseline / pre-event layer
+ * @property {SwipePaneLayer} right_layer - Anomaly / post-event layer
+ */
+
+/**
  * @typedef {Object} AlertRecord
  * @property {string} id - Unique alert identifier
  * @property {string} site_id - Monitored site / asset ID

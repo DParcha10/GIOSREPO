@@ -110,7 +110,26 @@ from app.models.schemas import (
     lat_lon_to_tile,
     tile_to_bbox,
     calculate_metric_gsd,
-    normalize_geojson_polygon
+    normalize_geojson_polygon,
+    calculate_haversine_distance,
+    calculate_initial_bearing,
+    calculate_polygon_centroid,
+    BandSpecMetadata,
+    BAND_SPECS,
+    get_band_spec,
+    list_band_specs,
+    get_band_wavelength,
+    SpatialLayerType,
+    SpatialLayerMetadata,
+    SPATIAL_LAYERS_METADATA,
+    get_spatial_layer_metadata,
+    list_spatial_layer_types,
+    SwipeComparisonMode,
+    SwipePaneLayer,
+    SwipeCurtainConfig,
+    SWIPE_PRESET_RATIOS,
+    get_swipe_preset_ratios,
+    generate_tile_cache_key
 )
 from app.config import settings
 
@@ -1254,6 +1273,204 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertIsNone(normalize_geojson_polygon(None))
         self.assertIsNone(normalize_geojson_polygon({"type": "Point", "coordinates": [0, 0]}))
         self.assertIsNone(normalize_geojson_polygon({"type": "Polygon", "coordinates": []}))
+
+    def test_geodesic_math_and_centroid(self):
+        """Verify Haversine distance, initial bearing, and polygon centroid calculations."""
+        # Haversine distance between San Luis Reservoir points
+        lat1, lon1 = 37.0582, -121.0744
+        lat2, lon2 = 37.0682, -121.0744  # ~1.11 km north
+        dist_km = calculate_haversine_distance(lat1, lon1, lat2, lon2, unit="km")
+        self.assertAlmostEqual(dist_km, 1.112, places=2)
+        dist_m = calculate_haversine_distance(lat1, lon1, lat2, lon2, unit="m")
+        self.assertAlmostEqual(dist_m, 1111.95, places=0)
+        # Identical points
+        self.assertEqual(calculate_haversine_distance(lat1, lon1, lat1, lon1), 0.0)
+
+        # Initial bearing
+        # Due north
+        bearing_n = calculate_initial_bearing(lat1, lon1, lat2, lon1)
+        self.assertAlmostEqual(bearing_n, 0.0, delta=1.0)
+        # Due east
+        bearing_e = calculate_initial_bearing(lat1, lon1, lat1, lon1 + 0.01)
+        self.assertAlmostEqual(bearing_e, 90.0, delta=1.0)
+
+        # Polygon centroid
+        polygon_geom = {
+            "type": "Polygon",
+            "coordinates": [[
+                [-121.1, 37.0],
+                [-121.0, 37.0],
+                [-121.0, 37.1],
+                [-121.1, 37.1],
+                [-121.1, 37.0]
+            ]]
+        }
+        lat_c, lon_c = calculate_polygon_centroid(polygon_geom)
+        self.assertAlmostEqual(lat_c, 37.05, places=2)
+        self.assertAlmostEqual(lon_c, -121.05, places=2)
+
+        # Fallback for invalid geometry
+        self.assertEqual(calculate_polygon_centroid(None), (37.0582, -121.0744))
+        self.assertEqual(calculate_polygon_centroid({}), (37.0582, -121.0744))
+
+    def test_bounding_box_advanced_features(self):
+        """Verify BoundingBox.from_points and BoundingBox.expand functionality."""
+        points = [
+            (37.05, -121.10),
+            (37.15, -121.00),
+            (37.10, -121.05)
+        ]
+        bbox = BoundingBox.from_points(points, coord_format="lat_lon")
+        self.assertEqual(bbox.min_lat, 37.05)
+        self.assertEqual(bbox.max_lat, 37.15)
+        self.assertEqual(bbox.min_lon, -121.10)
+        self.assertEqual(bbox.max_lon, -121.00)
+
+        # Lon/lat format
+        lon_lat_pts = [(-121.10, 37.05), (-121.00, 37.15)]
+        bbox_ll = BoundingBox.from_points(lon_lat_pts, coord_format="lon_lat")
+        self.assertEqual(bbox_ll.min_lon, -121.10)
+        self.assertEqual(bbox_ll.max_lat, 37.15)
+
+        # Expand bbox
+        expanded = bbox.expand(buffer_pct=0.1)
+        self.assertLess(expanded.min_lon, bbox.min_lon)
+        self.assertGreater(expanded.max_lon, bbox.max_lon)
+        self.assertLess(expanded.min_lat, bbox.min_lat)
+        self.assertGreater(expanded.max_lat, bbox.max_lat)
+
+        # Expansion width test
+        w_orig = bbox.max_lon - bbox.min_lon
+        w_exp = expanded.max_lon - expanded.min_lon
+        self.assertAlmostEqual(w_exp, w_orig * 1.1, places=3)
+
+    def test_multi_spectral_band_specs_catalog(self):
+        """Verify BandSpecMetadata and physical sensor band catalog."""
+        self.assertEqual(len(BAND_SPECS), 11)
+        self.assertIn("b02", BAND_SPECS)
+        self.assertIn("b05", BAND_SPECS)
+        self.assertIn("b08", BAND_SPECS)
+        self.assertIn("b10", BAND_SPECS)
+
+        # Lookup helpers
+        b5 = get_band_spec("B05")
+        self.assertIsNotNone(b5)
+        self.assertEqual(b5.key, "b05")
+        self.assertEqual(b5.center_wavelength_nm, 705.0)
+        self.assertEqual(b5.spectrum_domain, "Vegetation Red-Edge")
+
+        # Unknown band
+        self.assertIsNone(get_band_spec("unknown_band"))
+        self.assertIsNone(get_band_spec(""))
+
+        # List all
+        all_specs = list_band_specs()
+        self.assertEqual(len(all_specs), 11)
+
+        # Wavelength lookup
+        self.assertEqual(get_band_wavelength("b04"), 665.0)
+        self.assertEqual(get_band_wavelength("b10"), 10895.0)
+        self.assertEqual(get_band_wavelength("unknown", default=500.0), 500.0)
+
+    def test_spatial_layer_types_and_metadata(self):
+        """Verify SpatialLayerType enum, registry, and lookup helpers."""
+        self.assertEqual(SpatialLayerType.CRITICAL_INFRASTRUCTURE.value, "critical_infrastructure")
+        self.assertEqual(SpatialLayerType.SENSOR_GRID.value, "sensor_grid")
+        self.assertEqual(SpatialLayerType.HAZARD_ZONES.value, "hazard_zones")
+        self.assertEqual(SpatialLayerType.DRONE_FLIGHT_BOUNDS.value, "drone_flight_bounds")
+
+        self.assertEqual(len(SPATIAL_LAYERS_METADATA), 4)
+
+        # Lookup by string and enum
+        meta_str = get_spatial_layer_metadata("critical_infrastructure")
+        meta_enum = get_spatial_layer_metadata(SpatialLayerType.CRITICAL_INFRASTRUCTURE)
+        self.assertIsNotNone(meta_str)
+        self.assertIsNotNone(meta_enum)
+        self.assertEqual(meta_str.layer_id, SpatialLayerType.CRITICAL_INFRASTRUCTURE)
+        self.assertEqual(meta_str.icon, "ShieldAlert")
+
+        # Unknown layer returns None
+        self.assertIsNone(get_spatial_layer_metadata("unknown_layer"))
+
+        # List layers
+        layers = list_spatial_layer_types()
+        self.assertEqual(len(layers), 4)
+
+    def test_swipe_curtain_contracts_and_presets(self):
+        """Verify SwipeComparisonMode, SwipePaneLayer, and SwipeCurtainConfig."""
+        self.assertEqual(SwipeComparisonMode.OPTICAL_VS_ANOMALY.value, "optical_vs_anomaly")
+        self.assertEqual(SwipeComparisonMode.PRE_VS_POST.value, "pre_vs_post")
+        self.assertEqual(SwipeComparisonMode.SATELLITE_VS_DRONE.value, "satellite_vs_drone")
+        self.assertEqual(SwipeComparisonMode.INDEX_VS_INDEX.value, "index_vs_index")
+
+        left = SwipePaneLayer(
+            title="Pre-Fire Optical Baseline",
+            collection=SatelliteCollection.SENTINEL_2,
+            date="2026-07-01",
+            index=SpectralIndex.RGB
+        )
+        right = SwipePaneLayer(
+            title="Post-Fire Burn Severity",
+            collection=SatelliteCollection.SENTINEL_2,
+            date="2026-08-20",
+            index=SpectralIndex.DNBR,
+            colormap=TileColormap.SPECTRAL
+        )
+        curtain = SwipeCurtainConfig(
+            mode=SwipeComparisonMode.PRE_VS_POST,
+            slider_pos=50.0,
+            left_layer=left,
+            right_layer=right
+        )
+        self.assertEqual(curtain.mode, SwipeComparisonMode.PRE_VS_POST)
+        self.assertEqual(curtain.slider_pos, 50.0)
+        self.assertEqual(curtain.left_layer.title, "Pre-Fire Optical Baseline")
+
+        # Presets
+        self.assertEqual(SWIPE_PRESET_RATIOS, [25, 50, 75])
+        self.assertEqual(get_swipe_preset_ratios(), [25, 50, 75])
+
+    def test_deterministic_tile_cache_key(self):
+        """Verify deterministic tile cache key generation for backend caching and frontend prefetching."""
+        key1 = generate_tile_cache_key(
+            collection="sentinel-2-l2a",
+            item_id="S2A_MSIL2A_20260820T184211",
+            z=13,
+            x=1310,
+            y=3165,
+            index="ndmi",
+            rescale="-0.2,0.6",
+            colormap="spectral"
+        )
+        key2 = generate_tile_cache_key(
+            collection="SENTINEL-2-L2A",
+            item_id="S2A_MSIL2A_20260820T184211",
+            z="13",
+            x="1310",
+            y="3165",
+            index="NDMI",
+            rescale="-0.2,0.6",
+            colormap="SPECTRAL"
+        )
+        # Identical parameters must produce identical cache keys
+        self.assertEqual(key1, key2)
+        self.assertIn("sentinel-2-l2a", key1)
+        self.assertIn("z13_x1310_y3165", key1)
+        self.assertIn("ndmi", key1)
+
+        # Pre/post differencing keys
+        diff_key = generate_tile_cache_key(
+            collection="wildfire",
+            item_id="burn-severity",
+            z=12,
+            x=1310,
+            y=3165,
+            index="dnbr",
+            pre="2026-07-01",
+            post="2026-08-20"
+        )
+        self.assertIn("pre_2026-07-01", diff_key)
+        self.assertIn("post_2026-08-20", diff_key)
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

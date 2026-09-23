@@ -12,7 +12,13 @@ import rasterio.errors
 from app.config import settings
 from app.utils.cache import cache_manager
 from app.services.preprocessing import preprocessing_service
-from app.models.schemas import parse_bbox, BoundingBox
+from app.models.schemas import (
+    parse_bbox,
+    BoundingBox,
+    BAND_SPECS,
+    get_band_spec,
+    get_band_wavelength
+)
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 try:
@@ -337,6 +343,16 @@ class DataAcquisitionService:
             # Apply radiometric calibration & offset
             if apply_calibration:
                 ds = preprocessing_service.normalise_reflectance(ds, collection=collection)
+
+        # Annotate multi-spectral variables with physical band specifications
+        for var_name in list(ds.data_vars):
+            spec = get_band_spec(var_name)
+            if spec:
+                ds[var_name].attrs["center_wavelength_nm"] = spec.center_wavelength_nm
+                ds[var_name].attrs["bandwidth_nm"] = spec.bandwidth_nm
+                ds[var_name].attrs["spatial_resolution_m"] = spec.spatial_resolution_m
+                ds[var_name].attrs["spectrum_domain"] = spec.spectrum_domain
+                ds[var_name].attrs["common_name"] = spec.common_name
 
         # Trigger garbage collection for intermediate chunk memory
         gc.collect()

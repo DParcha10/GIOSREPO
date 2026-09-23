@@ -17,7 +17,10 @@ from app.models.schemas import (
     BoundingBox,
     DroneStatus,
     calculate_metric_gsd as photogrammetric_metric_gsd,
-    lat_lon_to_tile
+    lat_lon_to_tile,
+    calculate_haversine_distance,
+    calculate_initial_bearing,
+    calculate_polygon_centroid
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +100,38 @@ class DroneService:
         if gsd_cm <= 0.0 or math.isnan(gsd_cm) or gsd_cm > 2000.0:
             gsd_cm = 2.80  # Standard survey GSD 2.8cm
         return gsd_cm
+
+    @staticmethod
+    def calculate_flight_metric_gsd(
+        flight_altitude_m: float,
+        focal_length_mm: float = 8.8,
+        sensor_width_mm: float = 13.2,
+        image_width_px: int = 5472
+    ) -> float:
+        """Calculates Ground Sample Distance (GSD) in cm/px from UAV flight parameters."""
+        return photogrammetric_metric_gsd(
+            flight_altitude_m=flight_altitude_m,
+            focal_length_mm=focal_length_mm,
+            sensor_width_mm=sensor_width_mm,
+            image_width_px=image_width_px
+        )
+
+    @staticmethod
+    def calculate_flight_path_distance(flight_path: List[List[float]], unit: str = "km") -> float:
+        """Calculates total geodesic flight distance across sequential waypoints."""
+        if not flight_path or len(flight_path) < 2:
+            return 0.0
+        total_dist = 0.0
+        for i in range(len(flight_path) - 1):
+            p1 = flight_path[i]
+            p2 = flight_path[i + 1]
+            total_dist += calculate_haversine_distance(p1[0], p1[1], p2[0], p2[1], unit=unit)
+        return round(total_dist, 3)
+
+    @staticmethod
+    def calculate_flight_bearing(p1: List[float], p2: List[float]) -> float:
+        """Calculates compass heading bearing in degrees [0, 360) from waypoint 1 to 2."""
+        return calculate_initial_bearing(p1[0], p1[1], p2[0], p2[1])
 
     def _create_default_benchmark_ortho(self):
         """Generates a default synthetic centimeter-grade drone COG over San Luis Dam embankment."""
@@ -230,6 +265,21 @@ class DroneService:
             return BoundingBox(min_lon=b[0], min_lat=b[1], max_lon=b[2], max_lat=b[3])
         return None
 
+    def get_ortho_tile_bounds(self, ortho_id: str, zoom: int) -> Optional[Dict[str, int]]:
+        """Calculates Web Mercator XYZ tile index range covering the orthomosaic at a given zoom level."""
+        bbox = self.get_ortho_bbox(ortho_id)
+        if not bbox:
+            return None
+        min_x, max_y = lat_lon_to_tile(bbox.max_lat, bbox.min_lon, zoom)
+        max_x, min_y = lat_lon_to_tile(bbox.min_lat, bbox.max_lon, zoom)
+        return {
+            "zoom": zoom,
+            "min_x": min_x,
+            "max_x": max_x,
+            "min_y": min_y,
+            "max_y": max_y
+        }
+
     def get_tile(self, ortho_id: str, z: int, x: int, y: int) -> bytes:
         """Renders 256x256 RGBA PNG tile for drone orthomosaic supporting centimeter zoom up to Zoom 22."""
         meta = self.registered_orthos.get(ortho_id)
@@ -338,6 +388,11 @@ class DroneService:
                 path.append([current_lat, max_lng])
                 path.append([current_lat, min_lng])
 
+        # Planned photogrammetric metric GSD at standard survey altitude (100m AGL)
+        planned_gsd = photogrammetric_metric_gsd(flight_altitude_m=100.0)
+        total_flight_km = DroneService.calculate_flight_path_distance(path, unit="km")
+        initial_bearing = DroneService.calculate_flight_bearing(path[0], path[1]) if len(path) >= 2 else 90.0
+
         mission = {
             "id": mission_id,
             "event_id": event_id,
@@ -345,8 +400,12 @@ class DroneService:
             "flight_path": path,
             "center": [lat, lng],
             "radius_km": radius_km,
+            "total_distance_km": total_flight_km,
+            "initial_bearing_deg": initial_bearing,
             "estimated_time_mins": round((radius_km * 2 * num_passes) / 0.5),
             "payload": "LiDAR + Multispectral",
+            "planned_gsd_cm": planned_gsd,
+            "gsd_display": f"{planned_gsd:.2f} cm/px",
             "ticks": 0
         }
         self.active_missions[mission_id] = mission

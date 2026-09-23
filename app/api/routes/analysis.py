@@ -202,6 +202,8 @@ def get_pixel_probe(
         },
         climatological_context={
             "historical_august_median_ndmi": baseline_median_ndmi,
+            "baseline_median": baseline_median_ndmi,
+            "baseline_mad": seasonal_mad,
             "seasonal_z_score": z_score,
             "anomaly_flag": anomaly_flag
         }

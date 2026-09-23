@@ -24,7 +24,8 @@ from app.models.schemas import (
     lat_lon_to_tile,
     tile_to_bbox as schema_tile_to_bbox,
     SpectralIndex,
-    TileColormap
+    TileColormap,
+    generate_tile_cache_key
 )
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,33 @@ class TileService:
     def tile_to_bbox(z: int, x: int, y: int) -> BoundingBox:
         """Calculates BoundingBox model for Web Mercator tile."""
         return schema_tile_to_bbox(z, x, y)
+
+    @staticmethod
+    def get_tile_cache_key(
+        collection: str,
+        item_id: str,
+        z: Union[int, str],
+        x: Union[int, str],
+        y: Union[int, str],
+        index: Optional[str] = "rgb",
+        rescale: Optional[str] = None,
+        colormap: Optional[str] = "spectral",
+        pre: Optional[str] = None,
+        post: Optional[str] = None
+    ) -> str:
+        """Returns deterministic cache key for XYZ tile matching shared contracts."""
+        return generate_tile_cache_key(
+            collection=collection,
+            item_id=item_id,
+            z=z,
+            x=x,
+            y=y,
+            index=index,
+            rescale=rescale,
+            colormap=colormap,
+            pre=pre,
+            post=post
+        )
 
     @staticmethod
     def get_colormap(name: Optional[Union[str, TileColormap]] = "spectral"):
@@ -130,18 +158,23 @@ class TileService:
             else:
                 idx_clean = "dnbr"
 
-        # 2. Check disk cache
+        # 2. Check disk cache with deterministic key alignment
         cache_subdir = os.path.join(TILE_CACHE_DIR, col_clean, item_id, str(z), str(x))
         os.makedirs(cache_subdir, exist_ok=True)
         date_tag = f"_{pre or 'nopre'}_{post or 'nopost'}" if (pre or post) else ""
         cache_file = os.path.join(cache_subdir, f"{y}_{idx_clean}_{cmap_clean}_{rescale_clean}{date_tag}.png")
+        det_cache_key = generate_tile_cache_key(
+            col_clean, item_id, z, x, y, idx_clean, rescale_clean, cmap_clean, pre, post
+        )
+        det_cache_file = os.path.join(cache_subdir, f"{det_cache_key}.png")
 
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file, "rb") as f:
-                    return f.read()
-            except Exception as e:
-                logger.warning("Error reading tile cache %s: %s", cache_file, e)
+        for f_cand in (det_cache_file, cache_file):
+            if os.path.exists(f_cand):
+                try:
+                    with open(f_cand, "rb") as f:
+                        return f.read()
+                except Exception as e:
+                    logger.warning("Error reading tile cache %s: %s", f_cand, e)
 
         # 3. Compute tile bounds
         min_lon, min_lat, max_lon, max_lat = self.tile_to_bounds_wgs84(z, x, y)
@@ -255,11 +288,12 @@ class TileService:
         del rgba
 
         # Write to disk cache
-        try:
-            with open(cache_file, "wb") as f:
-                f.write(png_bytes)
-        except Exception as write_err:
-            logger.warning("Could not cache tile %s: %s", cache_file, write_err)
+        for f_cand in (cache_file, det_cache_file):
+            try:
+                with open(f_cand, "wb") as f:
+                    f.write(png_bytes)
+            except Exception as write_err:
+                logger.warning("Could not cache tile %s: %s", f_cand, write_err)
 
         return png_bytes
 

@@ -5,6 +5,8 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 from scipy import stats
 
+from app.models.schemas import classify_z_score
+
 class TimeSeriesService:
     @staticmethod
     def _extract_month(date_str: str) -> int:
@@ -56,17 +58,21 @@ class TimeSeriesService:
         # Global fallback MAD in case of low sample sizes in a single month
         global_med = float(np.median(arr))
         global_mad = float(np.median(np.abs(arr - global_med)))
+        global_p10 = float(np.percentile(arr, 10))
+        global_p90 = float(np.percentile(arr, 90))
         min_scale = max(global_mad, 0.015)
 
-        # Calculate monthly median and MAD
+        # Calculate monthly median, MAD, and percentile envelopes
         climatology: Dict[int, tuple] = {}
         for m, vals in monthly_buckets.items():
             m_arr = np.array(vals)
             m_med = float(np.median(m_arr))
             m_mad = float(np.median(np.abs(m_arr - m_med)))
+            p10 = float(np.percentile(m_arr, 10))
+            p90 = float(np.percentile(m_arr, 90))
             # If monthly MAD is zero (single point or identical values), use global minimum scale
             scale = max(m_mad, min_scale) * 1.4826 + 1e-6
-            climatology[m] = (m_med, scale)
+            climatology[m] = (m_med, scale, m_mad, p10, p90)
 
         # 2. Non-parametric Theil-Sen Robust Slope & Kendall Tau
         x_indices = np.arange(len(arr), dtype=float)
@@ -93,7 +99,9 @@ class TimeSeriesService:
         anomaly_count = 0
         for d, v in zip(clean_dates, clean_values):
             m = cls._extract_month(d)
-            med, scale = climatology.get(m, (global_med, min_scale * 1.4826 + 1e-6))
+            med, scale, mad, p10, p90 = climatology.get(
+                m, (global_med, min_scale * 1.4826 + 1e-6, global_mad, global_p10, global_p90)
+            )
             z = (v - med) / scale
             is_anom = bool(abs(z) >= anomaly_threshold)
             if is_anom:
@@ -103,6 +111,9 @@ class TimeSeriesService:
                 "date": d,
                 "value": round(float(v), 3),
                 "baseline_median": round(float(med), 3),
+                "baseline_mad": round(float(mad), 3),
+                "percentile_10": round(float(p10), 3),
+                "percentile_90": round(float(p90), 3),
                 "z_score": round(float(z), 2),
                 "is_anomaly": is_anom
             })
