@@ -93,8 +93,23 @@ class AlertEngine:
 
         return alert_dict
 
-    def dispatch_webhook(self, alert_data: Dict[str, Any], webhook_url: str = "https://hooks.gios-defense.internal/alerts"):
-        """Dispatches outgoing webhook notification with payload and metadata."""
+    def dispatch_webhook(self, alert_data: Dict[str, Any], webhook_url: str = "https://hooks.gios-defense.internal/alerts") -> Dict[str, Any]:
+        """Dispatches outgoing webhook notification with payload formatted to AlertWebhookPayload schema."""
+        payload = {
+            "event_type": "hazard_anomaly_alert",
+            "alert": {
+                "id": alert_data.get("alert_id"),
+                "site_id": alert_data.get("event_id"),
+                "site_name": alert_data.get("site_name"),
+                "metric": alert_data.get("metric"),
+                "severity": alert_data.get("severity", "critical"),
+                "z_score": float(alert_data.get("z_score", 0.0)),
+                "message": alert_data.get("message"),
+                "timestamp": alert_data.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                "status": "active"
+            },
+            "sent_at": datetime.now(timezone.utc).isoformat()
+        }
         logger.info(
             "[WEBHOOK DISPATCH] Target: %s | Event: %s | Severity: %s | z-score: %.2f | Message: %s",
             webhook_url,
@@ -103,6 +118,7 @@ class AlertEngine:
             alert_data.get("z_score", 0.0),
             alert_data.get("message")
         )
+        return payload
 
     def get_persisted_alerts(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Queries recent alerts from SQLite."""

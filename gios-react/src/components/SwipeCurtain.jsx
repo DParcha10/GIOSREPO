@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { 
-  Columns, ChevronLeft, ChevronRight, X, Eye, Sliders, Calendar, Satellite, Sparkles
+  Columns, ChevronLeft, ChevronRight, X, Calendar, Satellite
 } from 'lucide-react';
+import { 
+  SWIPE_COMPARISON_MODES, 
+  getSwipePresetRatios 
+} from '../config/constants';
 
 export default function SwipeCurtain({
   sliderPos = 50,
@@ -14,7 +18,9 @@ export default function SwipeCurtain({
   rightTitle = 'Moisture Anomaly (NDMI)',
   rightDate = '2026-08-20',
   rightSensor = 'Sentinel-2 L2A',
-  containerRef
+  containerRef,
+  comparisonMode = SWIPE_COMPARISON_MODES.OPTICAL_VS_ANOMALY,
+  onComparisonModeChange
 }) {
   const isDragging = useRef(false);
   const handleRef = useRef(null);
@@ -150,7 +156,7 @@ export default function SwipeCurtain({
 
           {/* Quick Presets */}
           <div className="flex items-center gap-1">
-            {[25, 50, 75].map(val => (
+            {getSwipePresetRatios().map(val => (
               <button
                 key={val}
                 onClick={() => setSliderPos(val)}
@@ -164,6 +170,32 @@ export default function SwipeCurtain({
               </button>
             ))}
           </div>
+
+          {onComparisonModeChange && (
+            <>
+              <div className="h-4 w-px bg-gray-700"></div>
+              <div className="flex items-center gap-1">
+                {[
+                  { key: SWIPE_COMPARISON_MODES.OPTICAL_VS_ANOMALY, label: 'Optical vs Anomaly' },
+                  { key: SWIPE_COMPARISON_MODES.PRE_VS_POST, label: 'Pre vs Post' },
+                  { key: SWIPE_COMPARISON_MODES.SATELLITE_VS_DRONE, label: 'Sat vs Drone' },
+                  { key: SWIPE_COMPARISON_MODES.INDEX_VS_INDEX, label: 'NDVI vs NDMI' }
+                ].map(mode => (
+                  <button
+                    key={mode.key}
+                    onClick={() => onComparisonModeChange(mode.key)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold transition-all ${
+                      comparisonMode === mode.key
+                        ? 'bg-purple-600/50 text-purple-200 border border-purple-400/60 shadow-[0_0_8px_rgba(168,85,247,0.4)]'
+                        : 'text-gray-400 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           <div className="h-4 w-px bg-gray-700"></div>
 

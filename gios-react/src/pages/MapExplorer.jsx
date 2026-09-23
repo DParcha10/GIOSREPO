@@ -38,7 +38,18 @@ import giosApi, {
   DRONE_STATUSES,
   normalizeGeojsonPolygon,
   classifyZScore,
-  getAutoStretch
+  getAutoStretch,
+  SPATIAL_LAYERS,
+  getSpatialLayerMetadata,
+  listSpatialLayerTypes,
+  getBandSpec,
+  getBandWavelength,
+  SWIPE_COMPARISON_MODES,
+  calculateHaversineDistance,
+  calculateInitialBearing,
+  calculatePolygonCentroid,
+  bboxFromPoints,
+  bboxExpand
 } from '../api/giosApi';
 import useJarvisStore from '../store/jarvisStore';
 import {
@@ -148,6 +159,7 @@ export default function MapExplorer() {
   // T-12 Multi-Temporal Swipe Curtain State
   const [curtainActive, setCurtainActive] = useState(false);
   const [curtainPos, setCurtainPos] = useState(50);
+  const [swipeComparisonMode, setSwipeComparisonMode] = useState(SWIPE_COMPARISON_MODES.OPTICAL_VS_ANOMALY);
 
   // T-13b Interactive Pixel Inspector Probe State
   const [pixelProbeActive, setPixelProbeActive] = useState(false);
@@ -169,6 +181,8 @@ export default function MapExplorer() {
   const [loadingTrend, setLoadingTrend] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [vectorLayers, setVectorLayers] = useState([]);
+  const [activeSpatialLayer, setActiveSpatialLayer] = useState(SPATIAL_LAYERS.CRITICAL_INFRASTRUCTURE);
+  const [spatialLayerVisible, setSpatialLayerVisible] = useState(true);
   const [droneMissions, setDroneMissions] = useState([]);
 
   // JARVIS Autonomous Integration
@@ -241,14 +255,19 @@ export default function MapExplorer() {
     }
   };
 
-  const fetchVectorLayers = async () => {
+  const fetchVectorLayers = async (layerType = activeSpatialLayer) => {
     try {
-      const res = await fetchInfrastructureLayers('critical_infrastructure');
+      const res = await fetchInfrastructureLayers(layerType);
       if (res?.features) {
         setVectorLayers(res.features);
       }
     } catch (e) { console.error("Vectors failed", e); }
   };
+
+  useEffect(() => {
+    fetchVectorLayers(activeSpatialLayer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSpatialLayer]);
 
   const fetchDroneMissions = async () => {
     try {
@@ -458,6 +477,9 @@ export default function MapExplorer() {
         ]]
       };
       const geojsonGeometry = normalizeGeojsonPolygon(rawGeometry) || rawGeometry;
+      const centroid = calculatePolygonCentroid(geojsonGeometry);
+      const polyBbox = bboxFromPoints(customPolygonVertices, 'lat_lon');
+      const expandedBbox = bboxExpand(polyBbox, 0.1);
       const collection = selectedEvent?.sensor?.toLowerCase().includes('landsat') ? 'landsat-c2-l2' : 'sentinel-2-l2a';
       const itemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SEH';
 
@@ -467,13 +489,24 @@ export default function MapExplorer() {
         item_id: itemId,
         index: activeSpectralIndex
       });
-      setZonalStatsResult(response);
+      setZonalStatsResult({
+        ...response,
+        centroid,
+        bbox: polyBbox,
+        expandedBbox
+      });
     } catch (err) {
       const apiErr = formatApiError(err);
       console.error('Failed to calculate zonal statistics:', apiErr.detail);
+      const centroid = calculatePolygonCentroid(rawGeometry);
+      const polyBbox = bboxFromPoints(customPolygonVertices, 'lat_lon');
+      const expandedBbox = bboxExpand(polyBbox, 0.1);
       // Fallback matching contract
       setZonalStatsResult({
         index: activeSpectralIndex,
+        centroid,
+        bbox: polyBbox,
+        expandedBbox,
         area_hectares: 384.2,
         valid_pixels: 38420,
         cloud_covered_pixels: 0,
