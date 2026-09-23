@@ -13,7 +13,12 @@ from rasterio.windows import from_bounds
 import pyproj
 from shapely.geometry import box
 from app.config import settings
-from app.models.schemas import BoundingBox, DroneStatus
+from app.models.schemas import (
+    BoundingBox,
+    DroneStatus,
+    calculate_metric_gsd as photogrammetric_metric_gsd,
+    lat_lon_to_tile
+)
 
 logger = logging.getLogger(__name__)
 

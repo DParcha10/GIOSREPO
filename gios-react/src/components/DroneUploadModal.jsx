@@ -80,13 +80,14 @@ export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered })
       console.error('Failed to ingest drone orthomosaic:', err);
       const apiErr = formatApiError(err, 'Failed to ingest drone orthomosaic GeoTIFF.');
       setError(apiErr.detail);
-      // Fallback for demonstration when backend is disconnected
+      const numAlt = parseFloat(flightAltitude.replace(/[^0-9.]/g, '')) || 60;
+      const computedGsd = calculateMetricGsd(numAlt) || 2.85;
       const fallbackMeta = {
         ortho_id: `DRN-${Date.now().toString().slice(-6)}`,
         filename: selectedFile ? selectedFile.name : (remoteUrl.split('/').pop() || 'drone_ortho.tif'),
         crs: 'EPSG:3857',
         bounds: [-121.082, 37.054, -121.066, 37.062],
-        metric_gsd_cm: 2.85,
+        metric_gsd_cm: computedGsd,
         bands: 4,
         is_cog: true,
         status: DRONE_STATUSES.READY

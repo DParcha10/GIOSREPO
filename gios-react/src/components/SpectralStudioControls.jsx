@@ -7,7 +7,9 @@ import {
   COLORMAPS as BASE_COLORMAPS,
   parseRescale,
   validateSpectralIndex,
-  validateColormap
+  validateColormap,
+  getColormapGradient,
+  getAutoStretch
 } from '../config/constants';
 
 const COLORMAP_GRADIENTS = {
@@ -26,7 +28,7 @@ export const COLORMAP_PALETTES = BASE_COLORMAPS.map(c => ({
   key: c.key,
   name: c.label.split(' (')[0],
   desc: c.label,
-  gradient: c.gradientCss || COLORMAP_GRADIENTS[c.key] || 'from-teal-500 to-purple-600'
+  gradient: c.gradientCss || getColormapGradient(c.key) || COLORMAP_GRADIENTS[c.key] || 'from-teal-500 to-purple-600'
 }));
 
 export const SPECTRAL_INDICES = BASE_INDICES.map(i => {
@@ -44,8 +46,8 @@ export const SPECTRAL_INDICES = BASE_INDICES.map(i => {
     requiresRedEdge: Boolean(i.requiresRedEdge),
     defaultMin: defMin,
     defaultMax: defMax,
-    autoMin: i.autoStretch ? i.autoStretch[0] : (i.key === 'ndmi' ? 0.05 : i.key === 'ndvi' ? 0.15 : i.key === 'lst' ? 12 : i.key === 'rgb' ? 10 : i.key === 'dnbr' ? 0.1 : i.key === 'rdnbr' ? 0.15 : defMin + 0.1),
-    autoMax: i.autoStretch ? i.autoStretch[1] : (i.key === 'ndmi' ? 0.45 : i.key === 'ndvi' ? 0.85 : i.key === 'lst' ? 42 : i.key === 'rgb' ? 240 : i.key === 'dnbr' ? 0.66 : i.key === 'rdnbr' ? 1.2 : defMax - 0.1)
+    autoMin: i.autoStretch ? i.autoStretch[0] : (getAutoStretch(i.key) ? getAutoStretch(i.key)[0] : defMin + 0.05),
+    autoMax: i.autoStretch ? i.autoStretch[1] : (getAutoStretch(i.key) ? getAutoStretch(i.key)[1] : defMax - 0.05)
   };
 });
 

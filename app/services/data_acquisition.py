@@ -419,11 +419,11 @@ class DataAcquisitionService:
                     raw = 11000 + gradient * 3000
                 elif b_low in {"nir08", "nir", "b5", "b05", "b8", "b08"}:
                     raw = 20000 + gradient * 6000
-                elif b_low in {"swir16", "swir1", "b6", "b06", "b11"}:
+                elif b_low in {"swir16", "swir1", "b6", "b06"}:
                     raw = 14000 + gradient * 4000
                 elif b_low in {"swir22", "swir2", "b7", "b07", "b12"}:
                     raw = 11000 + gradient * 3000
-                elif b_low in {"lwir11", "b10", "thermal", "band10", "lwir", "b11_landsat"}:
+                elif b_low in {"lwir11", "b10", "b11", "thermal", "band10", "band11", "lwir", "b11_landsat"}:
                     raw = np.full((ny, nx), 40000.0, dtype=np.float32)  # DN 40000 = +12.57 C
                 elif b_low in {"qa_pixel", "qa", "scl"}:
                     raw = np.zeros((ny, nx), dtype=np.uint16)

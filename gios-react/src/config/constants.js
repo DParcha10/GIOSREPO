@@ -1031,4 +1031,306 @@ export const normalizeGeojsonPolygon = (geometry) => {
   return { type: 'Polygon', coordinates: [cleanRing] };
 };
 
+/**
+ * Registered GIS vector layer types matching backend SpatialLayerType enum.
+ */
+export const SPATIAL_LAYER_TYPES = {
+  CRITICAL_INFRASTRUCTURE: 'critical_infrastructure',
+  SENSOR_GRID: 'sensor_grid',
+  HAZARD_ZONES: 'hazard_zones',
+  DRONE_FLIGHT_BOUNDS: 'drone_flight_bounds'
+};
+
+/**
+ * Metadata specifications for dynamic GIS vector layers matching backend SPATIAL_LAYERS_METADATA.
+ */
+export const SPATIAL_LAYERS = [
+  {
+    layerId: 'critical_infrastructure',
+    label: 'Critical Infrastructure Assets',
+    description: 'Hydraulic plants, dams, spillways, and intake towers.',
+    icon: 'ShieldAlert',
+    color: '#00ffaa',
+    defaultVisible: true
+  },
+  {
+    layerId: 'sensor_grid',
+    label: 'In-Situ Sensor & Piezometer Grid',
+    description: 'Embankment moisture probes, piezometer arrays, and USGS telemetry anchors.',
+    icon: 'Activity',
+    color: '#38bdf8',
+    defaultVisible: true
+  },
+  {
+    layerId: 'hazard_zones',
+    label: 'Active Hazard Boundaries',
+    description: 'Seepage alert perimeters, wildfire perimeters, and flood inundation polygons.',
+    icon: 'AlertTriangle',
+    color: '#f87171',
+    defaultVisible: true
+  },
+  {
+    layerId: 'drone_flight_bounds',
+    label: 'UAS Survey Extents & Geofences',
+    description: 'Autonomous drone inspection flight plans, waypoints, and orthomosaic footprints.',
+    icon: 'Plane',
+    color: '#fbbf24',
+    defaultVisible: false
+  }
+];
+
+/**
+ * Retrieves metadata for a vector layer type.
+ * 
+ * @param {string} layerId - Vector layer type (e.g. 'critical_infrastructure')
+ * @returns {typeof SPATIAL_LAYERS[0]|undefined}
+ */
+export const getSpatialLayerMetadata = (layerId) => {
+  if (!layerId) return undefined;
+  return SPATIAL_LAYERS.find((l) => l.layerId.toLowerCase() === String(layerId).toLowerCase());
+};
+
+/**
+ * Returns all registered spatial vector layer metadata specifications.
+ * 
+ * @returns {typeof SPATIAL_LAYERS}
+ */
+export const listSpatialLayerTypes = () => SPATIAL_LAYERS;
+
+/**
+ * Multi-spectral physical band specifications catalog matching backend BAND_SPECS.
+ */
+export const BAND_SPECS = [
+  { key: 'b02', name: 'Blue', centerWavelengthNm: 490.0, bandwidthNm: 65.0, spatialResolutionM: 10.0, spectrumDomain: 'Visible Blue', commonName: 'blue' },
+  { key: 'b03', name: 'Green', centerWavelengthNm: 560.0, bandwidthNm: 35.0, spatialResolutionM: 10.0, spectrumDomain: 'Visible Green', commonName: 'green' },
+  { key: 'b04', name: 'Red', centerWavelengthNm: 665.0, bandwidthNm: 30.0, spatialResolutionM: 10.0, spectrumDomain: 'Visible Red', commonName: 'red' },
+  { key: 'b05', name: 'RedEdge 1', centerWavelengthNm: 705.0, bandwidthNm: 15.0, spatialResolutionM: 20.0, spectrumDomain: 'Vegetation Red-Edge', commonName: 'rededge' },
+  { key: 'b06', name: 'RedEdge 2', centerWavelengthNm: 740.0, bandwidthNm: 15.0, spatialResolutionM: 20.0, spectrumDomain: 'Vegetation Red-Edge', commonName: 'rededge2' },
+  { key: 'b07', name: 'RedEdge 3', centerWavelengthNm: 783.0, bandwidthNm: 20.0, spatialResolutionM: 20.0, spectrumDomain: 'Vegetation Red-Edge', commonName: 'rededge3' },
+  { key: 'b08', name: 'NIR Broad', centerWavelengthNm: 842.0, bandwidthNm: 115.0, spatialResolutionM: 10.0, spectrumDomain: 'Near Infrared', commonName: 'nir' },
+  { key: 'b8a', name: 'NIR Narrow', centerWavelengthNm: 865.0, bandwidthNm: 20.0, spatialResolutionM: 20.0, spectrumDomain: 'Near Infrared Narrow', commonName: 'nir08' },
+  { key: 'b11', name: 'SWIR 1', centerWavelengthNm: 1610.0, bandwidthNm: 90.0, spatialResolutionM: 20.0, spectrumDomain: 'Shortwave Infrared', commonName: 'swir16' },
+  { key: 'b12', name: 'SWIR 2', centerWavelengthNm: 2190.0, bandwidthNm: 180.0, spatialResolutionM: 20.0, spectrumDomain: 'Shortwave Infrared', commonName: 'swir22' },
+  { key: 'b10', name: 'Thermal Infrared', centerWavelengthNm: 10895.0, bandwidthNm: 590.0, spatialResolutionM: 30.0, spectrumDomain: 'Thermal Infrared', commonName: 'lwir11' }
+];
+
+/**
+ * Looks up physical sensor band specification by key.
+ * 
+ * @param {string} bandKey - Band key (e.g. 'b02', 'b08', 'b10')
+ * @returns {typeof BAND_SPECS[0]|undefined}
+ */
+export const getBandSpec = (bandKey) => {
+  if (!bandKey) return undefined;
+  return BAND_SPECS.find((b) => b.key.toLowerCase() === String(bandKey).toLowerCase());
+};
+
+/**
+ * Returns all registered sensor band specifications.
+ * 
+ * @returns {typeof BAND_SPECS}
+ */
+export const listBandSpecs = () => BAND_SPECS;
+
+/**
+ * Retrieves center wavelength in nanometers for a band code.
+ * 
+ * @param {string} bandKey - Band key
+ * @param {number} [defaultValue=0.0] - Fallback wavelength
+ * @returns {number} Center wavelength in nm
+ */
+export const getBandWavelength = (bandKey, defaultValue = 0.0) => {
+  const spec = getBandSpec(bandKey);
+  return spec ? spec.centerWavelengthNm : defaultValue;
+};
+
+/**
+ * Operational comparison modes for multi-temporal swipe curtain.
+ */
+export const SWIPE_COMPARISON_MODES = {
+  OPTICAL_VS_ANOMALY: 'optical_vs_anomaly',
+  PRE_VS_POST: 'pre_vs_post',
+  SATELLITE_VS_DRONE: 'satellite_vs_drone',
+  INDEX_VS_INDEX: 'index_vs_index'
+};
+
+/**
+ * Preset split percentages for multi-temporal swipe curtain.
+ */
+export const SWIPE_PRESET_RATIOS = [25, 50, 75];
+
+/**
+ * Returns standard swipe curtain split percentage presets.
+ * 
+ * @returns {number[]}
+ */
+export const getSwipePresetRatios = () => SWIPE_PRESET_RATIOS;
+
+/**
+ * Calculates geodesic great-circle distance between two WGS84 points using Haversine formula.
+ * Parity implementation with calculate_haversine_distance() in app/models/schemas.py.
+ * 
+ * @param {number} lat1 - First point latitude in degrees
+ * @param {number} lon1 - First point longitude in degrees
+ * @param {number} lat2 - Second point latitude in degrees
+ * @param {number} lon2 - Second point longitude in degrees
+ * @param {'km'|'m'} [unit='km'] - Distance unit
+ * @returns {number} Geodesic distance in requested unit
+ */
+export const calculateHaversineDistance = (lat1, lon1, lat2, lon2, unit = 'km') => {
+  const R_KM = 6371.0;
+  const toRad = (deg) => (deg * Math.PI) / 180.0;
+  const phi1 = toRad(lat1);
+  const phi2 = toRad(lat2);
+  const deltaPhi = toRad(lat2 - lat1);
+  const deltaLambda = toRad(lon2 - lon1);
+
+  const a = Math.sin(deltaPhi / 2.0) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2.0) ** 2;
+  const c = 2.0 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0.0, 1.0 - a)));
+  const distanceKm = R_KM * c;
+
+  if (unit.toLowerCase() === 'm') {
+    return parseFloat((distanceKm * 1000.0).toFixed(3));
+  }
+  return parseFloat(distanceKm.toFixed(3));
+};
+
+/**
+ * Calculates initial compass bearing (forward azimuth) from point 1 to point 2 in degrees [0, 360).
+ * Parity implementation with calculate_initial_bearing() in app/models/schemas.py.
+ * 
+ * @param {number} lat1 - First point latitude in degrees
+ * @param {number} lon1 - First point longitude in degrees
+ * @param {number} lat2 - Second point latitude in degrees
+ * @param {number} lon2 - Second point longitude in degrees
+ * @returns {number} Compass bearing in degrees [0, 360)
+ */
+export const calculateInitialBearing = (lat1, lon1, lat2, lon2) => {
+  const toRad = (deg) => (deg * Math.PI) / 180.0;
+  const toDeg = (rad) => (rad * 180.0) / Math.PI;
+
+  const phi1 = toRad(lat1);
+  const phi2 = toRad(lat2);
+  const deltaLambda = toRad(lon2 - lon1);
+
+  const y = Math.sin(deltaLambda) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+  const bearingRad = Math.atan2(y, x);
+  const bearingDeg = (toDeg(bearingRad) + 360.0) % 360.0;
+  return parseFloat(bearingDeg.toFixed(2));
+};
+
+/**
+ * Calculates geographic center [lat, lon] of a GeoJSON polygon.
+ * Parity implementation with calculate_polygon_centroid() in app/models/schemas.py.
+ * 
+ * @param {any} geometry - GeoJSON Polygon geometry
+ * @returns {[number, number]} [latitude, longitude] centroid
+ */
+export const calculatePolygonCentroid = (geometry) => {
+  if (!geometry || typeof geometry !== 'object') return [37.0582, -121.0744];
+  const coords = geometry.coordinates;
+  if (!Array.isArray(coords) || coords.length === 0) return [37.0582, -121.0744];
+  const ring = coords[0];
+  if (!Array.isArray(ring) || ring.length === 0) return [37.0582, -121.0744];
+  const pts = ring.length > 3 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]
+    ? ring.slice(0, -1)
+    : ring;
+  const lons = [];
+  const lats = [];
+  for (const pt of pts) {
+    if (Array.isArray(pt) && pt.length >= 2) {
+      const lon = Number(pt[0]);
+      const lat = Number(pt[1]);
+      if (!isNaN(lon) && !isNaN(lat) && isFinite(lon) && isFinite(lat)) {
+        lons.push(lon);
+        lats.push(lat);
+      }
+    }
+  }
+  if (lons.length === 0 || lats.length === 0) return [37.0582, -121.0744];
+  const avgLat = lats.reduce((a, b) => a + b, 0) / lats.length;
+  const avgLon = lons.reduce((a, b) => a + b, 0) / lons.length;
+  return [parseFloat(avgLat.toFixed(6)), parseFloat(avgLon.toFixed(6))];
+};
+
+/**
+ * Constructs an enclosing BoundingBox [min_lon, min_lat, max_lon, max_lat] from coordinate points.
+ * Parity implementation with BoundingBox.from_points() in app/models/schemas.py.
+ * 
+ * @param {number[][]} points - Sequence of point coordinates
+ * @param {'lat_lon'|'lon_lat'} [coordFormat='lat_lon'] - Coordinate order
+ * @returns {[number, number, number, number]} [min_lon, min_lat, max_lon, max_lat]
+ */
+export const bboxFromPoints = (points, coordFormat = 'lat_lon') => {
+  if (!Array.isArray(points) || points.length === 0) return [-121.2, 36.95, -120.95, 37.15];
+  const lats = [];
+  const lons = [];
+  for (const pt of points) {
+    if (Array.isArray(pt) && pt.length >= 2) {
+      const lon = Number(coordFormat === 'lon_lat' ? pt[0] : pt[1]);
+      const lat = Number(coordFormat === 'lon_lat' ? pt[1] : pt[0]);
+      if (!isNaN(lon) && !isNaN(lat) && isFinite(lon) && isFinite(lat)) {
+        lons.push(lon);
+        lats.push(lat);
+      }
+    }
+  }
+  if (lons.length === 0 || lats.length === 0) return [-121.2, 36.95, -120.95, 37.15];
+  return [
+    parseFloat(Math.min(...lons).toFixed(6)),
+    parseFloat(Math.min(...lats).toFixed(6)),
+    parseFloat(Math.max(...lons).toFixed(6)),
+    parseFloat(Math.max(...lats).toFixed(6))
+  ];
+};
+
+/**
+ * Expands a bounding box by a fractional buffer percentage.
+ * Parity implementation with BoundingBox.expand() in app/models/schemas.py.
+ * 
+ * @param {string|number[]|Object} bbox - Input bounding box
+ * @param {number} [bufferPct=0.1] - Fractional expansion percentage (e.g. 0.1 for 10%)
+ * @returns {[number, number, number, number]} Expanded [min_lon, min_lat, max_lon, max_lat]
+ */
+export const bboxExpand = (bbox, bufferPct = 0.1) => {
+  const [minLon, minLat, maxLon, maxLat] = parseBbox(bbox);
+  const width = maxLon - minLon;
+  const height = maxLat - minLat;
+  const dLon = width * Math.max(0.0, Number(bufferPct)) * 0.5;
+  const dLat = height * Math.max(0.0, Number(bufferPct)) * 0.5;
+  return [
+    parseFloat(Math.max(-180.0, minLon - dLon).toFixed(6)),
+    parseFloat(Math.max(-90.0, minLat - dLat).toFixed(6)),
+    parseFloat(Math.min(180.0, maxLon + dLon).toFixed(6)),
+    parseFloat(Math.min(90.0, maxLat + dLat).toFixed(6))
+  ];
+};
+
+/**
+ * Generates a standardized deterministic cache key for XYZ tiles.
+ * Shared contract between backend tile caching and frontend tile prefetching.
+ * Parity implementation with generate_tile_cache_key() in app/models/schemas.py.
+ * 
+ * @param {string} collection - Imagery collection
+ * @param {string} itemId - Scene or orthomosaic ID
+ * @param {number|string} z - Zoom level
+ * @param {number|string} x - Tile X
+ * @param {number|string} y - Tile Y
+ * @param {Object} [options={}] - Options (index, rescale, colormap, pre, post)
+ * @returns {string} Sanitized cache key string
+ */
+export const generateTileCacheKey = (collection, itemId, z, x, y, options = {}) => {
+  const col = String(collection).toLowerCase().trim();
+  const item = String(itemId).trim();
+  const idx = String(options.index || 'rgb').toLowerCase().trim();
+  const resc = options.rescale ? String(options.rescale).trim() : 'default';
+  const cmap = String(options.colormap || 'spectral').toLowerCase().trim();
+  const parts = [col, item, `z${z}`, `x${x}`, `y${y}`, idx, `rescale_${resc}`, cmap];
+  if (options.pre) parts.push(`pre_${options.pre}`);
+  if (options.post) parts.push(`post_${options.post}`);
+  const raw = parts.join('_');
+  return raw.replace(/[^a-zA-Z0-9._-]/g, '_');
+};
+
 

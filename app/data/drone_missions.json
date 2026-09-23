@@ -1215,6 +1215,6 @@
     "radius_km": 1.0,
     "estimated_time_mins": 32,
     "payload": "LiDAR + Multispectral",
-    "ticks": 0
+    "ticks": 1
   }
 }

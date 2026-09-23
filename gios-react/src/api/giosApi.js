@@ -56,7 +56,24 @@ export {
   tileToBbox,
   tileToLeafletBounds,
   calculateMetricGsd,
-  normalizeGeojsonPolygon
+  normalizeGeojsonPolygon,
+  SPATIAL_LAYER_TYPES,
+  SPATIAL_LAYERS,
+  getSpatialLayerMetadata,
+  listSpatialLayerTypes,
+  BAND_SPECS,
+  getBandSpec,
+  listBandSpecs,
+  getBandWavelength,
+  SWIPE_COMPARISON_MODES,
+  SWIPE_PRESET_RATIOS,
+  getSwipePresetRatios,
+  calculateHaversineDistance,
+  calculateInitialBearing,
+  calculatePolygonCentroid,
+  bboxFromPoints,
+  bboxExpand,
+  generateTileCacheKey
 } from '../config/constants.js';
 
 /**

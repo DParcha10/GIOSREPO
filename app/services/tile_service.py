@@ -20,6 +20,9 @@ from app.models.schemas import (
     validate_spectral_index,
     validate_colormap,
     get_spectral_index_metadata,
+    get_auto_stretch,
+    lat_lon_to_tile,
+    tile_to_bbox as schema_tile_to_bbox,
     SpectralIndex,
     TileColormap
 )
@@ -45,6 +48,11 @@ DEFAULT_INDEX_RANGES = {
 
 class TileService:
     @staticmethod
+    def lat_lon_to_tile(lat: float, lon: float, zoom: int) -> Tuple[int, int]:
+        """Converts WGS84 degree coordinates to Web Mercator tile x, y indices."""
+        return lat_lon_to_tile(lat, lon, zoom)
+
+    @staticmethod
     def tile_to_bounds_wgs84(z: int, x: int, y: int) -> Tuple[float, float, float, float]:
         """Calculates WGS84 bounding box (min_lon, min_lat, max_lon, max_lat) for Web Mercator tile."""
         n = 2.0 ** z
@@ -59,8 +67,7 @@ class TileService:
     @staticmethod
     def tile_to_bbox(z: int, x: int, y: int) -> BoundingBox:
         """Calculates BoundingBox model for Web Mercator tile."""
-        min_lon, min_lat, max_lon, max_lat = TileService.tile_to_bounds_wgs84(z, x, y)
-        return BoundingBox(min_lon=min_lon, min_lat=min_lat, max_lon=max_lon, max_lat=max_lat)
+        return schema_tile_to_bbox(z, x, y)
 
     @staticmethod
     def get_colormap(name: Optional[Union[str, TileColormap]] = "spectral"):
@@ -158,9 +165,12 @@ class TileService:
 
             # Contrast stretch RGB
             if rescale:
-                rmin, rmax = parse_rescale(rescale, default=(0.0, 0.3))
+                if isinstance(rescale, str) and rescale.strip().lower() in {"auto", "auto_stretch"}:
+                    rmin, rmax = get_auto_stretch("rgb", default=(0.0, 0.3))
+                else:
+                    rmin, rmax = parse_rescale(rescale, default=(0.0, 0.3))
             else:
-                rmin, rmax = 0.0, 0.3
+                rmin, rmax = get_auto_stretch("rgb", default=(0.0, 0.3))
 
             if rmax <= rmin:
                 rmax = rmin + 1e-4
@@ -198,20 +208,23 @@ class TileService:
                 val = base_variation
 
             # Dynamic contrast stretch
-            default_bounds = DEFAULT_INDEX_RANGES.get(idx_clean, (0.0, 1.0))
+            auto_bounds = get_auto_stretch(idx_clean, default=DEFAULT_INDEX_RANGES.get(idx_clean, (0.0, 1.0)))
             if rescale:
-                p0, p1 = parse_rescale(rescale, default=default_bounds)
-                if p0 >= 1.0 and p1 <= 99.0 and p1 > p0:
-                    # Percentile stretch
-                    vmin, vmax = float(np.nanpercentile(val, p0)), float(np.nanpercentile(val, p1))
+                if isinstance(rescale, str) and rescale.strip().lower() in {"auto", "auto_stretch"}:
+                    vmin, vmax = auto_bounds
                 else:
-                    vmin, vmax = p0, p1
+                    p0, p1 = parse_rescale(rescale, default=auto_bounds)
+                    if p0 >= 1.0 and p1 <= 99.0 and p1 > p0:
+                        # Percentile stretch
+                        vmin, vmax = float(np.nanpercentile(val, p0)), float(np.nanpercentile(val, p1))
+                    else:
+                        vmin, vmax = p0, p1
             else:
                 meta = get_spectral_index_metadata(idx_clean)
                 if meta and meta.default_rescale:
                     vmin, vmax = meta.parse_rescale()
                 else:
-                    vmin, vmax = default_bounds
+                    vmin, vmax = auto_bounds
 
             if vmax <= vmin:
                 vmax = vmin + 1e-4
