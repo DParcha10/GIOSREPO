@@ -14,9 +14,6 @@ import {
 import useAuthStore from '../store/authStore';
 import { useNavigate, Link } from 'react-router-dom';
 import giosApi, { 
-  getTileUrl, 
-  getDroneTileUrl, 
-  getWildfireDnbrTileUrl,
   calculateBurnSeverity,
   probePixel, 
   calculateZonalStats,
@@ -28,7 +25,17 @@ import giosApi, {
   computeRegionalIndex,
   parseRescale,
   validateSpectralIndex,
-  getIndexMetadata
+  validateColormap,
+  getIndexMetadata,
+  parseBbox,
+  formatBbox,
+  bboxToLeafletBounds,
+  formatApiError,
+  formatGsdDisplay,
+  buildTileUrl,
+  buildDroneTileUrl,
+  buildWildfireTileUrl,
+  DRONE_STATUSES
 } from '../api/giosApi';
 import useJarvisStore from '../store/jarvisStore';
 import {
@@ -130,7 +137,7 @@ export default function MapExplorer() {
     metric_gsd_cm: 2.85,
     bands: 4,
     is_cog: true,
-    status: 'READY'
+    status: DRONE_STATUSES.READY
   });
   const [zoomScaleMode, setZoomScaleMode] = useState('macro'); // 'macro' (10m) | 'micro' (2.8cm)
   const [customFlyTarget, setCustomFlyTarget] = useState(null);
@@ -232,7 +239,8 @@ export default function MapExplorer() {
         setSelectedEvent(defaultEvt);
       }
     } catch (err) {
-      console.error('Failed to fetch events from backend:', err);
+      const apiErr = formatApiError(err);
+      console.error('Failed to fetch events from backend:', apiErr.detail);
     }
   };
 
@@ -273,12 +281,12 @@ export default function MapExplorer() {
       setLoadingTrend(true);
       try {
         const delta = 0.02;
-        const bbox = [
+        const bbox = parseBbox([
           selectedEvent.lng - delta,
           selectedEvent.lat - delta,
           selectedEvent.lng + delta,
           selectedEvent.lat + delta
-        ];
+        ]);
 
         // Fetch time-series trend using Agent 5 contract
         const trendRes = await fetchTimeseriesTrend({
@@ -317,7 +325,8 @@ export default function MapExplorer() {
           setUsgsData(null);
         }
       } catch (err) {
-        console.error('Error fetching event telemetry:', err);
+        const apiErr = formatApiError(err);
+        console.error('Error fetching event telemetry:', apiErr.detail);
       } finally {
         setLoadingTrend(false);
       }
@@ -331,7 +340,12 @@ export default function MapExplorer() {
     if (!selectedEvent) return;
     setExporting(true);
     try {
-      const bboxStr = `${(selectedEvent.lng - 0.02).toFixed(4)},${(selectedEvent.lat - 0.02).toFixed(4)},${(selectedEvent.lng + 0.02).toFixed(4)},${(selectedEvent.lat + 0.02).toFixed(4)}`;
+      const bboxStr = formatBbox([
+        selectedEvent.lng - 0.02,
+        selectedEvent.lat - 0.02,
+        selectedEvent.lng + 0.02,
+        selectedEvent.lat + 0.02
+      ]);
       const pdfBlob = await downloadPdfReport(bboxStr, selectedEvent.metric || 'ndmi');
       const url = window.URL.createObjectURL(new Blob([pdfBlob], { type: 'application/pdf' }));
       const link = document.createElement('a');
@@ -341,8 +355,9 @@ export default function MapExplorer() {
       link.click();
       link.remove();
     } catch (err) {
-      console.error('Failed to export PDF:', err);
-      alert('PDF generation error. Ensure backend is running.');
+      const apiErr = formatApiError(err, 'PDF generation error. Ensure backend is running.');
+      console.error('Failed to export PDF:', apiErr.detail);
+      alert(apiErr.detail);
     } finally {
       setExporting(false);
     }
@@ -364,17 +379,19 @@ export default function MapExplorer() {
           median: burnRes?.mean_rdnbr ?? 0.612,
           min: -0.2,
           max: 0.85,
-          valid_pixels: Math.round((burnRes?.burned_area_hectares ?? 1420.5) * 100)
+          valid_pixels: Math.round((burnRes?.burned_area_hectares ?? 1420.5) * 100),
+          categories: burnRes?.categories || []
         });
       } else {
         const delta = 0.02;
+        const bbox = parseBbox([
+          selectedEvent.lng - delta,
+          selectedEvent.lat - delta,
+          selectedEvent.lng + delta,
+          selectedEvent.lat + delta
+        ]);
         const res = await computeRegionalIndex({
-          bbox: [
-            selectedEvent.lng - delta,
-            selectedEvent.lat - delta,
-            selectedEvent.lng + delta,
-            selectedEvent.lat + delta
-          ],
+          bbox,
           index: activeSpectralIndex,
           start_date: selectedEvent.start_date || '2026-08-01',
           end_date: selectedEvent.end_date || '2026-08-30'
@@ -382,7 +399,8 @@ export default function MapExplorer() {
         setStudioResult(res);
       }
     } catch (err) {
-      console.error(err);
+      const apiErr = formatApiError(err);
+      console.error('Spectral analysis error:', apiErr.detail);
     } finally {
       setStudioLoading(false);
     }
@@ -398,7 +416,8 @@ export default function MapExplorer() {
       const result = await probePixel(latlng.lat, latlng.lng, collection, itemId);
       setPixelProbeData(result);
     } catch (err) {
-      console.error('Failed to probe pixel:', err);
+      const apiErr = formatApiError(err);
+      console.error('Failed to probe pixel:', apiErr.detail);
       // Clean fallback from contract mock
       setPixelProbeData({
         coordinates: { latitude: latlng.lat, longitude: latlng.lng },
@@ -452,7 +471,8 @@ export default function MapExplorer() {
       });
       setZonalStatsResult(response);
     } catch (err) {
-      console.error('Failed to calculate zonal statistics:', err);
+      const apiErr = formatApiError(err);
+      console.error('Failed to calculate zonal statistics:', apiErr.detail);
       // Fallback matching contract
       setZonalStatsResult({
         index: activeSpectralIndex,
@@ -532,17 +552,19 @@ export default function MapExplorer() {
     street: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
   };
 
-  // Dynamic COG Tile URLs using Contract 1 & Contract helper getTileUrl
+  // Dynamic COG Tile URLs using Contract 1 & Contract helpers
   const activeCollection = selectedEvent?.sensor?.toLowerCase().includes('landsat') ? 'landsat-c2-l2' : 'sentinel-2-l2a';
   const activeItemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SEH';
+  const validatedColormap = validateColormap(activeColormap, 'spectral');
+  const apiBase = (import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000') + '/api/v1';
 
   const isWildfireIndex = activeSpectralIndex === 'dnbr' || activeSpectralIndex === 'rdnbr' || selectedEvent?.category === 'wildfire';
   const dynamicSpectralTileUrl = isWildfireIndex && selectedEvent?.start_date && selectedEvent?.end_date
-    ? getWildfireDnbrTileUrl('{z}', '{x}', '{y}', selectedEvent.start_date, selectedEvent.end_date, {
-        colormap: activeColormap,
+    ? buildWildfireTileUrl('{z}', '{x}', '{y}', selectedEvent.start_date, selectedEvent.end_date, {
+        colormap: validatedColormap,
         rescale: `${rescaleMin},${rescaleMax}`
-      })
-    : getTileUrl(
+      }, apiBase)
+    : buildTileUrl(
         activeCollection,
         activeItemId,
         '{z}',
@@ -551,27 +573,32 @@ export default function MapExplorer() {
         {
           index: activeSpectralIndex,
           rescale: `${rescaleMin},${rescaleMax}`,
-          colormap: activeColormap,
+          colormap: validatedColormap,
           pre: selectedEvent?.start_date,
           post: selectedEvent?.end_date
-        }
+        },
+        apiBase
       );
 
-  const dynamicOpticalTileUrl = getTileUrl(
+  const dynamicOpticalTileUrl = buildTileUrl(
     activeCollection,
     activeItemId,
     '{z}',
     '{x}',
     '{y}',
-    { index: 'rgb' }
+    { index: 'rgb' },
+    apiBase
   );
 
-  const dynamicDroneTileUrl = getDroneTileUrl(
+  const dynamicDroneTileUrl = buildDroneTileUrl(
     registeredDroneOrtho?.ortho_id || 'ORTHO-SLD-202609-01',
     '{z}',
     '{x}',
-    '{y}'
+    '{y}',
+    apiBase
   );
+
+  const droneLeafletBounds = registeredDroneOrtho?.bounds ? bboxToLeafletBounds(registeredDroneOrtho.bounds) : null;
 
   // Dynamic Polygon coordinates around active event (fallback if no custom polygon drawn)
   const defaultAOIPolygon = selectedEvent ? [
@@ -772,6 +799,29 @@ export default function MapExplorer() {
                   {selectedEvent.severity_label || 'High Hazard'}
                 </span>
               </div>
+              {(() => {
+                const meta = getIndexMetadata(selectedEvent.metric);
+                if (!meta) return null;
+                return (
+                  <div className="flex flex-wrap gap-1">
+                    {meta.isDifferenced && (
+                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono font-bold">
+                        Δ Differenced
+                      </span>
+                    )}
+                    {meta.requiresThermal && (
+                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 font-mono font-bold">
+                        Thermal IR ($T_C$)
+                      </span>
+                    )}
+                    {meta.requiresRedEdge && (
+                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-bold">
+                        Red-Edge (B05)
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
               <p className="text-[10px] text-gray-400 leading-relaxed line-clamp-3">
                 {selectedEvent.description}
               </p>
@@ -866,14 +916,33 @@ export default function MapExplorer() {
 
             {/* 4. T-11: Drone Centimeter-Scale COG Tile Layer */}
             {layerMode === 'drone' && !curtainActive && (
-              <TileLayer 
-                key={`drone-live-${registeredDroneOrtho?.ortho_id}`}
-                url={dynamicDroneTileUrl}
-                opacity={layerOpacity}
-                maxNativeZoom={22}
-                maxZoom={24}
-                keepBuffer={4}
-              />
+              <>
+                <TileLayer 
+                  key={`drone-live-${registeredDroneOrtho?.ortho_id}`}
+                  url={dynamicDroneTileUrl}
+                  opacity={layerOpacity}
+                  maxNativeZoom={22}
+                  maxZoom={24}
+                  keepBuffer={4}
+                />
+                {droneLeafletBounds && (
+                  <Polygon 
+                    positions={[
+                      droneLeafletBounds[0],
+                      [droneLeafletBounds[0][0], droneLeafletBounds[1][1]],
+                      droneLeafletBounds[1],
+                      [droneLeafletBounds[1][0], droneLeafletBounds[0][1]]
+                    ]}
+                    pathOptions={{ 
+                      color: '#a855f7', 
+                      weight: 1.5, 
+                      fillColor: '#a855f7', 
+                      fillOpacity: 0.08, 
+                      dashArray: '4, 4' 
+                    }}
+                  />
+                )}
+              </>
             )}
 
             {/* Drone Mission Flight Paths */}
@@ -1220,7 +1289,7 @@ export default function MapExplorer() {
                   onClick={() => { setLayerMode('drone'); setCurtainActive(false); }}
                   className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${layerMode === 'drone' ? 'bg-purple-500/20 text-purple-400' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                 >
-                  <Radio className="w-3 h-3"/> Drone (2.8cm)
+                  <Radio className="w-3 h-3"/> Drone ({formatGsdDisplay(registeredDroneOrtho?.metric_gsd_cm || 2.85)})
                 </button>
               </div>
             </div>
@@ -1285,10 +1354,10 @@ export default function MapExplorer() {
                     ? 'bg-purple-600 text-white shadow-[0_0_12px_rgba(168,85,247,0.6)]' 
                     : 'text-gray-300 hover:text-white hover:bg-white/10'
                 }`}
-                title="Toggle between Macro (10m Regional) and Micro (2.8cm Centimeter Zoom 20)"
+                title="Toggle between Macro (10m Regional) and Micro (Centimeter Zoom 20)"
               >
                 {zoomScaleMode === 'micro' ? <Minimize2 className="w-3.5 h-3.5 text-purple-200" /> : <Maximize2 className="w-3.5 h-3.5" />}
-                <span>{zoomScaleMode === 'micro' ? 'Micro: 2.8cm' : 'Macro: 10m'}</span>
+                <span>{zoomScaleMode === 'micro' ? `Micro: ${formatGsdDisplay(registeredDroneOrtho?.metric_gsd_cm || 2.85)}` : 'Macro: 10m'}</span>
               </button>
 
               {/* T-11 Drone Ingest Modal Trigger */}
@@ -1482,6 +1551,29 @@ export default function MapExplorer() {
                           <div>[RESOLUTION]: 10m Ground Sample Distance (Sentinel-2 L2A BOA Calibrated Surface Reflectance).</div>
                           <div>[LOCATION]: Centered on {selectedEvent?.title} ({selectedEvent?.lat}, {selectedEvent?.lng}).</div>
                         </div>
+
+                        {studioResult.categories && studioResult.categories.length > 0 && (
+                          <div className="space-y-2 pt-2 border-t border-gray-800/80">
+                            <div className="text-[10px] font-mono uppercase tracking-wider text-gray-400 font-bold flex justify-between items-center">
+                              <span>USGS FIREMON Burn Severity Distribution</span>
+                              <span className="text-amber-400">{studioResult.categories.reduce((acc, c) => acc + (c.hectares || 0), 0).toFixed(1)} ha total</span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                              {studioResult.categories.map((cat, idx) => (
+                                <div key={idx} className={`p-2.5 rounded border text-xs font-mono flex flex-col justify-between ${cat.badge_class || cat.badgeClass || 'bg-black/40 border-gray-800 text-gray-300'}`}>
+                                  <div className="font-bold flex items-center justify-between">
+                                    <span className="truncate">{cat.category}</span>
+                                    <span className="text-[11px] font-bold">{(cat.percentage || 0).toFixed(1)}%</span>
+                                  </div>
+                                  <div className="text-[10px] opacity-80 mt-1 flex justify-between">
+                                    <span>&ge; {cat.min_dnbr} ΔNBR</span>
+                                    <span>{(cat.hectares || 0).toFixed(1)} ha</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="h-48 flex items-center justify-center text-gray-500 font-mono text-xs">
@@ -1526,7 +1618,7 @@ export default function MapExplorer() {
                     </div>
                     <div className="p-3 bg-black/40 border border-purple-500/30 rounded bg-purple-500/5">
                       <span className="text-[10px] text-purple-400 font-mono block">Drone Ortho Resolution</span>
-                      <span className="text-xl font-bold font-['Orbitron'] text-purple-300">{registeredDroneOrtho?.metric_gsd_cm || 2.85} cm / px</span>
+                      <span className="text-xl font-bold font-['Orbitron'] text-purple-300">{formatGsdDisplay(registeredDroneOrtho?.metric_gsd_cm || 2.85)}</span>
                     </div>
                   </div>
                   <div className="p-4 bg-black/40 border border-gray-800 rounded-lg text-xs leading-relaxed text-gray-300 space-y-2">
@@ -1911,7 +2003,7 @@ export default function MapExplorer() {
             <Layers className="w-3.5 h-3.5 text-primary" />
             {layerMode === 'drone' || zoomScaleMode === 'micro' ? (
               <span className="text-purple-300 font-bold">
-                Centimeter Survey: {registeredDroneOrtho?.metric_gsd_cm || '2.85'} cm/px (Micro Zoom Level 20)
+                Centimeter Survey: {formatGsdDisplay(registeredDroneOrtho?.metric_gsd_cm || 2.85)} (Micro Zoom Level 20)
               </span>
             ) : (
               <span>Spatial Res: 10m Ground Sample ({selectedEvent?.sensor || 'Sentinel-2 L2A'})</span>

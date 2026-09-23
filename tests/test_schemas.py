@@ -98,7 +98,19 @@ from app.models.schemas import (
     API_ROUTE_CONTRACTS,
     format_api_route,
     validate_spectral_index,
-    validate_colormap
+    validate_colormap,
+    BoundingBox,
+    parse_bbox,
+    ApiErrorResponse,
+    get_auto_stretch,
+    get_colormap_gradient,
+    get_colormap_color_stops,
+    CLIMATOLOGICAL_ANOMALY_LEVELS,
+    classify_z_score,
+    lat_lon_to_tile,
+    tile_to_bbox,
+    calculate_metric_gsd,
+    normalize_geojson_polygon
 )
 from app.config import settings
 
@@ -1026,6 +1038,222 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             self.assertIn("badge_class", level)
             self.assertIn("badgeClass", level)
             self.assertEqual(level["badge_class"], level["badgeClass"])
+
+    def test_drone_status_lifecycle_expansion(self):
+        """Verify DroneStatus enum covers complete lifecycle including SCHEDULED, COMPLETED, and PENDING."""
+        self.assertEqual(DroneStatus.READY.value, "READY")
+        self.assertEqual(DroneStatus.PROCESSING.value, "PROCESSING")
+        self.assertEqual(DroneStatus.FAILED.value, "FAILED")
+        self.assertEqual(DroneStatus.SCHEDULED.value, "SCHEDULED")
+        self.assertEqual(DroneStatus.COMPLETED.value, "COMPLETED")
+        self.assertEqual(DroneStatus.PENDING.value, "PENDING")
+
+    def test_spectral_index_metadata_feature_flags(self):
+        """Verify SpectralIndexMetadata feature flags (is_differenced, requires_thermal, requires_rededge)."""
+        ndci = get_spectral_index_metadata("ndci")
+        self.assertIsNotNone(ndci)
+        self.assertTrue(ndci.requires_rededge)
+        self.assertFalse(ndci.is_differenced)
+        self.assertFalse(ndci.requires_thermal)
+
+        lst = get_spectral_index_metadata("lst")
+        self.assertIsNotNone(lst)
+        self.assertTrue(lst.requires_thermal)
+        self.assertFalse(lst.is_differenced)
+
+        dnbr = get_spectral_index_metadata("dnbr")
+        self.assertIsNotNone(dnbr)
+        self.assertTrue(dnbr.is_differenced)
+
+        rdnbr = get_spectral_index_metadata("rdnbr")
+        self.assertIsNotNone(rdnbr)
+        self.assertTrue(rdnbr.is_differenced)
+
+        ndvi = get_spectral_index_metadata("ndvi")
+        self.assertIsNotNone(ndvi)
+        self.assertFalse(ndvi.is_differenced)
+        self.assertFalse(ndvi.requires_thermal)
+        self.assertFalse(ndvi.requires_rededge)
+
+    def test_bounding_box_model_and_methods(self):
+        """Verify BoundingBox model serialization, coordinates checking, and Leaflet bounds."""
+        bbox = BoundingBox(min_lon=-121.2, min_lat=36.95, max_lon=-120.95, max_lat=37.15)
+        self.assertEqual(bbox.to_tuple(), (-121.2, 36.95, -120.95, 37.15))
+        self.assertEqual(bbox.to_str(), "-121.2,36.95,-120.95,37.15")
+        self.assertEqual(bbox.to_leaflet_bounds(), [[36.95, -121.2], [37.15, -120.95]])
+        self.assertTrue(bbox.contains_point(37.05, -121.07))
+        self.assertFalse(bbox.contains_point(38.00, -121.07))
+
+    def test_parse_bbox_utility(self):
+        """Verify parse_bbox utility handles tuples, lists, strings, dicts, and fallback defaults."""
+        self.assertEqual(parse_bbox([-121.2, 36.95, -120.95, 37.15]), (-121.2, 36.95, -120.95, 37.15))
+        self.assertEqual(parse_bbox("-121.2,36.95,-120.95,37.15"), (-121.2, 36.95, -120.95, 37.15))
+        self.assertEqual(
+            parse_bbox({"min_lon": -121.2, "min_lat": 36.95, "max_lon": -120.95, "max_lat": 37.15}),
+            (-121.2, 36.95, -120.95, 37.15)
+        )
+        self.assertEqual(
+            parse_bbox({"west": -121.2, "south": 36.95, "east": -120.95, "north": 37.15}),
+            (-121.2, 36.95, -120.95, 37.15)
+        )
+        bbox_obj = BoundingBox(min_lon=-121.2, min_lat=36.95, max_lon=-120.95, max_lat=37.15)
+        self.assertEqual(parse_bbox(bbox_obj), (-121.2, 36.95, -120.95, 37.15))
+        # Invalid inputs fallback to default
+        self.assertEqual(parse_bbox(None, default=(0.0, 0.0, 1.0, 1.0)), (0.0, 0.0, 1.0, 1.0))
+        self.assertEqual(parse_bbox("invalid_bbox", default=(0.0, 0.0, 1.0, 1.0)), (0.0, 0.0, 1.0, 1.0))
+        self.assertEqual(parse_bbox([1.0, 2.0], default=(0.0, 0.0, 1.0, 1.0)), (0.0, 0.0, 1.0, 1.0))
+
+    def test_api_error_response_model(self):
+        """Verify ApiErrorResponse model defaults and serialization."""
+        err = ApiErrorResponse(detail="Invalid coordinates provided", error_code="ERR_INVALID_COORDS", status_code=422)
+        self.assertEqual(err.detail, "Invalid coordinates provided")
+        self.assertEqual(err.error_code, "ERR_INVALID_COORDS")
+        self.assertEqual(err.status_code, 422)
+        self.assertIsNotNone(err.timestamp)
+
+        # Default values
+        err_def = ApiErrorResponse(detail="Server exception")
+        self.assertEqual(err_def.status_code, 400)
+        self.assertIsNone(err_def.error_code)
+
+    def test_drone_orthomosaic_metadata_extensions(self):
+        """Verify DroneOrthomosaicMetadata gsd_display and bbox properties."""
+        meta = DroneOrthomosaicMetadata(
+            ortho_id="DRN-02",
+            filename="drone_highres.tif",
+            crs="EPSG:4326",
+            bounds=(-121.08, 37.05, -121.06, 37.07),
+            metric_gsd_cm=2.85
+        )
+        self.assertEqual(meta.gsd_display, "2.85 cm/px")
+        self.assertIsInstance(meta.bbox, BoundingBox)
+        self.assertEqual(meta.bbox.min_lon, -121.08)
+        self.assertEqual(meta.bbox.max_lat, 37.07)
+
+    def test_dynamic_tile_params_classmethods(self):
+        """Verify DynamicTileParams build_drone_tile_url and build_wildfire_tile_url classmethods."""
+        drone_url = DynamicTileParams.build_drone_tile_url(ortho_id="DRN-01", z=18, x=500, y=600)
+        self.assertEqual(drone_url, "/api/v1/drone/DRN-01/tiles/18/500/600.png")
+
+        wf_url = DynamicTileParams.build_wildfire_tile_url(z=12, x=100, y=200, pre="2025-08-15", post="2026-08-20")
+        self.assertIn("/api/v1/tiles/wildfire/dnbr/12/100/200.png?", wf_url)
+        self.assertIn("pre=2025-08-15", wf_url)
+        self.assertIn("post=2026-08-20", wf_url)
+        self.assertIn("colormap=turbo", wf_url)
+        self.assertIn("rescale=-0.2%2C0.8", wf_url)
+
+    def test_auto_stretch_bounds_and_lookup(self):
+        """Verify 2%-98% cumulative auto stretch bounds for spectral indices."""
+        self.assertEqual(get_auto_stretch("ndmi"), (0.05, 0.45))
+        self.assertEqual(get_auto_stretch(SpectralIndex.NDVI), (0.15, 0.85))
+        self.assertEqual(get_auto_stretch("lst"), (12.0, 42.0))
+        self.assertEqual(get_auto_stretch("dnbr"), (0.1, 0.66))
+        self.assertEqual(get_auto_stretch("rdnbr"), (0.15, 1.2))
+        self.assertEqual(get_auto_stretch(None, default=(-0.2, 0.6)), (-0.2, 0.6))
+        self.assertEqual(get_auto_stretch("unknown_index", default=(-0.2, 0.6)), (-0.2, 0.6))
+
+    def test_colormap_gradients_and_color_stops(self):
+        """Verify colormap CSS gradient strings and hex color stop ramps."""
+        grad = get_colormap_gradient("spectral")
+        self.assertIn("from-blue-600", grad)
+        stops = get_colormap_color_stops("spectral")
+        self.assertEqual(len(stops), 5)
+        self.assertTrue(all(s.startswith("#") for s in stops))
+
+        viridis_grad = get_colormap_gradient(TileColormap.VIRIDIS)
+        self.assertIn("from-purple-900", viridis_grad)
+        viridis_stops = get_colormap_color_stops("viridis")
+        self.assertEqual(len(viridis_stops), 5)
+
+        # Fallback for unknown
+        fallback_grad = get_colormap_gradient("unknown_cmap")
+        self.assertIn("from-blue-600", fallback_grad)
+
+    def test_climatological_anomaly_z_score_classification(self):
+        """Verify climatological seasonal z-score anomaly tiering and metadata."""
+        # Critical anomaly |z| >= 2.5
+        crit = classify_z_score(2.84)
+        self.assertEqual(crit["level"], "CRITICAL_ANOMALY")
+        self.assertEqual(crit["severity"], "critical")
+        self.assertTrue(crit["is_anomaly"])
+
+        # Warning anomaly 2.0 <= |z| < 2.5 (negative z-score test)
+        warn = classify_z_score(-2.15)
+        self.assertEqual(warn["level"], "WARNING_ANOMALY")
+        self.assertEqual(warn["severity"], "warning")
+        self.assertTrue(warn["is_anomaly"])
+
+        # Moderate anomaly 1.5 <= |z| < 2.0
+        mod = classify_z_score(1.72)
+        self.assertEqual(mod["level"], "MODERATE_ANOMALY")
+        self.assertEqual(mod["severity"], "moderate")
+        self.assertFalse(mod["is_anomaly"])
+
+        # Nominal |z| < 1.5
+        nom = classify_z_score(0.45)
+        self.assertEqual(nom["level"], "NOMINAL")
+        self.assertEqual(nom["severity"], "nominal")
+        self.assertFalse(nom["is_anomaly"])
+
+        # Edge cases: None, NaN
+        self.assertEqual(classify_z_score(None)["level"], "NOMINAL")
+        self.assertEqual(classify_z_score(float("nan"))["level"], "NOMINAL")
+
+    def test_tile_math_and_bounding_box_generation(self):
+        """Verify Slippy map tile coordinate conversion and bounding box generation."""
+        lat, lon, zoom = 37.0582, -121.0744, 13
+        x, y = lat_lon_to_tile(lat, lon, zoom)
+        self.assertIsInstance(x, int)
+        self.assertIsInstance(y, int)
+        self.assertGreater(x, 0)
+        self.assertGreater(y, 0)
+
+        # Tile to bounding box
+        bbox = tile_to_bbox(zoom, x, y)
+        self.assertIsInstance(bbox, BoundingBox)
+        self.assertTrue(bbox.contains_point(lat, lon))
+        self.assertLess(bbox.min_lon, bbox.max_lon)
+        self.assertLess(bbox.min_lat, bbox.max_lat)
+
+    def test_metric_gsd_flight_planning_calculation(self):
+        """Verify metric GSD photogrammetry resolution calculation."""
+        # 60m flight with 8.8mm lens, 13.2mm sensor, 5472px width
+        gsd_60 = calculate_metric_gsd(altitude_m=60.0, focal_length_mm=8.8, sensor_width_mm=13.2, image_width_px=5472)
+        self.assertAlmostEqual(gsd_60, 1.645, places=2)
+
+        # 100m flight
+        gsd_100 = calculate_metric_gsd(altitude_m=100.0, focal_length_mm=8.8, sensor_width_mm=13.2, image_width_px=5472)
+        self.assertAlmostEqual(gsd_100, 2.741, places=2)
+
+        # Invalid inputs return 0.0
+        self.assertEqual(calculate_metric_gsd(altitude_m=0.0), 0.0)
+        self.assertEqual(calculate_metric_gsd(altitude_m=-10.0), 0.0)
+
+    def test_geojson_polygon_normalization(self):
+        """Verify GeoJSON polygon validation and closed linear ring normalization."""
+        # Open ring should be closed
+        open_geom = {
+            "type": "Polygon",
+            "coordinates": [[[-121.5, 39.5], [-121.4, 39.5], [-121.4, 39.6], [-121.5, 39.6]]]
+        }
+        normalized = normalize_geojson_polygon(open_geom)
+        self.assertIsNotNone(normalized)
+        ring = normalized["coordinates"][0]
+        self.assertEqual(ring[0], ring[-1])
+        self.assertEqual(len(ring), 5)
+
+        # Already closed ring
+        closed_geom = {
+            "type": "Polygon",
+            "coordinates": [[[-121.5, 39.5], [-121.4, 39.5], [-121.4, 39.6], [-121.5, 39.6], [-121.5, 39.5]]]
+        }
+        norm_closed = normalize_geojson_polygon(closed_geom)
+        self.assertEqual(len(norm_closed["coordinates"][0]), 5)
+
+        # Invalid geometry returns None
+        self.assertIsNone(normalize_geojson_polygon(None))
+        self.assertIsNone(normalize_geojson_polygon({"type": "Point", "coordinates": [0, 0]}))
+        self.assertIsNone(normalize_geojson_polygon({"type": "Polygon", "coordinates": []}))
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

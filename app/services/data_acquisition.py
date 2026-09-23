@@ -12,6 +12,7 @@ import rasterio.errors
 from app.config import settings
 from app.utils.cache import cache_manager
 from app.services.preprocessing import preprocessing_service
+from app.models.schemas import parse_bbox, BoundingBox
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 try:
@@ -55,7 +56,7 @@ class DataAcquisitionService:
 
     def search_scenes(
         self,
-        bbox: Union[Tuple[float, float, float, float], List[float], str],
+        bbox: Union[Tuple[float, float, float, float], List[float], str, Dict[str, float], BoundingBox, None],
         start_date: str,
         end_date: str,
         collection: str = "sentinel-2-l2a",
@@ -63,18 +64,8 @@ class DataAcquisitionService:
         sign_assets: bool = True
     ) -> List[Dict[str, Any]]:
         """Searches Planetary Computer STAC catalog, signing asset URLs with SAS tokens."""
-        if isinstance(bbox, str):
-            try:
-                parts = [float(p.strip()) for p in bbox.split(",") if p.strip()]
-                if len(parts) == 4:
-                    bbox = tuple(parts)
-            except Exception:
-                pass
-        elif isinstance(bbox, list) and len(bbox) == 4:
-            try:
-                bbox = tuple(float(x) for x in bbox)
-            except Exception:
-                pass
+        if bbox is not None:
+            bbox = parse_bbox(bbox)
 
         cache_key = {"bbox": bbox, "start": start_date, "end": end_date, "col": collection, "cloud": max_cloud, "sign": sign_assets}
         cached = cache_manager.get("stac_search", cache_key)
@@ -82,15 +73,17 @@ class DataAcquisitionService:
             return cached
 
         try:
-            client = Client.open(self.catalog_url)
-            search = client.search(
-                collections=[collection],
-                bbox=bbox,
-                datetime=f"{start_date}/{end_date}",
-                query={"eo:cloud_cover": {"lt": max_cloud}},
-                limit=50
-            )
-            items = list(search.items())
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                client = Client.open(self.catalog_url)
+                search = client.search(
+                    collections=[collection],
+                    bbox=bbox,
+                    datetime=f"{start_date}/{end_date}",
+                    query={"eo:cloud_cover": {"lt": max_cloud}},
+                    limit=50
+                )
+                items = list(search.items())
             results = []
             for item in items:
                 # Sign STAC Item in-place to grant valid Azure SAS tokens
@@ -147,7 +140,7 @@ class DataAcquisitionService:
         self,
         items: Union[List[Any], Any],
         bands: Optional[List[str]] = None,
-        bbox: Optional[Tuple[float, float, float, float]] = None,
+        bbox: Optional[Union[Tuple[float, float, float, float], List[float], str, Dict[str, float], BoundingBox]] = None,
         crs: str = "EPSG:3857",
         resolution: Optional[float] = None,
         collection: str = "sentinel-2-l2a",
@@ -220,20 +213,8 @@ class DataAcquisitionService:
                     logger.warning("Could not fetch STAC item by ID %s: %s", it, fetch_err)
 
         # Normalize bbox to standard (min_lon, min_lat, max_lon, max_lat)
-        if isinstance(bbox, str):
-            try:
-                parts = [float(p.strip()) for p in bbox.split(",") if p.strip()]
-                if len(parts) == 4:
-                    bbox = tuple(parts)
-            except Exception:
-                pass
-        elif isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-            try:
-                bbox = tuple(float(x) for x in bbox)
-            except Exception:
-                pass
-
-        if bbox and len(bbox) == 4:
+        if bbox is not None:
+            bbox = parse_bbox(bbox)
             b0, b1, b2, b3 = bbox
             if b0 == b2:
                 b0 -= 0.005

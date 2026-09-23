@@ -106,6 +106,7 @@ class SpectralIndexMetadata(BaseModel):
     is_differenced: bool = Field(default=False, description="Whether index requires multi-temporal pre/post scene differencing")
     requires_thermal: bool = Field(default=False, description="Whether index requires thermal infrared band (e.g. Landsat Band 10)")
     requires_rededge: bool = Field(default=False, description="Whether index requires red-edge bands (e.g. Sentinel-2 Band 5)")
+    auto_stretch: Tuple[float, float] = Field(default=(-1.0, 1.0), description="2%-98% cumulative contrast stretch recommended bounds")
 
     def parse_rescale(self) -> Tuple[float, float]:
         """Parses default rescale string into numeric (min, max) tuple."""
@@ -120,6 +121,8 @@ class ColormapMetadata(BaseModel):
     key: TileColormap = Field(..., description="Colormap palette identifier enum")
     label: str = Field(..., description="Descriptive colormap name with typical application domain")
     description: Optional[str] = Field(default=None, description="Detailed palette description")
+    gradient_css: str = Field(default="", description="Tailwind CSS color gradient classes for frontend UI")
+    color_stops: List[str] = Field(default_factory=list, description="Hex color stops defining the palette ramp")
 
 SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
     "ndmi": SpectralIndexMetadata(
@@ -132,7 +135,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.SPECTRAL,
         default_rescale="-0.2,0.6",
         unit="dimensionless",
-        description="Sensitive to water content in vegetation canopy and soil moisture along embankment toes."
+        description="Sensitive to water content in vegetation canopy and soil moisture along embankment toes.",
+        auto_stretch=(0.05, 0.45)
     ),
     "ndvi": SpectralIndexMetadata(
         key=SpectralIndex.NDVI,
@@ -144,7 +148,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.VIRIDIS,
         default_rescale="-0.1,0.85",
         unit="dimensionless",
-        description="Evaluates live green plant biomass, chlorophyll density, and vegetative vigor."
+        description="Evaluates live green plant biomass, chlorophyll density, and vegetative vigor.",
+        auto_stretch=(0.15, 0.85)
     ),
     "mndwi": SpectralIndexMetadata(
         key=SpectralIndex.MNDWI,
@@ -156,7 +161,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.TURBO,
         default_rescale="-0.3,0.5",
         unit="dimensionless",
-        description="Suppresses built-up urban features while amplifying open water bodies and flood inundation."
+        description="Suppresses built-up urban features while amplifying open water bodies and flood inundation.",
+        auto_stretch=(-0.2, 0.4)
     ),
     "ndci": SpectralIndexMetadata(
         key=SpectralIndex.NDCI,
@@ -169,7 +175,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_rescale="-0.1,0.5",
         unit="dimensionless",
         description="Quantifies chlorophyll-a concentration and microcystin bloom risk in inland reservoirs.",
-        requires_rededge=True
+        requires_rededge=True,
+        auto_stretch=(-0.05, 0.4)
     ),
     "nbr": SpectralIndexMetadata(
         key=SpectralIndex.NBR,
@@ -181,7 +188,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.TURBO,
         default_rescale="-0.4,0.8",
         unit="dimensionless",
-        description="Highlights burned areas and high-heat signatures by contrasting NIR and SWIR2 reflectance."
+        description="Highlights burned areas and high-heat signatures by contrasting NIR and SWIR2 reflectance.",
+        auto_stretch=(-0.2, 0.6)
     ),
     "evi": SpectralIndexMetadata(
         key=SpectralIndex.EVI,
@@ -193,7 +201,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.VIRIDIS,
         default_rescale="-0.1,0.9",
         unit="dimensionless",
-        description="Atmospherically corrected vegetation index that resists saturation in high-biomass regions."
+        description="Atmospherically corrected vegetation index that resists saturation in high-biomass regions.",
+        auto_stretch=(0.1, 0.8)
     ),
     "savi": SpectralIndexMetadata(
         key=SpectralIndex.SAVI,
@@ -205,7 +214,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.VIRIDIS,
         default_rescale="-0.1,0.8",
         unit="dimensionless",
-        description="Incorporates a soil brightness correction factor (L=0.5) for arid soils and embankments."
+        description="Incorporates a soil brightness correction factor (L=0.5) for arid soils and embankments.",
+        auto_stretch=(0.1, 0.7)
     ),
     "lst": SpectralIndexMetadata(
         key=SpectralIndex.LST,
@@ -218,7 +228,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_rescale="10.0,45.0",
         unit="°C",
         description="Calibrated radiometric surface skin temperature in degrees Celsius from thermal infrared.",
-        requires_thermal=True
+        requires_thermal=True,
+        auto_stretch=(12.0, 42.0)
     ),
     "rgb": SpectralIndexMetadata(
         key=SpectralIndex.RGB,
@@ -230,7 +241,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=None,
         default_rescale="0,255",
         unit="reflectance",
-        description="Calibrated surface reflectance composite simulating natural human eye perception."
+        description="Calibrated surface reflectance composite simulating natural human eye perception.",
+        auto_stretch=(10.0, 240.0)
     ),
     "dnbr": SpectralIndexMetadata(
         key=SpectralIndex.DNBR,
@@ -243,7 +255,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_rescale="-0.2,0.8",
         unit="dimensionless",
         description="Differenced NBR assessing fire severity and biomass loss between pre- and post-fire scenes.",
-        is_differenced=True
+        is_differenced=True,
+        auto_stretch=(0.1, 0.66)
     ),
     "rdnbr": SpectralIndexMetadata(
         key=SpectralIndex.RDNBR,
@@ -256,19 +269,68 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_rescale="-0.5,1.5",
         unit="dimensionless",
         description="Relative differenced NBR normalized by pre-fire canopy density for steep terrain assessment.",
-        is_differenced=True
+        is_differenced=True,
+        auto_stretch=(0.15, 1.2)
     ),
 }
 
 COLORMAPS_METADATA: Dict[str, ColormapMetadata] = {
-    "spectral": ColormapMetadata(key=TileColormap.SPECTRAL, label="Spectral (Moisture & Hazard Detection)", description="High-contrast diverging palette for soil moisture and seepage"),
-    "viridis": ColormapMetadata(key=TileColormap.VIRIDIS, label="Viridis (Vegetation & Biophysical Health)", description="Perceptually uniform sequential palette for vegetation vigor"),
-    "turbo": ColormapMetadata(key=TileColormap.TURBO, label="Turbo (Thermal & High-Contrast Severity)", description="Rainbow alternative with improved perceptual linearity for wildfire and inundation"),
-    "rdylbu": ColormapMetadata(key=TileColormap.RDYLBU, label="Red-Yellow-Blue (Diverging Water & Drought)", description="Diverging palette for drought stress and hydrological anomalies"),
-    "terrain": ColormapMetadata(key=TileColormap.TERRAIN, label="Terrain (Topography & Physical Elevation)", description="Earth-tone palette suitable for digital elevation models and bathymetry"),
-    "magma": ColormapMetadata(key=TileColormap.MAGMA, label="Magma (Thermal Infrared & Radiation)", description="High-radiance dark-to-bright palette for Land Surface Temperature"),
-    "inferno": ColormapMetadata(key=TileColormap.INFERNO, label="Inferno (High Radiance / Active Fire)", description="Saturated thermal palette for high-intensity wildfire and hotspot tracking"),
-    "cividis": ColormapMetadata(key=TileColormap.CIVIDIS, label="Cividis (Colorblind Accessible)", description="Color-vision-deficiency optimized palette for universal accessibility"),
+    "spectral": ColormapMetadata(
+        key=TileColormap.SPECTRAL,
+        label="Spectral (Moisture & Hazard Detection)",
+        description="High-contrast diverging palette for soil moisture and seepage",
+        gradient_css="from-blue-600 via-green-400 via-yellow-400 to-red-600",
+        color_stops=["#2b83ba", "#abdda4", "#ffffbf", "#fdae61", "#d7191c"]
+    ),
+    "viridis": ColormapMetadata(
+        key=TileColormap.VIRIDIS,
+        label="Viridis (Vegetation & Biophysical Health)",
+        description="Perceptually uniform sequential palette for vegetation vigor",
+        gradient_css="from-purple-900 via-teal-500 to-yellow-300",
+        color_stops=["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"]
+    ),
+    "turbo": ColormapMetadata(
+        key=TileColormap.TURBO,
+        label="Turbo (Thermal & High-Contrast Severity)",
+        description="Rainbow alternative with improved perceptual linearity for wildfire and inundation",
+        gradient_css="from-blue-700 via-cyan-400 via-green-400 via-yellow-400 to-red-600",
+        color_stops=["#30123b", "#1ae4b6", "#a2fc3c", "#febb2d", "#7a0403"]
+    ),
+    "rdylbu": ColormapMetadata(
+        key=TileColormap.RDYLBU,
+        label="Red-Yellow-Blue (Diverging Water & Drought)",
+        description="Diverging palette for drought stress and hydrological anomalies",
+        gradient_css="from-red-600 via-yellow-300 to-blue-600",
+        color_stops=["#d73027", "#f46d43", "#fdae61", "#fee090", "#e0f3f8", "#abd9e9", "#74add1", "#4575b4"]
+    ),
+    "terrain": ColormapMetadata(
+        key=TileColormap.TERRAIN,
+        label="Terrain (Topography & Physical Elevation)",
+        description="Earth-tone palette suitable for digital elevation models and bathymetry",
+        gradient_css="from-blue-700 via-emerald-600 via-yellow-600 to-stone-200",
+        color_stops=["#333399", "#006600", "#669900", "#ffff66", "#cc6600", "#ffffff"]
+    ),
+    "magma": ColormapMetadata(
+        key=TileColormap.MAGMA,
+        label="Magma (Thermal Infrared & Radiation)",
+        description="High-radiance dark-to-bright palette for Land Surface Temperature",
+        gradient_css="from-black via-purple-800 via-pink-600 to-amber-300",
+        color_stops=["#000004", "#51127c", "#b73779", "#fc8961", "#fec087"]
+    ),
+    "inferno": ColormapMetadata(
+        key=TileColormap.INFERNO,
+        label="Inferno (High Radiance / Active Fire)",
+        description="Saturated thermal palette for high-intensity wildfire and hotspot tracking",
+        gradient_css="from-black via-red-800 via-amber-500 to-yellow-200",
+        color_stops=["#000004", "#57106e", "#bb3754", "#f98e09", "#fcffa4"]
+    ),
+    "cividis": ColormapMetadata(
+        key=TileColormap.CIVIDIS,
+        label="Cividis (Colorblind Accessible)",
+        description="Color-vision-deficiency optimized palette for universal accessibility",
+        gradient_css="from-blue-950 via-teal-700 to-yellow-400",
+        color_stops=["#00204d", "#414d6b", "#7c7b78", "#c3af6d", "#ffea46"]
+    ),
 }
 
 def get_spectral_index_metadata(index: Union[str, SpectralIndex]) -> Optional[SpectralIndexMetadata]:
@@ -288,6 +350,35 @@ def get_colormap_metadata(colormap: Union[str, TileColormap]) -> Optional[Colorm
 def list_colormaps() -> List[ColormapMetadata]:
     """Return all supported dynamic tile colormap metadata specifications."""
     return list(COLORMAPS_METADATA.values())
+
+def get_auto_stretch(index: Union[str, SpectralIndex, None], default: Tuple[float, float] = (-0.2, 0.6)) -> Tuple[float, float]:
+    """Retrieves standard 2%-98% cumulative auto stretch bounds for a spectral index."""
+    if not index:
+        return default
+    meta = get_spectral_index_metadata(index)
+    if meta and hasattr(meta, "auto_stretch") and meta.auto_stretch:
+        return meta.auto_stretch
+    return default
+
+def get_colormap_gradient(colormap: Union[str, TileColormap, None], default: str = "from-blue-600 via-green-400 via-yellow-400 to-red-600") -> str:
+    """Retrieves Tailwind CSS color gradient classes for a colormap palette."""
+    if not colormap:
+        return default
+    meta = get_colormap_metadata(colormap)
+    if meta and getattr(meta, "gradient_css", None):
+        return meta.gradient_css
+    return default
+
+def get_colormap_color_stops(colormap: Union[str, TileColormap, None], default: Optional[List[str]] = None) -> List[str]:
+    """Retrieves hex color stops defining the ramp for a colormap palette."""
+    if default is None:
+        default = ["#2b83ba", "#abdda4", "#ffffbf", "#fdae61", "#d7191c"]
+    if not colormap:
+        return default
+    meta = get_colormap_metadata(colormap)
+    if meta and getattr(meta, "color_stops", None):
+        return meta.color_stops
+    return default
 
 def parse_rescale(rescale: Union[str, List[float], Tuple[float, float], None], default: Tuple[float, float] = (-1.0, 1.0)) -> Tuple[float, float]:
     """Parses a comma-separated rescale string (e.g. "-0.2,0.6") or sequence into a numeric (min, max) tuple.
@@ -432,6 +523,218 @@ def format_api_route(route_name: str, **kwargs) -> str:
     template = API_ROUTE_CONTRACTS[route_name]
     return template.format(**kwargs)
 
+class BoundingBox(BaseModel):
+    """Standardized WGS84 geographic bounding box [min_lon, min_lat, max_lon, max_lat]."""
+    min_lon: float = Field(..., description="Westernmost longitude in WGS84 degrees")
+    min_lat: float = Field(..., description="Southernmost latitude in WGS84 degrees")
+    max_lon: float = Field(..., description="Easternmost longitude in WGS84 degrees")
+    max_lat: float = Field(..., description="Northernmost latitude in WGS84 degrees")
+
+    def to_tuple(self) -> Tuple[float, float, float, float]:
+        """Convert to standard (min_lon, min_lat, max_lon, max_lat) tuple."""
+        return (self.min_lon, self.min_lat, self.max_lon, self.max_lat)
+
+    def to_str(self) -> str:
+        """Convert to comma-separated string 'min_lon,min_lat,max_lon,max_lat'."""
+        return f"{self.min_lon},{self.min_lat},{self.max_lon},{self.max_lat}"
+
+    def to_leaflet_bounds(self) -> List[List[float]]:
+        """Convert to Leaflet LatLngBounds format [[south, west], [north, east]]."""
+        return [[self.min_lat, self.min_lon], [self.max_lat, self.max_lon]]
+
+    def contains_point(self, lat: float, lng: float) -> bool:
+        """Check if a point (lat, lng) is within the bounding box."""
+        return self.min_lat <= lat <= self.max_lat and self.min_lon <= lng <= self.max_lon
+
+def parse_bbox(
+    val: Union[str, Sequence[float], Dict[str, float], BoundingBox, None],
+    default: Tuple[float, float, float, float] = (-121.2, 36.95, -120.95, 37.15)
+) -> Tuple[float, float, float, float]:
+    """Parses bounding box from string, tuple/list, dict, or BoundingBox model into (min_lon, min_lat, max_lon, max_lat).
+    Parity implementation with parseBbox() in gios-react/src/config/constants.js.
+    """
+    if val is None:
+        return default
+    if isinstance(val, BoundingBox):
+        return val.to_tuple()
+    if isinstance(val, (list, tuple)) and len(val) == 4:
+        try:
+            coords = tuple(float(x) for x in val)
+            if all(math.isfinite(c) for c in coords):
+                return coords  # type: ignore
+        except Exception:
+            return default
+    if isinstance(val, dict):
+        try:
+            min_lon = float(val.get("min_lon", val.get("west", val.get("min_x", 0))))
+            min_lat = float(val.get("min_lat", val.get("south", val.get("min_y", 0))))
+            max_lon = float(val.get("max_lon", val.get("east", val.get("max_x", 0))))
+            max_lat = float(val.get("max_lat", val.get("north", val.get("max_y", 0))))
+            if all(math.isfinite(c) for c in (min_lon, min_lat, max_lon, max_lat)):
+                return (min_lon, min_lat, max_lon, max_lat)
+        except Exception:
+            return default
+    if isinstance(val, str):
+        try:
+            parts = [float(p.strip()) for p in val.split(",")]
+            if len(parts) == 4 and all(math.isfinite(p) for p in parts):
+                return (parts[0], parts[1], parts[2], parts[3])
+        except Exception:
+            return default
+    return default
+
+class ApiErrorResponse(BaseModel):
+    """Standardized API error response contract shared between backend and frontend."""
+    detail: str = Field(..., description="Human-readable error explanation or message")
+    error_code: Optional[str] = Field(default=None, description="Standard machine-readable error code")
+    status_code: int = Field(default=400, description="HTTP status code")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Error occurrence timestamp (ISO 8601)")
+
+# ============================================================================
+# CLIMATOLOGICAL ANOMALIES & SHARED WATCHDOG THRESHOLDS
+# ============================================================================
+
+CLIMATOLOGICAL_ANOMALY_LEVELS: List[Dict[str, Any]] = [
+    {
+        "level": "CRITICAL_ANOMALY",
+        "min_z": 2.5,
+        "severity": "critical",
+        "label": "Critical Anomaly (|z| ≥ 2.5)",
+        "badge_class": "bg-red-950/80 text-red-300 border-red-800",
+        "badgeClass": "bg-red-950/80 text-red-300 border-red-800",
+        "is_anomaly": True,
+        "description": "Severe statistical anomaly exceeding 2.5 MAD from historical seasonal baseline."
+    },
+    {
+        "level": "WARNING_ANOMALY",
+        "min_z": 2.0,
+        "severity": "warning",
+        "label": "Severe Warning (2.0 ≤ |z| < 2.5)",
+        "badge_class": "bg-amber-950/80 text-amber-300 border-amber-800",
+        "badgeClass": "bg-amber-950/80 text-amber-300 border-amber-800",
+        "is_anomaly": True,
+        "description": "Substantial deviation from seasonal expectation requiring operational monitoring."
+    },
+    {
+        "level": "MODERATE_ANOMALY",
+        "min_z": 1.5,
+        "severity": "moderate",
+        "label": "Moderate Anomaly (1.5 ≤ |z| < 2.0)",
+        "badge_class": "bg-yellow-950/80 text-yellow-300 border-yellow-800",
+        "badgeClass": "bg-yellow-950/80 text-yellow-300 border-yellow-800",
+        "is_anomaly": False,
+        "description": "Elevated variation within acceptable seasonal boundary thresholds."
+    },
+    {
+        "level": "NOMINAL",
+        "min_z": 0.0,
+        "severity": "nominal",
+        "label": "Nominal / Baseline (|z| < 1.5)",
+        "badge_class": "bg-emerald-950/80 text-emerald-300 border-emerald-800",
+        "badgeClass": "bg-emerald-950/80 text-emerald-300 border-emerald-800",
+        "is_anomaly": False,
+        "description": "Observations conform to climatological median baseline."
+    }
+]
+
+def classify_z_score(z: Any) -> Dict[str, Any]:
+    """Classifies a climatological seasonal z-score against operational anomaly thresholds.
+    Parity implementation with frontend classifyZScore() in constants.js.
+    """
+    if z is None:
+        return CLIMATOLOGICAL_ANOMALY_LEVELS[-1]
+    try:
+        val = abs(float(z))
+        if math.isnan(val) or not math.isfinite(val):
+            return CLIMATOLOGICAL_ANOMALY_LEVELS[-1]
+        for level in CLIMATOLOGICAL_ANOMALY_LEVELS:
+            if val >= level["min_z"]:
+                return level
+    except (ValueError, TypeError):
+        pass
+    return CLIMATOLOGICAL_ANOMALY_LEVELS[-1]
+
+# ============================================================================
+# SLIPPY MAP TILE MATH & GEOMETRY CONVENTIONS
+# ============================================================================
+
+def lat_lon_to_tile(lat: float, lon: float, zoom: int) -> Tuple[int, int]:
+    """Converts WGS84 geographic coordinates (lat, lon) to Web Mercator XYZ tile coordinates (x, y) at zoom.
+    
+    Standard slippy map tile projection:
+    x = floor((lon + 180) / 360 * 2^zoom)
+    lat_rad = lat * pi / 180
+    y = floor((1 - asinh(tan(lat_rad)) / pi) / 2 * 2^zoom)
+    """
+    n = 2.0 ** zoom
+    x = int(math.floor((lon + 180.0) / 360.0 * n))
+    lat_rad = math.radians(lat)
+    y = int(math.floor((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n))
+    max_tile = int(n) - 1
+    return (max(0, min(x, max_tile)), max(0, min(y, max_tile)))
+
+def tile_to_bbox(z: int, x: int, y: int) -> BoundingBox:
+    """Calculates the WGS84 geographic bounding box [min_lon, min_lat, max_lon, max_lat] for tile (z, x, y)."""
+    n = 2.0 ** z
+    min_lon = x / n * 360.0 - 180.0
+    max_lon = (x + 1) / n * 360.0 - 180.0
+    lat_rad_top = math.atan(math.sinh(math.pi * (1.0 - 2.0 * y / n)))
+    lat_rad_bottom = math.atan(math.sinh(math.pi * (1.0 - 2.0 * (y + 1) / n)))
+    max_lat = math.degrees(lat_rad_top)
+    min_lat = math.degrees(lat_rad_bottom)
+    return BoundingBox(
+        min_lon=round(min_lon, 6),
+        min_lat=round(min_lat, 6),
+        max_lon=round(max_lon, 6),
+        max_lat=round(max_lat, 6)
+    )
+
+def calculate_metric_gsd(
+    altitude_m: float,
+    focal_length_mm: float = 8.8,
+    sensor_width_mm: float = 13.2,
+    image_width_px: int = 5472
+) -> float:
+    """Calculates Ground Sample Distance (GSD) in centimeters per pixel from flight parameters.
+    
+    Formula: GSD (cm/px) = (altitude_m * 100 * sensor_width_mm) / (focal_length_mm * image_width_px)
+    """
+    if altitude_m <= 0 or focal_length_mm <= 0 or image_width_px <= 0:
+        return 0.0
+    gsd_cm = (altitude_m * 100.0 * sensor_width_mm) / (focal_length_mm * image_width_px)
+    return round(gsd_cm, 3)
+
+def normalize_geojson_polygon(geometry: Any) -> Optional[Dict[str, Any]]:
+    """Validates and normalizes GeoJSON Polygon geometry, ensuring closed coordinate rings.
+    
+    Returns standard {'type': 'Polygon', 'coordinates': [[[lon, lat], ...]]} or None.
+    """
+    if not isinstance(geometry, dict):
+        return None
+    gtype = geometry.get("type")
+    coords = geometry.get("coordinates")
+    if gtype != "Polygon" or not isinstance(coords, list) or len(coords) == 0:
+        return None
+    ring = coords[0]
+    if not isinstance(ring, list) or len(ring) < 3:
+        return None
+    # Validate each coordinate pair
+    clean_ring = []
+    for pt in ring:
+        if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+            try:
+                lon, lat = float(pt[0]), float(pt[1])
+                if math.isfinite(lon) and math.isfinite(lat):
+                    clean_ring.append([lon, lat])
+            except (ValueError, TypeError):
+                continue
+    if len(clean_ring) < 3:
+        return None
+    # Ensure linear ring is closed (first point equals last point)
+    if clean_ring[0] != clean_ring[-1]:
+        clean_ring.append(list(clean_ring[0]))
+    return {"type": "Polygon", "coordinates": [clean_ring]}
+
 # ============================================================================
 # CONTRACT 1: DYNAMIC XYZ TILE SERVER SCHEMAS
 # ============================================================================
@@ -490,6 +793,39 @@ class DynamicTileParams(BaseModel):
             from urllib.parse import urlencode
             return f"{path}?{urlencode(qp)}"
         return path
+
+    @classmethod
+    def build_drone_tile_url(cls, ortho_id: str, z: Union[int, str], x: Union[int, str], y: Union[int, str], base_prefix: str = "/api/v1") -> str:
+        """Constructs the canonical tile path for a registered drone orthomosaic."""
+        return f"{base_prefix}/drone/{ortho_id}/tiles/{z}/{x}/{y}.png"
+
+    @classmethod
+    def build_wildfire_tile_url(
+        cls,
+        z: Union[int, str],
+        x: Union[int, str],
+        y: Union[int, str],
+        pre: Optional[str] = None,
+        post: Optional[str] = None,
+        colormap: Optional[str] = "turbo",
+        rescale: Optional[str] = "-0.2,0.8",
+        base_prefix: str = "/api/v1"
+    ) -> str:
+        """Constructs the canonical tile path for wildfire dnbr differencing with query parameters."""
+        base = f"{base_prefix}/tiles/wildfire/dnbr/{z}/{x}/{y}.png"
+        query_parts = []
+        if pre:
+            query_parts.append(f"pre={pre}")
+        if post:
+            query_parts.append(f"post={post}")
+        if colormap:
+            query_parts.append(f"colormap={colormap}")
+        if rescale:
+            from urllib.parse import quote
+            query_parts.append(f"rescale={quote(str(rescale), safe='')}")
+        if query_parts:
+            return f"{base}?{'&'.join(query_parts)}"
+        return base
 
 # ============================================================================
 # CONTRACT 2: USGS FIREMON PRE/POST DIFFERENCED BURN SEVERITY SCHEMAS
@@ -731,6 +1067,21 @@ class DroneOrthomosaicMetadata(BaseModel):
         """Determines if a geographic point (lat, lng) falls within the orthomosaic bounds."""
         min_lon, min_lat, max_lon, max_lat = self.bounds
         return min_lat <= lat <= max_lat and min_lon <= lng <= max_lon
+
+    @property
+    def gsd_display(self) -> str:
+        """Formatted ground sample distance string (e.g. '2.85 cm/px')."""
+        return f"{self.metric_gsd_cm:.2f} cm/px"
+
+    @property
+    def bbox(self) -> BoundingBox:
+        """BoundingBox representation of orthomosaic geographic extents."""
+        return BoundingBox(
+            min_lon=self.bounds[0],
+            min_lat=self.bounds[1],
+            max_lon=self.bounds[2],
+            max_lat=self.bounds[3]
+        )
 
 class DroneMissionResponse(BaseModel):
     """Active or registered drone mission response."""

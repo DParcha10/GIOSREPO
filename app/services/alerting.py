@@ -170,12 +170,18 @@ class AlertEngine:
         for site_id, site_name in self.monitored_sites.items():
             try:
                 data = await integration_service.get_usgs_station(site_id)
-                discharge = data.get("discharge_cfs", 0)
-                if discharge > 2000 and self.alert_state.get(site_id) != "critical":
-                    self.alert_state[site_id] = "critical"
-                    await self.trigger_jarvis_alert(site_name, data)
-                elif discharge < 2000:
-                    self.alert_state[site_id] = "normal"
+                if not data:
+                    continue
+                discharge = data.get("discharge_cfs")
+                if discharge is not None:
+                    if discharge > 2000 and self.alert_state.get(site_id) != "critical":
+                        self.alert_state[site_id] = "critical"
+                        await self.trigger_jarvis_alert(site_name, data)
+                    elif discharge < 2000:
+                        self.alert_state[site_id] = "normal"
+                else:
+                    if self.alert_state.get(site_id) != "critical":
+                        self.alert_state[site_id] = "normal"
             except Exception as e:
                 logger.error("AlertEngine failed to poll %s: %s", site_id, e)
 

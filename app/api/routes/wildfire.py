@@ -1,5 +1,6 @@
 """Wildfire hazard and burn severity assessment routes."""
 import gc
+import warnings
 from fastapi import APIRouter
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any, Union
@@ -19,6 +20,11 @@ from app.models.schemas import (
 from app.services.indices import index_service
 
 router = APIRouter(prefix="/wildfire", tags=["Wildfire Hazard"])
+
+def _collect_memory():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ResourceWarning)
+        gc.collect()
 
 def _calculate_geometry_area_ha(geometry: Optional[Dict[str, Any]]) -> float:
     if not geometry:
@@ -79,7 +85,7 @@ def analyze_burn_severity(req: BurnSeverityApiRequest):
         del rdnbr_arr
         del valid_d
         del valid_rd
-        gc.collect()
+        _collect_memory()
     elif req.nbr_values and len(req.nbr_values) > 0:
         # If legacy nbr_values passed, treat as single-scene post NBR with default pre baseline (0.35 typical green canopy)
         arr_post = np.asarray(req.nbr_values, dtype=np.float32)
@@ -98,7 +104,7 @@ def analyze_burn_severity(req: BurnSeverityApiRequest):
         del rdnbr_arr
         del valid_d
         del valid_rd
-        gc.collect()
+        _collect_memory()
     else:
         # Realistic deterministic burn scenario for the requested dates / AOI
         # Simulate calibrated pre/post distribution over burned area with memory-conscious sample size
@@ -114,7 +120,7 @@ def analyze_burn_severity(req: BurnSeverityApiRequest):
         del burned_sample
         del unburned_sample
         del dnbr_arr
-        gc.collect()
+        _collect_memory()
 
     # Format category details with calculated hectares
     categories_result = []

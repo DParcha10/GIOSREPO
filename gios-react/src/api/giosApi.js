@@ -38,13 +38,47 @@ export {
   ALERT_SEVERITIES,
   DRONE_STATUSES,
   PROACTIVE_ALERT_TYPES,
-  API_ENDPOINTS
+  API_ENDPOINTS,
+  parseBbox,
+  bboxToLeafletBounds,
+  formatBbox,
+  formatApiError,
+  formatGsdDisplay,
+  buildTileUrl,
+  buildDroneTileUrl,
+  buildWildfireTileUrl,
+  CLIMATOLOGICAL_ANOMALY_LEVELS,
+  classifyZScore,
+  getAutoStretch,
+  getColormapGradient,
+  getColormapColorStops,
+  latLonToTile,
+  tileToBbox,
+  tileToLeafletBounds,
+  calculateMetricGsd,
+  normalizeGeojsonPolygon
 } from '../config/constants.js';
 
 /**
  * ============================================================================
  * JSDOC / TYPESCRIPT TYPE DEFINITIONS (API CONTRACTS & SCHEMAS)
  * ============================================================================
+ */
+
+/**
+ * @typedef {Object} BoundingBox
+ * @property {number} min_lon - Westernmost longitude
+ * @property {number} min_lat - Southernmost latitude
+ * @property {number} max_lon - Easternmost longitude
+ * @property {number} max_lat - Northernmost latitude
+ */
+
+/**
+ * @typedef {Object} ApiErrorResponse
+ * @property {string} detail - Human-readable error message
+ * @property {string|null} [error_code] - Machine-readable error code
+ * @property {number} status_code - HTTP status code
+ * @property {string} timestamp - ISO 8601 timestamp
  */
 
 /**
@@ -77,8 +111,12 @@ export {
  * @property {string[]} bands - Spectral bands utilized
  * @property {TileColormap|null} defaultColormap - Default colormap palette
  * @property {string} defaultRescale - Default rescale min,max
+ * @property {[number, number]} [autoStretch] - 2%-98% cumulative auto stretch bounds [min, max]
  * @property {string} unit - Measurement unit
  * @property {string} description - Scientific and operational description
+ * @property {boolean} [isDifferenced] - Multi-temporal differencing requirement
+ * @property {boolean} [requiresThermal] - Thermal band requirement
+ * @property {boolean} [requiresRedEdge] - Red-edge band requirement
  */
 
 /**
@@ -86,6 +124,19 @@ export {
  * @property {TileColormap} key - Colormap palette key
  * @property {string} label - Display label
  * @property {string} [description] - Palette description
+ * @property {string} [gradientCss] - Tailwind CSS gradient classes
+ * @property {string[]} [colorStops] - Hex color stops defining the ramp
+ */
+
+/**
+ * @typedef {Object} ClimatologicalAnomalyLevel
+ * @property {string} level - Anomaly level key (e.g. CRITICAL_ANOMALY, WARNING_ANOMALY, NOMINAL)
+ * @property {number} minZ - Minimum absolute z-score threshold
+ * @property {string} severity - Operational severity (critical, warning, moderate, nominal)
+ * @property {string} label - Human-readable label
+ * @property {string} badgeClass - Tailwind CSS badge styling classes
+ * @property {boolean} isAnomaly - Whether threshold constitutes actionable anomaly
+ * @property {string} description - Scientific narrative
  */
 
 /**

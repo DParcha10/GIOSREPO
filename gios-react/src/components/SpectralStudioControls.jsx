@@ -26,7 +26,7 @@ export const COLORMAP_PALETTES = BASE_COLORMAPS.map(c => ({
   key: c.key,
   name: c.label.split(' (')[0],
   desc: c.label,
-  gradient: COLORMAP_GRADIENTS[c.key] || 'from-teal-500 to-purple-600'
+  gradient: c.gradientCss || COLORMAP_GRADIENTS[c.key] || 'from-teal-500 to-purple-600'
 }));
 
 export const SPECTRAL_INDICES = BASE_INDICES.map(i => {
@@ -37,10 +37,15 @@ export const SPECTRAL_INDICES = BASE_INDICES.map(i => {
     name: i.name,
     label: i.label,
     formula: i.formula,
+    domain: i.domain,
+    description: i.description,
+    isDifferenced: Boolean(i.isDifferenced),
+    requiresThermal: Boolean(i.requiresThermal),
+    requiresRedEdge: Boolean(i.requiresRedEdge),
     defaultMin: defMin,
     defaultMax: defMax,
-    autoMin: i.key === 'ndmi' ? 0.05 : i.key === 'ndvi' ? 0.15 : i.key === 'lst' ? 12 : i.key === 'rgb' ? 10 : i.key === 'dnbr' ? 0.1 : i.key === 'rdnbr' ? 0.15 : defMin + 0.1,
-    autoMax: i.key === 'ndmi' ? 0.45 : i.key === 'ndvi' ? 0.85 : i.key === 'lst' ? 42 : i.key === 'rgb' ? 240 : i.key === 'dnbr' ? 0.66 : i.key === 'rdnbr' ? 1.2 : defMax - 0.1
+    autoMin: i.autoStretch ? i.autoStretch[0] : (i.key === 'ndmi' ? 0.05 : i.key === 'ndvi' ? 0.15 : i.key === 'lst' ? 12 : i.key === 'rgb' ? 10 : i.key === 'dnbr' ? 0.1 : i.key === 'rdnbr' ? 0.15 : defMin + 0.1),
+    autoMax: i.autoStretch ? i.autoStretch[1] : (i.key === 'ndmi' ? 0.45 : i.key === 'ndvi' ? 0.85 : i.key === 'lst' ? 42 : i.key === 'rgb' ? 240 : i.key === 'dnbr' ? 0.66 : i.key === 'rdnbr' ? 1.2 : defMax - 0.1)
   };
 });
 
@@ -108,19 +113,46 @@ export default function SpectralStudioControls({
                 if (onBandChange) onBandChange(idx.id);
                 if (onRescaleChange) onRescaleChange(idx.defaultMin, idx.defaultMax);
               }}
-              className={`py-1.5 px-2 rounded text-[10px] font-bold uppercase tracking-wider transition-all border ${
+              className={`py-1.5 px-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all border flex items-center justify-center gap-1 ${
                 activeBand === idx.id
                   ? 'border-primary bg-primary/20 text-primary shadow-[0_0_10px_rgba(0,255,170,0.3)]'
                   : 'border-gray-800 hover:border-gray-700 bg-black/40 text-gray-400 hover:text-white'
               }`}
             >
-              {idx.name}
+              <span>{idx.name}</span>
+              {idx.isDifferenced && (
+                <span className="text-[7px] px-1 py-0.5 rounded bg-amber-500/25 text-amber-300 font-mono font-bold" title="Differenced pre/post index">Δ</span>
+              )}
+              {idx.requiresThermal && (
+                <span className="text-[7px] px-1 py-0.5 rounded bg-red-500/25 text-red-300 font-mono font-bold" title="Thermal infrared (°C)">T</span>
+              )}
+              {idx.requiresRedEdge && (
+                <span className="text-[7px] px-1 py-0.5 rounded bg-emerald-500/25 text-emerald-300 font-mono font-bold" title="Red-Edge band required">RE</span>
+              )}
             </button>
           ))}
         </div>
         <div className="text-[9px] text-gray-500 font-mono truncate">
           Formula: {currentIdxMeta.formula}
         </div>
+        {currentIdxMeta.isDifferenced && (
+          <div className="text-[9px] text-amber-300 font-mono bg-amber-500/10 border border-amber-500/30 p-1.5 rounded flex items-center gap-1.5">
+            <Flame className="w-3 h-3 text-amber-400 shrink-0" />
+            <span>Multi-temporal differenced index: computes pre- vs post-event change (USGS FIREMON).</span>
+          </div>
+        )}
+        {currentIdxMeta.requiresThermal && (
+          <div className="text-[9px] text-red-300 font-mono bg-red-500/10 border border-red-500/30 p-1.5 rounded flex items-center gap-1.5">
+            <Info className="w-3 h-3 text-red-400 shrink-0" />
+            <span>Thermal infrared index: calibrated directly to Land Surface Temperature in °C ($T_C$).</span>
+          </div>
+        )}
+        {currentIdxMeta.requiresRedEdge && (
+          <div className="text-[9px] text-emerald-300 font-mono bg-emerald-500/10 border border-emerald-500/30 p-1.5 rounded flex items-center gap-1.5">
+            <Info className="w-3 h-3 text-emerald-400 shrink-0" />
+            <span>Chlorophyll index: requires Sentinel-2 RedEdge 1 (B05) band for HAB quantification.</span>
+          </div>
+        )}
       </div>
 
       {/* Dynamic Colormap Selector */}

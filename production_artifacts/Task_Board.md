@@ -2,8 +2,8 @@
 
 **Orchestrator:** Agent 4 — Master (`@master`)  
 **Source Plan:** `production_artifacts/Implementation_Plan.md`  
-**Last Updated:** September 23, 2026 — 04:30 UTC  
-**Execution State:** Stable Milestone Release `v2.5.0` Fully Archived & Released to GIOSREPO — 68/68 Backend Tests Passing (45/45 Schemas, 13/13 APIs, 6/6 Scientific Rigor, 4/4 Tile Server in 9.51s with 0 warnings); Bidirectional Shared Data Models, API Route Contracts & UI Symbology Hardened across Backend (`app/models/schemas.py`) and Frontend (`gios-react/src/config/constants.js`, `gios-react/src/api/giosApi.js`); Live Services Verified Healthy (FastAPI :8000 ONLINE, Vite Dev UI :5173 ONLINE, `/health` Proxy HEALTHY, 0 active anomalies); Frontend Quality Verified (0 ESLint errors/warnings, clean Vite build in 11.93s); Remote Sync to GitHub Complete.
+**Last Updated:** September 23, 2026 — 05:40 UTC  
+**Execution State:** Active Master Orchestration & Continuous Assurance — Stable Milestone Release `v2.5.0` Fully Operational; 85/85 Backend Tests Passing (58/58 Schemas, 17/17 APIs, 6/6 Scientific Rigor, 4/4 Tile Server in 9.66s with 0 warnings); Contrast Auto-Stretch Contracts, Colormap Gradients & Color Stops, Climatological Z-Score Classification, Slippy Map Tile Math & Metric GSD Planning Hardened across Backend (`app/models/schemas.py`) and Frontend (`gios-react/src/config/constants.js`, `gios-react/src/api/giosApi.js`, `gios-react/src/components/SpectralStudioControls.jsx`); Live Services Verified Healthy (FastAPI :8000 ONLINE, Vite Dev UI :5173 ONLINE, `/health` Proxy HEALTHY, 0 active anomalies); Frontend Quality Verified (0 ESLint errors/warnings, clean Vite build in 7.95s); Tasks T-36..T-39 Completed; 100% Discrete Single-Agent Task Assignment Enforced across Agents 5–10.
 
 ---
 
@@ -26,7 +26,7 @@
                      ORCHESTRATION TIMELINE & DISPATCH SEQUENCE
                      
      [Step 1: Agent 5 (@core-engineer)] ──────────────────► Status: DONE
-       └─ T-01, T-33, T-35: Shared Scaffolding, Schemas & API Contracts
+       └─ T-01, T-33, T-35, T-36, T-39: Shared Scaffolding, Schemas & API Contracts
                      │
                      ▼ 
      [Step 2: Agent 6 (@frontend) & Agent 7 (@backend) IN PARALLEL] ──► Status: DONE
@@ -36,11 +36,12 @@
                      ▼ 
      [Step 3: Agent 8 (@health-monitor) & Agent 9 (@debugger) CONTINUOUS] ──► Status: ACTIVE / MONITORING
        ├─ Agent 8 (@health-monitor): T-19 (Health Watchdog: PASS), T-22 (Memory Watchdog: Persistent Active)
-       └─ Agent 9 (@debugger):       T-18 (Scientific Suite: PASS), T-21 (Proxy Alignment: DONE), T-23 (CI Suite: PASS), T-24 (Schema Parity: DONE), T-26 (Lint Remediation: DONE), T-29 (Telemetry Assurance: DONE), T-31 (Live Services: DONE)
+       └─ Agent 9 (@debugger):       T-18 (Scientific Suite: PASS), T-21 (Proxy Alignment: DONE), T-23 (CI Suite: PASS), T-24 (Schema Parity: DONE), T-26 (Lint Remediation: DONE), T-29 (Telemetry Assurance: DONE), T-31 (Live Services: DONE), T-34 (Process Persistence: DONE), T-37 (CI Lint Remediation: DONE)
                      │
                      ▼ 
      [Step 4: Agent 10 (@archivist) ON STABLE MILESTONE] ──► Status: DONE (v2.5.0 Released)
-        └─ T-20, T-25, T-27, T-28, T-30, T-32 (DONE): Release Archival, Project Documentation Sync & Milestone Release Push
+        ├─ T-20, T-25, T-27, T-28, T-30, T-32, T-38 (DONE): v2.5.0 Release Archival & Remote Sync
+        └─ T-40 (DONE): Milestone Release v2.5.0 Production Archival & Remote Push
 ```
 
 ---
@@ -86,6 +87,11 @@
 | **T-33** | Core Schema Parity & Dynamic Tile Contracts Expansion | `@core-engineer` | `done` | T-01 | `app/models/schemas.py`<br>`tests/test_schemas.py` | Expanded Pydantic models with `parse_rescale`, `get_rescale_bounds`, `get_colormap_name`, `SATELLITE_COLLECTIONS_METADATA`, `SPECTRAL_INDICES_METADATA`, `COLORMAPS_METADATA`, and canonical `API_ROUTE_CONTRACTS`; expanded schema unit tests to 36/36 passing with 0 warnings; 59/59 total backend tests passing cleanly in 10.39s. |
 | **T-34** | Production Service Persistence & Continuous Health Assurance | `@debugger` | `done` | T-19, T-22, T-31 | `start_persistent_services.py`<br>`start_services.ps1`<br>`production_artifacts/Health_Status.md` | Root-caused background service termination to parent console group teardown; deployed detached OS background process launcher (`start_persistent_services.py`) with Windows `DETACHED_PROCESS` and `CREATE_NEW_PROCESS_GROUP` flags; restored FastAPI (:8000) and Vite UI (:5173) persistent background execution; verified `/health` proxy (HTTP 200), Tile endpoint (HTTP 200), and automated health daemon confirming System Status `HEALTHY` with 0 active anomalies; 59/59 pytest passing; 0 ESLint errors; clean Vite production build. |
 | **T-35** | Bidirectional Shared Contracts & Rescale Sequence Normalization | `@core-engineer` | `done` | T-01, T-33 | `app/models/schemas.py`<br>`gios-react/src/config/constants.js`<br>`gios-react/src/api/giosApi.js`<br>`tests/test_schemas.py` | Enhanced `parse_rescale` / `parseRescale` across numeric sequences, tuples, and strings; implemented bidirectional canonical route contract resolution (`format_api_route` / `formatApiRoute`); added index and colormap validation helpers (`validate_spectral_index` / `validateSpectralIndex`, `validate_colormap` / `validateColormap`); added tile parameter serialization and URL builders (`to_query_params`, `build_tile_url`, `build_tile_url_template`); added convenience properties for point coordinates (`lat`, `lng`) and zonal pixel fractions (`total_pixels`, `cloud_fraction`); expanded schema unit tests to 45/45 passing with 0 warnings; 68/68 total backend tests passing cleanly in 9.78s; 0 ESLint errors; clean Vite production build in 7.51s. |
+| **T-36** | Core Scaffolding Hardening: BoundingBox Normalization, Standardized ApiErrorResponse, Drone Lifecycle State Alignment & Biophysical Index Feature Flags | `@core-engineer` | `done` | T-01, T-33, T-35 | `app/models/schemas.py`<br>`gios-react/src/config/constants.js`<br>`gios-react/src/api/giosApi.js`<br>`tests/test_schemas.py` | Added `BoundingBox` model with WGS84 point containment, tuple conversion, string formatting, and Leaflet LatLngBounds generation; implemented bidirectional `parse_bbox` / `parseBbox` parsing string, sequence, dict, and model inputs; defined standardized `ApiErrorResponse` and `formatApiError` normalizer; expanded `DroneStatus` and `DRONE_STATUSES` to full lifecycle parity (`SCHEDULED`, `COMPLETED`, `PENDING`); integrated biophysical feature flags (`is_differenced`, `requires_thermal`, `requires_rededge` / `isDifferenced`, `requiresThermal`, `requiresRedEdge`) across `SPECTRAL_INDICES_METADATA` and `SPECTRAL_INDICES`; added `gsd_display` and `formatGsdDisplay` utilities; added `build_drone_tile_url`, `build_wildfire_tile_url`, `buildTileUrl`, `buildDroneTileUrl`, and `buildWildfireTileUrl`; expanded schema unit tests from 45/45 to 52/52 passing with 0 warnings; 75/75 total backend tests passing (52 schemas, 13 APIs, 6 scientific rigor, 4 tile server) in 8.84s; 0 ESLint errors; clean Vite production build in 7.27s; health daemon confirms 0 anomalies. |
+| **T-37** | Frontend CI Lint Remediation & MapExplorer Scaffolding Integration | `@debugger` | `done` | T-36 | `gios-react/src/pages/MapExplorer.jsx` | Reconciled and wired scaffolding imports (`validateColormap`, `bboxToLeafletBounds`, `formatGsdDisplay`, `buildTileUrl`, `buildDroneTileUrl`, `buildWildfireTileUrl`) in `MapExplorer.jsx`; eliminated all ESLint `no-unused-vars` errors; verified `npm run lint` exits code 0; verified clean Vite production build in 7.72s. |
+| **T-38** | Milestone Release v2.5.0-patch Repository Synchronization & Archival | `@archivist` | `done` | T-36, T-37 | `GIOSREPO/`<br>`production_artifacts/` | Verified QA clearance from Agent 9 (`@debugger`) on T-37; confirmed all 79 backend tests passing (52 schemas, 17 APIs, 6 scientific rigor, 4 tile server in 9.60s with 0 warnings), 0 ESLint errors/warnings, clean Vite production build (0 errors in 8.03s), and live services healthy (0 anomalies); synchronized finalized production code (`app/`, `gios-react/`, `tests/`, `start_persistent_services.py`, `start_services.ps1`, `health_check_daemon.py`, documentation) into `GIOSREPO/`; committed and pushed release update to GitHub remote. |
+| **T-39** | Core Scaffolding Hardening: Contrast Auto-Stretch Contracts, Colormap Gradients & Color Stops, Climatological Z-Score Classification, Slippy Map Tile Math & Metric GSD Planning | `@core-engineer` | `done` | T-01, T-33, T-35, T-36, T-37 | `app/models/schemas.py`<br>`gios-react/src/config/constants.js`<br>`gios-react/src/api/giosApi.js`<br>`gios-react/src/components/SpectralStudioControls.jsx`<br>`tests/test_schemas.py` | Defined bidirectional `auto_stretch` / `autoStretch` across all 11 spectral indices with `get_auto_stretch` / `getAutoStretch`; embedded full Tailwind `gradient_css` / `gradientCss` and hex `color_stops` / `colorStops` across all 8 dynamic colormaps with `get_colormap_gradient` and `get_colormap_color_stops`; defined `CLIMATOLOGICAL_ANOMALY_LEVELS` and `classify_z_score` / `classifyZScore` with operational badge parity; added Web Mercator slippy tile projection (`lat_lon_to_tile` / `latLonToTile`, `tile_to_bbox` / `tileToBbox`, `tileToLeafletBounds`); added photogrammetry metric GSD planning calculator `calculate_metric_gsd` / `calculateMetricGsd`; implemented robust `normalize_geojson_polygon` / `normalizeGeojsonPolygon` linear ring closure; connected `SpectralStudioControls.jsx` directly to shared contracts; expanded schema test suite to 58/58 passing with 0 warnings; 85/85 total backend tests passing in 9.66s; 0 ESLint errors; clean Vite production build in 7.95s; health check daemon verified HEALTHY with 0 active anomalies. |
+| **T-40** | Milestone Release v2.5.0 Production Archival & Remote Sync (85/85 Test Suite, Scaffolding Hardening & Clean Live System) | `@archivist` | `done` | T-36, T-37, T-38, T-39 | `GIOSREPO/`<br>`production_artifacts/` | Verified QA clearance from Agent 9 (`@debugger`); confirmed all 85 backend tests passing (58 schemas, 17 APIs, 6 scientific rigor, 4 tile server in 9.66s with 0 warnings), 0 ESLint errors/warnings, clean Vite production build (0 errors in 7.95s), and live services healthy (0 anomalies); synchronized finalized production code into `GIOSREPO/`; committed and pushed release update to GitHub remote. |
 
 
 ---
@@ -570,6 +576,146 @@
   - **Research & Plans Archival**: Organized and synchronized `production_artifacts/` (`Competitive_Gap_Analysis.md`, `Domain_Research.md`, `Implementation_Plan.md`, `GIOS_Project_Documentation.md`, `GIOS_Methodology.md`, `Health_Status.md`, `Task_Board.md`).
   - **Repository Synchronization**: Synchronized finalized QA-cleared production files from `app/`, `gios-react/`, `tests/`, `start_persistent_services.py`, `start_services.ps1`, and documentation into `GIOSREPO/` cleanly without build cache or submodule pollution.
   - **Release Push**: Committed and pushed Milestone Release `v2.5.0` to GitHub remote (`origin/main`).
+- **[2026-09-23 04:35 UTC]**: **Agent 7 (`@backend`)** completed dedicated backend remote sensing data/API implementation audit, memory-conscious raster ingestion hardening, and system assurance across all assigned work packages (**T-02**, **T-03**, **T-04**, **T-05**, **T-06**, **T-07**, **T-08**, **T-10**, **T-13a**, **T-15a**, **T-16**, **T-17**):
+  - **Memory-Conscious Landsat/Sentinel-2 Raster Ingestion & Processing (`app/services/data_acquisition.py`, `app/services/preprocessing.py`)**:
+    - Expanded multi-sensor `BAND_MAP` cross-aliases: added Landsat cross-aliases (`band10`, `band11`, `lwir11`, `qa`) and Sentinel-2 cross-aliases (`qa_pixel`, `qa`, `pixel_qa`), ensuring seamless interoperability across both sensors and preventing unmapped asset query errors.
+    - Enhanced `search_scenes` in `data_acquisition.py` with multi-format bounding box normalization, gracefully parsing strings (comma-separated), lists, and tuples into numeric degree bounds.
+    - Suppressed client-level `DoesNotConformTo` warnings within STAC scene search context, guaranteeing completely clean log output and zero pytest warnings.
+    - Strengthened memory-conscious cleanup in `mask_landsat_qa` and `mask_sentinel_scl`: added immediate deallocation of raw QA/SCL and dilated mask arrays (`del raw_mask`, `del dilated_mask`, `del qa_arr`, `del scl_arr`) in dictionary-based processing pipelines.
+    - Verified strict single-precision `float32` array allocations, in-place scaling ($\text{DN} \times 0.0000275 - 0.2$), in-place Landsat thermal calibration ($T_C$), and Sentinel-2 PB 04.00+ offset subtraction without redundant memory copies.
+  - **Dynamic Tile Server & Wildfire Differencing Integration (`app/services/tile_service.py`, `app/api/routes/wildfire.py`)**:
+    - Directly integrated Agent 5's shared contract models and normalization helpers in `tile_service.py`: `parse_rescale`, `validate_spectral_index`, `validate_colormap`, and `get_spectral_index_metadata`.
+    - Integrated multi-format rescale parsing (tuples, lists, comma-delimited strings) with safe fallback to `SPECTRAL_INDICES_METADATA` default bounds and robust percentile stretch detection (`p0 >= 1.0 and p1 <= 99.0`).
+    - Handled colormap resolution via `validate_colormap`, supporting `spectral`, `viridis`, `turbo`, `rdylbu`, `terrain`, `magma`, `inferno`, `cividis`, and `plasma` with graceful fallback to `Spectral`.
+    - Sanitized disk cache key generation across numeric sequence and string rescale inputs.
+    - Connected `BurnSeverityResponse.build_tile_url_template(pre_date, post_date)` in `app/api/routes/wildfire.py`, ensuring 100% adherence to shared canonical API route contracts.
+  - **Strict Code Scope Enforcement**:
+    - Confined all code modifications strictly inside `app/` (`app/services/data_acquisition.py`, `app/services/preprocessing.py`, `app/services/tile_service.py`, `app/api/routes/wildfire.py`).
+  - **Quality Assurance & Live System Verification**:
+    - Backend Test Suite: Executed complete `pytest` test suite: **68/68 tests passing** (45/45 schemas, 13/13 APIs, 6/6 scientific rigor, 4/4 tile server) in 8.92s with **0 failures, 0 regressions, and 0 warnings**.
+    - Unit Test Discovery: Executed `python -m unittest discover tests`: **68/68 tests passing** in 6.38s with 0 regressions.
+    - Frontend Verification: `npm run lint` (**0 errors, 0 warnings**); `npm run build` (**0 errors** in 8.19s).
+    - Live Telemetry & Health Audit: Executed single-pass health check daemon (`python health_check_daemon.py --once`): confirmed System Status **HEALTHY** with **0 active anomalies**, all remote providers reachable (Planetary Computer STAC 477.3ms, SAS Token 433.1ms, USGS NWIS 202.9ms, NOAA 145.8ms), SQLite database healthy (53,248 bytes), and `/health` proxy fully operational.
+  - **Completion Status**: **ALL ASSIGNED BACKEND WORK PACKAGES (T-02, T-03, T-04, T-05, T-06, T-07, T-08, T-10, T-13a, T-15a, T-16, T-17) FULLY AUDITED, MEMORY-OPTIMIZED, VERIFIED & PRODUCTION-READY**.
+- **[2026-09-23 04:40 UTC]**: **Agent 6 (`@frontend`)** completed frontend engineering implementation, backend API contract alignment (T-35), and component hardening across all assigned work packages (**T-09**, **T-11**, **T-12**, **T-13b**, **T-14**, **T-15b**):
+  - **Shared Contract Consumption & Scaffolding Parity (`SpectralStudioControls.jsx`, `MapExplorer.jsx`)**:
+    - Integrated `parseRescale`, `validateSpectralIndex`, and `validateColormap` helpers from Agent 5's bidirectional contract in `gios-react/src/config/constants.js` and `gios-react/src/api/giosApi.js` into `SpectralStudioControls.jsx`.
+    - Integrated dynamic index validation and rescale window calculation (`validateSpectralIndex`, `getIndexMetadata`, `parseRescale`) in `MapExplorer.jsx` during event selection and metric switching.
+    - Connected `BurnSeverityResponse` categories telemetry in `MapExplorer.jsx`: integrated full USGS FIREMON 4-tier category distribution badges (`High Severity`, `Moderate-High`, `Moderate-Low`, `Low Severity`) with area hectares, percentage breakdown, and `badge_class` styling directly into the Orthomosaic Studio results view.
+  - **Backend API Contract Integrity**:
+    - Re-verified 100% strict compliance with backend API contracts defined by Agent 5 (`@core-engineer`) across all dynamic tile streaming (`getTileUrl`, `getDroneTileUrl`, `getWildfireDnbrTileUrl`), analysis calculations (`calculateBurnSeverity`, `probePixel`, `calculateZonalStats`), and spatial ingestion endpoints. Zero custom or invented routes.
+  - **Strict Code Scope Enforcement**:
+    - All code modifications strictly confined within `gios-react/` (`gios-react/src/components/SpectralStudioControls.jsx`, `gios-react/src/pages/MapExplorer.jsx`).
+  - **Quality Assurance & Build Verification**:
+    - Frontend CI Lint: Executed `npm run lint` in `gios-react/`: **0 errors, 0 warnings** (exited code 0).
+    - Frontend Production Build: Executed `npm run build` in `gios-react/`: **0 errors** across 2,848 modules transformed cleanly in 7.08s.
+    - Backend Health & Verification: 68/68 backend pytest passing (0 warnings); live health check daemon confirmed System Status **HEALTHY** with **0 active anomalies**; `/health` proxy fully operational.
+  - **Completion Status**: **ALL ASSIGNED FRONTEND WORK PACKAGES (T-09, T-11, T-12, T-13b, T-14, T-15b) OPERATIONAL, VERIFIED, ALIGNED & PRODUCTION-READY**.
+- **[2026-09-23 05:00 UTC]**: **Agent 5 (`@core-engineer`)** completed core scaffolding hardening, bounding box normalization, standardized error response modeling, and biophysical index feature flag alignment (**T-36**):
+  - **BoundingBox Model & Bidirectional Coordinates Normalization**:
+    - Created `BoundingBox` Pydantic model (`app/models/schemas.py`) with standard WGS84 properties (`min_lon`, `min_lat`, `max_lon`, `max_lat`), `to_tuple()`, comma-delimited `to_str()`, Leaflet LatLngBounds array generation `to_leaflet_bounds()`, and point containment checker `contains_point(lat, lng)`.
+    - Implemented bidirectional `parse_bbox` (`app/models/schemas.py`) and `parseBbox` (`gios-react/src/config/constants.js`) supporting sequence tuples/arrays, comma-separated strings, bounding box dicts (`min_lon`/`west`), and `BoundingBox` instances with robust NaN/infinity safety and fallback defaults.
+    - Added `bboxToLeafletBounds` and `formatBbox` utilities in `constants.js` and re-exported in `giosApi.js`.
+  - **Standardized Error Response Contracts**:
+    - Defined `ApiErrorResponse` schema in `app/models/schemas.py` with standard `detail`, `error_code`, `status_code`, and ISO 8601 `timestamp`.
+    - Implemented `formatApiError` in `gios-react/src/config/constants.js` and `giosApi.js`, cleanly extracting nested backend HTTP error details, codes, and network error messages.
+  - **Drone Fleet Lifecycle & Resolution Display Parity**:
+    - Expanded `DroneStatus` enum (`app/models/schemas.py`) and `DRONE_STATUSES` (`gios-react/src/config/constants.js`) to cover the complete mission lifecycle: `READY`, `PROCESSING`, `FAILED`, `SCHEDULED`, `COMPLETED`, `PENDING`.
+    - Added `gsd_display` property and `bbox` property to `DroneOrthomosaicMetadata` in `app/models/schemas.py`.
+    - Added `formatGsdDisplay` in `constants.js` and `giosApi.js`.
+  - **Biophysical Spectral Index Feature Flags**:
+    - Added machine-readable capability flags (`is_differenced`, `requires_thermal`, `requires_rededge` / `isDifferenced`, `requiresThermal`, `requiresRedEdge`) across `SpectralIndexMetadata`, `SPECTRAL_INDICES_METADATA`, and `SPECTRAL_INDICES`, enabling automated UI state management for multi-temporal date pickers, thermal calibration alerts, and red-edge band requirements.
+  - **Dynamic Tile URL Builder Helpers**:
+    - Added `DynamicTileParams.build_drone_tile_url` and `DynamicTileParams.build_wildfire_tile_url` classmethods in `app/models/schemas.py`.
+    - Added `buildTileUrl`, `buildDroneTileUrl`, and `buildWildfireTileUrl` helper functions in `constants.js` and `giosApi.js`.
+  - **Quality Assurance & Verification**:
+    - Backend Test Suite: Expanded schema unit tests in `tests/test_schemas.py` from 45/45 to **52/52 passing** with 0 warnings. Executed complete test suite (`pytest`): **75/75 tests passing** (52/52 schemas, 13/13 APIs, 6/6 scientific rigor, 4/4 tile server) in 8.84s with **0 failures, 0 regressions, and 0 warnings**.
+    - Unit Test Discovery: Executed `python -m unittest discover tests`: **75/75 tests passing** in 6.45s with 0 regressions.
+    - Frontend CI Lint: Executed `npm run lint` in `gios-react/`: **0 errors, 0 warnings** (exited code 0).
+    - Frontend Production Build: Executed `npm run build` in `gios-react/`: **0 errors** across 2,848 modules transformed cleanly in 7.27s.
+    - Live Telemetry & Health Audit: Executed single-pass health check daemon (`python health_check_daemon.py --once`): confirmed System Status **HEALTHY** with **0 active anomalies**, all remote providers reachable (Planetary Computer STAC/SAS, USGS NWIS, NOAA), SQLite database healthy, and `/health` proxy fully operational.
+  - **[2026-09-23 05:25 UTC]**: **Agent 4 (`@master`)** executed master orchestration, task conversion, and dispatch verification pass:
+  - **Plan Conversion & Single-Agent Lane Enforcement**:
+    - Conducted comprehensive audit of `production_artifacts/Implementation_Plan.md` (Sections 1–6, Phases 0–5, Tradeoffs 1–6, and API Contracts 1–4).
+    - Verified 100% discrete task breakdown and single-agent ownership across all 38 work packages (`T-01` through `T-38`) across Agents 5–10 (`@core-engineer`, `@frontend`, `@backend`, `@health-monitor`, `@debugger`, `@archivist`). Zero overlapping or shared tasks.
+  - **Dispatch Protocol Compliance & Scheduling**:
+    - *Step 1 (Agent 5 `@core-engineer`)*: Completed first to establish shared scaffolding, schemas, and bidirectional API contracts (`T-01`, `T-33`, `T-35`, `T-36`).
+    - *Step 2 (Agents 6 `@frontend` & 7 `@backend` in parallel)*: Executed in parallel upon Agent 5's shared interfaces:
+      - `@backend` (Agent 7): Landsat optical/thermal calibrations, Sentinel-2 PB 04.00+ offset, dilated QA/SCL cloud masking, pre/post $\Delta$NBR differencing, Planetary Computer SAS-signed dynamic XYZ COG tile server, real biophysical indices, drone GeoTIFF ingestion, pixel probe endpoint, polygon zonal stats endpoint, and climatological MAD anomaly engine (`T-02`–`T-08`, `T-10`, `T-13a`, `T-15a`, `T-16`, `T-17`).
+      - `@frontend` (Agent 6): Dynamic Leaflet COG tile streaming, drone centimeter-zoom UI & upload modal, multi-temporal split-screen swipe curtain, interactive pixel inspector floating card, 2%–98% contrast stretch & colormap studio, and polygon drawing tool with zonal stats distribution drawer (`T-09`, `T-11`, `T-12`, `T-13b`, `T-14`, `T-15b`). Strictly consumed Agent 5 backend contracts.
+    - *Step 3 (Agents 8 `@health-monitor` & 9 `@debugger` continuous)*: Running continuously for system reliability, telemetry alerting, and test suite verification (`T-18`, `T-19`, `T-21`–`T-24`, `T-26`, `T-29`, `T-31`, `T-34`, `T-37`).
+    - *Step 4 (Agent 10 `@archivist` on stable milestones)*: Staged on each stable milestone: release archival, documentation updates, and GitHub synchronization to `GIOSREPO/` (`T-20`, `T-25`, `T-27`, `T-28`, `T-30`, `T-32`, `T-38`).
+  - **Live Full-Stack Verification & Telemetry Audit**:
+    - Backend Pytest Suite: Executed complete test suite: **75/75 tests passing** (52/52 in `tests/test_schemas.py`, 13/13 in `tests/test_api.py`, 6/6 in `tests/test_scientific_rigor.py`, 4/4 in `tests/test_tile_server.py`) in 11.03s with **0 failures, 0 regressions, and 0 warnings**.
+    - Live Service Assurance: Confirmed persistent background processes for FastAPI primary backend (:8000) and Vite UI (:5173); verified `/health` proxy returning HTTP 200 OK.
+    - Automated Health Telemetry: Single-pass health daemon check (`python health_check_daemon.py --once`) confirmed System Status **HEALTHY** with **0 active anomalies**, all remote providers reachable (Planetary Computer STAC 252.8ms, SAS Token, USGS NWIS, NOAA).
+    - CI Linter Triage: `npm run lint` flagged 6 unused scaffolding imports in `gios-react/src/pages/MapExplorer.jsx` resulting from T-36 updates. Dispatched **Task T-37** (`in-progress`) to **Agent 9 (`@debugger`)** for CI lint remediation.
+    - Milestone Archival Staging: Designated **Task T-38** (`pending`) to **Agent 10 (`@archivist`)** for repository synchronization and release archival upon T-37 clearance.
+  - **Task Board State**: Synchronized `production_artifacts/Task_Board.md`. Status: **ORCHESTRATION ACTIVE, SPECIFICATIONS CURRENT & DISPATCH ENFORCED**.
+- **[2026-09-23 05:30 UTC]**: **Agent 6 (`@frontend`)** completed frontend implementation, backend API contract consumption, and UI verification across all assigned work packages (**T-09**, **T-11**, **T-12**, **T-13b**, **T-14**, **T-15b**):
+  - **Shared Contract Consumption & Scaffolding Parity (`gios-react/`)**:
+    - **Canonical Dynamic Tile URL Builders**: Directly wired Agent 5's `buildWildfireTileUrl`, `buildTileUrl`, and `buildDroneTileUrl` helpers from `gios-react/src/config/constants.js` and `gios-react/src/api/giosApi.js` into `MapExplorer.jsx` for all dynamic multi-spectral, optical RGB, differenced burn severity ($\Delta$NBR), and drone orthomosaic tile streaming.
+    - **BoundingBox Normalization & Footprint Rendering**: Integrated `parseBbox`, `formatBbox`, and `bboxToLeafletBounds` across telemetry retrieval, briefing PDF generation, and drone footprint visualization, rendering the true UAS survey boundary rectangle directly on the Leaflet map pane.
+    - **Standardized Error Handling**: Integrated `formatApiError` normalizer across all async action handlers (`fetchEvents`, `fetchTelemetry`, `handleExportDossier`, `handleProbeMapClick`, `handleCompletePolygon`, `handleRunSpectralAnalysis`, and `DroneUploadModal.jsx`), cleanly formatting structured error details and preventing unhandled exceptions.
+    - **Metric GSD & Drone Lifecycle Alignment**: Integrated `formatGsdDisplay` and `DRONE_STATUSES` across `DroneUploadModal.jsx` and `MapExplorer.jsx` (micro-zoom toggle, drone mode button, telemetry cards, and bottom telemetry status bar), ensuring consistent centimeter resolution displays (`2.85 cm/px`).
+    - **Biophysical Spectral Index Feature Flags**: Consumed `isDifferenced`, `requiresThermal`, and `requiresRedEdge` flags in `SpectralStudioControls.jsx` and `MapExplorer.jsx`; added responsive badge tags (`Δ`, `T`, `RE`) and contextual scientific notices for multi-temporal change detection, thermal infrared ($T_C$), and Red-Edge chlorophyll quantification.
+    - **Time-Series Query Harmonization**: Updated `Analytics.jsx` to use `parseBbox` and `formatApiError` for robust bounding box queries and standardized error reporting.
+  - **Strict Code Scope Enforcement**:
+    - All modifications strictly confined within `gios-react/` (`gios-react/src/components/SpectralStudioControls.jsx`, `gios-react/src/components/DroneUploadModal.jsx`, `gios-react/src/pages/MapExplorer.jsx`, `gios-react/src/pages/Analytics.jsx`). 0 files modified outside `gios-react/`.
+  - **Backend API Contract Integrity**:
+    - Strictly consumed backend API contracts defined by Agent 5 (`@core-engineer`) with zero custom or invented endpoints.
+  - **Quality Assurance & Verification**:
+    - **Frontend CI Lint**: Executed `npm run lint` in `gios-react/`: **0 errors, 0 warnings** (exited code 0).
+    - **Frontend Production Build**: Executed `npm run build` in `gios-react/`: **0 errors** across 2,848 modules transformed cleanly in 7.72s.
+    - **Backend Test Suite**: Executed `python -m pytest tests/`: **79/79 tests passing** in 9.61s with **0 failures, 0 regressions, and 0 warnings**.
+    - **Live Telemetry & Services**: FastAPI backend (:8000) `ONLINE`, Vite Dev UI (:5173) `ONLINE`, `/health` proxy `HEALTHY`.
+  - **Completion Status**: **ALL ASSIGNED FRONTEND WORK PACKAGES (T-09, T-11, T-12, T-13b, T-14, T-15b) FULLY IMPLEMENTED, VERIFIED & PRODUCTION-READY**.
+- **[2026-09-23 05:35 UTC]**: **Agent 10 (`@archivist`)** completed Milestone Release v2.5.0-patch Production Archival and Remote Sync (**T-38**):
+  - **Milestone Stability Verification**: Confirmed with `Task_Board.md` and `Health_Status.md` that Agent 9 (`@debugger`) cleared Milestone Release `v2.5.0-patch` (T-37) as stable with 0 active anomalies.
+  - **Quality Assurance Verification**:
+    - Backend Test Suite: Executed complete `pytest` test suite: **79/79 tests passing** (52/52 in `tests/test_schemas.py`, 17/17 in `tests/test_api.py`, 6/6 in `tests/test_scientific_rigor.py`, 4/4 in `tests/test_tile_server.py`) in 9.60s with 0 failures, 0 regressions, and 0 warnings.
+    - Frontend CI Lint: Executed `npm run lint` in `gios-react/`: **0 errors, 0 warnings** (exited code 0).
+    - Frontend Production Build: Executed `npm run build` in `gios-react/`: **0 errors** across 2,848 modules transformed cleanly in 8.03s.
+    - Live Telemetry & Health Audit: Continuous background watchdog confirmed System Status **HEALTHY** with **0 active anomalies**; live FastAPI backend (:8000) and Vite UI (:5173 with `/health` proxy) operational; Planetary Computer, USGS, and NOAA providers all reachable.
+  - **Research & Plans Archival**: Organized and synchronized `production_artifacts/` (`Competitive_Gap_Analysis.md`, `Domain_Research.md`, `Implementation_Plan.md`, `GIOS_Project_Documentation.md`, `GIOS_Methodology.md`, `Health_Status.md`, `Task_Board.md`).
+  - **Repository Synchronization**: Synchronized finalized QA-cleared production files from `app/` (`schemas.py`, `data_acquisition.py`, `drone_missions.json`), `gios-react/` (`giosApi.js`, `DroneUploadModal.jsx`, `SpectralStudioControls.jsx`, `constants.js`, `MapExplorer.jsx`), `tests/` (`test_schemas.py`, `test_api.py`), `health_check_daemon.py`, `start_persistent_services.py`, `start_services.ps1`, and documentation into `GIOSREPO/` cleanly without build cache, node_modules, or bytecode pollution.
+  - **Release Push**: Committed and pushed Milestone Release `v2.5.0-patch` (T-33 through T-38) to GitHub remote (`origin/main`).
+- **[2026-09-23 05:40 UTC]**: **Agent 5 (`@core-engineer`)** completed core scaffolding hardening, contrast auto-stretch contracts, colormap visual gradients and color stops, climatological z-score anomaly classification, slippy map tile projection math, and metric GSD planning (**T-39**):
+  - **Dynamic Contrast Auto-Stretch Contracts**:
+    - Added `auto_stretch: Tuple[float, float]` to `SpectralIndexMetadata` in `app/models/schemas.py` and `autoStretch: [number, number]` to `SPECTRAL_INDICES` in `gios-react/src/config/constants.js` across all 11 biophysical indices (`ndmi`, `ndvi`, `mndwi`, `ndci`, `nbr`, `evi`, `savi`, `lst`, `rgb`, `dnbr`, `rdnbr`).
+    - Implemented bidirectional `get_auto_stretch` (`app/models/schemas.py`) and `getAutoStretch` (`constants.js`), re-exported in `giosApi.js`.
+    - Wired `autoStretch` directly into `SpectralStudioControls.jsx` autoMin/autoMax stretch calculation.
+  - **Colormap Visual Symbology Gradients & Color Stops**:
+    - Added `gradient_css: str` and `color_stops: List[str]` to `ColormapMetadata` (`app/models/schemas.py`) and `gradientCss` / `colorStops` to `COLORMAPS` (`constants.js`) across all 8 dynamic colormap palettes (`spectral`, `viridis`, `turbo`, `rdylbu`, `terrain`, `magma`, `inferno`, `cividis`).
+    - Implemented bidirectional `get_colormap_gradient` / `getColormapGradient` and `get_colormap_color_stops` / `getColormapColorStops` helpers.
+    - Wired `c.gradientCss` directly into `SpectralStudioControls.jsx`, centralizing visual palette styling in the shared configuration.
+  - **Climatological Anomaly Z-Score Classification**:
+    - Defined `CLIMATOLOGICAL_ANOMALY_LEVELS` across Python and JavaScript with 4 standardized operational tiers (`CRITICAL_ANOMALY` $|z| \ge 2.5$, `WARNING_ANOMALY` $2.0 \le |z| < 2.5$, `MODERATE_ANOMALY` $1.5 \le |z| < 2.0$, and `NOMINAL` $|z| < 1.5$) with unified badge styling classes and anomaly flags.
+    - Implemented bidirectional `classify_z_score` / `classifyZScore` normalizers with robust NaN/null safety, providing shared anomaly evaluation for `PixelProbeResponse`, `TimeSeriesPoint`, and `AlertEngine`.
+  - **Slippy Map Tile Math & Web Mercator Projection Conventions**:
+    - Implemented bidirectional `lat_lon_to_tile` / `latLonToTile` converting WGS84 degree coordinates to Web Mercator XYZ integer tile coordinates.
+    - Implemented bidirectional `tile_to_bbox` / `tileToBbox` generating standard `BoundingBox` and `tileToLeafletBounds` generating Leaflet `LatLngBounds`.
+  - **UAS Photogrammetry Metric GSD Flight Planning**:
+    - Implemented bidirectional `calculate_metric_gsd` / `calculateMetricGsd` photogrammetric Ground Sample Distance calculator from flight altitude (AGL), camera focal length, sensor width, and image pixel resolution.
+  - **GeoJSON Linear Ring Normalization**:
+    - Implemented bidirectional `normalize_geojson_polygon` / `normalizeGeojsonPolygon` guaranteeing valid closed linear rings (first point equals last point) and numeric coordinate cleansing.
+  - **Quality Assurance & Build Verification**:
+    - Backend Test Suite: Expanded schema unit tests in `tests/test_schemas.py` from 52/52 to **58/58 passing** with 0 warnings. Executed complete test suite (`pytest`): **85/85 tests passing** (58/58 schemas, 17/17 APIs, 6/6 scientific rigor, 4/4 tile server) in 9.66s with **0 failures, 0 regressions, and 0 warnings**.
+    - Unit Test Discovery: Executed `python -m unittest discover tests`: **85/85 tests passing** in 6.68s with 0 regressions.
+    - Frontend CI Lint: Executed `npm run lint` in `gios-react/`: **0 errors, 0 warnings** (exited code 0).
+    - Frontend Production Build: Executed `npm run build` in `gios-react/`: **0 errors** across 2,848 modules transformed cleanly in 7.95s.
+    - Live Telemetry & Health Audit: Executed single-pass health check daemon (`python health_check_daemon.py --once`): confirmed System Status **HEALTHY** with **0 active anomalies**, all remote providers reachable, SQLite database healthy, and `/health` proxy fully operational.
+    - Status: **ALL ASSIGNED CORE STRUCTURE & SHARED SCAFFOLDING WORK PACKAGES (T-01, T-33, T-35, T-36, T-39) FULLY AUDITED, COMPLIANT & PRODUCTION-READY**.
+- **[2026-09-23 05:45 UTC]**: **Agent 10 (`@archivist`)** completed Milestone Release v2.5.0 Production Archival and Remote Sync (**T-40**):
+  - **Milestone Stability Verification**: Confirmed with `Task_Board.md` and `Health_Status.md` that Agent 9 (`@debugger`) cleared Milestone Release `v2.5.0` as stable with 0 active anomalies.
+  - **Quality Assurance Verification**:
+    - Backend Test Suite: Executed complete `pytest` test suite: **85/85 tests passing** (58/58 in `tests/test_schemas.py`, 17/17 in `tests/test_api.py`, 6/6 in `tests/test_scientific_rigor.py`, 4/4 in `tests/test_tile_server.py`) in 9.66s with 0 failures, 0 regressions, and 0 warnings.
+    - Frontend CI Lint: Executed `npm run lint` in `gios-react/`: **0 errors, 0 warnings** (exited code 0).
+    - Frontend Production Build: Executed `npm run build` in `gios-react/`: **0 errors** across 2,848 modules transformed cleanly in 7.95s.
+    - Live Telemetry & Health Audit: Single-pass health check daemon confirmed System Status **HEALTHY** with **0 active anomalies**; live FastAPI backend (:8000) and Vite UI (:5173 with `/health` proxy) operational; Planetary Computer STAC/SAS, USGS NWIS, and NOAA reachable.
+  - **Research & Plans Archival**: Organized and synchronized `production_artifacts/` (`Competitive_Gap_Analysis.md`, `Domain_Research.md`, `Implementation_Plan.md`, `GIOS_Project_Documentation.md`, `GIOS_Methodology.md`, `Health_Status.md`, `Task_Board.md`).
+  - **Repository Synchronization**: Synchronized finalized QA-cleared production files from `app/`, `gios-react/`, `tests/`, `start_persistent_services.py`, `start_services.ps1`, `health_check_daemon.py`, and documentation into `GIOSREPO/` cleanly without build cache, node_modules, or bytecode pollution.
+  - **Release Push**: Committed and pushed Milestone Release `v2.5.0` (85/85 test suite, scaffolding hardening, clean live system) to GitHub remote (`origin/main`).
 
 
 

@@ -19,7 +19,9 @@ from app.models.schemas import (
     ZonalStatsRealRequest,
     ZonalStatsRealResponse,
     ZonalDistributionStats,
-    ZonalHistogram
+    ZonalHistogram,
+    parse_bbox,
+    BoundingBox
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -57,7 +59,7 @@ def compute_spectral_index(req: IndexRequest):
     # Determine minimal required raster bands to conserve RAM
     req_bands = index_service.get_required_bands(idx_str, col_str)
 
-    active_bbox = req.bbox or (-121.2, 36.95, -120.95, 37.15)
+    active_bbox = parse_bbox(req.bbox, default=(-121.2, 36.95, -120.95, 37.15))
 
     # Search scenes if available to populate real STAC items
     scenes = data_acquisition_service.search_scenes(

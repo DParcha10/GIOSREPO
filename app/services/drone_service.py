@@ -13,6 +13,7 @@ from rasterio.windows import from_bounds
 import pyproj
 from shapely.geometry import box
 from app.config import settings
+from app.models.schemas import BoundingBox, DroneStatus
 
 logger = logging.getLogger(__name__)
 
@@ -142,11 +143,12 @@ class DroneService:
             "crs": "EPSG:4326",
             "bounds": [-121.076, 37.056, -121.072, 37.060],
             "metric_gsd_cm": 2.80,
+            "gsd_display": "2.80 cm/px",
             "bands": 3,
             "width": 512,
             "height": 512,
             "is_cog": True,
-            "status": "READY"
+            "status": DroneStatus.READY.value
         }
         self._save_orthos()
 
@@ -201,16 +203,27 @@ class DroneService:
             "crs": crs_str,
             "bounds": bbox,
             "metric_gsd_cm": metric_gsd_cm,
+            "gsd_display": f"{metric_gsd_cm:.2f} cm/px",
             "bands": band_count,
             "width": width,
             "height": height,
             "is_cog": is_cog,
             "sensor_payload": payload,
-            "status": "READY"
+            "status": DroneStatus.READY.value
         }
         self.registered_orthos[oid] = meta
         self._save_orthos()
         return meta
+
+    def get_ortho_bbox(self, ortho_id: str) -> Optional[BoundingBox]:
+        """Returns BoundingBox model for registered orthomosaic."""
+        meta = self.registered_orthos.get(ortho_id)
+        if not meta:
+            return None
+        b = meta.get("bounds")
+        if b and len(b) == 4:
+            return BoundingBox(min_lon=b[0], min_lat=b[1], max_lon=b[2], max_lat=b[3])
+        return None
 
     def get_tile(self, ortho_id: str, z: int, x: int, y: int) -> bytes:
         """Renders 256x256 RGBA PNG tile for drone orthomosaic supporting centimeter zoom up to Zoom 22."""
@@ -323,7 +336,7 @@ class DroneService:
         mission = {
             "id": mission_id,
             "event_id": event_id,
-            "status": "SCHEDULED",
+            "status": DroneStatus.SCHEDULED.value,
             "flight_path": path,
             "center": [lat, lng],
             "radius_km": radius_km,
@@ -341,7 +354,7 @@ class DroneService:
         for mission_id, mission in list(self.active_missions.items()):
             current_status = mission["status"]
             ticks = mission.get("ticks", 0)
-            if current_status == "SCHEDULED":
+            if current_status == DroneStatus.SCHEDULED.value:
                 if ticks > 1:
                     mission["status"] = "IN_FLIGHT"
                     mission["ticks"] = 0
@@ -359,7 +372,7 @@ class DroneService:
                     changed = True
             elif current_status == "DATA_ACQUIRED":
                 if ticks > 2:
-                    mission["status"] = "COMPLETED"
+                    mission["status"] = DroneStatus.COMPLETED.value
                     mission["ticks"] = 0
                     changed = True
                 else:

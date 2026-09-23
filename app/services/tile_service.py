@@ -15,6 +15,8 @@ from app.services.drone_service import drone_service
 from app.services.indices import index_service
 from app.models.schemas import (
     parse_rescale,
+    parse_bbox,
+    BoundingBox,
     validate_spectral_index,
     validate_colormap,
     get_spectral_index_metadata,
@@ -53,6 +55,12 @@ class TileService:
         lat_rad_min = math.atan(math.sinh(math.pi * (1.0 - 2.0 * (y + 1.0) / n)))
         lat_min = math.degrees(lat_rad_min)
         return (lon_min, lat_min, lon_max, lat_max)
+
+    @staticmethod
+    def tile_to_bbox(z: int, x: int, y: int) -> BoundingBox:
+        """Calculates BoundingBox model for Web Mercator tile."""
+        min_lon, min_lat, max_lon, max_lat = TileService.tile_to_bounds_wgs84(z, x, y)
+        return BoundingBox(min_lon=min_lon, min_lat=min_lat, max_lon=max_lon, max_lat=max_lat)
 
     @staticmethod
     def get_colormap(name: Optional[Union[str, TileColormap]] = "spectral"):

@@ -3,7 +3,13 @@ import {
   X, UploadCloud, Radio, CheckCircle2, AlertCircle, RefreshCw, 
   FileCheck, Link as LinkIcon, Compass, Layers, ShieldCheck, ArrowRight
 } from 'lucide-react';
-import { registerDroneOrthomosaic } from '../api/giosApi';
+import { 
+  registerDroneOrthomosaic,
+  formatGsdDisplay,
+  formatBbox,
+  formatApiError,
+  DRONE_STATUSES
+} from '../api/giosApi';
 
 export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered }) {
   const [ingestMode, setIngestMode] = useState('file'); // 'file' | 'url'
@@ -71,6 +77,8 @@ export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered })
       }
     } catch (err) {
       console.error('Failed to ingest drone orthomosaic:', err);
+      const apiErr = formatApiError(err, 'Failed to ingest drone orthomosaic GeoTIFF.');
+      setError(apiErr.detail);
       // Fallback for demonstration when backend is disconnected
       const fallbackMeta = {
         ortho_id: `DRN-${Date.now().toString().slice(-6)}`,
@@ -80,7 +88,7 @@ export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered })
         metric_gsd_cm: 2.85,
         bands: 4,
         is_cog: true,
-        status: 'READY'
+        status: DRONE_STATUSES.READY
       };
       setRegisteredMetadata(fallbackMeta);
       if (onDroneRegistered) {
@@ -320,7 +328,7 @@ export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered })
                 <div className="p-3 bg-black/40 border border-gray-800 rounded-lg">
                   <span className="text-[10px] text-gray-500 uppercase font-mono block">Metric GSD</span>
                   <span className="text-sm font-bold text-white font-['Orbitron']">
-                    {registeredMetadata.metric_gsd_cm || 2.85} cm/px
+                    {formatGsdDisplay(registeredMetadata.metric_gsd_cm || 2.85)}
                   </span>
                 </div>
                 <div className="p-3 bg-black/40 border border-gray-800 rounded-lg">
@@ -332,14 +340,14 @@ export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered })
                 <div className="p-3 bg-black/40 border border-gray-800 rounded-lg">
                   <span className="text-[10px] text-gray-500 uppercase font-mono block">Status</span>
                   <span className="text-xs font-bold text-emerald-400 uppercase font-mono flex items-center gap-1">
-                    <ShieldCheck className="w-3 h-3" /> {registeredMetadata.status || 'READY'}
+                    <ShieldCheck className="w-3 h-3" /> {registeredMetadata.status || DRONE_STATUSES.READY}
                   </span>
                 </div>
               </div>
 
               <div className="p-3.5 bg-black/30 border border-gray-800 rounded-lg text-xs font-mono space-y-1 text-gray-300">
                 <div className="text-gray-400">Raster Asset: <span className="text-white">{registeredMetadata.filename}</span></div>
-                <div className="text-gray-400">Bounding Box: <span className="text-purple-300 font-bold">{JSON.stringify(registeredMetadata.bounds || [-121.082, 37.054, -121.066, 37.062])}</span></div>
+                <div className="text-gray-400">Bounding Box: <span className="text-purple-300 font-bold">{formatBbox(registeredMetadata.bounds || [-121.082, 37.054, -121.066, 37.062])}</span></div>
                 <div className="text-emerald-400 pt-1">
                   ✓ Micro-Resolution Zoom Active: Viewable from regional Zoom 13 to centimeter Zoom 22.
                 </div>

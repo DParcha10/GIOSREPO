@@ -441,7 +441,7 @@ async def tool_query_usgs(site_id: str) -> Dict[str, Any]:
     for attempt in range(3):
         try:
             data = await integration_service.get_usgs_station(site_id)
-            if data.get('discharge_cfs') is None:
+            if data.get('discharge_cfs') is None and data.get('gage_height_ft') is None and data.get('water_temp_c') is None:
                 raise ValueError('Missing telemetry data')
             return {"status": "success", "telemetry": data}
         except Exception as e:

@@ -260,6 +260,79 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(sentinel_data["provider"], "SentinelHub")
         self.assertIn("tile_url", sentinel_data)
 
+    def test_wildfire_burn_severity_api(self):
+        """Test POST /api/v1/wildfire/burn-severity endpoint."""
+        # 1. Default request
+        res1 = self.client.post("/api/v1/wildfire/burn-severity", json={})
+        self.assertEqual(res1.status_code, 200)
+        d1 = res1.json()
+        self.assertIn("mean_dnbr", d1)
+        self.assertIn("mean_rdnbr", d1)
+        self.assertIn("categories", d1)
+        self.assertGreater(len(d1["categories"]), 0)
+        self.assertIn("tile_url_template", d1)
+
+        # 2. Custom pre/post arrays
+        res2 = self.client.post(
+            "/api/v1/wildfire/burn-severity",
+            json={
+                "pre_nbr": [0.60, 0.55, 0.50],
+                "post_nbr": [-0.10, 0.05, 0.45]
+            }
+        )
+        self.assertEqual(res2.status_code, 200)
+        d2 = res2.json()
+        self.assertGreater(d2["mean_dnbr"], 0.0)
+        self.assertGreater(d2["mean_rdnbr"], 0.0)
+
+    def test_drone_fleet_endpoints(self):
+        """Test GET /api/v1/drone/missions and /api/v1/drone/orthomosaics."""
+        missions_res = self.client.get("/api/v1/drone/missions")
+        self.assertEqual(missions_res.status_code, 200)
+        m_data = missions_res.json()
+        self.assertIn("missions", m_data)
+
+        orthos_res = self.client.get("/api/v1/drone/orthomosaics")
+        self.assertEqual(orthos_res.status_code, 200)
+        o_data = orthos_res.json()
+        self.assertIn("orthomosaics", o_data)
+
+    def test_alert_engine_poll_sensors_none_discharge(self):
+        """Test AlertEngine.poll_sensors handles None discharge_cfs gracefully without TypeError."""
+        import asyncio
+        from unittest.mock import patch, AsyncMock
+        from app.services.alerting import alert_engine
+
+        mock_data = {
+            "site_id": "09486000",
+            "discharge_cfs": None,
+            "gage_height_ft": 4.12,
+            "water_temp_c": 19.3
+        }
+        with patch("app.services.integration.integration_service.get_usgs_station", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_data
+            # Run poll_sensors - should complete without throwing TypeError
+            asyncio.run(alert_engine.poll_sensors())
+            self.assertEqual(alert_engine.alert_state.get("09486000"), "normal")
+
+    def test_tool_query_usgs_gage_height_only(self):
+        """Test tool_query_usgs succeeds when gage_height is present even if discharge is None."""
+        import asyncio
+        from unittest.mock import patch, AsyncMock
+        from app.services.jarvis_brain import tool_query_usgs
+
+        mock_data = {
+            "site_id": "09486000",
+            "discharge_cfs": None,
+            "gage_height_ft": 5.4,
+            "water_temp_c": 21.0
+        }
+        with patch("app.services.integration.integration_service.get_usgs_station", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_data
+            result = asyncio.run(tool_query_usgs("09486000"))
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(result["telemetry"]["gage_height_ft"], 5.4)
+
 if __name__ == "__main__":
     unittest.main()
 

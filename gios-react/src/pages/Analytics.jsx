@@ -5,7 +5,7 @@ import {
 } from 'chart.js';
 import { Line, Bar, Doughnut, Scatter } from 'react-chartjs-2';
 import axios from 'axios';
-import { getHealthStatus, fetchTimeseriesTrend } from '../api/giosApi';
+import { getHealthStatus, fetchTimeseriesTrend, parseBbox, formatApiError } from '../api/giosApi';
 import { SPECTRAL_INDICES } from '../config/constants';
 import { Radar, RefreshCw } from 'lucide-react';
 import MetallicPaintText from '../components/ReactBits/MetallicPaintText';
@@ -32,10 +32,7 @@ export default function Analytics() {
   const handleQueryTrend = async () => {
     try {
       setQueryLoading(true);
-      const bboxParts = queryBbox.split(',').map(s => parseFloat(s.trim()));
-      const bbox = bboxParts.length === 4 && bboxParts.every(n => !isNaN(n)) 
-        ? bboxParts 
-        : [-121.10, 37.00, -121.05, 37.05];
+      const bbox = parseBbox(queryBbox, [-121.10, 37.00, -121.05, 37.05]);
 
       const res = await fetchTimeseriesTrend({
         bbox,
@@ -77,7 +74,8 @@ export default function Analytics() {
         });
       }
     } catch (err) {
-      console.error('Failed to query time-series trend:', err);
+      const apiErr = formatApiError(err);
+      console.error('Failed to query time-series trend:', apiErr.detail);
     } finally {
       setQueryLoading(false);
     }
