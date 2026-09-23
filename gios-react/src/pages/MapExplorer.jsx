@@ -35,7 +35,10 @@ import giosApi, {
   buildTileUrl,
   buildDroneTileUrl,
   buildWildfireTileUrl,
-  DRONE_STATUSES
+  DRONE_STATUSES,
+  normalizeGeojsonPolygon,
+  classifyZScore,
+  getAutoStretch
 } from '../api/giosApi';
 import useJarvisStore from '../store/jarvisStore';
 import {
@@ -193,21 +196,15 @@ export default function MapExplorer() {
     if (selectedEvent?.metric) {
       const m = validateSpectralIndex(selectedEvent.metric.toLowerCase(), 'ndmi');
       setActiveSpectralIndex(m);
-      const meta = getIndexMetadata(m);
-      if (meta && meta.defaultRescale) {
-        const [dMin, dMax] = parseRescale(meta.defaultRescale, [-0.2, 0.6]);
+      const autoBounds = getAutoStretch(m);
+      if (autoBounds) {
+        setRescaleMin(autoBounds[0]);
+        setRescaleMax(autoBounds[1]);
+      } else {
+        const meta = getIndexMetadata(m);
+        const [dMin, dMax] = parseRescale(meta?.defaultRescale, [-0.2, 0.6]);
         setRescaleMin(dMin);
         setRescaleMax(dMax);
-      } else {
-        if (m === 'ndmi') { setRescaleMin(0.05); setRescaleMax(0.45); }
-        else if (m === 'ndci') { setRescaleMin(0.02); setRescaleMax(0.38); }
-        else if (m === 'mndwi') { setRescaleMin(-0.2); setRescaleMax(0.4); }
-        else if (m === 'ndvi') { setRescaleMin(0.15); setRescaleMax(0.85); }
-        else if (m === 'lst') { setRescaleMin(12); setRescaleMax(42); }
-        else if (m === 'nbr') { setRescaleMin(-0.1); setRescaleMax(0.65); }
-        else if (m === 'dnbr') { setRescaleMin(-0.1); setRescaleMax(0.66); }
-        else if (m === 'rdnbr') { setRescaleMin(-0.2); setRescaleMax(1.2); }
-        else if (m === 'rgb') { setRescaleMin(0); setRescaleMax(255); }
       }
     }
   }, [selectedEvent]);
@@ -453,13 +450,14 @@ export default function MapExplorer() {
     setAnalyticsSubTab('zonal');
 
     try {
-      const geojsonGeometry = {
+      const rawGeometry = {
         type: 'Polygon',
         coordinates: [[
           ...customPolygonVertices.map(v => [v[1], v[0]]),
           [customPolygonVertices[0][1], customPolygonVertices[0][0]]
         ]]
       };
+      const geojsonGeometry = normalizeGeojsonPolygon(rawGeometry) || rawGeometry;
       const collection = selectedEvent?.sensor?.toLowerCase().includes('landsat') ? 'landsat-c2-l2' : 'sentinel-2-l2a';
       const itemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SEH';
 
@@ -1186,22 +1184,32 @@ export default function MapExplorer() {
                     </div>
                   </div>
 
-                  {/* Climatological Context */}
-                  <div className="p-2.5 rounded bg-red-500/10 border border-red-500/30 text-xs font-mono flex items-center justify-between">
-                    <div>
-                      <span className="text-[9px] text-gray-400 uppercase block">Seasonal Climatology (MAD)</span>
-                      <span className="text-red-400 font-bold flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        {pixelProbeData.climatological_context?.anomaly_flag || 'HIGH_MOISTURE_ANOMALY'}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-[9px] text-gray-400 uppercase block">Z-SCORE</span>
-                      <span className="text-base font-['Orbitron'] font-bold text-red-300">
-                        +{pixelProbeData.climatological_context?.seasonal_z_score || '2.84'} σ
-                      </span>
-                    </div>
-                  </div>
+                  {/* Climatological Context with Agent 5 classifyZScore contract */}
+                  {(() => {
+                    const rawZ = pixelProbeData.climatological_context?.seasonal_z_score;
+                    const numZ = typeof rawZ === 'number' ? rawZ : parseFloat(rawZ);
+                    const zScore = !isNaN(numZ) ? numZ : 2.84;
+                    const zClass = classifyZScore(zScore);
+                    const badgeClass = zClass?.badgeClass || 'bg-red-500/10 text-red-300 border-red-500/30';
+                    const anomalyLabel = zClass?.label || pixelProbeData.climatological_context?.anomaly_flag || 'HIGH_MOISTURE_ANOMALY';
+                    return (
+                      <div className={`p-2.5 rounded border text-xs font-mono flex items-center justify-between ${badgeClass}`}>
+                        <div>
+                          <span className="text-[9px] text-gray-400 uppercase block">Seasonal Climatology (MAD)</span>
+                          <span className="font-bold flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            {anomalyLabel}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[9px] text-gray-400 uppercase block">Z-SCORE</span>
+                          <span className="text-base font-['Orbitron'] font-bold">
+                            {zScore >= 0 ? `+${zScore.toFixed(2)}` : zScore.toFixed(2)} σ
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <p className="text-[9px] text-gray-500 font-mono text-center">
                     Click anywhere on map to inspect another pixel

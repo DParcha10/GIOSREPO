@@ -21,7 +21,9 @@ from app.models.schemas import (
     ZonalDistributionStats,
     ZonalHistogram,
     parse_bbox,
-    BoundingBox
+    BoundingBox,
+    normalize_geojson_polygon,
+    classify_z_score
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -211,9 +213,10 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     and distribution statistics over a GeoJSON polygon AOI.
     Enforces memory-conscious array processing and garbage collection.
     """
-    poly = shape(req.geometry)
+    norm_geom = normalize_geojson_polygon(req.geometry) or req.geometry
+    poly = shape(norm_geom)
     min_lon, min_lat, max_lon, max_lat = poly.bounds
-    area_ha = _calculate_polygon_area_ha(req.geometry)
+    area_ha = _calculate_polygon_area_ha(norm_geom)
 
     idx_str = req.index.value if hasattr(req.index, "value") else str(req.index)
     col_str = req.collection
@@ -246,7 +249,7 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
 
     ny, nx = index_arr.shape[-2], index_arr.shape[-1]
     tf = from_bounds(min_lon, min_lat, max_lon, max_lat, nx, ny)
-    inside_mask = geometry_mask([poly], out_shape=(ny, nx), transform=tf, invert=True)
+    inside_mask = geometry_mask([norm_geom], out_shape=(ny, nx), transform=tf, invert=True)
 
     arr_2d = np.squeeze(index_arr)
     raw_inside = arr_2d[inside_mask] if arr_2d.ndim == 2 else index_arr[..., inside_mask].ravel()

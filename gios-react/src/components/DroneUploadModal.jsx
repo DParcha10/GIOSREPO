@@ -8,7 +8,8 @@ import {
   formatGsdDisplay,
   formatBbox,
   formatApiError,
-  DRONE_STATUSES
+  DRONE_STATUSES,
+  calculateMetricGsd
 } from '../api/giosApi';
 
 export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered }) {
@@ -251,26 +252,38 @@ export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered })
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 font-mono">
-                    Flight Altitude
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 font-mono flex items-center justify-between">
+                    <span>Flight Altitude (AGL)</span>
+                    <span className="text-purple-400">{flightAltitude}</span>
                   </label>
                   <input
                     type="text"
                     value={flightAltitude}
-                    onChange={(e) => setFlightAltitude(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFlightAltitude(val);
+                      const num = parseFloat(val.replace(/[^0-9.]/g, ''));
+                      if (!isNaN(num) && num > 0) {
+                        const gsd = calculateMetricGsd(num);
+                        setTargetGsd(`${gsd} cm/px`);
+                      }
+                    }}
                     className="w-full px-3 py-2 rounded bg-black/40 border border-gray-700 text-xs text-white focus:border-purple-500 focus:outline-none font-mono"
+                    placeholder="e.g. 60m AGL"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 font-mono">
-                    Target Metric GSD
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 font-mono flex items-center justify-between">
+                    <span>Target Metric GSD</span>
+                    <span className="text-emerald-400 font-bold">{targetGsd}</span>
                   </label>
                   <input
                     type="text"
                     value={targetGsd}
                     onChange={(e) => setTargetGsd(e.target.value)}
                     className="w-full px-3 py-2 rounded bg-black/40 border border-gray-700 text-xs text-white focus:border-purple-500 focus:outline-none font-mono"
+                    placeholder="e.g. 2.85 cm/px"
                   />
                 </div>
               </div>

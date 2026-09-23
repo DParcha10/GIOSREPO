@@ -546,6 +546,52 @@ class BoundingBox(BaseModel):
         """Check if a point (lat, lng) is within the bounding box."""
         return self.min_lat <= lat <= self.max_lat and self.min_lon <= lng <= self.max_lon
 
+    def expand(self, buffer_pct: float = 0.1) -> "BoundingBox":
+        """Expands bounding box by given fractional percentage (e.g. 0.1 for 10% expansion)."""
+        width = self.max_lon - self.min_lon
+        height = self.max_lat - self.min_lat
+        d_lon = width * max(0.0, float(buffer_pct)) * 0.5
+        d_lat = height * max(0.0, float(buffer_pct)) * 0.5
+        return BoundingBox(
+            min_lon=max(-180.0, round(self.min_lon - d_lon, 6)),
+            min_lat=max(-90.0, round(self.min_lat - d_lat, 6)),
+            max_lon=min(180.0, round(self.max_lon + d_lon, 6)),
+            max_lat=min(90.0, round(self.max_lat + d_lat, 6))
+        )
+
+    @classmethod
+    def from_points(cls, points: Sequence[Sequence[float]], coord_format: str = "lat_lon") -> "BoundingBox":
+        """Calculates enclosing BoundingBox from a sequence of point coordinates.
+        
+        Args:
+            points: List/tuple of coordinate pairs.
+            coord_format: 'lat_lon' [lat, lon] (Leaflet default) or 'lon_lat' [lon, lat] (GeoJSON default).
+        """
+        if not points:
+            return cls(min_lon=-121.2, min_lat=36.95, max_lon=-120.95, max_lat=37.15)
+        lats: List[float] = []
+        lons: List[float] = []
+        for pt in points:
+            if len(pt) >= 2:
+                try:
+                    if coord_format == "lon_lat":
+                        lon_val, lat_val = float(pt[0]), float(pt[1])
+                    else:
+                        lat_val, lon_val = float(pt[0]), float(pt[1])
+                    if math.isfinite(lat_val) and math.isfinite(lon_val):
+                        lats.append(lat_val)
+                        lons.append(lon_val)
+                except (ValueError, TypeError):
+                    continue
+        if not lats or not lons:
+            return cls(min_lon=-121.2, min_lat=36.95, max_lon=-120.95, max_lat=37.15)
+        return cls(
+            min_lon=round(min(lons), 6),
+            min_lat=round(min(lats), 6),
+            max_lon=round(max(lons), 6),
+            max_lat=round(max(lats), 6)
+        )
+
 def parse_bbox(
     val: Union[str, Sequence[float], Dict[str, float], BoundingBox, None],
     default: Tuple[float, float, float, float] = (-121.2, 36.95, -120.95, 37.15)
@@ -734,6 +780,254 @@ def normalize_geojson_polygon(geometry: Any) -> Optional[Dict[str, Any]]:
     if clean_ring[0] != clean_ring[-1]:
         clean_ring.append(list(clean_ring[0]))
     return {"type": "Polygon", "coordinates": [clean_ring]}
+
+# ============================================================================
+# GEODESIC & SPATIAL GEOMETRY CONVENTIONS
+# ============================================================================
+
+def calculate_haversine_distance(
+    lat1: float, lon1: float, lat2: float, lon2: float, unit: str = "km"
+) -> float:
+    """Calculates geodesic great-circle distance between two WGS84 points using the Haversine formula.
+    
+    Args:
+        lat1: First point latitude in degrees
+        lon1: First point longitude in degrees
+        lat2: Second point latitude in degrees
+        lon2: Second point longitude in degrees
+        unit: 'km' (kilometers) or 'm' (meters)
+    
+    Returns:
+        Geodesic distance in requested unit, rounded to 3 decimal places.
+    """
+    R_KM = 6371.0  # Mean radius of the Earth in km
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = math.sin(delta_phi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
+    distance_km = R_KM * c
+
+    if unit.lower() == "m":
+        return round(distance_km * 1000.0, 3)
+    return round(distance_km, 3)
+
+def calculate_initial_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculates the initial compass bearing (forward azimuth) from point 1 to point 2 in degrees [0, 360)."""
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    y = math.sin(delta_lambda) * math.cos(phi2)
+    x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(delta_lambda)
+    bearing_rad = math.atan2(y, x)
+    bearing_deg = (math.degrees(bearing_rad) + 360.0) % 360.0
+    return round(bearing_deg, 2)
+
+def calculate_polygon_centroid(geometry: Any) -> Tuple[float, float]:
+    """Calculates geographic center (latitude, longitude) of a GeoJSON polygon ring.
+    
+    Returns:
+        (latitude, longitude) tuple in WGS84 degrees.
+    """
+    if not isinstance(geometry, dict):
+        return (37.0582, -121.0744)
+    coords = geometry.get("coordinates")
+    if not coords or not isinstance(coords, list) or len(coords) == 0:
+        return (37.0582, -121.0744)
+    ring = coords[0]
+    if not isinstance(ring, list) or len(ring) == 0:
+        return (37.0582, -121.0744)
+    pts = ring[:-1] if len(ring) > 3 and ring[0] == ring[-1] else ring
+    lons: List[float] = []
+    lats: List[float] = []
+    for p in pts:
+        if isinstance(p, (list, tuple)) and len(p) >= 2:
+            try:
+                lon, lat = float(p[0]), float(p[1])
+                if math.isfinite(lon) and math.isfinite(lat):
+                    lons.append(lon)
+                    lats.append(lat)
+            except (ValueError, TypeError):
+                continue
+    if not lons or not lats:
+        return (37.0582, -121.0744)
+    return (round(sum(lats) / len(lats), 6), round(sum(lons) / len(lons), 6))
+
+# ============================================================================
+# MULTI-SPECTRAL BAND SPECIFICATIONS CATALOG
+# ============================================================================
+
+class BandSpecMetadata(BaseModel):
+    """Calibrated physical sensor band specification matching remote sensing standards."""
+    key: str = Field(..., description="Canonical band identifier code (e.g. 'b02', 'b08', 'b10')")
+    name: str = Field(..., description="Descriptive band name (e.g. 'Blue', 'NIR Broad', 'Thermal')")
+    center_wavelength_nm: float = Field(..., description="Center spectral wavelength in nanometers")
+    bandwidth_nm: float = Field(..., description="Full width at half maximum (FWHM) in nanometers")
+    spatial_resolution_m: float = Field(..., description="Native ground sampling distance in meters")
+    spectrum_domain: str = Field(..., description="Electromagnetic spectrum region (e.g. 'Visible', 'NIR', 'SWIR', 'TIR')")
+    common_name: str = Field(..., description="STAC common band name (e.g. 'blue', 'nir', 'swir16')")
+
+BAND_SPECS: Dict[str, BandSpecMetadata] = {
+    "b02": BandSpecMetadata(key="b02", name="Blue", center_wavelength_nm=490.0, bandwidth_nm=65.0, spatial_resolution_m=10.0, spectrum_domain="Visible Blue", common_name="blue"),
+    "b03": BandSpecMetadata(key="b03", name="Green", center_wavelength_nm=560.0, bandwidth_nm=35.0, spatial_resolution_m=10.0, spectrum_domain="Visible Green", common_name="green"),
+    "b04": BandSpecMetadata(key="b04", name="Red", center_wavelength_nm=665.0, bandwidth_nm=30.0, spatial_resolution_m=10.0, spectrum_domain="Visible Red", common_name="red"),
+    "b05": BandSpecMetadata(key="b05", name="RedEdge 1", center_wavelength_nm=705.0, bandwidth_nm=15.0, spatial_resolution_m=20.0, spectrum_domain="Vegetation Red-Edge", common_name="rededge"),
+    "b06": BandSpecMetadata(key="b06", name="RedEdge 2", center_wavelength_nm=740.0, bandwidth_nm=15.0, spatial_resolution_m=20.0, spectrum_domain="Vegetation Red-Edge", common_name="rededge2"),
+    "b07": BandSpecMetadata(key="b07", name="RedEdge 3", center_wavelength_nm=783.0, bandwidth_nm=20.0, spatial_resolution_m=20.0, spectrum_domain="Vegetation Red-Edge", common_name="rededge3"),
+    "b08": BandSpecMetadata(key="b08", name="NIR Broad", center_wavelength_nm=842.0, bandwidth_nm=115.0, spatial_resolution_m=10.0, spectrum_domain="Near Infrared", common_name="nir"),
+    "b8a": BandSpecMetadata(key="b8a", name="NIR Narrow", center_wavelength_nm=865.0, bandwidth_nm=20.0, spatial_resolution_m=20.0, spectrum_domain="Near Infrared Narrow", common_name="nir08"),
+    "b11": BandSpecMetadata(key="b11", name="SWIR 1", center_wavelength_nm=1610.0, bandwidth_nm=90.0, spatial_resolution_m=20.0, spectrum_domain="Shortwave Infrared", common_name="swir16"),
+    "b12": BandSpecMetadata(key="b12", name="SWIR 2", center_wavelength_nm=2190.0, bandwidth_nm=180.0, spatial_resolution_m=20.0, spectrum_domain="Shortwave Infrared", common_name="swir22"),
+    "b10": BandSpecMetadata(key="b10", name="Thermal Infrared", center_wavelength_nm=10895.0, bandwidth_nm=590.0, spatial_resolution_m=30.0, spectrum_domain="Thermal Infrared", common_name="lwir11"),
+}
+
+def get_band_spec(band_key: str) -> Optional[BandSpecMetadata]:
+    """Looks up band physical specification by key (case-insensitive)."""
+    if not band_key:
+        return None
+    return BAND_SPECS.get(str(band_key).lower().strip())
+
+def list_band_specs() -> List[BandSpecMetadata]:
+    """Returns all registered physical sensor band specifications."""
+    return list(BAND_SPECS.values())
+
+def get_band_wavelength(band_key: str, default: float = 0.0) -> float:
+    """Retrieves center wavelength in nanometers for a band code."""
+    spec = get_band_spec(band_key)
+    return spec.center_wavelength_nm if spec else default
+
+# ============================================================================
+# SPATIAL GIS VECTOR LAYER SPECIFICATIONS & REGISTRY
+# ============================================================================
+
+class SpatialLayerType(str, Enum):
+    """Registered GIS vector layer categories."""
+    CRITICAL_INFRASTRUCTURE = "critical_infrastructure"
+    SENSOR_GRID = "sensor_grid"
+    HAZARD_ZONES = "hazard_zones"
+    DRONE_FLIGHT_BOUNDS = "drone_flight_bounds"
+
+class SpatialLayerMetadata(BaseModel):
+    """Metadata specification for dynamic GIS vector layers."""
+    layer_id: SpatialLayerType = Field(..., description="Unique vector layer type enum")
+    label: str = Field(..., description="Human-readable layer display title")
+    description: str = Field(..., description="Detailed content narrative")
+    icon: str = Field(default="MapPin", description="Lucide icon identifier for UI rendering")
+    color: str = Field(default="#00ffaa", description="Hex styling color")
+    default_visible: bool = Field(default=True, description="Whether layer is displayed on initial map load")
+
+SPATIAL_LAYERS_METADATA: Dict[str, SpatialLayerMetadata] = {
+    "critical_infrastructure": SpatialLayerMetadata(
+        layer_id=SpatialLayerType.CRITICAL_INFRASTRUCTURE,
+        label="Critical Infrastructure Assets",
+        description="Hydraulic plants, dams, spillways, and intake towers.",
+        icon="ShieldAlert",
+        color="#00ffaa",
+        default_visible=True
+    ),
+    "sensor_grid": SpatialLayerMetadata(
+        layer_id=SpatialLayerType.SENSOR_GRID,
+        label="In-Situ Sensor & Piezometer Grid",
+        description="Embankment moisture probes, piezometer arrays, and USGS telemetry anchors.",
+        icon="Activity",
+        color="#38bdf8",
+        default_visible=True
+    ),
+    "hazard_zones": SpatialLayerMetadata(
+        layer_id=SpatialLayerType.HAZARD_ZONES,
+        label="Active Hazard Boundaries",
+        description="Seepage alert perimeters, wildfire perimeters, and flood inundation polygons.",
+        icon="AlertTriangle",
+        color="#f87171",
+        default_visible=True
+    ),
+    "drone_flight_bounds": SpatialLayerMetadata(
+        layer_id=SpatialLayerType.DRONE_FLIGHT_BOUNDS,
+        label="UAS Survey Extents & Geofences",
+        description="Autonomous drone inspection flight plans, waypoints, and orthomosaic footprints.",
+        icon="Plane",
+        color="#fbbf24",
+        default_visible=False
+    ),
+}
+
+def get_spatial_layer_metadata(layer_id: Union[str, SpatialLayerType]) -> Optional[SpatialLayerMetadata]:
+    """Look up metadata specification for a vector layer type."""
+    key = layer_id.value if hasattr(layer_id, "value") else str(layer_id).lower().strip()
+    return SPATIAL_LAYERS_METADATA.get(key)
+
+def list_spatial_layer_types() -> List[SpatialLayerMetadata]:
+    """Returns all supported vector layer metadata specifications."""
+    return list(SPATIAL_LAYERS_METADATA.values())
+
+# ============================================================================
+# MULTI-TEMPORAL SWIPE CURTAIN CONTRACTS & PRESETS
+# ============================================================================
+
+class SwipeComparisonMode(str, Enum):
+    """Operational comparison modes for multi-temporal swipe curtain."""
+    OPTICAL_VS_ANOMALY = "optical_vs_anomaly"
+    PRE_VS_POST = "pre_vs_post"
+    SATELLITE_VS_DRONE = "satellite_vs_drone"
+    INDEX_VS_INDEX = "index_vs_index"
+
+class SwipePaneLayer(BaseModel):
+    """Configuration for a single pane within the multi-temporal swipe curtain."""
+    title: str = Field(..., description="Display title for pane header")
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2, description="Imagery collection")
+    item_id: Optional[str] = Field(default=None, description="Scene or orthomosaic ID")
+    date: str = Field(..., description="Acquisition date (YYYY-MM-DD)")
+    sensor: str = Field(default="Sentinel-2 L2A", description="Sensor label")
+    index: SpectralIndex = Field(default=SpectralIndex.RGB, description="Spectral index")
+    colormap: Optional[TileColormap] = Field(default=None, description="Tile colormap")
+
+class SwipeCurtainConfig(BaseModel):
+    """Complete state and configuration contract for multi-temporal swipe curtain comparison."""
+    mode: SwipeComparisonMode = Field(default=SwipeComparisonMode.OPTICAL_VS_ANOMALY, description="Comparison mode")
+    slider_pos: float = Field(default=50.0, ge=2.0, le=98.0, description="Curtain split percentage [2.0, 98.0]")
+    left_layer: SwipePaneLayer = Field(..., description="Baseline / pre-event layer")
+    right_layer: SwipePaneLayer = Field(..., description="Anomaly / post-event layer")
+
+SWIPE_PRESET_RATIOS: List[int] = [25, 50, 75]
+
+def get_swipe_preset_ratios() -> List[int]:
+    """Returns standard swipe curtain split percentage presets."""
+    return list(SWIPE_PRESET_RATIOS)
+
+# ============================================================================
+# DETERMINISTIC TILE CACHE KEY GENERATION
+# ============================================================================
+
+def generate_tile_cache_key(
+    collection: str,
+    item_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    index: Optional[str] = "rgb",
+    rescale: Optional[str] = None,
+    colormap: Optional[str] = "spectral",
+    pre: Optional[str] = None,
+    post: Optional[str] = None
+) -> str:
+    """Generates a standardized deterministic cache key for XYZ tiles.
+    Shared contract between backend tile caching and frontend tile prefetching.
+    """
+    col = str(collection).lower().strip()
+    item = str(item_id).strip()
+    idx = str(index or "rgb").lower().strip()
+    resc = str(rescale).strip() if rescale else "default"
+    cmap = str(colormap or "spectral").lower().strip()
+    parts = [col, item, f"z{z}", f"x{x}", f"y{y}", idx, f"rescale_{resc}", cmap]
+    if pre:
+        parts.append(f"pre_{pre}")
+    if post:
+        parts.append(f"post_{post}")
+    raw = "_".join(parts)
+    return "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in raw)
 
 # ============================================================================
 # CONTRACT 1: DYNAMIC XYZ TILE SERVER SCHEMAS
