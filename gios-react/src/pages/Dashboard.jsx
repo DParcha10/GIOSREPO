@@ -34,6 +34,9 @@ export default function Dashboard() {
         }
       } catch (e) {
         console.error(e);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 

@@ -89,8 +89,16 @@ from app.models.schemas import (
     list_spectral_indices,
     get_colormap_metadata,
     list_colormaps,
+    SatelliteCollectionMetadata,
+    SATELLITE_COLLECTIONS_METADATA,
+    get_satellite_collection_metadata,
+    list_satellite_collections,
+    parse_rescale,
     classify_dnbr,
-    API_ROUTE_CONTRACTS
+    API_ROUTE_CONTRACTS,
+    format_api_route,
+    validate_spectral_index,
+    validate_colormap
 )
 from app.config import settings
 
@@ -801,6 +809,7 @@ class TestGIOSCoreSchemas(unittest.TestCase):
 
     def test_classify_dnbr_scalar_parity(self):
         """Verify scalar delta-NBR classifier parity across all USGS FIREMON thresholds."""
+        import numpy as np
         self.assertEqual(classify_dnbr(0.750)["category"], "High Severity")
         self.assertEqual(classify_dnbr(0.660)["category"], "High Severity")
         self.assertEqual(classify_dnbr(0.500)["category"], "Moderate-High Severity")
@@ -813,6 +822,86 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(classify_dnbr(-0.150)["category"], "Unburned / Low Change")
         self.assertEqual(classify_dnbr(None)["category"], "Unburned / Low Change")
         self.assertEqual(classify_dnbr(float("nan"))["category"], "Unburned / Low Change")
+        self.assertEqual(classify_dnbr(float("inf"))["category"], "Unburned / Low Change")
+        # Parity with numpy scalars and strings
+        self.assertEqual(classify_dnbr(np.float32(0.50))["category"], "Moderate-High Severity")
+        self.assertEqual(classify_dnbr(np.float64(0.70))["category"], "High Severity")
+        self.assertEqual(classify_dnbr("0.35")["category"], "Moderate-Low Severity")
+        self.assertEqual(classify_dnbr("invalid")["category"], "Unburned / Low Change")
+
+    def test_parse_rescale_utility(self):
+        """Verify parse_rescale utility correctly parses min,max ranges with robust fallback."""
+        self.assertEqual(parse_rescale("-0.2,0.6"), (-0.2, 0.6))
+        self.assertEqual(parse_rescale(" 10.0 , 45.0 "), (10.0, 45.0))
+        self.assertEqual(parse_rescale("0,255"), (0.0, 255.0))
+        self.assertEqual(parse_rescale("invalid"), (-1.0, 1.0))
+        self.assertEqual(parse_rescale(""), (-1.0, 1.0))
+        self.assertEqual(parse_rescale(None), (-1.0, 1.0))
+        self.assertEqual(parse_rescale("0.5"), (-1.0, 1.0))
+        self.assertEqual(parse_rescale("nan,0.5"), (-1.0, 1.0))
+        self.assertEqual(parse_rescale(None, default=(0.0, 1.0)), (0.0, 1.0))
+
+    def test_dynamic_tile_params_helper_methods(self):
+        """Verify DynamicTileParams get_rescale_bounds and get_colormap_name helpers."""
+        # Explicit rescale and colormap
+        p1 = DynamicTileParams(
+            collection="sentinel-2-l2a",
+            item_id="S2A_123",
+            z=12, x=100, y=200,
+            index=SpectralIndex.NDMI,
+            rescale="-0.1,0.5",
+            colormap=TileColormap.SPECTRAL
+        )
+        self.assertEqual(p1.get_rescale_bounds(), (-0.1, 0.5))
+        self.assertEqual(p1.get_colormap_name(), "spectral")
+
+        # Default rescale derived from index metadata (NDMI -> -0.2, 0.6)
+        p2 = DynamicTileParams(
+            collection="sentinel-2-l2a",
+            item_id="S2A_123",
+            z=12, x=100, y=200,
+            index=SpectralIndex.NDMI
+        )
+        self.assertEqual(p2.get_rescale_bounds(), (-0.2, 0.6))
+        self.assertEqual(p2.get_colormap_name(), "spectral")
+
+        # RGB defaults
+        p3 = DynamicTileParams(
+            collection="sentinel-2-l2a",
+            item_id="S2A_123",
+            z=12, x=100, y=200,
+            index=SpectralIndex.RGB,
+            colormap=None
+        )
+        self.assertEqual(p3.get_rescale_bounds(), (0, 255))
+        self.assertEqual(p3.get_colormap_name(), "spectral")
+
+    def test_satellite_collections_metadata_contract(self):
+        """Verify satellite and aerial imagery collection metadata and catalog lookup."""
+        self.assertEqual(len(SATELLITE_COLLECTIONS_METADATA), 3)
+        for col_id in ["sentinel-2-l2a", "landsat-c2-l2", "drone-ortho"]:
+            self.assertIn(col_id, SATELLITE_COLLECTIONS_METADATA)
+            meta = SATELLITE_COLLECTIONS_METADATA[col_id]
+            self.assertIsInstance(meta, SatelliteCollectionMetadata)
+            self.assertTrue(meta.resolution_m > 0)
+            self.assertTrue(len(meta.label) > 0)
+
+        # Lookup helper
+        s2_meta = get_satellite_collection_metadata("sentinel-2-l2a")
+        self.assertIsNotNone(s2_meta)
+        self.assertEqual(s2_meta.id, SatelliteCollection.SENTINEL_2)
+        self.assertEqual(s2_meta.resolution_m, 10.0)
+
+        landsat_meta = get_satellite_collection_metadata(SatelliteCollection.LANDSAT_C2_L2)
+        self.assertIsNotNone(landsat_meta)
+        self.assertEqual(landsat_meta.resolution_m, 30.0)
+
+        self.assertIsNone(get_satellite_collection_metadata("non_existent_collection"))
+
+        # Listing helper
+        all_collections = list_satellite_collections()
+        self.assertEqual(len(all_collections), 3)
+        self.assertIn("sentinel-2-l2a", [c.id.value for c in all_collections])
 
     def test_api_route_contracts_coverage(self):
         """Verify canonical API route contracts dictionary matches required system routes."""
@@ -826,6 +915,117 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertIn("agent_chat", API_ROUTE_CONTRACTS)
         self.assertIn("spatial_buffer", API_ROUTE_CONTRACTS)
         self.assertIn("reports_pdf", API_ROUTE_CONTRACTS)
+
+    def test_parse_rescale_enhanced_sequence_inputs(self):
+        """Verify parse_rescale accepts list, tuple, and formatted string inputs."""
+        self.assertEqual(parse_rescale([-0.2, 0.6]), (-0.2, 0.6))
+        self.assertEqual(parse_rescale((-0.5, 1.5)), (-0.5, 1.5))
+        self.assertEqual(parse_rescale(["0.1", "0.9"]), (0.1, 0.9))
+        self.assertEqual(parse_rescale([10]), (-1.0, 1.0))
+        self.assertEqual(parse_rescale([10, 20, 30]), (-1.0, 1.0))
+        self.assertEqual(parse_rescale([float("nan"), 0.5]), (-1.0, 1.0))
+
+    def test_format_api_route_helper(self):
+        """Verify format_api_route dynamically substitutes route parameters."""
+        evt_url = format_api_route("event_detail", event_id="EVT-01")
+        self.assertEqual(evt_url, "/api/v1/events/EVT-01")
+
+        tile_url = format_api_route("tiles_dynamic", collection="sentinel-2-l2a", item_id="S2A_123", z=12, x=100, y=200)
+        self.assertEqual(tile_url, "/api/v1/tiles/sentinel-2-l2a/S2A_123/12/100/200.png")
+
+        usgs_url = format_api_route("integration_usgs", site_id="11262900")
+        self.assertEqual(usgs_url, "/api/v1/integration/usgs/11262900")
+
+        with self.assertRaises(KeyError):
+            format_api_route("unknown_route_key")
+
+    def test_validate_spectral_index_and_colormap(self):
+        """Verify validation and normalization of spectral indices and colormaps."""
+        self.assertEqual(validate_spectral_index("ndmi"), SpectralIndex.NDMI)
+        self.assertEqual(validate_spectral_index("NDVI"), SpectralIndex.NDVI)
+        self.assertEqual(validate_spectral_index(SpectralIndex.LST), SpectralIndex.LST)
+        self.assertEqual(validate_spectral_index("invalid_index"), SpectralIndex.RGB)
+        self.assertEqual(validate_spectral_index(None, default=SpectralIndex.NDMI), SpectralIndex.NDMI)
+
+        self.assertEqual(validate_colormap("spectral"), TileColormap.SPECTRAL)
+        self.assertEqual(validate_colormap("VIRIDIS"), TileColormap.VIRIDIS)
+        self.assertEqual(validate_colormap(TileColormap.TURBO), TileColormap.TURBO)
+        self.assertEqual(validate_colormap("invalid_palette"), TileColormap.SPECTRAL)
+        self.assertEqual(validate_colormap(None, default=TileColormap.MAGMA), TileColormap.MAGMA)
+
+    def test_dynamic_tile_params_url_builders(self):
+        """Verify DynamicTileParams to_query_params and build_tile_url methods."""
+        p = DynamicTileParams(
+            collection="sentinel-2-l2a",
+            item_id="S2A_123",
+            z=12, x=100, y=200,
+            index=SpectralIndex.NDMI,
+            rescale="-0.2,0.6",
+            colormap=TileColormap.SPECTRAL
+        )
+        qp = p.to_query_params()
+        self.assertEqual(qp["index"], "ndmi")
+        self.assertEqual(qp["rescale"], "-0.2,0.6")
+        self.assertEqual(qp["colormap"], "spectral")
+
+        url = p.build_tile_url()
+        self.assertTrue(url.startswith("/api/v1/tiles/sentinel-2-l2a/S2A_123/12/100/200.png?"))
+        self.assertIn("index=ndmi", url)
+        self.assertIn("rescale=-0.2%2C0.6", url)
+        self.assertIn("colormap=spectral", url)
+
+    def test_burn_severity_response_tile_url_template_builder(self):
+        """Verify BurnSeverityResponse.build_tile_url_template helper."""
+        tmpl = BurnSeverityResponse.build_tile_url_template(pre_date="2025-08-15", post_date="2026-08-20")
+        self.assertEqual(tmpl, "/api/v1/tiles/wildfire/dnbr/{z}/{x}/{y}.png?pre=2025-08-15&post=2026-08-20")
+
+        tmpl_no_pre = BurnSeverityResponse.build_tile_url_template(post_date="2026-08-20")
+        self.assertEqual(tmpl_no_pre, "/api/v1/tiles/wildfire/dnbr/{z}/{x}/{y}.png?post=2026-08-20")
+
+        tmpl_bare = BurnSeverityResponse.build_tile_url_template()
+        self.assertEqual(tmpl_bare, "/api/v1/tiles/wildfire/dnbr/{z}/{x}/{y}.png")
+
+    def test_pixel_coordinates_lat_lng_properties(self):
+        """Verify PixelCoordinates lat and lng convenience properties."""
+        coords = PixelCoordinates(latitude=37.0582, longitude=-121.0744)
+        self.assertEqual(coords.lat, 37.0582)
+        self.assertEqual(coords.lng, -121.0744)
+
+    def test_zonal_stats_pixel_properties(self):
+        """Verify ZonalStatsRealResponse total_pixels and cloud_fraction properties."""
+        resp = ZonalStatsRealResponse(
+            index="ndmi",
+            area_hectares=100.0,
+            valid_pixels=800,
+            cloud_covered_pixels=200,
+            statistics=ZonalDistributionStats(
+                mean=0.35, median=0.34, std_dev=0.05, min=0.1, max=0.6,
+                percentile_10=0.2, percentile_90=0.5
+            ),
+            histogram=ZonalHistogram(bin_edges=[0.0, 0.5, 1.0], counts=[400, 400])
+        )
+        self.assertEqual(resp.total_pixels, 1000)
+        self.assertAlmostEqual(resp.cloud_fraction, 0.20, places=2)
+
+    def test_drone_orthomosaic_contains_point(self):
+        """Verify DroneOrthomosaicMetadata contains_point bounding box checker."""
+        meta = DroneOrthomosaicMetadata(
+            ortho_id="DRN-01",
+            filename="drone.tif",
+            crs="EPSG:4326",
+            bounds=(-121.08, 37.05, -121.06, 37.07),
+            metric_gsd_cm=2.85
+        )
+        self.assertTrue(meta.contains_point(37.06, -121.07))
+        self.assertFalse(meta.contains_point(38.00, -121.07))
+        self.assertFalse(meta.contains_point(37.06, -122.00))
+
+    def test_firemon_thresholds_badge_classes(self):
+        """Verify FIREMON_THRESHOLDS contains both badge_class and badgeClass."""
+        for level in FIREMON_THRESHOLDS:
+            self.assertIn("badge_class", level)
+            self.assertIn("badgeClass", level)
+            self.assertEqual(level["badge_class"], level["badgeClass"])
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

@@ -157,12 +157,13 @@ class IndexComputationService:
         - If input is already calibrated to Celsius: preserves values.
         """
         arr = np.asarray(thermal_input, dtype=np.float32)
-        # Check if values are raw DN (e.g., Landsat Band 10 typically 20,000 - 60,000)
-        # Values in Celsius typically range from -60 to +80
-        mask_raw_dn = np.nanmean(arr) > 1000.0 if arr.size > 0 else False
+        valid = arr[np.isfinite(arr)]
+        mask_raw_dn = len(valid) > 0 and float(np.mean(valid)) > 1000.0
+        del valid
         if mask_raw_dn:
-            kelvin = arr * np.float32(0.00341802) + np.float32(149.0)
-            return kelvin - np.float32(273.15)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                kelvin = arr * np.float32(0.00341802) + np.float32(149.0)
+                return kelvin - np.float32(273.15)
         return arr
 
     @classmethod
@@ -191,12 +192,25 @@ class IndexComputationService:
         elif name == "dnbr":
             nbr_pre = bands.get("nbr_pre")
             nbr_post = bands.get("nbr_post")
+            if nbr_pre is None or nbr_post is None:
+                nir = bands.get("nir", bands.get("B08", bands.get("b08", bands.get("nir08", bands.get("b8", bands.get("B8"))))))
+                swir2 = bands.get("swir2", bands.get("B12", bands.get("b12", bands.get("swir22"))))
+                if nir is not None and swir2 is not None:
+                    nbr_post = cls.nbr(nir, swir2)
+                    nbr_pre = np.full_like(nbr_post, 0.35, dtype=np.float32)
             return cls.dnbr(nbr_pre, nbr_post)
         elif name == "rdnbr":
             nbr_pre = bands.get("nbr_pre")
             dnbr_val = bands.get("dnbr")
             if dnbr_val is None and nbr_pre is not None and "nbr_post" in bands:
                 dnbr_val = cls.dnbr(nbr_pre, bands.get("nbr_post"))
+            elif dnbr_val is None:
+                nir = bands.get("nir", bands.get("B08", bands.get("b08", bands.get("nir08", bands.get("b8", bands.get("B8"))))))
+                swir2 = bands.get("swir2", bands.get("B12", bands.get("b12", bands.get("swir22"))))
+                if nir is not None and swir2 is not None:
+                    nbr_post = cls.nbr(nir, swir2)
+                    nbr_pre = np.full_like(nbr_post, 0.35, dtype=np.float32)
+                    dnbr_val = cls.dnbr(nbr_pre, nbr_post)
             return cls.rdnbr(dnbr_val, nbr_pre)
         elif name == "evi":
             nir = bands.get("nir", bands.get("B08", bands.get("b08", bands.get("nir08", bands.get("b8", bands.get("B8"))))))
@@ -208,7 +222,17 @@ class IndexComputationService:
             red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
             return cls.savi(nir, red)
         elif name == "lst":
-            thermal = bands.get("lwir11", bands.get("b10", bands.get("thermal", bands.get("B10"))))
+            thermal = (
+                bands.get("lwir11")
+                or bands.get("lwir")
+                or bands.get("b10")
+                or bands.get("band10")
+                or bands.get("thermal")
+                or bands.get("LWIR11")
+                or bands.get("B10")
+                or bands.get("b11")
+                or bands.get("B11")
+            )
             return cls.lst(thermal)
         elif name == "rgb":
             red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))

@@ -23,9 +23,16 @@ export {
   classifyDnbr,
   getIndexMetadata,
   getColormapMetadata,
+  getSatelliteCollectionMetadata,
   listSpectralIndices,
   listColormaps,
+  listSatelliteCollections,
+  parseRescale,
+  validateSpectralIndex,
+  validateColormap,
+  formatApiRoute,
   DEFAULT_MAP_CONFIG,
+  DEFAULT_MAP_VIEWPORT_CONFIG,
   HAZARD_CATEGORIES,
   HAZARD_SEVERITIES,
   ALERT_SEVERITIES,
@@ -79,6 +86,15 @@ export {
  * @property {TileColormap} key - Colormap palette key
  * @property {string} label - Display label
  * @property {string} [description] - Palette description
+ */
+
+/**
+ * @typedef {Object} SatelliteCollectionMetadata
+ * @property {SatelliteCollection} id - Collection identifier
+ * @property {string} label - Descriptive collection name
+ * @property {string} description - Sensor characteristics and ground resolution
+ * @property {number} resolution_m - Spatial resolution in meters
+ * @property {number|null} [revisit_days] - Typical temporal revisit period in days
  */
 
 /**
@@ -622,15 +638,22 @@ giosApi.interceptors.request.use((config) => {
  * @returns {string} Fully qualified XYZ tile URL
  */
 export const getTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const col = typeof collection === 'object' && collection !== null ? (collection.id || collection.value || String(collection)) : collection;
   const params = new URLSearchParams();
-  if (options.index) params.set('index', options.index);
+  if (options.index) {
+    const idx = typeof options.index === 'object' && options.index !== null ? (options.index.key || options.index.value || String(options.index)) : options.index;
+    params.set('index', idx);
+  }
   if (options.rescale) params.set('rescale', options.rescale);
-  if (options.colormap) params.set('colormap', options.colormap);
+  if (options.colormap) {
+    const cm = typeof options.colormap === 'object' && options.colormap !== null ? (options.colormap.key || options.colormap.value || String(options.colormap)) : options.colormap;
+    params.set('colormap', cm);
+  }
   if (options.pre) params.set('pre', options.pre);
   if (options.post) params.set('post', options.post);
   const queryStr = params.toString() ? `?${params.toString()}` : '';
   const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
-  return `${base}/api/v1/tiles/${collection}/${itemId}/${z}/${x}/${y}.png${queryStr}`;
+  return `${base}/api/v1/tiles/${col}/${itemId}/${z}/${x}/${y}.png${queryStr}`;
 };
 
 /**
@@ -690,8 +713,9 @@ export const calculateBurnSeverity = async (params) => {
  * @returns {Promise<PixelProbeResponse>} Point surface reflectance, indices, and climatological context
  */
 export const probePixel = async (lat, lng, collection = 'sentinel-2-l2a', itemId) => {
+  const col = typeof collection === 'object' && collection !== null ? (collection.id || collection.value || String(collection)) : collection;
   const response = await giosApi.get('/api/v1/analysis/pixel-probe', {
-    params: { lat, lng, collection, item_id: itemId }
+    params: { lat, lng, collection: col, item_id: itemId }
   });
   return response.data;
 };
@@ -703,7 +727,14 @@ export const probePixel = async (lat, lng, collection = 'sentinel-2-l2a', itemId
  * @returns {Promise<ZonalStatsRealResponse>} True area in hectares, pixel counts, distribution stats, and histogram
  */
 export const calculateZonalStats = async (params) => {
-  const response = await giosApi.post('/api/v1/analysis/zonal-stats', params);
+  const payload = { ...params };
+  if (payload.collection && typeof payload.collection === 'object') {
+    payload.collection = payload.collection.id || payload.collection.value || String(payload.collection);
+  }
+  if (payload.index && typeof payload.index === 'object') {
+    payload.index = payload.index.key || payload.index.value || String(payload.index);
+  }
+  const response = await giosApi.post('/api/v1/analysis/zonal-stats', payload);
   return response.data;
 };
 
@@ -738,8 +769,9 @@ export const fetchTimeseriesTrend = async (params) => {
  * @returns {Promise<Array>} List of hazard event objects
  */
 export const fetchHazardEvents = async (category = null) => {
+  const cat = typeof category === 'object' && category !== null ? (category.key || category.value || String(category)) : category;
   const response = await giosApi.get('/api/v1/events', {
-    params: category ? { category } : {}
+    params: cat ? { category: cat } : {}
   });
   return response.data.events || [];
 };

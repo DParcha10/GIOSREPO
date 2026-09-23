@@ -25,7 +25,10 @@ import giosApi, {
   fetchDroneMissions as fetchDroneMissionsApi,
   fetchTimeseriesTrend,
   downloadPdfReport,
-  computeRegionalIndex
+  computeRegionalIndex,
+  parseRescale,
+  validateSpectralIndex,
+  getIndexMetadata
 } from '../api/giosApi';
 import useJarvisStore from '../store/jarvisStore';
 import {
@@ -181,17 +184,24 @@ export default function MapExplorer() {
   // Sync active spectral index with selected event default metric
   useEffect(() => {
     if (selectedEvent?.metric) {
-      const m = selectedEvent.metric.toLowerCase();
+      const m = validateSpectralIndex(selectedEvent.metric.toLowerCase(), 'ndmi');
       setActiveSpectralIndex(m);
-      if (m === 'ndmi') { setRescaleMin(0.05); setRescaleMax(0.45); }
-      else if (m === 'ndci') { setRescaleMin(0.02); setRescaleMax(0.38); }
-      else if (m === 'mndwi') { setRescaleMin(-0.2); setRescaleMax(0.4); }
-      else if (m === 'ndvi') { setRescaleMin(0.15); setRescaleMax(0.85); }
-      else if (m === 'lst') { setRescaleMin(12); setRescaleMax(42); }
-      else if (m === 'nbr') { setRescaleMin(-0.1); setRescaleMax(0.65); }
-      else if (m === 'dnbr') { setRescaleMin(-0.1); setRescaleMax(0.66); }
-      else if (m === 'rdnbr') { setRescaleMin(-0.2); setRescaleMax(1.2); }
-      else if (m === 'rgb') { setRescaleMin(0); setRescaleMax(255); }
+      const meta = getIndexMetadata(m);
+      if (meta && meta.defaultRescale) {
+        const [dMin, dMax] = parseRescale(meta.defaultRescale, [-0.2, 0.6]);
+        setRescaleMin(dMin);
+        setRescaleMax(dMax);
+      } else {
+        if (m === 'ndmi') { setRescaleMin(0.05); setRescaleMax(0.45); }
+        else if (m === 'ndci') { setRescaleMin(0.02); setRescaleMax(0.38); }
+        else if (m === 'mndwi') { setRescaleMin(-0.2); setRescaleMax(0.4); }
+        else if (m === 'ndvi') { setRescaleMin(0.15); setRescaleMax(0.85); }
+        else if (m === 'lst') { setRescaleMin(12); setRescaleMax(42); }
+        else if (m === 'nbr') { setRescaleMin(-0.1); setRescaleMax(0.65); }
+        else if (m === 'dnbr') { setRescaleMin(-0.1); setRescaleMax(0.66); }
+        else if (m === 'rdnbr') { setRescaleMin(-0.2); setRescaleMax(1.2); }
+        else if (m === 'rgb') { setRescaleMin(0); setRescaleMax(255); }
+      }
     }
   }, [selectedEvent]);
 

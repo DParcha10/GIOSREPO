@@ -12,7 +12,7 @@ Comprehensive shared contracts for GIOS v2.5:
 import math
 from enum import Enum
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import List, Dict, Any, Optional, Tuple, Union, Sequence
 from pydantic import BaseModel, Field
 
 # ============================================================================
@@ -74,10 +74,13 @@ class AlertSeverity(str, Enum):
     INFO = "info"
 
 class DroneStatus(str, Enum):
-    """Status lifecycle for drone orthomosaic ingestion and overview generation."""
+    """Status lifecycle for drone orthomosaic ingestion, missions, and overview generation."""
     READY = "READY"
     PROCESSING = "PROCESSING"
     FAILED = "FAILED"
+    SCHEDULED = "SCHEDULED"
+    COMPLETED = "COMPLETED"
+    PENDING = "PENDING"
 
 class ProactiveAlertType(str, Enum):
     """Proactive alert types streamed by backend over SSE (/api/v1/agent/stream-alerts)."""
@@ -100,6 +103,17 @@ class SpectralIndexMetadata(BaseModel):
     default_rescale: str = Field(default="-1.0,1.0", description="Recommended default min,max linear rescale range")
     unit: str = Field(default="dimensionless", description="Physical unit of measurement")
     description: str = Field(..., description="Physical definition and hazard monitoring utility")
+    is_differenced: bool = Field(default=False, description="Whether index requires multi-temporal pre/post scene differencing")
+    requires_thermal: bool = Field(default=False, description="Whether index requires thermal infrared band (e.g. Landsat Band 10)")
+    requires_rededge: bool = Field(default=False, description="Whether index requires red-edge bands (e.g. Sentinel-2 Band 5)")
+
+    def parse_rescale(self) -> Tuple[float, float]:
+        """Parses default rescale string into numeric (min, max) tuple."""
+        try:
+            parts = [float(p.strip()) for p in self.default_rescale.split(",")]
+            return (parts[0], parts[1])
+        except Exception:
+            return (-1.0, 1.0)
 
 class ColormapMetadata(BaseModel):
     """Raster colormap palette metadata matching dynamic XYZ tile server capabilities."""
@@ -154,7 +168,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.VIRIDIS,
         default_rescale="-0.1,0.5",
         unit="dimensionless",
-        description="Quantifies chlorophyll-a concentration and microcystin bloom risk in inland reservoirs."
+        description="Quantifies chlorophyll-a concentration and microcystin bloom risk in inland reservoirs.",
+        requires_rededge=True
     ),
     "nbr": SpectralIndexMetadata(
         key=SpectralIndex.NBR,
@@ -202,7 +217,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.MAGMA,
         default_rescale="10.0,45.0",
         unit="°C",
-        description="Calibrated radiometric surface skin temperature in degrees Celsius from thermal infrared."
+        description="Calibrated radiometric surface skin temperature in degrees Celsius from thermal infrared.",
+        requires_thermal=True
     ),
     "rgb": SpectralIndexMetadata(
         key=SpectralIndex.RGB,
@@ -226,7 +242,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.TURBO,
         default_rescale="-0.2,0.8",
         unit="dimensionless",
-        description="Differenced NBR assessing fire severity and biomass loss between pre- and post-fire scenes."
+        description="Differenced NBR assessing fire severity and biomass loss between pre- and post-fire scenes.",
+        is_differenced=True
     ),
     "rdnbr": SpectralIndexMetadata(
         key=SpectralIndex.RDNBR,
@@ -238,7 +255,8 @@ SPECTRAL_INDICES_METADATA: Dict[str, SpectralIndexMetadata] = {
         default_colormap=TileColormap.TURBO,
         default_rescale="-0.5,1.5",
         unit="dimensionless",
-        description="Relative differenced NBR normalized by pre-fire canopy density for steep terrain assessment."
+        description="Relative differenced NBR normalized by pre-fire canopy density for steep terrain assessment.",
+        is_differenced=True
     ),
 }
 
@@ -270,6 +288,103 @@ def get_colormap_metadata(colormap: Union[str, TileColormap]) -> Optional[Colorm
 def list_colormaps() -> List[ColormapMetadata]:
     """Return all supported dynamic tile colormap metadata specifications."""
     return list(COLORMAPS_METADATA.values())
+
+def parse_rescale(rescale: Union[str, List[float], Tuple[float, float], None], default: Tuple[float, float] = (-1.0, 1.0)) -> Tuple[float, float]:
+    """Parses a comma-separated rescale string (e.g. "-0.2,0.6") or sequence into a numeric (min, max) tuple.
+    Parity implementation with parseRescale() in gios-react/src/config/constants.js.
+    """
+    if rescale is None:
+        return default
+    if isinstance(rescale, (list, tuple)) and len(rescale) == 2:
+        try:
+            p0, p1 = float(rescale[0]), float(rescale[1])
+            if not (math.isnan(p0) or math.isnan(p1)):
+                return (p0, p1)
+        except Exception:
+            return default
+    if isinstance(rescale, str):
+        try:
+            parts = [float(p.strip()) for p in rescale.split(",")]
+            if len(parts) == 2 and not (math.isnan(parts[0]) or math.isnan(parts[1])):
+                return (parts[0], parts[1])
+        except Exception:
+            pass
+    return default
+
+def validate_spectral_index(index: Union[str, SpectralIndex, None], default: SpectralIndex = SpectralIndex.RGB) -> SpectralIndex:
+    """Safely validates and normalizes a spectral index string or enum with fallback default."""
+    if isinstance(index, SpectralIndex):
+        return index
+    if not index or not isinstance(index, str):
+        return default
+    try:
+        return SpectralIndex(index.lower().strip())
+    except ValueError:
+        return default
+
+def validate_colormap(colormap: Union[str, TileColormap, None], default: TileColormap = TileColormap.SPECTRAL) -> TileColormap:
+    """Safely validates and normalizes a tile colormap string or enum with fallback default."""
+    if isinstance(colormap, TileColormap):
+        return colormap
+    if not colormap or not isinstance(colormap, str):
+        return default
+    try:
+        return TileColormap(colormap.lower().strip())
+    except ValueError:
+        return default
+
+class SatelliteCollectionMetadata(BaseModel):
+    """Metadata specification for supported satellite and aerial imagery collections."""
+    id: SatelliteCollection = Field(..., description="Collection identifier enum")
+    label: str = Field(..., description="Descriptive collection name")
+    description: str = Field(..., description="Sensor characteristics and ground resolution")
+    resolution_m: float = Field(..., description="Spatial resolution in meters")
+    revisit_days: Optional[float] = Field(default=None, description="Typical temporal revisit period in days")
+
+SATELLITE_COLLECTIONS_METADATA: Dict[str, SatelliteCollectionMetadata] = {
+    "sentinel-2-l2a": SatelliteCollectionMetadata(
+        id=SatelliteCollection.SENTINEL_2,
+        label="Sentinel-2 MSI Level-2A (ESA / 10m-20m)",
+        description="Multi-spectral surface reflectance with 5-day revisit cycle.",
+        resolution_m=10.0,
+        revisit_days=5.0
+    ),
+    "landsat-c2-l2": SatelliteCollectionMetadata(
+        id=SatelliteCollection.LANDSAT_C2_L2,
+        label="Landsat 8/9 Collection 2 Level-2 (USGS / 30m)",
+        description="Multi-spectral and thermal infrared surface temperature.",
+        resolution_m=30.0,
+        revisit_days=16.0
+    ),
+    "drone-ortho": SatelliteCollectionMetadata(
+        id=SatelliteCollection.DRONE_ORTHO,
+        label="High-Resolution UAS Orthomosaic (<3cm GSD)",
+        description="Centimeter-scale drone survey photogrammetry Cloud-Optimized GeoTIFF.",
+        resolution_m=0.028,
+        revisit_days=None
+    )
+}
+
+def get_satellite_collection_metadata(collection: Union[str, SatelliteCollection]) -> Optional[SatelliteCollectionMetadata]:
+    """Look up metadata specification for an imagery collection."""
+    key = collection.value if hasattr(collection, "value") else str(collection).lower().strip()
+    return SATELLITE_COLLECTIONS_METADATA.get(key)
+
+def list_satellite_collections() -> List[SatelliteCollectionMetadata]:
+    """Return all supported satellite and drone collection metadata specifications."""
+    return list(SATELLITE_COLLECTIONS_METADATA.values())
+
+class MapViewportConfig(BaseModel):
+    """Standardized map viewport configuration and zoom thresholds."""
+    center: Tuple[float, float] = Field(default=(37.0582, -121.0744), description="Center coordinates [lat, lng]")
+    default_zoom: int = Field(default=13, ge=0, le=24, description="Default map zoom level")
+    macro_zoom: int = Field(default=13, ge=0, le=24, description="Macro regional satellite zoom level (10m)")
+    micro_zoom: int = Field(default=19, ge=0, le=24, description="Micro drone inspection zoom level (2.8cm)")
+    min_zoom: int = Field(default=2, ge=0, le=24, description="Minimum allowable zoom level")
+    max_zoom: int = Field(default=24, ge=0, le=24, description="Maximum map zoom level")
+    max_native_zoom: int = Field(default=22, ge=0, le=24, description="Maximum native raster tile zoom level")
+
+DEFAULT_MAP_VIEWPORT_CONFIG = MapViewportConfig()
 
 API_ROUTE_CONTRACTS: Dict[str, str] = {
     "health": "/health",
@@ -305,6 +420,18 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "iot_data": "/api/v1/iot/data",
 }
 
+def format_api_route(route_name: str, **kwargs) -> str:
+    """Format a canonical API route contract path with dynamic parameter substitutions.
+    
+    Example:
+        format_api_route("event_detail", event_id="EVT-01") -> "/api/v1/events/EVT-01"
+        format_api_route("tiles_dynamic", collection="sentinel-2-l2a", item_id="S2A_123", z=12, x=100, y=200)
+    """
+    if route_name not in API_ROUTE_CONTRACTS:
+        raise KeyError(f"Unknown API route contract '{route_name}'. Registered: {list(API_ROUTE_CONTRACTS.keys())}")
+    template = API_ROUTE_CONTRACTS[route_name]
+    return template.format(**kwargs)
+
 # ============================================================================
 # CONTRACT 1: DYNAMIC XYZ TILE SERVER SCHEMAS
 # ============================================================================
@@ -321,6 +448,48 @@ class DynamicTileParams(BaseModel):
     colormap: Optional[TileColormap] = Field(default=TileColormap.SPECTRAL, description="Colormap palette name")
     pre: Optional[str] = Field(default=None, description="Pre-event baseline date for differenced burn severity tiles (YYYY-MM-DD)")
     post: Optional[str] = Field(default=None, description="Post-event assessment date for differenced burn severity tiles (YYYY-MM-DD)")
+
+    def get_rescale_bounds(self) -> Tuple[float, float]:
+        """Resolves active (min, max) rescale bounds from query params or index defaults."""
+        if self.rescale:
+            return parse_rescale(self.rescale, default=(-1.0, 1.0))
+        meta = get_spectral_index_metadata(self.index)
+        if meta:
+            return meta.parse_rescale()
+        return (0.0, 1.0) if self.index == SpectralIndex.RGB else (-1.0, 1.0)
+
+    def get_colormap_name(self) -> str:
+        """Returns the effective colormap palette string."""
+        if self.colormap:
+            return self.colormap.value if hasattr(self.colormap, "value") else str(self.colormap)
+        meta = get_spectral_index_metadata(self.index)
+        if meta and meta.default_colormap:
+            return meta.default_colormap.value
+        return "spectral"
+
+    def to_query_params(self) -> Dict[str, str]:
+        """Convert dynamic tile parameters into URL query parameters dictionary."""
+        params: Dict[str, str] = {}
+        if self.index:
+            params["index"] = self.index.value if hasattr(self.index, "value") else str(self.index)
+        if self.rescale:
+            params["rescale"] = str(self.rescale)
+        if self.colormap:
+            params["colormap"] = self.colormap.value if hasattr(self.colormap, "value") else str(self.colormap)
+        if self.pre:
+            params["pre"] = str(self.pre)
+        if self.post:
+            params["post"] = str(self.post)
+        return params
+
+    def build_tile_url(self, base_prefix: str = "/api/v1") -> str:
+        """Constructs the canonical tile path with query parameters."""
+        path = f"{base_prefix}/tiles/{self.collection}/{self.item_id}/{self.z}/{self.x}/{self.y}.png"
+        qp = self.to_query_params()
+        if qp:
+            from urllib.parse import urlencode
+            return f"{path}?{urlencode(qp)}"
+        return path
 
 # ============================================================================
 # CONTRACT 2: USGS FIREMON PRE/POST DIFFERENCED BURN SEVERITY SCHEMAS
@@ -357,43 +526,59 @@ FIREMON_THRESHOLDS: List[Dict[str, Any]] = [
         "category": "High Severity",
         "min_dnbr": 0.660,
         "color": "#7f0000",
+        "badge_class": "bg-red-950/80 text-red-300 border-red-800",
+        "badgeClass": "bg-red-950/80 text-red-300 border-red-800",
         "description": "Deep canopy mortality, total ground char, high post-fire erosion susceptibility."
     },
     {
         "category": "Moderate-High Severity",
         "min_dnbr": 0.440,
         "color": "#d7301f",
+        "badge_class": "bg-orange-950/80 text-orange-300 border-orange-800",
+        "badgeClass": "bg-orange-950/80 text-orange-300 border-orange-800",
         "description": "Substantial canopy scorched, understory consumed."
     },
     {
         "category": "Moderate-Low Severity",
         "min_dnbr": 0.270,
         "color": "#fc8d59",
+        "badge_class": "bg-amber-950/80 text-amber-300 border-amber-800",
+        "badgeClass": "bg-amber-950/80 text-amber-300 border-amber-800",
         "description": "Mixed surface fire, light scorch, localized duff consumption."
     },
     {
         "category": "Low Severity",
         "min_dnbr": 0.100,
         "color": "#fdbb84",
+        "badge_class": "bg-yellow-950/80 text-yellow-300 border-yellow-800",
+        "badgeClass": "bg-yellow-950/80 text-yellow-300 border-yellow-800",
         "description": "Surface char on litter, minimal crown or overstory scorch."
     },
     {
         "category": "Unburned / Low Change",
         "min_dnbr": -0.100,
         "color": "#2ca25f",
+        "badge_class": "bg-emerald-950/80 text-emerald-300 border-emerald-800",
+        "badgeClass": "bg-emerald-950/80 text-emerald-300 border-emerald-800",
         "description": "No detectable fire damage or enhanced post-event vegetation regrowth."
     },
 ]
 
-def classify_dnbr(dnbr: Optional[float]) -> Dict[str, Any]:
+def classify_dnbr(dnbr: Any) -> Dict[str, Any]:
     """Classifies a scalar delta-NBR value according to USGS FIREMON standards.
     Parity implementation with frontend classifyDnbr() in constants.js.
     """
-    if dnbr is None or (isinstance(dnbr, (float, int)) and math.isnan(dnbr)):
+    if dnbr is None:
         return FIREMON_THRESHOLDS[-1]
-    for level in FIREMON_THRESHOLDS:
-        if dnbr >= level["min_dnbr"]:
-            return level
+    try:
+        val = float(dnbr)
+        if math.isnan(val) or not math.isfinite(val):
+            return FIREMON_THRESHOLDS[-1]
+        for level in FIREMON_THRESHOLDS:
+            if val >= level["min_dnbr"]:
+                return level
+    except (ValueError, TypeError):
+        pass
     return FIREMON_THRESHOLDS[-1]
 
 
@@ -418,6 +603,19 @@ class BurnSeverityResponse(BaseModel):
     mean_nbr: Optional[float] = Field(default=None, description="Legacy mean single-date NBR")
     timestamp: Optional[str] = Field(default=None, description="Processing timestamp (ISO 8601)")
 
+    @staticmethod
+    def build_tile_url_template(pre_date: Optional[str] = None, post_date: Optional[str] = None, base_prefix: str = "/api/v1") -> str:
+        """Constructs the canonical XYZ tile URL template for wildfire differencing."""
+        base = f"{base_prefix}/tiles/wildfire/dnbr/{{z}}/{{x}}/{{y}}.png"
+        query = []
+        if pre_date:
+            query.append(f"pre={pre_date}")
+        if post_date:
+            query.append(f"post={post_date}")
+        if query:
+            return f"{base}?{'&'.join(query)}"
+        return base
+
 # ============================================================================
 # CONTRACT 3: INTERACTIVE PIXEL PROBE SCHEMAS
 # ============================================================================
@@ -426,6 +624,16 @@ class PixelCoordinates(BaseModel):
     """Geographic point coordinates for coordinate probing."""
     latitude: float = Field(..., description="Latitude coordinate in WGS84")
     longitude: float = Field(..., description="Longitude coordinate in WGS84")
+
+    @property
+    def lat(self) -> float:
+        """Alias for latitude matching frontend coordinate properties."""
+        return self.latitude
+
+    @property
+    def lng(self) -> float:
+        """Alias for longitude matching frontend coordinate properties."""
+        return self.longitude
 
 class ClimatologicalContext(BaseModel):
     """Climatological baseline context and anomaly diagnostics for a point coordinate."""
@@ -485,6 +693,17 @@ class ZonalStatsRealResponse(BaseModel):
     statistics: ZonalDistributionStats = Field(..., description="Parametric and non-parametric distribution statistics")
     histogram: ZonalHistogram = Field(..., description="Binned frequency distribution")
 
+    @property
+    def total_pixels(self) -> int:
+        """Total pixels within the analyzed polygon geometry (valid + masked)."""
+        return self.valid_pixels + self.cloud_covered_pixels
+
+    @property
+    def cloud_fraction(self) -> float:
+        """Fraction of polygon area obscured by clouds or invalid mask."""
+        tot = self.total_pixels
+        return (self.cloud_covered_pixels / tot) if tot > 0 else 0.0
+
 # ============================================================================
 # DRONE ORTHOMOSAIC INGESTION & MISSION SCHEMAS
 # ============================================================================
@@ -507,6 +726,11 @@ class DroneOrthomosaicMetadata(BaseModel):
     is_cog: bool = Field(default=True, description="Whether raster is Cloud-Optimized GeoTIFF with internal pyramids")
     status: str = Field(default="READY", description="Processing status (READY, PROCESSING, FAILED)")
     upload_timestamp: Optional[str] = Field(default=None, description="Upload and ingestion timestamp (ISO 8601)")
+
+    def contains_point(self, lat: float, lng: float) -> bool:
+        """Determines if a geographic point (lat, lng) falls within the orthomosaic bounds."""
+        min_lon, min_lat, max_lon, max_lat = self.bounds
+        return min_lat <= lat <= max_lat and min_lon <= lng <= max_lon
 
 class DroneMissionResponse(BaseModel):
     """Active or registered drone mission response."""

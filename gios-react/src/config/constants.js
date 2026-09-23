@@ -147,14 +147,14 @@ export const SPECTRAL_INDICES = [
  * Colormaps supported by the dynamic XYZ raster tile renderer.
  */
 export const COLORMAPS = [
-  { key: 'spectral', label: 'Spectral (Moisture & Hazard Detection)' },
-  { key: 'viridis', label: 'Viridis (Vegetation & Biophysical Health)' },
-  { key: 'turbo', label: 'Turbo (Thermal & High-Contrast Severity)' },
-  { key: 'rdylbu', label: 'Red-Yellow-Blue (Diverging Water & Drought)' },
-  { key: 'terrain', label: 'Terrain (Topography & Physical Elevation)' },
-  { key: 'magma', label: 'Magma (Thermal Infrared & Radiation)' },
-  { key: 'inferno', label: 'Inferno (High Radiance / Active Fire)' },
-  { key: 'cividis', label: 'Cividis (Colorblind Accessible)' }
+  { key: 'spectral', label: 'Spectral (Moisture & Hazard Detection)', description: 'High-contrast diverging palette for soil moisture and seepage' },
+  { key: 'viridis', label: 'Viridis (Vegetation & Biophysical Health)', description: 'Perceptually uniform sequential palette for vegetation vigor' },
+  { key: 'turbo', label: 'Turbo (Thermal & High-Contrast Severity)', description: 'Rainbow alternative with improved perceptual linearity for wildfire and inundation' },
+  { key: 'rdylbu', label: 'Red-Yellow-Blue (Diverging Water & Drought)', description: 'Diverging palette for drought stress and hydrological anomalies' },
+  { key: 'terrain', label: 'Terrain (Topography & Physical Elevation)', description: 'Earth-tone palette suitable for digital elevation models and bathymetry' },
+  { key: 'magma', label: 'Magma (Thermal Infrared & Radiation)', description: 'High-radiance dark-to-bright palette for Land Surface Temperature' },
+  { key: 'inferno', label: 'Inferno (High Radiance / Active Fire)', description: 'Saturated thermal palette for high-intensity wildfire and hotspot tracking' },
+  { key: 'cividis', label: 'Cividis (Colorblind Accessible)', description: 'Color-vision-deficiency optimized palette for universal accessibility' }
 ];
 
 /**
@@ -164,17 +164,23 @@ export const SATELLITE_COLLECTIONS = [
   {
     id: 'sentinel-2-l2a',
     label: 'Sentinel-2 MSI Level-2A (ESA / 10m-20m)',
-    description: 'Multi-spectral surface reflectance with 5-day revisit cycle.'
+    description: 'Multi-spectral surface reflectance with 5-day revisit cycle.',
+    resolution_m: 10.0,
+    revisit_days: 5.0
   },
   {
     id: 'landsat-c2-l2',
     label: 'Landsat 8/9 Collection 2 Level-2 (USGS / 30m)',
-    description: 'Multi-spectral and thermal infrared surface temperature.'
+    description: 'Multi-spectral and thermal infrared surface temperature.',
+    resolution_m: 30.0,
+    revisit_days: 16.0
   },
   {
     id: 'drone-ortho',
     label: 'High-Resolution UAS Orthomosaic (<3cm GSD)',
-    description: 'Centimeter-scale drone survey photogrammetry Cloud-Optimized GeoTIFF.'
+    description: 'Centimeter-scale drone survey photogrammetry Cloud-Optimized GeoTIFF.',
+    resolution_m: 0.028,
+    revisit_days: null
   }
 ];
 
@@ -268,11 +274,12 @@ export const FIREMON_SEVERITY_LEVELS = [
  * @returns {typeof FIREMON_SEVERITY_LEVELS[0]} Matching severity level configuration
  */
 export const classifyDnbr = (dnbr) => {
-  if (dnbr === null || dnbr === undefined || isNaN(dnbr)) {
+  if (dnbr === null || dnbr === undefined || isNaN(Number(dnbr)) || !isFinite(Number(dnbr))) {
     return FIREMON_SEVERITY_LEVELS[FIREMON_SEVERITY_LEVELS.length - 1];
   }
+  const val = Number(dnbr);
   for (const level of FIREMON_SEVERITY_LEVELS) {
-    if (dnbr >= level.minDnbr) {
+    if (val >= level.minDnbr) {
       return level;
     }
   }
@@ -302,6 +309,17 @@ export const getColormapMetadata = (key) => {
 };
 
 /**
+ * Retrieves metadata for a satellite/aerial collection by ID.
+ * 
+ * @param {string} id - Collection identifier (e.g. 'sentinel-2-l2a', 'landsat-c2-l2')
+ * @returns {typeof SATELLITE_COLLECTIONS[0]|undefined}
+ */
+export const getSatelliteCollectionMetadata = (id) => {
+  if (!id) return undefined;
+  return SATELLITE_COLLECTIONS.find((col) => col.id.toLowerCase() === id.toLowerCase());
+};
+
+/**
  * Retrieves all registered spectral indices metadata.
  * 
  * @returns {typeof SPECTRAL_INDICES}
@@ -316,6 +334,64 @@ export const listSpectralIndices = () => SPECTRAL_INDICES;
 export const listColormaps = () => COLORMAPS;
 
 /**
+ * Retrieves all supported satellite and drone collections metadata.
+ * 
+ * @returns {typeof SATELLITE_COLLECTIONS}
+ */
+export const listSatelliteCollections = () => SATELLITE_COLLECTIONS;
+
+/**
+ * Parses a comma-separated rescale range string (e.g. "-0.2,0.6") or array into a [min, max] numeric pair.
+ * 
+ * @param {string|number[]|null|undefined} rescale - Formatted rescale string or array
+ * @param {[number, number]} [defaultValue=[-1.0, 1.0]] - Fallback default
+ * @returns {[number, number]} Parsed min and max numeric values
+ */
+export const parseRescale = (rescale, defaultValue = [-1.0, 1.0]) => {
+  if (!rescale) return defaultValue;
+  if (Array.isArray(rescale) && rescale.length === 2) {
+    const min = parseFloat(rescale[0]);
+    const max = parseFloat(rescale[1]);
+    if (!isNaN(min) && !isNaN(max)) return [min, max];
+    return defaultValue;
+  }
+  if (typeof rescale !== 'string') return defaultValue;
+  const parts = rescale.split(',').map((p) => parseFloat(p.trim()));
+  if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+    return [parts[0], parts[1]];
+  }
+  return defaultValue;
+};
+
+/**
+ * Validates and normalizes a spectral index key with fallback.
+ * 
+ * @param {string} [indexKey] - Spectral index key (e.g. 'ndmi', 'ndvi')
+ * @param {string} [defaultKey='rgb'] - Fallback spectral index
+ * @returns {string} Validated spectral index key
+ */
+export const validateSpectralIndex = (indexKey, defaultKey = 'rgb') => {
+  if (!indexKey || typeof indexKey !== 'string') return defaultKey;
+  const normalized = indexKey.toLowerCase().trim();
+  const exists = SPECTRAL_INDICES.some((idx) => idx.key === normalized);
+  return exists ? normalized : defaultKey;
+};
+
+/**
+ * Validates and normalizes a colormap palette key with fallback.
+ * 
+ * @param {string} [colormapKey] - Colormap key (e.g. 'spectral', 'viridis')
+ * @param {string} [defaultKey='spectral'] - Fallback colormap key
+ * @returns {string} Validated colormap key
+ */
+export const validateColormap = (colormapKey, defaultKey = 'spectral') => {
+  if (!colormapKey || typeof colormapKey !== 'string') return defaultKey;
+  const normalized = colormapKey.toLowerCase().trim();
+  const exists = COLORMAPS.some((cm) => cm.key === normalized);
+  return exists ? normalized : defaultKey;
+};
+
+/**
  * Map Viewport Defaults.
  */
 export const DEFAULT_MAP_CONFIG = {
@@ -327,6 +403,8 @@ export const DEFAULT_MAP_CONFIG = {
   maxZoom: 24,
   maxNativeZoom: 22
 };
+
+export const DEFAULT_MAP_VIEWPORT_CONFIG = DEFAULT_MAP_CONFIG;
 
 /**
  * Geotechnical and environmental hazard categories matching backend HazardCategory enum.
@@ -411,3 +489,42 @@ export const API_ENDPOINTS = {
   IOT_INGEST: '/api/v1/iot/ingest',
   IOT_DATA: '/api/v1/iot/data'
 };
+
+/**
+ * Formats an API endpoint path by name with dynamic parameters.
+ * Parity implementation with format_api_route() in app/models/schemas.py.
+ * 
+ * @param {string} endpointKey - Key corresponding to API_ROUTE_CONTRACTS / API_ENDPOINTS
+ * @param {Record<string, any>} [params={}] - Interpolation parameters
+ * @returns {string} Formatted endpoint URL path
+ */
+export const formatApiRoute = (endpointKey, params = {}) => {
+  if (!endpointKey || typeof endpointKey !== 'string') {
+    throw new Error('endpointKey must be a non-empty string');
+  }
+  const normalizedKey = endpointKey.toUpperCase();
+  const endpoint = API_ENDPOINTS[normalizedKey] || API_ENDPOINTS[endpointKey];
+  if (!endpoint) {
+    throw new Error(`Unknown API endpoint key: ${endpointKey}`);
+  }
+  if (typeof endpoint === 'function') {
+    switch (normalizedKey) {
+      case 'EVENT_DETAIL':
+        return endpoint(params.id || params.event_id);
+      case 'TILES_DYNAMIC':
+        return endpoint(params.collection, params.itemId || params.item_id, params.z, params.x, params.y);
+      case 'WILDFIRE_DNBR_TILE':
+        return endpoint(params.z, params.x, params.y);
+      case 'DRONE_TILE':
+        return endpoint(params.orthoId || params.ortho_id, params.z, params.x, params.y);
+      case 'SPATIAL_LAYERS':
+        return endpoint(params.layerType || params.layer_id || 'critical_infrastructure');
+      case 'INTEGRATION_USGS':
+        return endpoint(params.siteId || params.site_id);
+      default:
+        return endpoint(params);
+    }
+  }
+  return endpoint;
+};
+

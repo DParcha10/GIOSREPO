@@ -26,6 +26,8 @@ def _calculate_geometry_area_ha(geometry: Optional[Dict[str, Any]]) -> float:
     try:
         s = shape(geometry)
         c = s.centroid
+        if abs(c.x) > 180.0 or abs(c.y) > 90.0:
+            return round(s.area / 10000.0, 2)
         zone = int((c.x + 180) / 6) + 1
         hemisphere = "north" if c.y >= 0 else "south"
         proj_utm = pyproj.CRS(f"+proj=utm +zone={zone} +{hemisphere} +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
@@ -131,7 +133,7 @@ def analyze_burn_severity(req: BurnSeverityApiRequest):
             )
         )
 
-    tile_template = f"/api/v1/tiles/wildfire/dnbr/{{z}}/{{x}}/{{y}}.png?pre={pre_date}&post={post_date}"
+    tile_template = BurnSeverityResponse.build_tile_url_template(pre_date=pre_date, post_date=post_date)
 
     return BurnSeverityResponse(
         aoi_id=req.aoi_id or "AOI-DEFAULT",

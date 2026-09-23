@@ -4,7 +4,10 @@ import {
 } from 'lucide-react';
 import { 
   SPECTRAL_INDICES as BASE_INDICES, 
-  COLORMAPS as BASE_COLORMAPS 
+  COLORMAPS as BASE_COLORMAPS,
+  parseRescale,
+  validateSpectralIndex,
+  validateColormap
 } from '../config/constants';
 
 const COLORMAP_GRADIENTS = {
@@ -27,9 +30,7 @@ export const COLORMAP_PALETTES = BASE_COLORMAPS.map(c => ({
 }));
 
 export const SPECTRAL_INDICES = BASE_INDICES.map(i => {
-  const parts = (i.defaultRescale || '-0.2,0.6').split(',').map(Number);
-  const defMin = isNaN(parts[0]) ? -0.2 : parts[0];
-  const defMax = isNaN(parts[1]) ? 0.6 : parts[1];
+  const [defMin, defMax] = parseRescale(i.defaultRescale, [-0.2, 0.6]);
   return {
     id: i.key,
     key: i.key,
@@ -55,8 +56,10 @@ export default function SpectralStudioControls({
   onOpacityChange,
   isFloating = false
 }) {
-  const currentIdxMeta = SPECTRAL_INDICES.find(i => i.id === activeBand) || SPECTRAL_INDICES[0];
-  const currentColormapMeta = COLORMAP_PALETTES.find(c => c.id === activeColormap) || COLORMAP_PALETTES[0];
+  const validatedBand = validateSpectralIndex(activeBand, 'ndmi');
+  const validatedColormap = validateColormap(activeColormap, 'spectral');
+  const currentIdxMeta = SPECTRAL_INDICES.find(i => i.id === validatedBand) || SPECTRAL_INDICES[0];
+  const currentColormapMeta = COLORMAP_PALETTES.find(c => c.id === validatedColormap) || COLORMAP_PALETTES[0];
 
   const handleAutoStretch = () => {
     if (onRescaleChange && currentIdxMeta) {

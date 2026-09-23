@@ -6,6 +6,13 @@ from scipy.ndimage import binary_dilation
 
 class PreprocessingService:
     @staticmethod
+    def _get_spatial_dilation_structure(ndim: int) -> np.ndarray:
+        """Returns morphological structuring element operating strictly on spatial Y, X dimensions."""
+        if ndim <= 2:
+            return np.ones((3, 3), dtype=bool)
+        return np.ones((1,) * (ndim - 2) + (3, 3), dtype=bool)
+
+    @staticmethod
     def mask_landsat_qa(dataset: Any, dilation_iterations: int = 1):
         """Bitwise mask for Landsat Collection 2 QA_PIXEL with morphological dilation.
         
@@ -20,7 +27,7 @@ class PreprocessingService:
         # Check if dataset is xarray.Dataset
         if hasattr(dataset, "data_vars"):
             qa_name = None
-            for name in ["qa_pixel", "QA_PIXEL", "qa"]:
+            for name in ["qa_pixel", "QA_PIXEL", "qa", "QA", "pixel_qa", "PIXEL_QA"]:
                 if name in dataset:
                     qa_name = name
                     break
@@ -34,26 +41,36 @@ class PreprocessingService:
                 raw_mask = ((qa_int & bit_mask) != 0) | np.isnan(qa)
                 del qa_clean
                 del qa_int
+                del qa
                 if not np.any(raw_mask):
                     # Zero clouds or invalid pixels in the scene: fast bypass without allocating memory
                     del raw_mask
                     return dataset
                 if dilation_iterations > 0:
-                    struct = np.ones((1, 3, 3), dtype=bool) if raw_mask.ndim == 3 else np.ones((3, 3), dtype=bool)
+                    struct = PreprocessingService._get_spatial_dilation_structure(raw_mask.ndim)
                     dilated_mask = binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
                 else:
                     dilated_mask = raw_mask
                 del raw_mask
                 
+                qa_metadata_vars = {"qa_pixel", "qa", "pixel_qa", "spatial_ref", "crs", "grid_mapping"}
                 for var in list(dataset.data_vars):
-                    if var != qa_name:
-                        # Memory-conscious: in-place array assignment avoids xarray where() float64 upcasting and extra copies
-                        arr = dataset[var].values
-                        if not arr.flags.writeable or arr.dtype != np.float32:
-                            arr = arr.astype(np.float32, copy=True)
+                    if var.lower() in qa_metadata_vars or dataset[var].ndim < 2 or var == qa_name:
+                        continue
+                    # Memory-conscious: in-place array assignment avoids xarray where() float64 upcasting and extra copies
+                    arr = dataset[var].values
+                    if not arr.flags.writeable or arr.dtype != np.float32:
+                        arr = arr.astype(np.float32, copy=True)
+                    if arr.shape == dilated_mask.shape:
                         arr[dilated_mask] = np.nan
-                        dataset[var] = (dataset[var].dims, arr)
+                    elif arr.ndim > dilated_mask.ndim and arr.shape[-dilated_mask.ndim:] == dilated_mask.shape:
+                        arr[..., dilated_mask] = np.nan
+                    elif arr.ndim == dilated_mask.ndim + 1 and arr.shape[1:] == dilated_mask.shape:
+                        arr[:, dilated_mask] = np.nan
+                    dataset[var] = (dataset[var].dims, arr)
                 del dilated_mask
+                if hasattr(dataset, "attrs"):
+                    dataset.attrs["cloud_shadow_masked"] = True
                 gc.collect()
             return dataset
         
@@ -67,15 +84,18 @@ class PreprocessingService:
                     bit_mask |= (1 << b)
                 raw_mask = (qa_arr & bit_mask) != 0
                 if dilation_iterations > 0:
-                    struct = np.ones((1, 3, 3), dtype=bool) if raw_mask.ndim == 3 else np.ones((3, 3), dtype=bool)
+                    struct = PreprocessingService._get_spatial_dilation_structure(raw_mask.ndim)
                     dilated_mask = binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
                 else:
                     dilated_mask = raw_mask
                 for k, v in dataset.items():
-                    if k not in ["qa_pixel", "QA_PIXEL", "qa"]:
+                    if k not in ["qa_pixel", "QA_PIXEL", "qa", "QA", "pixel_qa", "PIXEL_QA"]:
                         arr = np.array(v, dtype=np.float32, copy=True)
                         arr[dilated_mask] = np.nan
                         dataset[k] = arr
+                del raw_mask
+                del dilated_mask
+                del qa_arr
             return dataset
         
         elif isinstance(dataset, np.ndarray):
@@ -84,7 +104,7 @@ class PreprocessingService:
                 bit_mask |= (1 << b)
             raw_mask = (dataset.astype(np.uint16) & bit_mask) != 0
             if dilation_iterations > 0:
-                struct = np.ones((1, 3, 3), dtype=bool) if dataset.ndim == 3 else np.ones((3, 3), dtype=bool)
+                struct = PreprocessingService._get_spatial_dilation_structure(dataset.ndim)
                 return binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
             return raw_mask
 
@@ -107,57 +127,70 @@ class PreprocessingService:
 
         if hasattr(dataset, "data_vars"):
             scl_name = None
-            for name in ["scl", "SCL"]:
+            for name in ["scl", "SCL", "scl_20m", "SCL_20M", "scl_60m"]:
                 if name in dataset:
                     scl_name = name
                     break
             if scl_name is not None:
                 scl = dataset[scl_name].values
                 raw_mask = np.isin(scl, list(invalid_classes)) | np.isnan(scl)
+                del scl
                 if not np.any(raw_mask):
                     # Zero clouds or invalid pixels in the scene: fast bypass without allocating memory
                     del raw_mask
                     return dataset
                 if dilation_iterations > 0:
-                    struct = np.ones((1, 3, 3), dtype=bool) if raw_mask.ndim == 3 else np.ones((3, 3), dtype=bool)
+                    struct = PreprocessingService._get_spatial_dilation_structure(raw_mask.ndim)
                     dilated_mask = binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
                 else:
                     dilated_mask = raw_mask
                 del raw_mask
                 
+                scl_metadata_vars = {"scl", "scl_20m", "scl_60m", "spatial_ref", "crs", "grid_mapping"}
                 for var in list(dataset.data_vars):
-                    if var != scl_name:
-                        # Memory-conscious: in-place array assignment avoids xarray where() float64 upcasting and extra copies
-                        arr = dataset[var].values
-                        if not arr.flags.writeable or arr.dtype != np.float32:
-                            arr = arr.astype(np.float32, copy=True)
+                    if var.lower() in scl_metadata_vars or dataset[var].ndim < 2 or var == scl_name:
+                        continue
+                    # Memory-conscious: in-place array assignment avoids xarray where() float64 upcasting and extra copies
+                    arr = dataset[var].values
+                    if not arr.flags.writeable or arr.dtype != np.float32:
+                        arr = arr.astype(np.float32, copy=True)
+                    if arr.shape == dilated_mask.shape:
                         arr[dilated_mask] = np.nan
-                        dataset[var] = (dataset[var].dims, arr)
+                    elif arr.ndim > dilated_mask.ndim and arr.shape[-dilated_mask.ndim:] == dilated_mask.shape:
+                        arr[..., dilated_mask] = np.nan
+                    elif arr.ndim == dilated_mask.ndim + 1 and arr.shape[1:] == dilated_mask.shape:
+                        arr[:, dilated_mask] = np.nan
+                    dataset[var] = (dataset[var].dims, arr)
                 del dilated_mask
+                if hasattr(dataset, "attrs"):
+                    dataset.attrs["cloud_shadow_masked"] = True
                 gc.collect()
             return dataset
 
         elif isinstance(dataset, dict):
-            scl = dataset.get("scl", dataset.get("SCL"))
+            scl = dataset.get("scl", dataset.get("SCL", dataset.get("scl_20m", dataset.get("SCL_20M"))))
             if scl is not None:
                 scl_arr = np.asarray(scl)
                 raw_mask = np.isin(scl_arr, list(invalid_classes))
                 if dilation_iterations > 0:
-                    struct = np.ones((1, 3, 3), dtype=bool) if raw_mask.ndim == 3 else np.ones((3, 3), dtype=bool)
+                    struct = PreprocessingService._get_spatial_dilation_structure(raw_mask.ndim)
                     dilated_mask = binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
                 else:
                     dilated_mask = raw_mask
                 for k, v in dataset.items():
-                    if k not in ["scl", "SCL"]:
+                    if k not in ["scl", "SCL", "scl_20m", "SCL_20M", "scl_60m"]:
                         arr = np.array(v, dtype=np.float32, copy=True)
                         arr[dilated_mask] = np.nan
                         dataset[k] = arr
+                del raw_mask
+                del dilated_mask
+                del scl_arr
             return dataset
 
         elif isinstance(dataset, np.ndarray):
             raw_mask = np.isin(dataset, list(invalid_classes))
             if dilation_iterations > 0:
-                struct = np.ones((1, 3, 3), dtype=bool) if dataset.ndim == 3 else np.ones((3, 3), dtype=bool)
+                struct = PreprocessingService._get_spatial_dilation_structure(dataset.ndim)
                 return binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
             return raw_mask
 
@@ -166,8 +199,8 @@ class PreprocessingService:
     @staticmethod
     def is_thermal_band(var_name: str) -> bool:
         """Determines if a band identifier represents a thermal infrared band."""
-        v = var_name.lower().strip()
-        return v in {"lwir11", "b10", "thermal", "band10", "lwir", "b11_landsat"} or "thermal" in v or "lwir" in v
+        v = str(var_name).lower().strip()
+        return v in {"lwir11", "b10", "b11", "thermal", "band10", "band11", "lwir", "b11_landsat"} or "thermal" in v or "lwir" in v
 
     @staticmethod
     def apply_landsat_calibration(
@@ -243,14 +276,19 @@ class PreprocessingService:
         dataset: Any,
         collection: str,
         processing_baseline: Optional[Union[float, str]] = None,
-        acquisition_date: Optional[str] = None
+        acquisition_date: Optional[str] = None,
+        is_thermal: bool = False
     ) -> Any:
         """Normalises surface reflectance to physical scale with distinct optical/thermal handling
         and Sentinel-2 PB 04.00+ offset subtraction.
         """
-        col_lower = collection.lower()
+        col_str = collection.value if hasattr(collection, "value") else str(collection)
+        col_lower = col_str.lower()
         is_landsat = "landsat" in col_lower
         is_sentinel = "sentinel" in col_lower
+
+        if hasattr(dataset, "attrs") and dataset.attrs.get("radiometrically_calibrated"):
+            return dataset
 
         pb = processing_baseline
         acq_date = acquisition_date
@@ -260,9 +298,10 @@ class PreprocessingService:
             if acq_date is None:
                 acq_date = dataset.attrs.get("datetime") or dataset.attrs.get("acquisition_date")
 
+        qa_names = {"qa_pixel", "scl", "qa", "pixel_qa", "scl_20m", "scl_60m", "spatial_ref", "crs", "grid_mapping"}
         if hasattr(dataset, "data_vars"):
             for var in list(dataset.data_vars):
-                if var.lower() in {"qa_pixel", "scl", "qa", "pixel_qa"}:
+                if var.lower() in qa_names or dataset[var].ndim < 2:
                     continue
                 if is_landsat:
                     is_therm = PreprocessingService.is_thermal_band(var)
@@ -282,17 +321,19 @@ class PreprocessingService:
                     )
                     dataset[var] = (dataset[var].dims, np.asarray(val, dtype=np.float32))
                     del val
+            if hasattr(dataset, "attrs"):
+                dataset.attrs["radiometrically_calibrated"] = True
             gc.collect()
             return dataset
 
         elif isinstance(dataset, dict):
             res = {}
             for k, v in dataset.items():
-                if k.lower() in {"qa_pixel", "scl", "qa", "pixel_qa"}:
+                if k.lower() in qa_names:
                     res[k] = v
                     continue
                 if is_landsat:
-                    if PreprocessingService.is_thermal_band(k):
+                    if PreprocessingService.is_thermal_band(k) or is_thermal:
                         res[k] = PreprocessingService.apply_landsat_calibration(v, is_thermal=True)
                     else:
                         res[k] = PreprocessingService.apply_landsat_calibration(v, is_thermal=False)
@@ -308,7 +349,7 @@ class PreprocessingService:
 
         elif isinstance(dataset, (np.ndarray, list, float, int)):
             if is_landsat:
-                return PreprocessingService.apply_landsat_calibration(dataset, is_thermal=False)
+                return PreprocessingService.apply_landsat_calibration(dataset, is_thermal=is_thermal)
             elif is_sentinel:
                 return PreprocessingService.apply_sentinel_offset(
                     dataset,

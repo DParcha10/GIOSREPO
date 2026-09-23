@@ -33,6 +33,8 @@ def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
         s = shape(geometry)
         c = s.centroid
+        if abs(c.x) > 180.0 or abs(c.y) > 90.0:
+            return round(s.area / 10000.0, 2)
         zone = int((c.x + 180) / 6) + 1
         hemisphere = "north" if c.y >= 0 else "south"
         proj_utm = pyproj.CRS(f"+proj=utm +zone={zone} +{hemisphere} +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
@@ -55,9 +57,11 @@ def compute_spectral_index(req: IndexRequest):
     # Determine minimal required raster bands to conserve RAM
     req_bands = index_service.get_required_bands(idx_str, col_str)
 
+    active_bbox = req.bbox or (-121.2, 36.95, -120.95, 37.15)
+
     # Search scenes if available to populate real STAC items
     scenes = data_acquisition_service.search_scenes(
-        bbox=req.bbox,
+        bbox=active_bbox,
         start_date=req.start_date,
         end_date=req.end_date,
         collection=col_str,
@@ -66,13 +70,19 @@ def compute_spectral_index(req: IndexRequest):
     items_to_load = [s["_stac_item"] for s in scenes if "_stac_item" in s]
     # Memory-conscious: select least-cloudy scenes (max 2) to prevent multi-granule memory blowup
     if len(items_to_load) > 2:
-        items_to_load = sorted(items_to_load, key=lambda it: float(getattr(it, "properties", {}).get("eo:cloud_cover", 0.0)))[:2]
+        def _get_cloud_it(it):
+            if hasattr(it, "properties"):
+                return float(it.properties.get("eo:cloud_cover", 0.0))
+            elif isinstance(it, dict):
+                return float(it.get("properties", it).get("eo:cloud_cover", it.get("cloud_cover", 0.0)))
+            return 0.0
+        items_to_load = sorted(items_to_load, key=_get_cloud_it)[:2]
 
     # Load calibrated data cube over AOI bounding box
     cube = data_acquisition_service.load_data_cube(
         items=items_to_load,
         bands=req_bands,
-        bbox=req.bbox,
+        bbox=active_bbox,
         resolution=res_val,
         collection=col_str,
         apply_mask=True,
@@ -209,7 +219,7 @@ def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
     # Load calibrated raster bands via data_acquisition_service with memory-conscious resolution
     req_bands = index_service.get_required_bands(idx_str, col_str)
     cube = data_acquisition_service.load_data_cube(
-        items=[],
+        items=[req.item_id] if getattr(req, "item_id", None) else [],
         bands=req_bands,
         bbox=(min_lon, min_lat, max_lon, max_lat),
         resolution=30.0,

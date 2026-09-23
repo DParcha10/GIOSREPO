@@ -14,29 +14,39 @@ from app.utils.cache import cache_manager
 from app.services.preprocessing import preprocessing_service
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+try:
+    import pystac_client.warnings
+    warnings.filterwarnings("ignore", category=pystac_client.warnings.DoesNotConformTo)
+except Exception:
+    pass
 
 logger = logging.getLogger(__name__)
 
 class DataAcquisitionService:
     BAND_MAP = {
         "sentinel-2-l2a": {
+            "coastal": "B01", "b01": "B01", "b1": "B01",
             "blue": "B02", "green": "B03", "red": "B04",
             "rededge": "B05", "re": "B05",
             "rededge1": "B05", "rededge2": "B06", "rededge3": "B07",
-            "nir": "B08", "swir1": "B11", "swir2": "B12", "scl": "SCL",
+            "nir": "B08", "nir08": "B08", "swir1": "B11", "swir16": "B11", "swir2": "B12", "swir22": "B12",
+            "scl": "SCL", "qa_pixel": "SCL", "qa": "SCL", "pixel_qa": "SCL",
             "b02": "B02", "b03": "B03", "b04": "B04",
             "b05": "B05", "b06": "B06", "b07": "B07",
-            "b08": "B08", "b8a": "B8A", "b11": "B11", "b12": "B12",
-            "b2": "B02", "b3": "B03", "b4": "B04", "b5": "B05", "b8": "B08"
+            "b08": "B08", "b8": "B08", "b8a": "B8A", "b08a": "B8A",
+            "b11": "B11", "b12": "B12",
+            "b2": "B02", "b3": "B03", "b4": "B04", "b5": "B05", "b6": "B06", "b7": "B07"
         },
         "landsat-c2-l2": {
-            "coastal": "coastal", "b1": "coastal",
+            "coastal": "coastal", "b1": "coastal", "b01": "coastal",
             "blue": "blue", "green": "green", "red": "red",
-            "nir": "nir08", "swir1": "swir16", "swir2": "swir22",
-            "thermal": "lwir11", "qa_pixel": "qa_pixel",
+            "nir": "nir08", "nir08": "nir08", "swir1": "swir16", "swir16": "swir16", "swir2": "swir22", "swir22": "swir22",
+            "thermal": "lwir11", "qa_pixel": "qa_pixel", "pixel_qa": "qa_pixel", "scl": "qa_pixel",
             "b2": "blue", "b3": "green", "b4": "red",
             "b5": "nir08", "b6": "swir16", "b7": "swir22",
-            "b10": "lwir11", "lwir": "lwir11", "qa": "qa_pixel"
+            "b02": "blue", "b03": "green", "b04": "red",
+            "b05": "nir08", "b06": "swir16", "b07": "swir22",
+            "b10": "lwir11", "b11": "lwir11", "lwir": "lwir11", "lwir11": "lwir11", "band10": "lwir11", "band11": "lwir11", "qa": "qa_pixel"
         }
     }
 
@@ -45,7 +55,7 @@ class DataAcquisitionService:
 
     def search_scenes(
         self,
-        bbox: Tuple[float, float, float, float],
+        bbox: Union[Tuple[float, float, float, float], List[float], str],
         start_date: str,
         end_date: str,
         collection: str = "sentinel-2-l2a",
@@ -53,6 +63,19 @@ class DataAcquisitionService:
         sign_assets: bool = True
     ) -> List[Dict[str, Any]]:
         """Searches Planetary Computer STAC catalog, signing asset URLs with SAS tokens."""
+        if isinstance(bbox, str):
+            try:
+                parts = [float(p.strip()) for p in bbox.split(",") if p.strip()]
+                if len(parts) == 4:
+                    bbox = tuple(parts)
+            except Exception:
+                pass
+        elif isinstance(bbox, list) and len(bbox) == 4:
+            try:
+                bbox = tuple(float(x) for x in bbox)
+            except Exception:
+                pass
+
         cache_key = {"bbox": bbox, "start": start_date, "end": end_date, "col": collection, "cloud": max_cloud, "sign": sign_assets}
         cached = cache_manager.get("stac_search", cache_key)
         if cached:
@@ -186,8 +209,30 @@ class DataAcquisitionService:
                     except Exception:
                         pass
                     stac_items_to_load.append(item_obj)
+            elif isinstance(it, str) and it.strip():
+                try:
+                    client = Client.open(self.catalog_url)
+                    stac_item = client.get_collection(collection).get_item(it.strip())
+                    if stac_item:
+                        pc.sign_inplace(stac_item)
+                        stac_items_to_load.append(stac_item)
+                except Exception as fetch_err:
+                    logger.warning("Could not fetch STAC item by ID %s: %s", it, fetch_err)
 
         # Normalize bbox to standard (min_lon, min_lat, max_lon, max_lat)
+        if isinstance(bbox, str):
+            try:
+                parts = [float(p.strip()) for p in bbox.split(",") if p.strip()]
+                if len(parts) == 4:
+                    bbox = tuple(parts)
+            except Exception:
+                pass
+        elif isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            try:
+                bbox = tuple(float(x) for x in bbox)
+            except Exception:
+                pass
+
         if bbox and len(bbox) == 4:
             b0, b1, b2, b3 = bbox
             if b0 == b2:
@@ -208,26 +253,34 @@ class DataAcquisitionService:
         if not active_bbox and len(stac_items_to_load) > 0:
             item_bbox = getattr(stac_items_to_load[0], "bbox", None)
             if item_bbox and len(item_bbox) == 4:
+                ib0, ib1, ib2, ib3 = item_bbox
+                if ib0 == ib2:
+                    ib0 -= 0.005
+                    ib2 += 0.005
+                if ib1 == ib3:
+                    ib1 -= 0.005
+                    ib3 += 0.005
                 active_bbox = (
-                    min(item_bbox[0], item_bbox[2]),
-                    min(item_bbox[1], item_bbox[3]),
-                    max(item_bbox[0], item_bbox[2]),
-                    max(item_bbox[1], item_bbox[3])
+                    min(ib0, ib2),
+                    min(ib1, ib3),
+                    max(ib0, ib2),
+                    max(ib1, ib3)
                 )
 
         if active_bbox:
             min_lon, min_lat, max_lon, max_lat = active_bbox
             if abs(min_lon) > 180.0 or abs(max_lon) > 180.0:
                 # Projected coordinates already in meters (e.g. EPSG:3857)
-                span_x_m = abs(max_lon - min_lon)
-                span_y_m = abs(max_lat - min_lat)
+                span_x_m = max(abs(max_lon - min_lon), 10.0)
+                span_y_m = max(abs(max_lat - min_lat), 10.0)
             else:
                 # Geographic coordinates in degrees (EPSG:4326)
                 mid_lat = (min_lat + max_lat) / 2.0
-                span_x_m = abs(max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat))
-                span_y_m = abs(max_lat - min_lat) * 111320.0
+                cos_lat = max(math.cos(math.radians(mid_lat)), 0.01)
+                span_x_m = max(abs(max_lon - min_lon) * 111320.0 * cos_lat, 10.0)
+                span_y_m = max(abs(max_lat - min_lat) * 111320.0, 10.0)
             max_pixels = 2048
-            min_safe_res = max(span_x_m / max_pixels, span_y_m / max_pixels)
+            min_safe_res = max(span_x_m / max_pixels, span_y_m / max_pixels, 1.0)
             if min_safe_res > target_res:
                 logger.info(
                     "Memory-conscious dynamic resampling: scaled resolution from %.1fm to %.1fm (bbox span: %.1fkm x %.1fkm)",
@@ -242,10 +295,24 @@ class DataAcquisitionService:
             )
             target_res = 60.0
 
-        # Memory-conscious: cap scenes to at most 2 scenes to prevent multi-granule memory blowup
+        # Handle CRS resolution unit conversion if geographic degrees requested
+        if crs and crs.upper() in {"EPSG:4326", "WGS84", "CRS84"} and target_res >= 1.0:
+            target_res = float(target_res / 111320.0)
+
+        # Memory-conscious: cap scenes to at most 2 lowest-cloud scenes to prevent multi-granule memory blowup
         if len(stac_items_to_load) > 2:
             logger.info("Memory-conscious: capping scenes to load from %d to 2 scenes", len(stac_items_to_load))
-            stac_items_to_load = stac_items_to_load[-2:]
+            try:
+                def _get_cloud_prop(item):
+                    if hasattr(item, "properties"):
+                        return float(item.properties.get("eo:cloud_cover", 0.0))
+                    elif isinstance(item, dict):
+                        props = item.get("properties", item)
+                        return float(props.get("eo:cloud_cover", item.get("cloud_cover", 0.0)))
+                    return 0.0
+                stac_items_to_load = sorted(stac_items_to_load, key=_get_cloud_prop)[:2]
+            except Exception:
+                stac_items_to_load = stac_items_to_load[-2:]
 
         ds = None
         if len(stac_items_to_load) > 0:
@@ -320,8 +387,8 @@ class DataAcquisitionService:
         nx = min(256, max(32, int(abs(mx_max - mx_min) / max(resolution, 10.0))))
         ny = min(256, max(32, int(abs(my_max - my_min) / max(resolution, 10.0))))
 
-        x_coords = np.linspace(mx_min, mx_max, nx)
-        y_coords = np.linspace(my_max, my_min, ny)
+        x_coords = np.linspace(mx_min, mx_max, nx, dtype=np.float32)
+        y_coords = np.linspace(my_max, my_min, ny, dtype=np.float32)
 
         xx, yy = np.meshgrid(np.linspace(0, 1, nx, dtype=np.float32), np.linspace(0, 1, ny, dtype=np.float32))
         gradient = xx * np.float32(0.4) + yy * np.float32(0.3)
@@ -337,50 +404,60 @@ class DataAcquisitionService:
                     raw[0:4, 0:4] = 9  # High probability cloud in corner to verify dilation
                     data_vars[band] = (["y", "x"], raw)
                     continue
-                elif b_clean in {"B02", "BLUE"}:
+                elif b_clean in {"B02", "BLUE", "B2"}:
                     raw = 1200 + gradient * 400
-                elif b_clean in {"B03", "GREEN"}:
+                elif b_clean in {"B03", "GREEN", "B3"}:
                     raw = 1350 + gradient * 500
-                elif b_clean in {"B04", "RED"}:
+                elif b_clean in {"B04", "RED", "B4"}:
                     raw = 1300 + gradient * 450
-                elif b_clean in {"B05", "REDEDGE1", "REDEDGE", "RE"}:
+                elif b_clean in {"B05", "REDEDGE1", "REDEDGE", "RE", "B5"}:
                     raw = 1800 + gradient * 700
-                elif b_clean in {"B08", "NIR", "B8A"}:
-                    raw = 3800 + gradient * 1200
-                elif b_clean in {"B11", "SWIR1"}:
+                elif b_clean in {"B06", "REDEDGE2", "B6"}:
                     raw = 2200 + gradient * 800
-                elif b_clean in {"B12", "SWIR2"}:
+                elif b_clean in {"B07", "REDEDGE3", "B7"}:
+                    raw = 2600 + gradient * 900
+                elif b_clean in {"B08", "NIR", "B8A", "B8", "NIR08"}:
+                    raw = 3800 + gradient * 1200
+                elif b_clean in {"B11", "SWIR1", "SWIR16"}:
+                    raw = 2200 + gradient * 800
+                elif b_clean in {"B12", "SWIR2", "SWIR22"}:
                     raw = 1500 + gradient * 600
+                elif b_clean in {"B01", "COASTAL", "B1"}:
+                    raw = 1100 + gradient * 300
                 else:
                     raw = 1500 + gradient * 500
                 data_vars[band] = (["y", "x"], raw.astype(np.float32))
             else:
                 # Landsat C2 L2 DN
                 b_low = band.lower()
-                if b_low in {"blue", "b2"}:
+                if b_low in {"blue", "b2", "b02"}:
                     raw = 9000 + gradient * 2000
-                elif b_low in {"green", "b3"}:
+                elif b_low in {"green", "b3", "b03"}:
                     raw = 10500 + gradient * 2500
-                elif b_low in {"red", "b4"}:
+                elif b_low in {"red", "b4", "b04"}:
                     raw = 11000 + gradient * 3000
-                elif b_low in {"nir08", "nir", "b5"}:
+                elif b_low in {"nir08", "nir", "b5", "b05", "b8", "b08"}:
                     raw = 20000 + gradient * 6000
-                elif b_low in {"swir16", "swir1", "b6"}:
+                elif b_low in {"swir16", "swir1", "b6", "b06", "b11"}:
                     raw = 14000 + gradient * 4000
-                elif b_low in {"swir22", "swir2", "b7"}:
+                elif b_low in {"swir22", "swir2", "b7", "b07", "b12"}:
                     raw = 11000 + gradient * 3000
-                elif b_low in {"lwir11", "b10", "thermal", "band10", "lwir"}:
+                elif b_low in {"lwir11", "b10", "thermal", "band10", "lwir", "b11_landsat"}:
                     raw = np.full((ny, nx), 40000.0, dtype=np.float32)  # DN 40000 = +12.57 C
-                elif b_low in {"qa_pixel", "qa"}:
+                elif b_low in {"qa_pixel", "qa", "scl"}:
                     raw = np.zeros((ny, nx), dtype=np.uint16)
                     raw[0:4, 0:4] = (1 << 3)  # Cloud bit
                     data_vars[band] = (["y", "x"], raw)
                     continue
-                elif b_low in {"coastal", "b1"}:
+                elif b_low in {"coastal", "b1", "b01"}:
                     raw = 8500 + gradient * 1500
                 else:
                     raw = 10000 + gradient * 2000
                 data_vars[band] = (["y", "x"], raw.astype(np.float32))
+
+        del xx
+        del yy
+        del gradient
 
         ds = xr.Dataset(
             data_vars=data_vars,

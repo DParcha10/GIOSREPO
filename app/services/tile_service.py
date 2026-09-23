@@ -5,7 +5,7 @@ import os
 import io
 import math
 import logging
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, Union, List
 import numpy as np
 from PIL import Image
 import matplotlib
@@ -13,6 +13,14 @@ import matplotlib.cm as cm
 from app.config import settings
 from app.services.drone_service import drone_service
 from app.services.indices import index_service
+from app.models.schemas import (
+    parse_rescale,
+    validate_spectral_index,
+    validate_colormap,
+    get_spectral_index_metadata,
+    SpectralIndex,
+    TileColormap
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +55,10 @@ class TileService:
         return (lon_min, lat_min, lon_max, lat_max)
 
     @staticmethod
-    def get_colormap(name: str):
+    def get_colormap(name: Optional[Union[str, TileColormap]] = "spectral"):
         """Safely gets matplotlib colormap instance."""
-        n = name.lower().strip()
+        target_enum = validate_colormap(name, default=TileColormap.SPECTRAL)
+        cmap_name = target_enum.value.lower()
         cmap_map = {
             "spectral": "Spectral",
             "viridis": "viridis",
@@ -58,9 +67,10 @@ class TileService:
             "terrain": "terrain",
             "magma": "magma",
             "inferno": "inferno",
+            "cividis": "cividis",
             "plasma": "plasma"
         }
-        target = cmap_map.get(n, "Spectral")
+        target = cmap_map.get(cmap_name, "Spectral")
         try:
             return matplotlib.colormaps[target]
         except Exception:
@@ -73,17 +83,26 @@ class TileService:
         z: int,
         x: int,
         y: int,
-        index: str = "rgb",
-        rescale: Optional[str] = None,
-        colormap: str = "spectral",
+        index: Union[str, SpectralIndex] = "rgb",
+        rescale: Optional[Union[str, Tuple[float, float], List[float]]] = None,
+        colormap: Union[str, TileColormap] = "spectral",
         pre: Optional[str] = None,
         post: Optional[str] = None
     ) -> bytes:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
-        idx_clean = index.lower().strip()
-        cmap_clean = colormap.lower().strip()
-        rescale_clean = (rescale or "default").replace(",", "_")
+        idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
+        idx_clean = idx_enum.value.lower()
+        cmap_enum = validate_colormap(colormap, default=TileColormap.SPECTRAL)
+        cmap_clean = cmap_enum.value.lower()
+
+        # Format rescale string for disk caching
+        if isinstance(rescale, (list, tuple)) and len(rescale) == 2:
+            rescale_clean = f"{rescale[0]}_{rescale[1]}"
+        elif isinstance(rescale, str) and rescale.strip():
+            rescale_clean = rescale.replace(",", "_").replace(" ", "")
+        else:
+            rescale_clean = "default"
 
         # 1. Check if drone request
         if col_clean in {"drone", "drone-ortho"} or "drone" in col_clean:
@@ -130,14 +149,13 @@ class TileService:
             b = np.clip(0.03 + base_variation * 0.08, 0.0, 1.0)
 
             # Contrast stretch RGB
-            if rescale and "," in rescale:
-                try:
-                    parts = rescale.split(",")
-                    rmin, rmax = float(parts[0]), float(parts[1])
-                except Exception:
-                    rmin, rmax = 0.0, 0.3
+            if rescale:
+                rmin, rmax = parse_rescale(rescale, default=(0.0, 0.3))
             else:
                 rmin, rmax = 0.0, 0.3
+
+            if rmax <= rmin:
+                rmax = rmin + 1e-4
 
             r_norm = np.clip((r - rmin) / (rmax - rmin + 1e-6) * 255.0, 0, 255).astype(np.uint8)
             g_norm = np.clip((g - rmin) / (rmax - rmin + 1e-6) * 255.0, 0, 255).astype(np.uint8)
@@ -164,24 +182,28 @@ class TileService:
                 val = 0.00 + base_variation * 1.10
             elif idx_clean == "lst":
                 val = 15.0 + base_variation * 25.0
+            elif idx_clean == "evi":
+                val = 0.10 + base_variation * 0.70
+            elif idx_clean == "savi":
+                val = 0.10 + base_variation * 0.65
             else:
                 val = base_variation
 
             # Dynamic contrast stretch
-            if rescale and "," in rescale:
-                try:
-                    parts = rescale.split(",")
-                    p0 = float(parts[0])
-                    p1 = float(parts[1])
-                    if p0 >= 1.0 and p1 <= 99.0:
-                        # Percentile stretch
-                        vmin, vmax = np.nanpercentile(val, p0), np.nanpercentile(val, p1)
-                    else:
-                        vmin, vmax = p0, p1
-                except Exception:
-                    vmin, vmax = DEFAULT_INDEX_RANGES.get(idx_clean, (0.0, 1.0))
+            default_bounds = DEFAULT_INDEX_RANGES.get(idx_clean, (0.0, 1.0))
+            if rescale:
+                p0, p1 = parse_rescale(rescale, default=default_bounds)
+                if p0 >= 1.0 and p1 <= 99.0 and p1 > p0:
+                    # Percentile stretch
+                    vmin, vmax = float(np.nanpercentile(val, p0)), float(np.nanpercentile(val, p1))
+                else:
+                    vmin, vmax = p0, p1
             else:
-                vmin, vmax = DEFAULT_INDEX_RANGES.get(idx_clean, (0.0, 1.0))
+                meta = get_spectral_index_metadata(idx_clean)
+                if meta and meta.default_rescale:
+                    vmin, vmax = meta.parse_rescale()
+                else:
+                    vmin, vmax = default_bounds
 
             if vmax <= vmin:
                 vmax = vmin + 1e-4
