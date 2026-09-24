@@ -9,6 +9,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 import atexit
+import threading
 
 class CacheManager:
     def __init__(self, directory: str = settings.cache_dir, default_ttl: int = settings.cache_ttl_seconds):
@@ -22,19 +23,31 @@ class CacheManager:
 
     def get(self, prefix: str, params: Any) -> Optional[Any]:
         key = self._generate_key(prefix, params)
-        val = self.cache.get(key)
-        if val is not None:
-            logger.debug("Cache hit for %s", key)
-        return val
+        try:
+            val = self.cache.get(key)
+            if val is not None:
+                logger.debug("Cache hit for %s", key)
+            return val
+        finally:
+            if threading.current_thread() is not threading.main_thread():
+                self.close()
 
     def set(self, prefix: str, params: Any, value: Any, ttl: Optional[int] = None) -> None:
         key = self._generate_key(prefix, params)
         expire = ttl if ttl is not None else self.default_ttl
-        self.cache.set(key, value, expire=expire)
-        logger.debug("Cached %s for %ds", key, expire)
+        try:
+            self.cache.set(key, value, expire=expire)
+            logger.debug("Cached %s for %ds", key, expire)
+        finally:
+            if threading.current_thread() is not threading.main_thread():
+                self.close()
 
     def clear(self) -> None:
-        self.cache.clear()
+        try:
+            self.cache.clear()
+        finally:
+            if threading.current_thread() is not threading.main_thread():
+                self.close()
 
     def close(self) -> None:
         try:

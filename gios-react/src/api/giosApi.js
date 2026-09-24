@@ -11,6 +11,11 @@ import {
   mockZonalStats,
   mockDroneOrthomosaic
 } from './mockData.js';
+import {
+  getCameraCalibrationPreset,
+  listCameraCalibrationPresets,
+  listSoilPresets
+} from '../config/constants.js';
 
 export {
   SPECTRAL_INDICES,
@@ -118,7 +123,35 @@ export {
   sensorsToFeatureCollection,
   calculateElevationStorageCapacity,
   calculateTilePyramidCoords,
-  calculateTilePyramidCount
+  calculateTilePyramidCount,
+  GCP_ROLES,
+  GCP_TARGET_TYPES,
+  calculateGcpResidualsAndRmse,
+  gcpToGeoJsonFeature,
+  gcpsToFeatureCollection,
+  SLOPE_STABILITY_TIERS,
+  calculateTopographicWetnessIndex,
+  calculateSlopeFactorOfSafety,
+  classifySlopeStabilityTier,
+  HLS_PLATFORMS,
+  HLS_TRANSFORMATION_COEFFICIENTS,
+  crossCalibrateSpectralBand,
+  WATER_QUALITY_METRICS,
+  TROPHIC_STATES,
+  calculateNdci,
+  calculateNdti,
+  classifyTrophicState,
+  CYANOBACTERIA_ALERT_LEVELS,
+  classifyCyanobacteriaAlert,
+  CAMERA_CALIBRATION_PRESETS,
+  getCameraCalibrationPreset,
+  listCameraCalibrationPresets,
+  SOIL_MECHANICS_PRESETS,
+  getSoilPreset,
+  listSoilPresets,
+  buildTwiTileUrl,
+  buildSlopeStabilityTileUrl,
+  buildWaterQualityTileUrl
 } from '../config/constants.js';
 
 /**
@@ -1170,6 +1203,95 @@ const demoAdapter = async (config) => {
         status: 'queued',
         created_at: new Date().toISOString()
       };
+      else if (url.includes('/api/v1/drone/gcp/quality') || url.includes('/api/v1/drone/gcp-quality')) data = {
+        ortho_id: 'ORTHO-DAM-01',
+        control_rmse: { rmse_x_m: 0.021, rmse_y_m: 0.019, rmse_z_m: 0.034, rmse_horizontal_m: 0.028, rmse_3d_m: 0.044, point_count: 5 },
+        check_rmse: { rmse_x_m: 0.024, rmse_y_m: 0.022, rmse_z_m: 0.038, rmse_horizontal_m: 0.033, rmse_3d_m: 0.050, point_count: 3 },
+        residuals: [
+          { point_id: 'GCP-01', role: 'control', delta_x_m: 0.015, delta_y_m: 0.012, delta_z_m: 0.022, residual_horizontal_m: 0.019, residual_3d_m: 0.029, image_pixel_reprojection_error_px: 0.42 },
+          { point_id: 'GCP-02', role: 'control', delta_x_m: -0.018, delta_y_m: 0.016, delta_z_m: -0.025, residual_horizontal_m: 0.024, residual_3d_m: 0.035, image_pixel_reprojection_error_px: 0.38 }
+        ],
+        survey_grade_achieved: true,
+        camera_calibration: { camera_id: 'CAM-DJI-P1-01', focal_length_mm: 35.0, focal_length_px: 7954.5, principal_point_x_px: 4096.0, principal_point_y_px: 2730.0, radial_distortion_k1: -0.012, radial_distortion_k2: 0.005, radial_distortion_k3: 0.0, tangential_distortion_p1: 0.0001, tangential_distortion_p2: -0.0001, sensor_width_mm: 35.9, sensor_height_mm: 24.0 },
+        assessed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/drone/gcp/geojson')) data = {
+        type: 'FeatureCollection',
+        features: [
+          { type: 'Feature', id: 'GCP-01', geometry: { type: 'Point', coordinates: [-121.082, 37.054] }, properties: { point_id: 'GCP-01', role: 'control', target_type: 'checkerboard', x_east: 670500.0, y_north: 4102500.0, z_elev: 154.2, crs: 'EPSG:32610', is_enabled: true } },
+          { type: 'Feature', id: 'GCP-02', geometry: { type: 'Point', coordinates: [-121.078, 37.058] }, properties: { point_id: 'GCP-02', role: 'control', target_type: 'checkerboard', x_east: 670850.0, y_north: 4102950.0, z_elev: 156.8, crs: 'EPSG:32610', is_enabled: true } },
+          { type: 'Feature', id: 'CHK-01', geometry: { type: 'Point', coordinates: [-121.080, 37.056] }, properties: { point_id: 'CHK-01', role: 'check', target_type: 'cross', x_east: 670680.0, y_north: 4102720.0, z_elev: 155.1, crs: 'EPSG:32610', is_enabled: true } }
+        ]
+      };
+      else if (url.endsWith('/api/v1/drone/camera/calibration') || url.endsWith('/api/v1/drone/camera/calibration/') || url.endsWith('/api/v1/drone/camera-calibration') || url.endsWith('/api/v1/drone/camera-calibration/')) data = listCameraCalibrationPresets();
+      else if (url.includes('/api/v1/drone/camera/calibration/') || url.includes('/api/v1/drone/camera-calibration/')) {
+        const parts = url.includes('/api/v1/drone/camera/calibration/')
+          ? url.split('/api/v1/drone/camera/calibration/')
+          : url.split('/api/v1/drone/camera-calibration/');
+        const cid = parts[1] ? parts[1].split('?')[0] : '';
+        data = getCameraCalibrationPreset(cid) || {
+          camera_id: cid || 'CAM-DJI-P1-01',
+          focal_length_mm: 35.0,
+          focal_length_px: 7954.5,
+          principal_point_x_px: 4096.0,
+          principal_point_y_px: 2730.0,
+          radial_distortion_k1: -0.012,
+          radial_distortion_k2: 0.005,
+          radial_distortion_k3: 0.0,
+          tangential_distortion_p1: 0.0001,
+          tangential_distortion_p2: -0.0001,
+          sensor_width_mm: 35.9,
+          sensor_height_mm: 24.0
+        };
+      }
+      else if (url.includes('/api/v1/analysis/terrain/soil-presets')) data = listSoilPresets();
+      else if (url.includes('/api/v1/analysis/terrain/twi') || url.includes('/api/v1/analysis/twi')) data = {
+        asset_id: 'SAN-LUIS-DAM-01',
+        mean_twi: 6.84,
+        min_twi: 2.15,
+        max_twi: 13.42,
+        saturated_area_hectares: 14.8,
+        saturation_percentage: 12.4,
+        tile_url_template: '/api/v1/tiles/terrain/twi/{z}/{x}/{y}.png',
+        created_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/terrain/slope-stability') || url.includes('/api/v1/analysis/slope-stability')) data = {
+        asset_id: 'SAN-LUIS-DAM-01',
+        mean_factor_of_safety: 1.68,
+        min_factor_of_safety: 1.18,
+        critical_area_hectares: 3.2,
+        stability_tier: 'stable',
+        tier_breakdown: { stable: 85.5, marginally_stable: 11.3, advisory: 3.2, failure_critical: 0.0 },
+        tile_url_template: '/api/v1/tiles/terrain/slope-stability/{z}/{x}/{y}.png',
+        created_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/hls/calibrate') || url.includes('/api/v1/analysis/hls-calibrate')) data = {
+        source_platform: 'landsat_oli',
+        target_platform: 'sentinel_msi',
+        band_name: 'nir',
+        calibrated_values: [0.324, 0.355, 0.412],
+        mean_calibrated: 0.364,
+        bias_correction_applied: -0.015,
+        formula_applied: 'MSI = 0.9825 * OLI - 0.0183'
+      };
+      else if (url.includes('/api/v1/analysis/water-quality') || url.includes('/api/v1/analysis/water_quality')) data = {
+        asset_id: 'SAN-LUIS-RESERVOIR',
+        item_id: 'S2A_MSIL2A_20260820',
+        primary_metric: 'ndci',
+        mean_value: 0.084,
+        estimated_chlorophyll_a_ugl: 5.6,
+        dominant_trophic_state: 'mesotrophic',
+        bloom_detected: false,
+        bloom_area_hectares: 12.4,
+        trophic_breakdown: [
+          { state: 'oligotrophic', label: 'Oligotrophic', min_ndci: null, max_ndci: 0.0, area_hectares: 1850.0, percentage: 38.1, chl_a_range_ugl: '< 2.6' },
+          { state: 'mesotrophic', label: 'Mesotrophic', min_ndci: 0.0, max_ndci: 0.12, area_hectares: 2540.0, percentage: 52.4, chl_a_range_ugl: '2.6 - 7.3' },
+          { state: 'eutrophic', label: 'Eutrophic', min_ndci: 0.12, max_ndci: 0.25, area_hectares: 440.0, percentage: 9.1, chl_a_range_ugl: '7.3 - 20.0' },
+          { state: 'hypereutrophic', label: 'Hypereutrophic', min_ndci: 0.25, max_ndci: null, area_hectares: 20.0, percentage: 0.4, chl_a_range_ugl: '>= 20.0' }
+        ],
+        tile_url_template: '/api/v1/tiles/water-quality/ndci/{z}/{x}/{y}.png',
+        created_at: new Date().toISOString()
+      };
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
@@ -2167,6 +2289,253 @@ export const preloadTileCache = async (params) => {
   return response.data;
 };
 
+/**
+ * @typedef {Object} GCPCoordinate
+ * @property {string} point_id - Unique GCP point identifier
+ * @property {'control'|'check'} role - Survey network role
+ * @property {'checkerboard'|'circular'|'cross'|'natural_feature'} target_type - Target geometry
+ * @property {number} x_east - Easting X in meters
+ * @property {number} y_north - Northing Y in meters
+ * @property {number} z_elev - Elevation Z in meters
+ * @property {string} [crs='EPSG:32610'] - Coordinate reference system
+ * @property {number|null} [lat] - Optional WGS84 latitude
+ * @property {number|null} [lng] - Optional WGS84 longitude
+ * @property {boolean} [is_enabled=true] - Active flag
+ */
+
+/**
+ * @typedef {Object} GCPResidual
+ * @property {string} point_id - Point identifier
+ * @property {'control'|'check'} role - Network role
+ * @property {number} delta_x_m - Residual in X
+ * @property {number} delta_y_m - Residual in Y
+ * @property {number} delta_z_m - Residual in Z
+ * @property {number} residual_horizontal_m - Planar horizontal error
+ * @property {number} residual_3d_m - 3D Euclidean error
+ * @property {number|null} [image_pixel_reprojection_error_px] - Reprojection error in px
+ */
+
+/**
+ * @typedef {Object} RMSEMetrics
+ * @property {number} rmse_x_m - RMSE in X
+ * @property {number} rmse_y_m - RMSE in Y
+ * @property {number} rmse_z_m - RMSE in Z
+ * @property {number} rmse_horizontal_m - Horizontal RMSE
+ * @property {number} rmse_3d_m - 3D RMSE
+ * @property {number} point_count - Total points
+ */
+
+/**
+ * @typedef {Object} CameraInteriorOrientation
+ * @property {string} camera_id - Camera identifier
+ * @property {number} focal_length_mm - Focal length in mm
+ * @property {number} focal_length_px - Focal length in px
+ * @property {number} principal_point_x_px - Principal point X
+ * @property {number} principal_point_y_px - Principal point Y
+ * @property {number} [radial_distortion_k1=0.0] - Distortion k1
+ * @property {number} [radial_distortion_k2=0.0] - Distortion k2
+ * @property {number} [radial_distortion_k3=0.0] - Distortion k3
+ * @property {number} [tangential_distortion_p1=0.0] - Distortion p1
+ * @property {number} [tangential_distortion_p2=0.0] - Distortion p2
+ * @property {number} [sensor_width_mm=13.2] - Sensor width in mm
+ * @property {number} [sensor_height_mm=8.8] - Sensor height in mm
+ */
+
+/**
+ * @typedef {Object} GCPQualityAssessmentRequest
+ * @property {string} ortho_id - Drone orthomosaic identifier
+ * @property {Array<GCPCoordinate>} control_points - Surveyed points
+ * @property {Array<Object>} estimated_positions - Estimated points
+ * @property {CameraInteriorOrientation|null} [camera_calibration] - Camera calibration
+ */
+
+/**
+ * @typedef {Object} GCPQualityAssessmentResponse
+ * @property {string} ortho_id - Drone orthomosaic ID
+ * @property {RMSEMetrics} control_rmse - Control point RMSE
+ * @property {RMSEMetrics|null} [check_rmse] - Check point RMSE
+ * @property {Array<GCPResidual>} residuals - Residual vectors
+ * @property {boolean} survey_grade_achieved - Survey grade flag (3D RMSE <= 0.05m)
+ * @property {CameraInteriorOrientation|null} [camera_calibration] - Camera calibration
+ * @property {string} assessed_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} TWIAnalysisRequest
+ * @property {string} asset_id - Infrastructure asset ID
+ * @property {Object} [geometry] - GeoJSON Polygon
+ * @property {string|number[]} [bbox] - Bounding box
+ * @property {number} [grid_resolution_m=10.0] - Grid resolution in meters
+ * @property {number} [min_slope_deg=0.1] - Minimum slope clamp
+ */
+
+/**
+ * @typedef {Object} TWIAnalysisResponse
+ * @property {string} asset_id - Target asset ID
+ * @property {number} mean_twi - Mean TWI
+ * @property {number} min_twi - Minimum TWI
+ * @property {number} max_twi - Maximum TWI
+ * @property {number} saturated_area_hectares - Saturated area in ha
+ * @property {number} saturation_percentage - Percentage of area saturated
+ * @property {string} tile_url_template - Streaming tile URL template
+ * @property {string} created_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} SlopeStabilityRequest
+ * @property {string} asset_id - Target embankment asset ID
+ * @property {Object} [geometry] - GeoJSON Polygon
+ * @property {string|number[]} [bbox] - Bounding box
+ * @property {number} [cohesion_kpa=12.0] - Effective soil cohesion in kPa
+ * @property {number} [friction_angle_deg=30.0] - Internal friction angle
+ * @property {number} [soil_unit_weight_kn_m3=19.0] - Moist soil unit weight
+ * @property {number} [water_table_ratio=0.5] - Saturation ratio m
+ * @property {number} [failure_depth_m=3.0] - Failure depth z
+ */
+
+/**
+ * @typedef {Object} SlopeStabilityResponse
+ * @property {string} asset_id - Embankment asset ID
+ * @property {number} mean_factor_of_safety - Mean Factor of Safety
+ * @property {number} min_factor_of_safety - Lowest Factor of Safety
+ * @property {number} critical_area_hectares - Critical area in ha (FS <= 1.30)
+ * @property {'stable'|'marginally_stable'|'advisory'|'failure_critical'} stability_tier - Stability tier
+ * @property {Record<string, number>} tier_breakdown - Area breakdown per tier
+ * @property {string} tile_url_template - Streaming tile URL template
+ * @property {string} created_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} HLSBandCalibrationRequest
+ * @property {'landsat_oli'|'sentinel_msi'} source_platform - Source sensor platform
+ * @property {'landsat_oli'|'sentinel_msi'} target_platform - Target sensor platform
+ * @property {string} band_name - Spectral band name
+ * @property {Array<number>} reflectance_values - Surface reflectance values
+ */
+
+/**
+ * @typedef {Object} HLSBandCalibrationResponse
+ * @property {'landsat_oli'|'sentinel_msi'} source_platform - Source platform
+ * @property {'landsat_oli'|'sentinel_msi'} target_platform - Target platform
+ * @property {string} band_name - Band name
+ * @property {Array<number>} calibrated_values - Harmonized reflectance values
+ * @property {number} mean_calibrated - Mean harmonized reflectance
+ * @property {number} bias_correction_applied - Applied bias correction
+ * @property {string} formula_applied - Formula string
+ */
+
+/**
+ * @typedef {Object} WaterQualityAnalysisRequest
+ * @property {string} asset_id - Reservoir or lake asset ID
+ * @property {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {string} item_id - Scene item ID
+ * @property {Object} [geometry] - Optional GeoJSON Polygon
+ * @property {string|number[]} [bbox] - Optional bounding box
+ * @property {'ndci'|'ndti'|'fai'|'turbidity_fnu'|'chlorophyll_a_ugl'} [metric='ndci'] - Indicator
+ */
+
+/**
+ * @typedef {Object} WaterQualityAnalysisResponse
+ * @property {string} asset_id - Asset ID
+ * @property {string} item_id - Scene item ID
+ * @property {'ndci'|'ndti'|'fai'|'turbidity_fnu'|'chlorophyll_a_ugl'} primary_metric - Primary indicator
+ * @property {number} mean_value - Mean metric value
+ * @property {number} estimated_chlorophyll_a_ugl - Estimated Chl-a in ug/L
+ * @property {'oligotrophic'|'mesotrophic'|'eutrophic'|'hypereutrophic'} dominant_trophic_state - Trophic state
+ * @property {boolean} bloom_detected - Bloom threshold flag
+ * @property {number} bloom_area_hectares - Bloom area in ha
+ * @property {Array<{state: string, label: string, min_ndci: number|null, max_ndci: number|null, area_hectares: number, percentage: number, chl_a_range_ugl: string}>} trophic_breakdown - Breakdown
+ * @property {string} tile_url_template - Dynamic XYZ tile template
+ * @property {string} created_at - ISO 8601 timestamp
+ */
+
+/**
+ * Assesses Ground Control Point (GCP) and Check Point network accuracy for a drone orthomosaic.
+ * 
+ * @param {GCPQualityAssessmentRequest} params - GCP assessment parameters
+ * @returns {Promise<GCPQualityAssessmentResponse>} Residual error vectors and RMSE metrics
+ */
+export const assessGcpQuality = async (params) => {
+  const response = await giosApi.post('/api/v1/drone/gcp/quality', params);
+  return response.data;
+};
+
+/**
+ * Retrieves camera interior calibration parameters for a drone sensor.
+ * 
+ * @param {string} cameraId - Camera serial or instrument ID
+ * @returns {Promise<CameraInteriorOrientation>} Camera interior calibration parameters
+ */
+export const fetchCameraCalibration = async (cameraId) => {
+  const response = await giosApi.get(`/api/v1/drone/camera/calibration/${cameraId}`);
+  return response.data;
+};
+
+/**
+ * Calculates Topographic Wetness Index (TWI) over digital terrain.
+ * 
+ * @param {TWIAnalysisRequest} params - TWI analysis parameters
+ * @returns {Promise<TWIAnalysisResponse>} TWI spatial statistics and tile template
+ */
+export const calculateTwiAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/terrain/twi', params);
+  return response.data;
+};
+
+/**
+ * Calculates geotechnical infinite slope stability Factor of Safety (FS).
+ * 
+ * @param {SlopeStabilityRequest} params - Slope stability parameters
+ * @returns {Promise<SlopeStabilityResponse>} Factor of Safety metrics and tier breakdown
+ */
+export const calculateSlopeStability = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/terrain/slope-stability', params);
+  return response.data;
+};
+
+/**
+ * Harmonizes multi-sensor spectral reflectance values using HLS polynomial regressions.
+ * 
+ * @param {HLSBandCalibrationRequest} params - HLS calibration parameters
+ * @returns {Promise<HLSBandCalibrationResponse>} Harmonized reflectance values
+ */
+export const calibrateHlsBand = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/hls/calibrate', params);
+  return response.data;
+};
+
+/**
+ * Analyzes reservoir water quality, turbidity, and cyanobacteria algal bloom status.
+ * 
+ * @param {WaterQualityAnalysisRequest} params - Water quality parameters
+ * @returns {Promise<WaterQualityAnalysisResponse>} NDCI, Chl-a, and trophic state breakdown
+ */
+export const calculateWaterQualityAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/water-quality', params);
+  return response.data;
+};
+
+/**
+ * Retrieves the catalog of standard drone camera interior calibration presets.
+ * 
+ * @returns {Promise<Array<CameraInteriorOrientation>>} List of registered camera profiles
+ */
+export const fetchCameraCalibrationPresets = async () => {
+  const response = await giosApi.get('/api/v1/drone/camera/calibration');
+  return response.data;
+};
+
+/**
+ * Retrieves standard geotechnical soil mechanics presets for slope stability analysis.
+ * 
+ * @returns {Promise<Array<Object>>} List of soil mechanics parameter presets
+ */
+export const fetchSoilPresets = async () => {
+  const response = await giosApi.get('/api/v1/analysis/terrain/soil-presets');
+  return response.data;
+};
+
 export default giosApi;
+
 
 

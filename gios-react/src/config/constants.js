@@ -754,7 +754,25 @@ export const API_ENDPOINTS = {
   INTEGRATION_GEOTECHNICAL_SUMMARY: (assetId) => `/api/v1/integration/geotechnical/summary/${assetId}`,
   INTEGRATION_SENSOR_SUMMARY: (assetId) => `/api/v1/integration/geotechnical/summary/${assetId}`,
   ANALYSIS_BATHYMETRY_EAC: '/api/v1/analysis/bathymetry/eac',
-  TILES_CACHE_PRELOAD: '/api/v1/tiles/cache/preload'
+  TILES_CACHE_PRELOAD: '/api/v1/tiles/cache/preload',
+  DRONE_GCP_QUALITY: '/api/v1/drone/gcp/quality',
+  DRONE_CAMERA_CALIBRATION: (cameraId) => `/api/v1/drone/camera/calibration/${cameraId}`,
+  ANALYSIS_TWI: '/api/v1/analysis/terrain/twi',
+  ANALYSIS_TWI_SHORT: '/api/v1/analysis/twi',
+  ANALYSIS_SLOPE_STABILITY: '/api/v1/analysis/terrain/slope-stability',
+  ANALYSIS_SLOPE_STABILITY_SHORT: '/api/v1/analysis/slope-stability',
+  ANALYSIS_HLS_CALIBRATE: '/api/v1/analysis/hls/calibrate',
+  ANALYSIS_HLS_CALIBRATE_SHORT: '/api/v1/analysis/hls-calibrate',
+  ANALYSIS_WATER_QUALITY: '/api/v1/analysis/water-quality',
+  DRONE_GCP_QUALITY_SHORT: '/api/v1/drone/gcp-quality',
+  DRONE_CAMERA_CALIBRATION_SHORT: '/api/v1/drone/camera-calibration',
+  DRONE_GCP_GEOJSON: '/api/v1/drone/gcp/geojson',
+  DRONE_CAMERA_CALIBRATION_LIST: '/api/v1/drone/camera/calibration',
+  TILES_TWI: (z, x, y) => `/api/v1/tiles/terrain/twi/${z}/${x}/${y}.png`,
+  TILES_SLOPE_STABILITY: (z, x, y) => `/api/v1/tiles/terrain/slope-stability/${z}/${x}/${y}.png`,
+  TILES_WATER_QUALITY: (metric, z, x, y) => `/api/v1/tiles/water-quality/${metric}/${z}/${x}/${y}.png`,
+  TILES_WATER_QUALITY_SCENE: (collection, itemId, metric, z, x, y) => `/api/v1/tiles/water-quality/${collection}/${itemId}/${metric}/${z}/${x}/${y}.png`,
+  GEOTECHNICAL_SOIL_PRESETS: '/api/v1/analysis/terrain/soil-presets'
 };
 
 /**
@@ -810,6 +828,16 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'INTEGRATION_GEOTECHNICAL_SUMMARY':
       case 'INTEGRATION_SENSOR_SUMMARY':
         return endpoint(params.assetId || params.asset_id);
+      case 'DRONE_CAMERA_CALIBRATION':
+        return endpoint(params.cameraId || params.camera_id || 'default');
+      case 'TILES_TWI':
+        return endpoint(params.z, params.x, params.y);
+      case 'TILES_SLOPE_STABILITY':
+        return endpoint(params.z, params.x, params.y);
+      case 'TILES_WATER_QUALITY':
+        return endpoint(params.metric || 'ndci', params.z, params.x, params.y);
+      case 'TILES_WATER_QUALITY_SCENE':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id, params.metric || 'ndci', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -834,10 +862,47 @@ export const parseBbox = (val, defaultValue = [-121.2, 36.95, -120.95, 37.15]) =
     return defaultValue;
   }
   if (typeof val === 'object' && val !== null) {
-    const min_lon = Number(val.min_lon ?? val.west ?? val.min_x);
-    const min_lat = Number(val.min_lat ?? val.south ?? val.min_y);
-    const max_lon = Number(val.max_lon ?? val.east ?? val.max_x);
-    const max_lat = Number(val.max_lat ?? val.north ?? val.max_y);
+    let target = val;
+    if (target.geometry && typeof target.geometry === 'object') {
+      target = target.geometry;
+    }
+    const rawCoords = target.coordinates;
+    if (rawCoords) {
+      const coordsList = [];
+      const extractPts = (obj) => {
+        if (Array.isArray(obj)) {
+          if (obj.length >= 2 && typeof obj[0] === 'number' && typeof obj[1] === 'number') {
+            coordsList.push([Number(obj[0]), Number(obj[1])]);
+          } else {
+            obj.forEach(extractPts);
+          }
+        }
+      };
+      extractPts(rawCoords);
+      if (coordsList.length > 0) {
+        const lons = coordsList.map((p) => p[0]);
+        const lats = coordsList.map((p) => p[1]);
+        const min_lon = Math.min(...lons);
+        const min_lat = Math.min(...lats);
+        const max_lon = Math.max(...lons);
+        const max_lat = Math.max(...lats);
+        if ([min_lon, min_lat, max_lon, max_lat].every((c) => !isNaN(c) && isFinite(c))) {
+          return [
+            Number(min_lon.toFixed(6)),
+            Number(min_lat.toFixed(6)),
+            Number(max_lon.toFixed(6)),
+            Number(max_lat.toFixed(6))
+          ];
+        }
+      }
+    }
+    if (Array.isArray(target.bbox) && target.bbox.length === 4) {
+      return parseBbox(target.bbox, defaultValue);
+    }
+    const min_lon = Number(target.min_lon ?? target.west ?? target.min_x);
+    const min_lat = Number(target.min_lat ?? target.south ?? target.min_y);
+    const max_lon = Number(target.max_lon ?? target.east ?? target.max_x);
+    const max_lat = Number(target.max_lat ?? target.north ?? target.max_y);
     if (!isNaN(min_lon) && !isNaN(min_lat) && !isNaN(max_lon) && !isNaN(max_lat)) {
       return [min_lon, min_lat, max_lon, max_lat];
     }
@@ -2537,6 +2602,564 @@ export const calculateTilePyramidCount = (minLon, minLat, maxLon, maxLat, minZoo
     zoom_tile_counts: zoomCounts
   };
 };
+
+// ============================================================================
+// PHOTOGRAMMETRY & GROUND CONTROL POINTS (GCP) QUALITY ASSESSMENT
+// ============================================================================
+
+export const GCP_ROLES = {
+  CONTROL: 'control',
+  CHECK: 'check'
+};
+
+export const GCP_TARGET_TYPES = {
+  CHECKERBOARD: 'checkerboard',
+  CIRCULAR: 'circular',
+  CROSS: 'cross',
+  NATURAL_FEATURE: 'natural_feature'
+};
+
+/**
+ * Calculates residual errors and separate RMSE metrics for Control Points and Check Points.
+ * Parity implementation with calculate_gcp_residuals_and_rmse() in app/models/schemas.py.
+ * 
+ * @param {Array<Object>} measuredPoints - Surveyed ground control points
+ * @param {Array<Object>} estimatedPoints - Photogrammetric model estimated points
+ * @returns {{ residuals: Array<Object>, controlRmse: Object, checkRmse: Object|null }} Residuals and RMSE
+ */
+export const calculateGcpResidualsAndRmse = (measuredPoints, estimatedPoints) => {
+  const estLookup = {};
+  if (Array.isArray(estimatedPoints)) {
+    for (const ep of estimatedPoints) {
+      const pid = String(ep.point_id || '').trim();
+      if (pid) estLookup[pid] = ep;
+    }
+  }
+
+  const residuals = [];
+  const ctrlResiduals = [];
+  const checkResiduals = [];
+
+  if (Array.isArray(measuredPoints)) {
+    for (const mp of measuredPoints) {
+      const pid = String(mp.point_id || '').trim();
+      if (!pid || !estLookup[pid]) continue;
+
+      const ep = estLookup[pid];
+      const role = String(mp.role || 'control').toLowerCase() === 'check' ? 'check' : 'control';
+      const dx = Number(ep.x_east || 0.0) - Number(mp.x_east || 0.0);
+      const dy = Number(ep.y_north || 0.0) - Number(mp.y_north || 0.0);
+      const dz = Number(ep.z_elev || 0.0) - Number(mp.z_elev || 0.0);
+
+      const hRes = Math.sqrt(dx * dx + dy * dy);
+      const res3d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const reproj = ep.reprojection_error_px !== undefined ? ep.reprojection_error_px : ep.image_pixel_reprojection_error_px;
+
+      const resObj = {
+        point_id: pid,
+        role,
+        delta_x_m: parseFloat(dx.toFixed(4)),
+        delta_y_m: parseFloat(dy.toFixed(4)),
+        delta_z_m: parseFloat(dz.toFixed(4)),
+        residual_horizontal_m: parseFloat(hRes.toFixed(4)),
+        residual_3d_m: parseFloat(res3d.toFixed(4)),
+        image_pixel_reprojection_error_px: reproj !== undefined && reproj !== null ? parseFloat(Number(reproj).toFixed(2)) : null
+      };
+
+      residuals.push(resObj);
+      if (role === 'control') {
+        ctrlResiduals.push(resObj);
+      } else {
+        checkResiduals.push(resObj);
+      }
+    }
+  }
+
+  const computeRmse = (resList) => {
+    const n = resList.length;
+    if (n === 0) {
+      return { rmse_x_m: 0.0, rmse_y_m: 0.0, rmse_z_m: 0.0, rmse_horizontal_m: 0.0, rmse_3d_m: 0.0, point_count: 0 };
+    }
+    const sumDx2 = resList.reduce((acc, r) => acc + (r.delta_x_m ** 2), 0);
+    const sumDy2 = resList.reduce((acc, r) => acc + (r.delta_y_m ** 2), 0);
+    const sumDz2 = resList.reduce((acc, r) => acc + (r.delta_z_m ** 2), 0);
+    const rx = Math.sqrt(sumDx2 / n);
+    const ry = Math.sqrt(sumDy2 / n);
+    const rz = Math.sqrt(sumDz2 / n);
+    const rh = Math.sqrt(rx * rx + ry * ry);
+    const r3d = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    return {
+      rmse_x_m: parseFloat(rx.toFixed(4)),
+      rmse_y_m: parseFloat(ry.toFixed(4)),
+      rmse_z_m: parseFloat(rz.toFixed(4)),
+      rmse_horizontal_m: parseFloat(rh.toFixed(4)),
+      rmse_3d_m: parseFloat(r3d.toFixed(4)),
+      point_count: n
+    };
+  };
+
+  const controlRmse = computeRmse(ctrlResiduals.length > 0 ? ctrlResiduals : residuals);
+  const checkRmse = checkResiduals.length > 0 ? computeRmse(checkResiduals) : null;
+  return { residuals, controlRmse, checkRmse };
+};
+
+/**
+ * Converts a GCP point object into an RFC 7946 GeoJSON Feature.
+ * 
+ * @param {Object} gcp - GCP coordinate object
+ * @returns {Object} GeoJSON Feature
+ */
+export const gcpToGeoJsonFeature = (gcp) => {
+  const data = gcp || {};
+  const lat = Number(data.lat || 0.0);
+  const lng = Number(data.lng || 0.0);
+  const pid = String(data.point_id || '');
+  return {
+    type: 'Feature',
+    id: pid,
+    geometry: {
+      type: 'Point',
+      coordinates: [lng, lat]
+    },
+    properties: {
+      point_id: pid,
+      role: data.role || 'control',
+      target_type: data.target_type || 'checkerboard',
+      x_east: data.x_east,
+      y_north: data.y_north,
+      z_elev: data.z_elev,
+      crs: data.crs || 'EPSG:32610',
+      is_enabled: data.is_enabled !== undefined ? Boolean(data.is_enabled) : true
+    }
+  };
+};
+
+/**
+ * Converts an array of GCP points into an RFC 7946 GeoJSON FeatureCollection.
+ * 
+ * @param {Array<Object>} gcps - Sequence of GCP points
+ * @returns {Object} GeoJSON FeatureCollection
+ */
+export const gcpsToFeatureCollection = (gcps) => ({
+  type: 'FeatureCollection',
+  features: Array.isArray(gcps) ? gcps.map(gcpToGeoJsonFeature) : []
+});
+
+
+// ============================================================================
+// TOPOGRAPHIC WETNESS INDEX (TWI) & SLOPE STABILITY FACTOR OF SAFETY (FS)
+// ============================================================================
+
+export const SLOPE_STABILITY_TIERS = {
+  STABLE: 'stable',
+  MARGINALLY_STABLE: 'marginally_stable',
+  ADVISORY: 'advisory',
+  FAILURE_CRITICAL: 'failure_critical'
+};
+
+/**
+ * Calculates Topographic Wetness Index: TWI = ln(a / tan(beta)).
+ * Parity implementation with calculate_topographic_wetness_index() in app/models/schemas.py.
+ * 
+ * @param {number} catchmentAreaM2 - Upslope contributing area in m^2
+ * @param {number} slopeDegrees - Ground surface slope in degrees
+ * @param {number} [contourWidthM=10.0] - Contour pixel width in meters
+ * @param {number} [minSlopeDeg=0.1] - Minimum slope clamp to avoid singularity
+ * @returns {number} Topographic Wetness Index value
+ */
+export const calculateTopographicWetnessIndex = (
+  catchmentAreaM2,
+  slopeDegrees,
+  contourWidthM = 10.0,
+  minSlopeDeg = 0.1
+) => {
+  const effSlope = Math.max(Number(slopeDegrees) || 0.0, Number(minSlopeDeg) || 0.1);
+  const slopeRad = (effSlope * Math.PI) / 180.0;
+  let tanBeta = Math.tan(slopeRad);
+  if (tanBeta <= 1e-6) tanBeta = 1e-6;
+  const specificCatchment = Math.max((Number(catchmentAreaM2) || 0.0) / Math.max(Number(contourWidthM) || 1.0, 1.0), 1.0);
+  const twi = Math.log(specificCatchment / tanBeta);
+  return parseFloat(twi.toFixed(3));
+};
+
+/**
+ * Calculates Factor of Safety (FS) for an infinite slope with parallel phreatic seepage.
+ * Parity implementation with calculate_slope_factor_of_safety() in app/models/schemas.py.
+ * 
+ * @param {number} slopeDeg - Slope angle in degrees
+ * @param {number} [cohesionKpa=12.0] - Effective soil cohesion c' in kPa
+ * @param {number} [frictionAngleDeg=30.0] - Effective friction angle phi' in degrees
+ * @param {number} [unitWeightSoil=19.0] - Soil unit weight gamma in kN/m^3
+ * @param {number} [saturationM=0.5] - Saturation ratio m = hw / z [0.0, 1.0]
+ * @param {number} [depthM=3.0] - Slip failure depth z in meters
+ * @param {number} [unitWeightWater=9.81] - Water unit weight in kN/m^3
+ * @returns {number} Factor of Safety (FS)
+ */
+export const calculateSlopeFactorOfSafety = (
+  slopeDeg,
+  cohesionKpa = 12.0,
+  frictionAngleDeg = 30.0,
+  unitWeightSoil = 19.0,
+  saturationM = 0.5,
+  depthM = 3.0,
+  unitWeightWater = 9.81
+) => {
+  const deg = Number(slopeDeg) || 0.0;
+  if (deg <= 0.1) return 99.0;
+
+  const betaRad = (deg * Math.PI) / 180.0;
+  const phiRad = ((Number(frictionAngleDeg) || 30.0) * Math.PI) / 180.0;
+
+  const cosBeta = Math.cos(betaRad);
+  const sinBeta = Math.sin(betaRad);
+  const tanPhi = Math.tan(phiRad);
+
+  const mClamped = Math.max(0.0, Math.min(1.0, Number(saturationM) || 0.0));
+  const effUnitWeight = (Number(unitWeightSoil) || 19.0) - (mClamped * (Number(unitWeightWater) || 9.81));
+  const z = Number(depthM) || 3.0;
+
+  const numerator = (Number(cohesionKpa) || 12.0) + (effUnitWeight * z * (cosBeta ** 2) * tanPhi);
+  const denominator = (Number(unitWeightSoil) || 19.0) * z * sinBeta * cosBeta;
+
+  if (denominator <= 1e-6) return 99.0;
+  const fs = numerator / denominator;
+  return parseFloat(fs.toFixed(3));
+};
+
+/**
+ * Categorizes a Factor of Safety score into standard geotechnical stability tiers.
+ * 
+ * @param {number} fs - Factor of Safety
+ * @returns {'stable'|'marginally_stable'|'advisory'|'failure_critical'} Stability tier
+ */
+export const classifySlopeStabilityTier = (fs) => {
+  const val = Number(fs);
+  if (val >= 1.50) return SLOPE_STABILITY_TIERS.STABLE;
+  if (val >= 1.30) return SLOPE_STABILITY_TIERS.MARGINALLY_STABLE;
+  if (val > 1.00) return SLOPE_STABILITY_TIERS.ADVISORY;
+  return SLOPE_STABILITY_TIERS.FAILURE_CRITICAL;
+};
+
+
+// ============================================================================
+// HARMONIZED LANDSAT SENTINEL-2 (HLS) SPECTRAL CROSS-CALIBRATION
+// ============================================================================
+
+export const HLS_PLATFORMS = {
+  LANDSAT_OLI: 'landsat_oli',
+  SENTINEL_MSI: 'sentinel_msi'
+};
+
+export const HLS_TRANSFORMATION_COEFFICIENTS = {
+  blue: { band_name: 'blue', slope: 0.9959, offset: -0.0002, r_squared: 0.998 },
+  green: { band_name: 'green', slope: 0.9778, offset: -0.0040, r_squared: 0.997 },
+  red: { band_name: 'red', slope: 1.0050, offset: -0.0009, r_squared: 0.998 },
+  nir: { band_name: 'nir', slope: 0.9825, offset: -0.0183, r_squared: 0.995 },
+  swir1: { band_name: 'swir1', slope: 1.0010, offset: -0.0020, r_squared: 0.996 },
+  swir2: { band_name: 'swir2', slope: 0.9720, offset: -0.0048, r_squared: 0.994 }
+};
+
+/**
+ * Cross-calibrates spectral reflectance values between Landsat OLI and Sentinel MSI.
+ * Parity implementation with cross_calibrate_spectral_band() in app/models/schemas.py.
+ * 
+ * @param {number[]} values - Input reflectance values
+ * @param {string} bandName - Band name ('blue', 'green', 'red', 'nir', 'swir1', 'swir2')
+ * @param {string} [sourcePlatform='landsat_oli'] - Source platform
+ * @param {string} [targetPlatform='sentinel_msi'] - Target platform
+ * @returns {number[]} Calibrated reflectance values
+ */
+export const crossCalibrateSpectralBand = (
+  values,
+  bandName,
+  sourcePlatform = 'landsat_oli',
+  targetPlatform = 'sentinel_msi'
+) => {
+  const bKey = String(bandName || '').toLowerCase().trim();
+  if (!HLS_TRANSFORMATION_COEFFICIENTS[bKey] || !Array.isArray(values)) {
+    return Array.isArray(values) ? values.map((v) => parseFloat(Number(v).toFixed(4))) : [];
+  }
+  const spec = HLS_TRANSFORMATION_COEFFICIENTS[bKey];
+  const src = String(sourcePlatform).toLowerCase();
+  const tgt = String(targetPlatform).toLowerCase();
+
+  return values.map((v) => {
+    const val = Number(v);
+    if (isNaN(val)) return 0.0;
+    if (src === tgt) {
+      return parseFloat(val.toFixed(4));
+    }
+    if (src === 'landsat_oli' && tgt === 'sentinel_msi') {
+      const res = spec.slope * val + spec.offset;
+      return parseFloat(Math.max(0.0, Math.min(1.0, res)).toFixed(4));
+    }
+    if (src === 'sentinel_msi' && tgt === 'landsat_oli') {
+      const res = (val - spec.offset) / spec.slope;
+      return parseFloat(Math.max(0.0, Math.min(1.0, res)).toFixed(4));
+    }
+    return parseFloat(val.toFixed(4));
+  });
+};
+
+
+// ============================================================================
+// HARMFUL ALGAL BLOOM (HAB) & WATER QUALITY TROPHIC ANALYTICS
+// ============================================================================
+
+export const WATER_QUALITY_METRICS = {
+  NDCI: 'ndci',
+  NDTI: 'ndti',
+  FAI: 'fai',
+  TURBIDITY_FNU: 'turbidity_fnu',
+  CHLOROPHYLL_A_UGL: 'chlorophyll_a_ugl'
+};
+
+export const TROPHIC_STATES = {
+  OLIGOTROPHIC: 'oligotrophic',
+  MESOTROPHIC: 'mesotrophic',
+  EUTROPHIC: 'eutrophic',
+  HYPEREUTROPHIC: 'hypereutrophic'
+};
+
+/**
+ * Calculates Normalized Difference Chlorophyll Index: NDCI = (B05 - B04)/(B05 + B04).
+ * 
+ * @param {number} red - Red surface reflectance (Band 4)
+ * @param {number} rededge1 - RedEdge1 surface reflectance (Band 5)
+ * @returns {number} NDCI index in [-1.0, 1.0]
+ */
+export const calculateNdci = (red, rededge1) => {
+  const r = Number(red) || 0.0;
+  const re = Number(rededge1) || 0.0;
+  const denom = re + r;
+  if (Math.abs(denom) < 1e-6) return 0.0;
+  const val = (re - r) / denom;
+  return parseFloat(Math.max(-1.0, Math.min(1.0, val)).toFixed(4));
+};
+
+/**
+ * Calculates Normalized Difference Turbidity Index: NDTI = (B04 - B03)/(B04 + B03).
+ * 
+ * @param {number} green - Green surface reflectance (Band 3)
+ * @param {number} red - Red surface reflectance (Band 4)
+ * @returns {number} NDTI index in [-1.0, 1.0]
+ */
+export const calculateNdti = (green, red) => {
+  const g = Number(green) || 0.0;
+  const r = Number(red) || 0.0;
+  const denom = r + g;
+  if (Math.abs(denom) < 1e-6) return 0.0;
+  const val = (r - g) / denom;
+  return parseFloat(Math.max(-1.0, Math.min(1.0, val)).toFixed(4));
+};
+
+/**
+ * Classifies NDCI index into limnological trophic states.
+ * 
+ * @param {number} ndciValue - NDCI index score
+ * @returns {'oligotrophic'|'mesotrophic'|'eutrophic'|'hypereutrophic'} Trophic state
+ */
+export const classifyTrophicState = (ndciValue) => {
+  const v = Number(ndciValue);
+  if (v < 0.0) return TROPHIC_STATES.OLIGOTROPHIC;
+  if (v < 0.12) return TROPHIC_STATES.MESOTROPHIC;
+  if (v < 0.25) return TROPHIC_STATES.EUTROPHIC;
+  return TROPHIC_STATES.HYPEREUTROPHIC;
+};
+
+
+// ============================================================================
+// CYANOBACTERIA BLOOM RISK & WATER QUALITY ALERT TIERS
+// ============================================================================
+
+export const CYANOBACTERIA_ALERT_LEVELS = {
+  LOW: 'low',
+  MODERATE: 'moderate',
+  HIGH: 'high',
+  VERY_HIGH: 'very_high'
+};
+
+/**
+ * Classifies estimated Chlorophyll-a (ug/L) into WHO cyanobacteria alert tiers.
+ * 
+ * @param {number} chlorophyllAUgl - Chlorophyll-a in ug/L
+ * @returns {'low'|'moderate'|'high'|'very_high'} Alert level
+ */
+export const classifyCyanobacteriaAlert = (chlorophyllAUgl) => {
+  const val = Number(chlorophyllAUgl) || 0.0;
+  if (val < 10.0) return CYANOBACTERIA_ALERT_LEVELS.LOW;
+  if (val < 50.0) return CYANOBACTERIA_ALERT_LEVELS.MODERATE;
+  if (val < 100.0) return CYANOBACTERIA_ALERT_LEVELS.HIGH;
+  return CYANOBACTERIA_ALERT_LEVELS.VERY_HIGH;
+};
+
+
+// ============================================================================
+// CAMERA CALIBRATION PRESETS (DRONE PHOTOGRAMMETRY SENSORS)
+// ============================================================================
+
+export const CAMERA_CALIBRATION_PRESETS = {
+  dji_zenmuse_p1_35mm: {
+    camera_id: 'DJI-ZENMUSE-P1-35MM',
+    name: 'DJI Zenmuse P1 (35mm)',
+    focal_length_mm: 35.0,
+    focal_length_px: 8000.0,
+    principal_point_x_px: 4096.0,
+    principal_point_y_px: 2730.0,
+    radial_distortion_k1: -0.024,
+    radial_distortion_k2: 0.015,
+    radial_distortion_k3: -0.003,
+    tangential_distortion_p1: 0.0001,
+    tangential_distortion_p2: 0.0001,
+    sensor_width_mm: 35.9,
+    sensor_height_mm: 24.0
+  },
+  dji_phantom_4_rtk: {
+    camera_id: 'DJI-PHANTOM-4-RTK',
+    name: 'DJI Phantom 4 RTK (8.8mm)',
+    focal_length_mm: 8.8,
+    focal_length_px: 3666.67,
+    principal_point_x_px: 2736.0,
+    principal_point_y_px: 1824.0,
+    radial_distortion_k1: -0.125,
+    radial_distortion_k2: 0.105,
+    radial_distortion_k3: -0.021,
+    tangential_distortion_p1: 0.0002,
+    tangential_distortion_p2: 0.0002,
+    sensor_width_mm: 13.2,
+    sensor_height_mm: 8.8
+  },
+  dji_mavic_3_enterprise: {
+    camera_id: 'DJI-MAVIC-3-ENTERPRISE',
+    name: 'DJI Mavic 3 Enterprise (12.3mm)',
+    focal_length_mm: 12.29,
+    focal_length_px: 3724.24,
+    principal_point_x_px: 2644.0,
+    principal_point_y_px: 1984.0,
+    radial_distortion_k1: -0.082,
+    radial_distortion_k2: 0.064,
+    radial_distortion_k3: -0.012,
+    tangential_distortion_p1: 0.0001,
+    tangential_distortion_p2: 0.0001,
+    sensor_width_mm: 17.3,
+    sensor_height_mm: 13.0
+  },
+  sony_rx1r_ii: {
+    camera_id: 'SONY-RX1R-II',
+    name: 'Sony RX1R II (35mm Full-Frame)',
+    focal_length_mm: 35.0,
+    focal_length_px: 7777.78,
+    principal_point_x_px: 3968.0,
+    principal_point_y_px: 2648.0,
+    radial_distortion_k1: -0.018,
+    radial_distortion_k2: 0.010,
+    radial_distortion_k3: -0.002,
+    tangential_distortion_p1: 0.00005,
+    tangential_distortion_p2: 0.00005,
+    sensor_width_mm: 35.9,
+    sensor_height_mm: 24.0
+  }
+};
+
+export const getCameraCalibrationPreset = (cameraId) => {
+  const cid = String(cameraId || '').toLowerCase().replace(/-/g, '_').trim();
+  if (CAMERA_CALIBRATION_PRESETS[cid]) return CAMERA_CALIBRATION_PRESETS[cid];
+  for (const key of Object.keys(CAMERA_CALIBRATION_PRESETS)) {
+    const spec = CAMERA_CALIBRATION_PRESETS[key];
+    if (spec.camera_id.toLowerCase().replace(/-/g, '_') === cid) return spec;
+  }
+  return null;
+};
+
+export const listCameraCalibrationPresets = () => Object.values(CAMERA_CALIBRATION_PRESETS);
+
+
+// ============================================================================
+// GEOTECHNICAL SOIL MECHANICS PRESETS (SLOPE STABILITY)
+// ============================================================================
+
+export const SOIL_MECHANICS_PRESETS = {
+  compacted_clay_core: {
+    key: 'compacted_clay_core',
+    name: 'Compacted Clay Core (Impervious)',
+    cohesion_kpa: 25.0,
+    friction_angle_deg: 22.0,
+    soil_unit_weight_kn_m3: 20.0,
+    description: 'Low-permeability clay core barrier with high cohesive shear strength.'
+  },
+  silty_sand_shell: {
+    key: 'silty_sand_shell',
+    name: 'Silty Sand Shell (Semi-Pervious)',
+    cohesion_kpa: 5.0,
+    friction_angle_deg: 32.0,
+    soil_unit_weight_kn_m3: 19.0,
+    description: 'Granular embankment structural fill with moderate internal friction angle.'
+  },
+  rockfill_embankment: {
+    key: 'rockfill_embankment',
+    name: 'Rockfill Embankment Zone',
+    cohesion_kpa: 0.0,
+    friction_angle_deg: 40.0,
+    soil_unit_weight_kn_m3: 21.0,
+    description: 'Crushed rock shoulder material characterized by high frictional resistance without cohesion.'
+  },
+  mine_tailings_silt: {
+    key: 'mine_tailings_silt',
+    name: 'Mine Tailings Silt/Slurry',
+    cohesion_kpa: 2.0,
+    friction_angle_deg: 26.0,
+    soil_unit_weight_kn_m3: 17.5,
+    description: 'Unconsolidated or fine hydraulically deposited tailings prone to liquefaction and seepage instability.'
+  },
+  compacted_earthfill: {
+    key: 'compacted_earthfill',
+    name: 'Compacted Earthfill (Standard)',
+    cohesion_kpa: 12.0,
+    friction_angle_deg: 30.0,
+    soil_unit_weight_kn_m3: 19.0,
+    description: 'Standard engineered fill material for dam embankments, levees, and roadway slopes.'
+  }
+};
+
+export const getSoilPreset = (key) => {
+  const k = String(key || '').toLowerCase().trim();
+  return SOIL_MECHANICS_PRESETS[k] || null;
+};
+
+export const listSoilPresets = () => Object.values(SOIL_MECHANICS_PRESETS);
+
+
+// ============================================================================
+// DYNAMIC TILE URL BUILDERS (TWI, SLOPE STABILITY & WATER QUALITY)
+// ============================================================================
+
+export const buildTwiTileUrl = (z, x, y, options = {}) => {
+  const rescale = options.rescale || '2.0,12.0';
+  const colormap = options.colormap || 'spectral';
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/terrain/twi/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
+export const buildSlopeStabilityTileUrl = (z, x, y, options = {}) => {
+  const rescale = options.rescale || '0.8,2.0';
+  const colormap = options.colormap || 'rdylbu';
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/terrain/slope-stability/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
+export const buildWaterQualityTileUrl = (metric, z, x, y, options = {}) => {
+  const m = String(metric || 'ndci').toLowerCase();
+  const defaultRescale = m === 'ndci' ? '-0.1,0.4' : (m === 'ndti' ? '-0.2,0.3' : '0.0,50.0');
+  const defaultColormap = m === 'ndci' ? 'spectral' : (m === 'ndti' ? 'turbo' : 'viridis');
+  const rescale = options.rescale || defaultRescale;
+  const colormap = options.colormap || defaultColormap;
+  const basePrefix = options.basePrefix || '/api/v1';
+  if (options.collection && options.itemId) {
+    return `${basePrefix}/tiles/water-quality/${options.collection}/${options.itemId}/${m}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+  }
+  return `${basePrefix}/tiles/water-quality/${m}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
 
 
 

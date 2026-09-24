@@ -247,6 +247,7 @@ def list_geotechnical_sensors(
     return sensors
 
 @router.get("/geotechnical/sensors/geojson")
+@router.get("/geotechnical/geojson", include_in_schema=False)
 @router.get("/geotechnical-sensors/geojson", include_in_schema=False)
 def get_geotechnical_sensors_geojson(
     asset_id: Optional[str] = Query(None, description="Filter by infrastructure asset ID")

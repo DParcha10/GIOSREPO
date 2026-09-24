@@ -3,6 +3,8 @@ Tests all core APIs: Health, Auth, Events, Analysis, Time-Series, Reports, Spati
 Also tests the JARVIS AI Agent: identity, memory, map marking, tab routing, web search, data analysis.
 """
 import unittest
+import warnings
+warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed database.*")
 from fastapi.testclient import TestClient
 from main import app
 
@@ -332,6 +334,304 @@ class TestGIOSApi(unittest.TestCase):
             result = asyncio.run(tool_query_usgs("09486000"))
             self.assertEqual(result["status"], "success")
             self.assertEqual(result["telemetry"]["gage_height_ft"], 5.4)
+
+    def test_bitemporal_change_detection_api(self):
+        """Test POST /api/v1/analysis/change-detection returns valid difference matrix and categories."""
+        res = self.client.post("/api/v1/analysis/change-detection", json={
+            "collection": "sentinel-2-l2a",
+            "metric": "ndmi_diff",
+            "pre_scene_id": "S2A_MSIL2A_20260715",
+            "post_scene_id": "S2B_MSIL2A_20260815",
+            "bbox": [-121.08, 37.05, -121.06, 37.065]
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["metric"], "ndmi_diff")
+        self.assertIn("mean_difference", data)
+        self.assertIn("categories", data)
+        self.assertGreater(len(data["categories"]), 0)
+        self.assertIn("tile_url_template", data)
+
+    def test_difference_tile_streaming_api(self):
+        """Test GET /api/v1/tiles/difference returns 200 OK with valid PNG bytes."""
+        res = self.client.get(
+            "/api/v1/tiles/difference/sentinel-2-l2a/S2A_20260715/S2B_20260815/ndmi_diff/12/1042/1628.png"
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res.content), 100)
+
+    def test_geotechnical_sensor_instrumentation_api(self):
+        """Test GET geotechnical sensor suite: sensors list, readings, summary, and geojson export."""
+        # 1. Sensors list
+        res_list = self.client.get("/api/v1/integration/geotechnical/sensors")
+        self.assertEqual(res_list.status_code, 200)
+        sensors = res_list.json()
+        self.assertIsInstance(sensors, list)
+        self.assertGreaterEqual(len(sensors), 6)
+        sensor_ids = [s["sensor_id"] for s in sensors]
+        self.assertIn("PZ-SL-101", sensor_ids)
+
+        # 2. Sensor readings
+        res_readings = self.client.get("/api/v1/integration/geotechnical/sensors/PZ-SL-101/readings")
+        self.assertEqual(res_readings.status_code, 200)
+        readings = res_readings.json()
+        self.assertIsInstance(readings, list)
+        self.assertGreater(len(readings), 0)
+
+        # 3. Network summary
+        res_sum = self.client.get("/api/v1/integration/geotechnical/summary/SAN-LUIS-DAM-01")
+        self.assertEqual(res_sum.status_code, 200)
+        summary = res_sum.json()
+        self.assertEqual(summary["asset_id"], "SAN-LUIS-DAM-01")
+        self.assertGreaterEqual(summary["total_sensors"], 6)
+
+        # 4. GeoJSON export (both primary route and alias)
+        res_geo1 = self.client.get("/api/v1/integration/geotechnical/sensors/geojson")
+        self.assertEqual(res_geo1.status_code, 200)
+        geo1 = res_geo1.json()
+        self.assertEqual(geo1["type"], "FeatureCollection")
+        self.assertGreaterEqual(len(geo1["features"]), 6)
+
+        res_geo2 = self.client.get("/api/v1/integration/geotechnical/geojson")
+        self.assertEqual(res_geo2.status_code, 200)
+        geo2 = res_geo2.json()
+        self.assertEqual(geo2["type"], "FeatureCollection")
+
+    def test_reservoir_bathymetry_eac_api(self):
+        """Test POST /api/v1/analysis/bathymetry/eac calculates EAC curves with frustum integration."""
+        res = self.client.post("/api/v1/analysis/bathymetry/eac", json={
+            "asset_id": "SAN-LUIS-RES-01",
+            "datum_min_elevation_m": 160.0,
+            "datum_max_elevation_m": 250.0,
+            "step_elevation_m": 10.0,
+            "current_pool_elevation_m": 236.4,
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["asset_id"], "SAN-LUIS-RES-01")
+        self.assertIn("curve_points", data)
+        self.assertGreater(len(data["curve_points"]), 0)
+        self.assertIn("current_storage_m3", data)
+        self.assertIn("max_capacity_m3", data)
+        self.assertIn("storage_volume_acre_feet", data["curve_points"][0])
+
+        # Also test with parameter aliases (min_elevation_m, max_elevation_m, elevation_step_m)
+        res_alias = self.client.post("/api/v1/analysis/bathymetry/eac", json={
+            "asset_id": "SAN-LUIS-RES-01",
+            "min_elevation_m": 160.0,
+            "max_elevation_m": 250.0,
+            "elevation_step_m": 10.0,
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(res_alias.status_code, 200)
+
+    def test_tile_cache_preload_api(self):
+        """Test POST /api/v1/tiles/cache/preload queues tile cache pre-warm job."""
+        res = self.client.post("/api/v1/tiles/cache/preload", json={
+            "collection": "sentinel-2-l2a",
+            "item_id": "S2A_MSIL2A_20260815",
+            "index": "ndvi",
+            "min_zoom": 10,
+            "max_zoom": 11,
+            "bbox": [-121.08, 37.05, -121.06, 37.065]
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("job_id", data)
+        self.assertEqual(data["status"], "queued")
+        self.assertGreater(data["total_tiles_to_cache"], 0)
+
+        # Also test with scene_id alias
+        res_alias = self.client.post("/api/v1/tiles/cache/preload", json={
+            "collection": "sentinel-2-l2a",
+            "scene_id": "S2A_MSIL2A_20260815",
+            "min_zoom": 10,
+            "max_zoom": 11,
+            "bbox": [-121.08, 37.05, -121.06, 37.065]
+        })
+        self.assertEqual(res_alias.status_code, 200)
+
+    def test_drone_gcp_quality_assessment_api(self):
+        """Test POST /api/v1/drone/gcp/quality and /api/v1/drone/gcp-quality calculates survey-grade residuals and RMSE."""
+        payload = {
+            "ortho_id": "ORTHO-SL-DAM-01",
+            "control_points": [
+                {"point_id": "GCP-01", "role": "control", "x_east": 672000.0, "y_north": 4104000.0, "z_elev": 165.0, "lat": 37.06, "lng": -121.07},
+                {"point_id": "GCP-02", "role": "control", "x_east": 672500.0, "y_north": 4104500.0, "z_elev": 166.0, "lat": 37.065, "lng": -121.065},
+                {"point_id": "CP-01", "role": "check", "x_east": 672200.0, "y_north": 4104200.0, "z_elev": 165.5, "lat": 37.062, "lng": -121.068}
+            ],
+            "estimated_positions": [
+                {"point_id": "GCP-01", "x_east": 672000.02, "y_north": 4104000.01, "z_elev": 165.03, "reprojection_error_px": 0.35},
+                {"point_id": "GCP-02", "x_east": 672499.98, "y_north": 4104500.02, "z_elev": 165.98, "reprojection_error_px": 0.41},
+                {"point_id": "CP-01", "x_east": 672200.03, "y_north": 4104199.97, "z_elev": 165.54, "reprojection_error_px": 0.48}
+            ]
+        }
+        res = self.client.post("/api/v1/drone/gcp/quality", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["ortho_id"], "ORTHO-SL-DAM-01")
+        self.assertTrue(data["survey_grade_achieved"])
+        self.assertIn("control_rmse", data)
+        self.assertIn("check_rmse", data)
+        self.assertEqual(len(data["residuals"]), 3)
+        self.assertLess(data["control_rmse"]["rmse_3d_m"], 0.05)
+
+        # Test route alias /gcp-quality and coordinate aliases (x, y, z)
+        alias_payload = {
+            "ortho_id": "ORTHO-SL-DAM-02",
+            "control_points": [
+                {"point_id": "GCP-01", "role": "control", "x": 672000.0, "y": 4104000.0, "z": 165.0}
+            ],
+            "estimated_positions": [
+                {"point_id": "GCP-01", "x": 672000.01, "y": 4104000.01, "z": 165.01}
+            ]
+        }
+        res_alias = self.client.post("/api/v1/drone/gcp-quality", json=alias_payload)
+        self.assertEqual(res_alias.status_code, 200)
+        self.assertTrue(res_alias.json()["survey_grade_achieved"])
+
+        # Test GCP GeoJSON export
+        res_geo = self.client.post("/api/v1/drone/gcp/geojson", json=payload["control_points"])
+        self.assertEqual(res_geo.status_code, 200)
+        geo_data = res_geo.json()
+        self.assertEqual(geo_data["type"], "FeatureCollection")
+        self.assertEqual(len(geo_data["features"]), 3)
+
+    def test_drone_camera_calibration_api(self):
+        """Test GET /api/v1/drone/camera/calibration/{camera_id} returns interior orientation parameters."""
+        res = self.client.get("/api/v1/drone/camera/calibration/DJI-ZENMUSE-P1-01")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["camera_id"], "DJI-ZENMUSE-P1-01")
+        self.assertEqual(data["focal_length_mm"], 35.0)
+        self.assertIn("principal_point_x_px", data)
+        self.assertIn("radial_distortion_k1", data)
+
+        # Test route alias /calibration/camera/{camera_id} and fallback camera profile
+        res_alias = self.client.get("/api/v1/drone/calibration/camera/CUSTOM-CAMERA-99")
+        self.assertEqual(res_alias.status_code, 200)
+        self.assertEqual(res_alias.json()["camera_id"], "CUSTOM-CAMERA-99")
+
+    def test_topographic_wetness_index_api(self):
+        """Test POST /api/v1/analysis/terrain/twi and dynamic XYZ tile streaming."""
+        res = self.client.post("/api/v1/analysis/terrain/twi", json={
+            "asset_id": "SAN-LUIS-DAM-01",
+            "bbox": [-121.12, 37.02, -121.04, 37.09],
+            "grid_resolution_m": 10.0
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["asset_id"], "SAN-LUIS-DAM-01")
+        self.assertIn("mean_twi", data)
+        self.assertIn("min_twi", data)
+        self.assertIn("max_twi", data)
+        self.assertIn("tile_url_template", data)
+
+        # Test route alias /analysis/twi with omitted asset_id
+        res_alias = self.client.post("/api/v1/analysis/twi", json={
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Test TWI XYZ tile streaming
+        res_tile = self.client.get("/api/v1/tiles/terrain/twi/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_slope_stability_factor_of_safety_api(self):
+        """Test POST /api/v1/analysis/terrain/slope-stability and dynamic XYZ slope stability tiles."""
+        res = self.client.post("/api/v1/analysis/terrain/slope-stability", json={
+            "asset_id": "SAN-LUIS-EMBANKMENT-01",
+            "bbox": [-121.12, 37.02, -121.04, 37.09],
+            "cohesion_kpa": 14.0,
+            "friction_angle_deg": 32.0,
+            "soil_unit_weight_kn_m3": 19.5,
+            "water_table_ratio": 0.4
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["asset_id"], "SAN-LUIS-EMBANKMENT-01")
+        self.assertIn("mean_factor_of_safety", data)
+        self.assertIn("min_factor_of_safety", data)
+        self.assertIn("stability_tier", data)
+        self.assertIn("tier_breakdown", data)
+        self.assertIn("tile_url_template", data)
+
+        # Test route alias /analysis/slope-stability
+        res_alias = self.client.post("/api/v1/analysis/slope-stability", json={
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Test Slope Stability XYZ tile streaming
+        res_tile = self.client.get("/api/v1/tiles/terrain/slope-stability/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_hls_spectral_cross_calibration_api(self):
+        """Test POST /api/v1/analysis/hls/calibrate cross-harmonizes Landsat and Sentinel bands."""
+        res = self.client.post("/api/v1/analysis/hls/calibrate", json={
+            "source_platform": "landsat_oli",
+            "target_platform": "sentinel_msi",
+            "band_name": "red",
+            "reflectance_values": [0.05, 0.12, 0.25]
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["source_platform"], "landsat_oli")
+        self.assertEqual(data["target_platform"], "sentinel_msi")
+        self.assertEqual(data["band_name"], "red")
+        self.assertEqual(len(data["calibrated_values"]), 3)
+        self.assertIn("mean_calibrated", data)
+        self.assertIn("formula_applied", data)
+
+        # Test route alias /analysis/hls-calibrate and lenient input parameter aliases
+        res_alias = self.client.post("/api/v1/analysis/hls-calibrate", json={
+            "source_platform": "landsat_8_9",
+            "target_platform": "sentinel_2a_2b",
+            "band": "nir",
+            "reflectance": 0.35
+        })
+        self.assertEqual(res_alias.status_code, 200)
+        alias_data = res_alias.json()
+        self.assertEqual(len(alias_data["calibrated_values"]), 1)
+        self.assertEqual(alias_data["band_name"], "nir")
+
+    def test_water_quality_trophic_state_api(self):
+        """Test POST /api/v1/analysis/water-quality computes NDCI, NDTI, and Carlson trophic classifications."""
+        res = self.client.post("/api/v1/analysis/water-quality", json={
+            "asset_id": "SAN-LUIS-RESERVOIR",
+            "item_id": "S2A_MSIL2A_20260901",
+            "bbox": [-121.12, 37.02, -121.04, 37.09],
+            "metric": "ndci"
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["asset_id"], "SAN-LUIS-RESERVOIR")
+        self.assertEqual(data["primary_metric"], "ndci")
+        self.assertIn("mean_value", data)
+        self.assertIn("dominant_trophic_state", data)
+        self.assertIn("bloom_detected", data)
+        self.assertIn("trophic_breakdown", data)
+        self.assertGreater(len(data["trophic_breakdown"]), 0)
+        self.assertIn("tile_url_template", data)
+
+        # Test route alias /analysis/water_quality with parameter aliases
+        res_alias = self.client.post("/api/v1/analysis/water_quality", json={
+            "water_body_id": "SAN-LUIS-RESERVOIR",
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Test Water Quality XYZ tile streaming
+        res_tile = self.client.get("/api/v1/tiles/water-quality/ndci/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
 
 if __name__ == "__main__":
     unittest.main()

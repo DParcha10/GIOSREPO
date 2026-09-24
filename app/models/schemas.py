@@ -554,6 +554,24 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "integration_sensor_summary": "/api/v1/integration/geotechnical/summary/{asset_id}",
     "analysis_bathymetry_eac": "/api/v1/analysis/bathymetry/eac",
     "tiles_cache_preload": "/api/v1/tiles/cache/preload",
+    "drone_gcp_quality": "/api/v1/drone/gcp/quality",
+    "drone_gcp_quality_short": "/api/v1/drone/gcp-quality",
+    "drone_gcp_geojson": "/api/v1/drone/gcp/geojson",
+    "drone_camera_calibration": "/api/v1/drone/camera/calibration/{camera_id}",
+    "drone_camera_calibration_short": "/api/v1/drone/camera-calibration",
+    "drone_camera_calibration_list": "/api/v1/drone/camera/calibration",
+    "analysis_twi": "/api/v1/analysis/terrain/twi",
+    "analysis_twi_short": "/api/v1/analysis/twi",
+    "analysis_slope_stability": "/api/v1/analysis/terrain/slope-stability",
+    "analysis_slope_stability_short": "/api/v1/analysis/slope-stability",
+    "analysis_hls_calibrate": "/api/v1/analysis/hls/calibrate",
+    "analysis_hls_calibrate_short": "/api/v1/analysis/hls-calibrate",
+    "analysis_water_quality": "/api/v1/analysis/water-quality",
+    "tiles_twi": "/api/v1/tiles/terrain/twi/{z}/{x}/{y}.png",
+    "tiles_slope_stability": "/api/v1/tiles/terrain/slope-stability/{z}/{x}/{y}.png",
+    "tiles_water_quality": "/api/v1/tiles/water-quality/{metric}/{z}/{x}/{y}.png",
+    "tiles_water_quality_scene": "/api/v1/tiles/water-quality/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png",
+    "geotechnical_soil_presets": "/api/v1/analysis/terrain/soil-presets",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -716,12 +734,34 @@ def parse_bbox(
             return default
     if isinstance(val, dict):
         try:
-            min_lon = float(val.get("min_lon", val.get("west", val.get("min_x", 0))))
-            min_lat = float(val.get("min_lat", val.get("south", val.get("min_y", 0))))
-            max_lon = float(val.get("max_lon", val.get("east", val.get("max_x", 0))))
-            max_lat = float(val.get("max_lat", val.get("north", val.get("max_y", 0))))
-            if all(math.isfinite(c) for c in (min_lon, min_lat, max_lon, max_lat)):
-                return (min_lon, min_lat, max_lon, max_lat)
+            if "geometry" in val and isinstance(val["geometry"], dict):
+                val = val["geometry"]
+            if "coordinates" in val:
+                coords_list = []
+                def _extract_pts(obj):
+                    if isinstance(obj, (list, tuple)):
+                        if len(obj) >= 2 and isinstance(obj[0], (int, float)) and isinstance(obj[1], (int, float)):
+                            coords_list.append((float(obj[0]), float(obj[1])))
+                        else:
+                            for item in obj:
+                                _extract_pts(item)
+                _extract_pts(val["coordinates"])
+                if coords_list:
+                    min_x = min(pt[0] for pt in coords_list)
+                    max_x = max(pt[0] for pt in coords_list)
+                    min_y = min(pt[1] for pt in coords_list)
+                    max_y = max(pt[1] for pt in coords_list)
+                    if all(math.isfinite(c) for c in (min_x, min_y, max_x, max_y)):
+                        return (round(min_x, 6), round(min_y, 6), round(max_x, 6), round(max_y, 6))
+            if "bbox" in val and isinstance(val["bbox"], (list, tuple)) and len(val["bbox"]) == 4:
+                return parse_bbox(val["bbox"], default=default)
+            if any(k in val for k in ("min_lon", "west", "min_x", "max_lon", "east", "max_x", "min_lat", "south", "min_y", "max_lat", "north", "max_y")):
+                min_lon = float(val.get("min_lon", val.get("west", val.get("min_x", 0))))
+                min_lat = float(val.get("min_lat", val.get("south", val.get("min_y", 0))))
+                max_lon = float(val.get("max_lon", val.get("east", val.get("max_x", 0))))
+                max_lat = float(val.get("max_lat", val.get("north", val.get("max_y", 0))))
+                if all(math.isfinite(c) for c in (min_lon, min_lat, max_lon, max_lat)):
+                    return (min_lon, min_lat, max_lon, max_lat)
         except Exception:
             return default
     if isinstance(val, str):
@@ -3410,23 +3450,30 @@ class EACAnalysisRequest(BaseModel):
     @classmethod
     def parse_bbox_field(cls, data: Any) -> Any:
         """Parses bbox input and auto-populates polygon geometry if missing."""
-        if isinstance(data, dict) and "bbox" in data and data["bbox"] is not None:
-            raw = data["bbox"]
-            if not isinstance(raw, BoundingBox):
-                t = parse_bbox(raw)
-                data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
-            if not data.get("geometry"):
-                b = data["bbox"]
-                data["geometry"] = {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [b.min_lon, b.min_lat],
-                        [b.max_lon, b.min_lat],
-                        [b.max_lon, b.max_lat],
-                        [b.min_lon, b.max_lat],
-                        [b.min_lon, b.min_lat]
-                    ]]
-                }
+        if isinstance(data, dict):
+            if "datum_min_elevation_m" not in data and "min_elevation_m" in data:
+                data["datum_min_elevation_m"] = data["min_elevation_m"]
+            if "datum_max_elevation_m" not in data and "max_elevation_m" in data:
+                data["datum_max_elevation_m"] = data["max_elevation_m"]
+            if "step_elevation_m" not in data and "elevation_step_m" in data:
+                data["step_elevation_m"] = data["elevation_step_m"]
+            if "bbox" in data and data["bbox"] is not None:
+                raw = data["bbox"]
+                if not isinstance(raw, BoundingBox):
+                    t = parse_bbox(raw)
+                    data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
+                if not data.get("geometry"):
+                    b = data["bbox"]
+                    data["geometry"] = {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [b.min_lon, b.min_lat],
+                            [b.max_lon, b.min_lat],
+                            [b.max_lon, b.max_lat],
+                            [b.min_lon, b.max_lat],
+                            [b.min_lon, b.min_lat]
+                        ]]
+                    }
         return data
 
     @model_validator(mode="after")
@@ -3574,11 +3621,14 @@ class TileCachePreloadRequest(BaseModel):
     @classmethod
     def parse_bbox_field(cls, data: Any) -> Any:
         """Parses bbox input from list, tuple, string, or dict."""
-        if isinstance(data, dict) and "bbox" in data:
-            raw = data["bbox"]
-            if not isinstance(raw, BoundingBox):
-                t = parse_bbox(raw)
-                data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
+        if isinstance(data, dict):
+            if "item_id" not in data and "scene_id" in data:
+                data["item_id"] = data["scene_id"]
+            if "bbox" in data and data["bbox"] is not None:
+                raw = data["bbox"]
+                if not isinstance(raw, BoundingBox):
+                    t = parse_bbox(raw)
+                    data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
         return data
 
     @model_validator(mode="after")
@@ -3644,5 +3694,857 @@ def calculate_tile_pyramid_count(
     )
 
 
+# ============================================================================
+# PHOTOGRAMMETRY & GROUND CONTROL POINTS (GCP) QUALITY ASSESSMENT SCAFFOLDING
+# ============================================================================
 
+class GCPRole(str, Enum):
+    """Role of a ground control target within a photogrammetric survey network."""
+    CONTROL = "control"   # Constrains bundle adjustment georeferencing
+    CHECK = "check"       # Independent verification point for blind accuracy validation
+
+class GCPTargetType(str, Enum):
+    """Visual marker geometry for photogrammetric ground targets."""
+    CHECKERBOARD = "checkerboard"
+    CIRCULAR = "circular"
+    CROSS = "cross"
+    NATURAL_FEATURE = "natural_feature"
+
+class GCPCoordinate(BaseModel):
+    """Surveyed ground control point coordinate record."""
+    point_id: str = Field(..., min_length=1, description="Unique GCP point identifier (e.g. 'GCP-01')")
+    role: GCPRole = Field(default=GCPRole.CONTROL, description="Survey network point role")
+    target_type: GCPTargetType = Field(default=GCPTargetType.CHECKERBOARD, description="Visual target marker type")
+    x_east: float = Field(..., description="Easting / X coordinate in projected CRS (meters)")
+    y_north: float = Field(..., description="Northing / Y coordinate in projected CRS (meters)")
+    z_elev: float = Field(..., description="Elevation / Z coordinate in meters MSL")
+    crs: str = Field(default="EPSG:32610", description="Coordinate reference system (e.g. 'EPSG:32610')")
+    lat: Optional[float] = Field(default=None, ge=-90.0, le=90.0, description="Optional WGS84 latitude")
+    lng: Optional[float] = Field(default=None, ge=-180.0, le=180.0, description="Optional WGS84 longitude")
+    is_enabled: bool = Field(default=True, description="Whether target is active in bundle adjustment")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "x_east" not in data:
+                for k in ("x", "east", "easting"):
+                    if k in data and data[k] is not None:
+                        data["x_east"] = float(data[k])
+                        break
+            if "y_north" not in data:
+                for k in ("y", "north", "northing"):
+                    if k in data and data[k] is not None:
+                        data["y_north"] = float(data[k])
+                        break
+            if "z_elev" not in data:
+                for k in ("z", "elev", "elevation"):
+                    if k in data and data[k] is not None:
+                        data["z_elev"] = float(data[k])
+                        break
+            if "lng" not in data:
+                for k in ("lon", "longitude"):
+                    if k in data and data[k] is not None:
+                        data["lng"] = float(data[k])
+                        break
+            if "lat" not in data:
+                for k in ("latitude",):
+                    if k in data and data[k] is not None:
+                        data["lat"] = float(data[k])
+                        break
+        return data
+
+class GCPResidual(BaseModel):
+    """Residual error vector between surveyed position and photogrammetric model estimate."""
+    point_id: str = Field(..., description="GCP point identifier")
+    role: GCPRole = Field(..., description="Point network role")
+    delta_x_m: float = Field(..., description="Residual in Easting X (meters)")
+    delta_y_m: float = Field(..., description="Residual in Northing Y (meters)")
+    delta_z_m: float = Field(..., description="Residual in Elevation Z (meters)")
+    residual_horizontal_m: float = Field(..., ge=0.0, description="Planar horizontal residual sqrt(dX^2 + dY^2) in meters")
+    residual_3d_m: float = Field(..., ge=0.0, description="3D Euclidean residual sqrt(dX^2 + dY^2 + dZ^2) in meters")
+    image_pixel_reprojection_error_px: Optional[float] = Field(default=None, ge=0.0, description="Mean image reprojection error in pixels")
+
+class RMSEMetrics(BaseModel):
+    """Statistical Root Mean Square Error (RMSE) summary metrics across a point set."""
+    rmse_x_m: float = Field(..., ge=0.0, description="RMSE in Easting X (meters)")
+    rmse_y_m: float = Field(..., ge=0.0, description="RMSE in Northing Y (meters)")
+    rmse_z_m: float = Field(..., ge=0.0, description="RMSE in Elevation Z (meters)")
+    rmse_horizontal_m: float = Field(..., ge=0.0, description="Planar horizontal RMSE sqrt(RMSE_X^2 + RMSE_Y^2) in meters")
+    rmse_3d_m: float = Field(..., ge=0.0, description="Total 3D RMSE sqrt(RMSE_X^2 + RMSE_Y^2 + RMSE_Z^2) in meters")
+    point_count: int = Field(..., ge=0, description="Total points evaluated")
+
+class CameraInteriorOrientation(BaseModel):
+    """Brown-Conrady / pinhole interior camera calibration parameter specification."""
+    camera_id: str = Field(..., description="Camera instrument ID or serial number")
+    focal_length_mm: float = Field(..., gt=0.0, description="Calibrated focal length in millimeters")
+    focal_length_px: float = Field(..., gt=0.0, description="Calibrated focal length in pixels")
+    principal_point_x_px: float = Field(..., description="Principal point X offset in pixels (cx)")
+    principal_point_y_px: float = Field(..., description="Principal point Y offset in pixels (cy)")
+    radial_distortion_k1: float = Field(default=0.0, description="1st order radial distortion coefficient k1")
+    radial_distortion_k2: float = Field(default=0.0, description="2nd order radial distortion coefficient k2")
+    radial_distortion_k3: float = Field(default=0.0, description="3rd order radial distortion coefficient k3")
+    tangential_distortion_p1: float = Field(default=0.0, description="1st order tangential distortion coefficient p1")
+    tangential_distortion_p2: float = Field(default=0.0, description="2nd order tangential distortion coefficient p2")
+    sensor_width_mm: float = Field(default=13.2, gt=0.0, description="Sensor physical width in mm")
+    sensor_height_mm: float = Field(default=8.8, gt=0.0, description="Sensor physical height in mm")
+
+class GCPQualityAssessmentRequest(BaseModel):
+    """Request payload to evaluate Ground Control and Check Point network accuracy."""
+    ortho_id: str = Field(..., min_length=1, description="Associated drone orthomosaic ID")
+    control_points: List[GCPCoordinate] = Field(..., min_length=1, description="Surveyed ground control coordinates")
+    estimated_positions: List[Dict[str, Any]] = Field(..., min_length=1, description="Model estimated point coordinates")
+    camera_calibration: Optional[CameraInteriorOrientation] = Field(default=None, description="Optional camera calibration model")
+
+class GCPQualityAssessmentResponse(BaseModel):
+    """Response payload containing photogrammetric GCP and Check Point accuracy analysis."""
+    ortho_id: str = Field(..., description="Drone orthomosaic identifier")
+    control_rmse: RMSEMetrics = Field(..., description="Root Mean Square Error for Control Points")
+    check_rmse: Optional[RMSEMetrics] = Field(default=None, description="Root Mean Square Error for Check Points")
+    residuals: List[GCPResidual] = Field(default_factory=list, description="Point-by-point residual error vectors")
+    survey_grade_achieved: bool = Field(..., description="Flag indicating if total 3D RMSE <= 0.05m (5cm survey grade standard)")
+    camera_calibration: Optional[CameraInteriorOrientation] = Field(default=None, description="Applied camera calibration")
+    assessed_at: str = Field(..., description="ISO 8601 assessment timestamp")
+
+def calculate_gcp_residuals_and_rmse(
+    measured_points: Sequence[Union[GCPCoordinate, Dict[str, Any]]],
+    estimated_points: Sequence[Dict[str, Any]]
+) -> Tuple[List[GCPResidual], RMSEMetrics, Optional[RMSEMetrics]]:
+    """Calculates residual vectors and separate RMSE metrics for Control Points and Check Points."""
+    est_lookup: Dict[str, Dict[str, Any]] = {}
+    for ep in estimated_points:
+        pid = str(ep.get("point_id", "")).strip()
+        if pid:
+            est_lookup[pid] = ep
+
+    residuals: List[GCPResidual] = []
+    ctrl_residuals: List[GCPResidual] = []
+    check_residuals: List[GCPResidual] = []
+
+    for mp in measured_points:
+        if isinstance(mp, BaseModel):
+            m_data = mp.model_dump()
+        else:
+            m_data = dict(mp)
+        
+        pid = str(m_data.get("point_id", "")).strip()
+        if not pid or pid not in est_lookup:
+            continue
+
+        raw_role = m_data.get("role", "control")
+        role_enum = raw_role if isinstance(raw_role, GCPRole) else (GCPRole.CHECK if str(raw_role).lower() == "check" else GCPRole.CONTROL)
+        
+        ep = est_lookup[pid]
+        def _get_c(d, *keys):
+            for k in keys:
+                if k in d and d[k] is not None:
+                    return float(d[k])
+            return 0.0
+
+        dx = _get_c(ep, "x_east", "x", "east", "easting") - _get_c(m_data, "x_east", "x", "east", "easting")
+        dy = _get_c(ep, "y_north", "y", "north", "northing") - _get_c(m_data, "y_north", "y", "north", "northing")
+        dz = _get_c(ep, "z_elev", "z", "elev", "elevation") - _get_c(m_data, "z_elev", "z", "elev", "elevation")
+        
+        h_res = math.sqrt(dx * dx + dy * dy)
+        res_3d = math.sqrt(dx * dx + dy * dy + dz * dz)
+        reproj = ep.get("reprojection_error_px") or ep.get("image_pixel_reprojection_error_px")
+
+        residual = GCPResidual(
+            point_id=pid,
+            role=role_enum,
+            delta_x_m=round(dx, 4),
+            delta_y_m=round(dy, 4),
+            delta_z_m=round(dz, 4),
+            residual_horizontal_m=round(h_res, 4),
+            residual_3d_m=round(res_3d, 4),
+            image_pixel_reprojection_error_px=round(float(reproj), 2) if reproj is not None else None
+        )
+        residuals.append(residual)
+        if role_enum == GCPRole.CONTROL:
+            ctrl_residuals.append(residual)
+        else:
+            check_residuals.append(residual)
+
+    def _compute_rmse(res_list: List[GCPResidual]) -> RMSEMetrics:
+        n = len(res_list)
+        if n == 0:
+            return RMSEMetrics(rmse_x_m=0.0, rmse_y_m=0.0, rmse_z_m=0.0, rmse_horizontal_m=0.0, rmse_3d_m=0.0, point_count=0)
+        sum_dx2 = sum(r.delta_x_m ** 2 for r in res_list)
+        sum_dy2 = sum(r.delta_y_m ** 2 for r in res_list)
+        sum_dz2 = sum(r.delta_z_m ** 2 for r in res_list)
+        rx = math.sqrt(sum_dx2 / n)
+        ry = math.sqrt(sum_dy2 / n)
+        rz = math.sqrt(sum_dz2 / n)
+        rh = math.sqrt(rx * rx + ry * ry)
+        r3d = math.sqrt(rx * rx + ry * ry + rz * rz)
+        return RMSEMetrics(
+            rmse_x_m=round(rx, 4),
+            rmse_y_m=round(ry, 4),
+            rmse_z_m=round(rz, 4),
+            rmse_horizontal_m=round(rh, 4),
+            rmse_3d_m=round(r3d, 4),
+            point_count=n
+        )
+
+    ctrl_metrics = _compute_rmse(ctrl_residuals if ctrl_residuals else residuals)
+    check_metrics = _compute_rmse(check_residuals) if check_residuals else None
+    return (residuals, ctrl_metrics, check_metrics)
+
+def gcp_to_geojson_feature(gcp: Union[GCPCoordinate, Dict[str, Any]]) -> Dict[str, Any]:
+    """Converts a GCPCoordinate or dict into an RFC 7946 GeoJSON Feature."""
+    if isinstance(gcp, BaseModel):
+        data = gcp.model_dump()
+    else:
+        data = dict(gcp)
+    
+    lat = float(data.get("lat") if data.get("lat") is not None else (data.get("latitude") or 0.0))
+    lng = float(data.get("lng") if data.get("lng") is not None else (data.get("lon") or data.get("longitude") or 0.0))
+    pid = str(data.get("point_id", ""))
+    role_val = data.get("role", "control")
+    role_str = role_val.value if hasattr(role_val, "value") else str(role_val)
+    target_val = data.get("target_type", "checkerboard")
+    target_str = target_val.value if hasattr(target_val, "value") else str(target_val)
+
+    return {
+        "type": "Feature",
+        "id": pid,
+        "geometry": {
+            "type": "Point",
+            "coordinates": [lng, lat]
+        },
+        "properties": {
+            "point_id": pid,
+            "role": role_str,
+            "target_type": target_str,
+            "x_east": data.get("x_east"),
+            "y_north": data.get("y_north"),
+            "z_elev": data.get("z_elev"),
+            "lat": lat,
+            "lng": lng,
+            "crs": data.get("crs", "EPSG:32610"),
+            "is_enabled": data.get("is_enabled", True)
+        }
+    }
+
+def gcps_to_feature_collection(gcps: Sequence[Union[GCPCoordinate, Dict[str, Any]]]) -> Dict[str, Any]:
+    """Converts a sequence of GCPCoordinate models into an RFC 7946 GeoJSON FeatureCollection."""
+    features = [gcp_to_geojson_feature(p) for p in gcps]
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }
+
+
+# ============================================================================
+# TOPOGRAPHIC WETNESS INDEX (TWI) & SLOPE STABILITY FACTOR OF SAFETY (FS)
+# ============================================================================
+
+class SlopeStabilityTier(str, Enum):
+    """Geotechnical factor of safety stability risk classifications."""
+    STABLE = "stable"                     # FS >= 1.50 (industry standard for long-term dam stability)
+    MARGINALLY_STABLE = "marginally_stable" # 1.30 <= FS < 1.50 (advisory surveillance recommended)
+    ADVISORY = "advisory"                 # 1.00 < FS < 1.30 (heightened failure risk)
+    FAILURE_CRITICAL = "failure_critical" # FS <= 1.00 (active slope failure imminent or in progress)
+
+class TWIAnalysisRequest(BaseModel):
+    """Request payload to calculate Topographic Wetness Index (TWI) over a digital elevation terrain model."""
+    asset_id: str = Field(..., min_length=1, description="Target infrastructure or embankment asset ID")
+    geometry: Optional[Dict[str, Any]] = Field(default=None, description="Optional GeoJSON Polygon bounding analysis area")
+    bbox: Optional[BoundingBox] = Field(default=None, description="Optional bounding box envelope")
+    grid_resolution_m: float = Field(default=10.0, gt=0.0, le=100.0, description="DEM spatial resolution in meters")
+    min_slope_deg: float = Field(default=0.1, ge=0.01, le=10.0, description="Minimum slope clamp in degrees to prevent ln(inf)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_bbox_field(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("asset_id"):
+                for k in ("terrain_id", "id", "name"):
+                    if data.get(k):
+                        data["asset_id"] = str(data[k])
+                        break
+                if not data.get("asset_id"):
+                    data["asset_id"] = "TERRAIN-01"
+            if "bbox" in data and data["bbox"] is not None:
+                raw = data["bbox"]
+                if not isinstance(raw, BoundingBox):
+                    t = parse_bbox(raw)
+                    data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
+                if not data.get("geometry"):
+                    b = data["bbox"]
+                    data["geometry"] = {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [b.min_lon, b.min_lat],
+                            [b.max_lon, b.min_lat],
+                            [b.max_lon, b.max_lat],
+                            [b.min_lon, b.max_lat],
+                            [b.min_lon, b.min_lat]
+                        ]]
+                    }
+        return data
+
+class TWIAnalysisResponse(BaseModel):
+    """Response payload containing Topographic Wetness Index (TWI) spatial analytics."""
+    asset_id: str = Field(..., description="Target asset identifier")
+    mean_twi: float = Field(..., description="Mean Topographic Wetness Index across analyzed terrain")
+    min_twi: float = Field(..., description="Minimum observed TWI")
+    max_twi: float = Field(..., description="Maximum observed TWI")
+    saturated_area_hectares: float = Field(..., ge=0.0, description="Area with TWI >= 8.0 representing potential moisture ponding / seepage zones")
+    saturation_percentage: float = Field(..., ge=0.0, le=100.0, description="Percentage of area exceeding saturation threshold")
+    tile_url_template: str = Field(..., description="Streaming XYZ tile URL template for TWI layer")
+    created_at: str = Field(..., description="ISO 8601 calculation timestamp")
+
+class SlopeStabilityRequest(BaseModel):
+    """Request payload to calculate infinite slope Factor of Safety (FS) stability model."""
+    asset_id: str = Field(default="EMBANKMENT-01", description="Target embankment or dam asset ID")
+    geometry: Optional[Dict[str, Any]] = Field(default=None, description="Optional GeoJSON Polygon")
+    bbox: Optional[BoundingBox] = Field(default=None, description="Optional bounding box")
+    cohesion_kpa: float = Field(default=12.0, ge=0.0, le=200.0, description="Effective soil cohesion c' in kPa")
+    friction_angle_deg: float = Field(default=30.0, ge=5.0, le=60.0, description="Effective internal friction angle phi' in degrees")
+    soil_unit_weight_kn_m3: float = Field(default=19.0, ge=10.0, le=30.0, description="Total moist soil unit weight gamma in kN/m^3")
+    water_table_ratio: float = Field(default=0.5, ge=0.0, le=1.0, description="Phreatic water surface saturation ratio m = hw / z")
+    failure_depth_m: float = Field(default=3.0, gt=0.1, le=50.0, description="Failure slab slip depth z in meters")
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_bbox_field(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("asset_id"):
+                for k in ("slope_id", "embankment_id", "id", "name"):
+                    if data.get(k):
+                        data["asset_id"] = str(data[k])
+                        break
+                if not data.get("asset_id"):
+                    data["asset_id"] = "EMBANKMENT-01"
+            if "bbox" in data and data["bbox"] is not None:
+                raw = data["bbox"]
+                if not isinstance(raw, BoundingBox):
+                    t = parse_bbox(raw)
+                    data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
+                if not data.get("geometry"):
+                    b = data["bbox"]
+                    data["geometry"] = {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [b.min_lon, b.min_lat],
+                            [b.max_lon, b.min_lat],
+                            [b.max_lon, b.max_lat],
+                            [b.min_lon, b.max_lat],
+                            [b.min_lon, b.min_lat]
+                        ]]
+                    }
+        return data
+
+class SlopeStabilityResponse(BaseModel):
+    """Response payload containing geotechnical infinite slope stability Factor of Safety analysis."""
+    asset_id: str = Field(..., description="Target asset identifier")
+    mean_factor_of_safety: float = Field(..., description="Mean Factor of Safety across slopes")
+    min_factor_of_safety: float = Field(..., description="Lowest Factor of Safety indicating most critical failure zone")
+    critical_area_hectares: float = Field(..., ge=0.0, description="Embankment area with FS <= 1.30")
+    stability_tier: SlopeStabilityTier = Field(..., description="Overall geotechnical stability tier")
+    tier_breakdown: Dict[str, float] = Field(default_factory=dict, description="Hectare area breakdown per stability tier")
+    tile_url_template: str = Field(..., description="Streaming XYZ tile URL template for slope stability layer")
+    created_at: str = Field(..., description="ISO 8601 calculation timestamp")
+
+def calculate_topographic_wetness_index(
+    catchment_area_m2: float,
+    slope_degrees: float,
+    contour_width_m: float = 10.0,
+    min_slope_deg: float = 0.1
+) -> float:
+    """Calculates Topographic Wetness Index: TWI = ln(a / tan(beta))."""
+    eff_slope = max(slope_degrees, min_slope_deg)
+    slope_rad = (eff_slope * math.pi) / 180.0
+    tan_beta = math.tan(slope_rad)
+    if tan_beta <= 1e-6:
+        tan_beta = 1e-6
+    specific_catchment = max(catchment_area_m2 / max(contour_width_m, 1.0), 1.0)
+    twi = math.log(specific_catchment / tan_beta)
+    return round(twi, 3)
+
+def calculate_slope_factor_of_safety(
+    slope_deg: float,
+    cohesion_kpa: float = 12.0,
+    friction_angle_deg: float = 30.0,
+    unit_weight_soil: float = 19.0,
+    saturation_m: float = 0.5,
+    depth_m: float = 3.0,
+    unit_weight_water: float = 9.81
+) -> float:
+    """Calculates Factor of Safety (FS) for an infinite slope with parallel phreatic seepage.
+    
+    Formula: FS = (c' + (gamma - m * gamma_w) * z * cos^2(beta) * tan(phi')) / (gamma * z * sin(beta) * cos(beta))
+    """
+    if slope_deg <= 0.1:
+        return 99.0  # Planar flat terrain is unconditionally stable
+    
+    beta_rad = (slope_deg * math.pi) / 180.0
+    phi_rad = (friction_angle_deg * math.pi) / 180.0
+    
+    cos_beta = math.cos(beta_rad)
+    sin_beta = math.sin(beta_rad)
+    tan_phi = math.tan(phi_rad)
+    
+    m_clamped = max(0.0, min(1.0, saturation_m))
+    eff_unit_weight = unit_weight_soil - (m_clamped * unit_weight_water)
+    
+    numerator = cohesion_kpa + (eff_unit_weight * depth_m * (cos_beta ** 2) * tan_phi)
+    denominator = unit_weight_soil * depth_m * sin_beta * cos_beta
+    
+    if denominator <= 1e-6:
+        return 99.0
+        
+    fs = numerator / denominator
+    return round(fs, 3)
+
+def classify_slope_stability_tier(fs: float) -> SlopeStabilityTier:
+    """Categorizes Factor of Safety into standard geotechnical stability tiers."""
+    if fs >= 1.50:
+        return SlopeStabilityTier.STABLE
+    if fs >= 1.30:
+        return SlopeStabilityTier.MARGINALLY_STABLE
+    if fs > 1.00:
+        return SlopeStabilityTier.ADVISORY
+    return SlopeStabilityTier.FAILURE_CRITICAL
+
+
+# ============================================================================
+# HARMONIZED LANDSAT SENTINEL-2 (HLS) SPECTRAL CROSS-CALIBRATION
+# ============================================================================
+
+class HLSPlatform(str, Enum):
+    """Supported satellite sensor platforms in Harmonized Landsat Sentinel-2 system."""
+    LANDSAT_OLI = "landsat_oli"
+    SENTINEL_MSI = "sentinel_msi"
+
+class HLSBandSpec(BaseModel):
+    """Cross-sensor polynomial regression coefficients for an optical spectral band."""
+    band_name: str = Field(..., description="Spectral band identifier ('blue', 'green', 'red', 'nir', 'swir1', 'swir2')")
+    slope: float = Field(..., description="Linear slope coefficient (MSI = slope * OLI + offset)")
+    offset: float = Field(..., description="Additive offset coefficient")
+    r_squared: float = Field(..., ge=0.0, le=1.0, description="Coefficient of determination R^2")
+
+HLS_TRANSFORMATION_COEFFICIENTS: Dict[str, HLSBandSpec] = {
+    "blue": HLSBandSpec(band_name="blue", slope=0.9959, offset=-0.0002, r_squared=0.998),
+    "green": HLSBandSpec(band_name="green", slope=0.9778, offset=-0.0040, r_squared=0.997),
+    "red": HLSBandSpec(band_name="red", slope=1.0050, offset=-0.0009, r_squared=0.998),
+    "nir": HLSBandSpec(band_name="nir", slope=0.9825, offset=-0.0183, r_squared=0.995),
+    "swir1": HLSBandSpec(band_name="swir1", slope=1.0010, offset=-0.0020, r_squared=0.996),
+    "swir2": HLSBandSpec(band_name="swir2", slope=0.9720, offset=-0.0048, r_squared=0.994),
+}
+
+class HLSBandCalibrationRequest(BaseModel):
+    """Request payload to harmonize spectral reflectance across Landsat OLI and Sentinel MSI."""
+    source_platform: HLSPlatform = Field(..., description="Input sensor platform")
+    target_platform: HLSPlatform = Field(..., description="Target sensor platform to harmonize to")
+    band_name: str = Field(..., description="Standard spectral band name")
+    reflectance_values: List[float] = Field(..., min_length=1, description="Input surface reflectance values [0.0, 1.0]")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # source_platform
+            src = str(data.get("source_platform", "")).lower()
+            if "landsat" in src:
+                data["source_platform"] = HLSPlatform.LANDSAT_OLI
+            elif "sentinel" in src:
+                data["source_platform"] = HLSPlatform.SENTINEL_MSI
+
+            # target_platform
+            tgt = str(data.get("target_platform", "")).lower()
+            if "sentinel" in tgt:
+                data["target_platform"] = HLSPlatform.SENTINEL_MSI
+            elif "landsat" in tgt:
+                data["target_platform"] = HLSPlatform.LANDSAT_OLI
+
+            # band_name
+            if not data.get("band_name") and data.get("band"):
+                data["band_name"] = str(data["band"])
+
+            # reflectance_values
+            if "reflectance_values" not in data:
+                if "values" in data and isinstance(data["values"], list):
+                    data["reflectance_values"] = data["values"]
+                elif "reflectance" in data:
+                    v = data["reflectance"]
+                    data["reflectance_values"] = v if isinstance(v, list) else [float(v)]
+                elif "reflectances" in data and isinstance(data["reflectances"], list):
+                    data["reflectance_values"] = data["reflectances"]
+        return data
+
+class HLSBandCalibrationResponse(BaseModel):
+    """Response payload containing cross-calibrated surface reflectance values."""
+    source_platform: HLSPlatform = Field(..., description="Source sensor platform")
+    target_platform: HLSPlatform = Field(..., description="Target sensor platform")
+    band_name: str = Field(..., description="Spectral band name")
+    calibrated_values: List[float] = Field(default_factory=list, description="Harmonized reflectance values")
+    mean_calibrated: float = Field(..., description="Mean harmonized reflectance")
+    bias_correction_applied: float = Field(..., description="Difference between calibrated and uncalibrated means")
+    formula_applied: str = Field(..., description="Applied mathematical regression formula")
+
+def cross_calibrate_spectral_band(
+    values: Sequence[float],
+    band_name: str,
+    source_platform: Union[str, HLSPlatform] = HLSPlatform.LANDSAT_OLI,
+    target_platform: Union[str, HLSPlatform] = HLSPlatform.SENTINEL_MSI
+) -> List[float]:
+    """Applies USGS/NASA HLS cross-sensor polynomial regression transformation."""
+    b_key = str(band_name).lower().strip()
+    if b_key not in HLS_TRANSFORMATION_COEFFICIENTS:
+        return [round(float(v), 4) for v in values if v is not None and not math.isnan(v)]
+        
+    spec = HLS_TRANSFORMATION_COEFFICIENTS[b_key]
+    src_str = source_platform.value if hasattr(source_platform, "value") else str(source_platform).lower()
+    tgt_str = target_platform.value if hasattr(target_platform, "value") else str(target_platform).lower()
+    
+    calibrated = []
+    for v in values:
+        if v is None or math.isnan(v):
+            continue
+        if src_str == tgt_str:
+            calibrated.append(round(float(v), 4))
+        elif src_str == HLSPlatform.LANDSAT_OLI.value and tgt_str == HLSPlatform.SENTINEL_MSI.value:
+            # Forward: MSI = slope * OLI + offset
+            res = spec.slope * v + spec.offset
+            calibrated.append(round(float(max(0.0, min(1.0, res))), 4))
+        elif src_str == HLSPlatform.SENTINEL_MSI.value and tgt_str == HLSPlatform.LANDSAT_OLI.value:
+            # Inverse: OLI = (MSI - offset) / slope
+            res = (v - spec.offset) / spec.slope
+            calibrated.append(round(float(max(0.0, min(1.0, res))), 4))
+        else:
+            calibrated.append(round(float(v), 4))
+    return calibrated
+
+
+# ============================================================================
+# HARMFUL ALGAL BLOOM (HAB) & RESERVOIR WATER QUALITY TROPHIC ANALYTICS
+# ============================================================================
+
+class WaterQualityMetric(str, Enum):
+    """Biophysical water quality and aquatic hazard indicators."""
+    NDCI = "ndci"                     # Normalized Difference Chlorophyll Index (B05 - B04)/(B05 + B04)
+    NDTI = "ndti"                     # Normalized Difference Turbidity Index (B04 - B03)/(B04 + B03)
+    FAI = "fai"                       # Floating Algae Index (scum / cyanobacteria detection)
+    TURBIDITY_FNU = "turbidity_fnu"   # Estimated Formazin Nephelometric Units
+    CHLOROPHYLL_A_UGL = "chlorophyll_a_ugl" # Estimated Chlorophyll-a in ug/L
+
+class TrophicState(str, Enum):
+    """Limnological trophic status classification for lake and reservoir water quality."""
+    OLIGOTROPHIC = "oligotrophic"       # Low nutrients, clear water, low algal biomass (Chl-a < 2.6 ug/L)
+    MESOTROPHIC = "mesotrophic"         # Moderate productivity, good ecological balance (Chl-a 2.6 - 7.3 ug/L)
+    EUTROPHIC = "eutrophic"             # High nutrient enrichment, frequent algae blooms (Chl-a 7.3 - 20 ug/L)
+    HYPEREUTROPHIC = "hypereutrophic"   # Extreme algae scum, cyanobacteria risk, oxygen depletion (Chl-a >= 20 ug/L)
+
+class TrophicCategoryDetail(BaseModel):
+    """Categorical surface water area breakdown by trophic status tier."""
+    state: TrophicState = Field(..., description="Trophic status tier")
+    label: str = Field(..., description="Human-readable title")
+    min_ndci: Optional[float] = Field(default=None, description="Lower NDCI boundary")
+    max_ndci: Optional[float] = Field(default=None, description="Upper NDCI boundary")
+    area_hectares: float = Field(..., ge=0.0, description="Surface area in hectares")
+    percentage: float = Field(..., ge=0.0, le=100.0, description="Percentage of total water surface")
+    chl_a_range_ugl: str = Field(..., description="Estimated chlorophyll-a range in ug/L")
+
+class WaterQualityAnalysisRequest(BaseModel):
+    """Request payload to evaluate reservoir water quality, turbidity, and cyanobacteria blooms."""
+    asset_id: str = Field(..., min_length=1, description="Target reservoir or water body asset identifier")
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2, description="Satellite collection (Sentinel-2 recommended for 705nm red-edge)")
+    item_id: str = Field(..., min_length=1, description="Target scene item ID")
+    geometry: Optional[Dict[str, Any]] = Field(default=None, description="Optional GeoJSON Polygon bounding water body")
+    bbox: Optional[BoundingBox] = Field(default=None, description="Optional bounding box envelope")
+    metric: WaterQualityMetric = Field(default=WaterQualityMetric.NDCI, description="Target water quality indicator")
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_bbox_field(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("asset_id"):
+                for k in ("water_body_id", "lake_id", "reservoir_id", "id", "name"):
+                    if data.get(k):
+                        data["asset_id"] = str(data[k])
+                        break
+                if not data.get("asset_id"):
+                    data["asset_id"] = "RESERVOIR-01"
+            if not data.get("item_id"):
+                for k in ("scene_id", "granule_id", "product_id"):
+                    if data.get(k):
+                        data["item_id"] = str(data[k])
+                        break
+                if not data.get("item_id"):
+                    data["item_id"] = "S2A_MSIL2A_20260901"
+            if "bbox" in data and data["bbox"] is not None:
+                raw = data["bbox"]
+                if not isinstance(raw, BoundingBox):
+                    t = parse_bbox(raw)
+                    data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
+                if not data.get("geometry"):
+                    b = data["bbox"]
+                    data["geometry"] = {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [b.min_lon, b.min_lat],
+                            [b.max_lon, b.min_lat],
+                            [b.max_lon, b.max_lat],
+                            [b.min_lon, b.max_lat],
+                            [b.min_lon, b.min_lat]
+                        ]]
+                    }
+        return data
+
+class WaterQualityAnalysisResponse(BaseModel):
+    """Response payload containing reservoir water quality and algal bloom analytics."""
+    asset_id: str = Field(..., description="Target reservoir asset ID")
+    item_id: str = Field(..., description="Analyzed scene item ID")
+    primary_metric: WaterQualityMetric = Field(..., description="Evaluated primary metric")
+    mean_value: float = Field(..., description="Mean metric value over water surface")
+    estimated_chlorophyll_a_ugl: float = Field(..., ge=0.0, description="Mean estimated Chlorophyll-a concentration in ug/L")
+    dominant_trophic_state: TrophicState = Field(..., description="Predominant limnological trophic state")
+    bloom_detected: bool = Field(..., description="True if eutrophic or hypereutrophic area >= 15% of surface")
+    bloom_area_hectares: float = Field(..., ge=0.0, description="Water area exceeding bloom threshold in hectares")
+    trophic_breakdown: List[TrophicCategoryDetail] = Field(default_factory=list, description="Categorical trophic area distribution")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for water quality symbology")
+    created_at: str = Field(..., description="ISO 8601 calculation timestamp")
+
+def calculate_ndci(red: float, rededge1: float) -> float:
+    """Calculates Normalized Difference Chlorophyll Index: NDCI = (B05 - B04) / (B05 + B04)."""
+    denom = rededge1 + red
+    if abs(denom) < 1e-6:
+        return 0.0
+    val = (rededge1 - red) / denom
+    return float(max(-1.0, min(1.0, round(val, 4))))
+
+def calculate_ndti(green: float, red: float) -> float:
+    """Calculates Normalized Difference Turbidity Index: NDTI = (B04 - B03) / (B04 + B03)."""
+    denom = red + green
+    if abs(denom) < 1e-6:
+        return 0.0
+    val = (red - green) / denom
+    return float(max(-1.0, min(1.0, round(val, 4))))
+
+def classify_trophic_state(ndci_value: float) -> TrophicState:
+    """Classifies NDCI into limnological trophic states (Mishra & Mishra / Carlson model)."""
+    if ndci_value < 0.0:
+        return TrophicState.OLIGOTROPHIC
+    if ndci_value < 0.12:
+        return TrophicState.MESOTROPHIC
+    if ndci_value < 0.25:
+        return TrophicState.EUTROPHIC
+    return TrophicState.HYPEREUTROPHIC
+
+
+# ============================================================================
+# CYANOBACTERIA BLOOM RISK & WATER QUALITY ALERT TIERS
+# ============================================================================
+
+class CyanobacteriaAlertLevel(str, Enum):
+    """WHO / EPA limnological cyanobacteria cell density and microcystin toxicity alert tiers."""
+    LOW = "low"                   # Chl-a < 10 ug/L (< 20,000 cells/mL) - Low health risk
+    MODERATE = "moderate"         # 10 <= Chl-a < 50 ug/L (20,000 - 100,000 cells/mL) - Recreational advisory
+    HIGH = "high"                 # 50 <= Chl-a < 100 ug/L (100,000 - 200,000 cells/mL) - Primary contact hazard
+    VERY_HIGH = "very_high"       # Chl-a >= 100 ug/L (> 200,000 cells/mL) - Severe bloom scum / toxic hazard
+
+def classify_cyanobacteria_alert(chlorophyll_a_ugl: float) -> CyanobacteriaAlertLevel:
+    """Classifies estimated Chlorophyll-a (ug/L) into WHO cyanobacteria alert tiers."""
+    val = float(chlorophyll_a_ugl)
+    if val < 10.0:
+        return CyanobacteriaAlertLevel.LOW
+    if val < 50.0:
+        return CyanobacteriaAlertLevel.MODERATE
+    if val < 100.0:
+        return CyanobacteriaAlertLevel.HIGH
+    return CyanobacteriaAlertLevel.VERY_HIGH
+
+
+# ============================================================================
+# CAMERA CALIBRATION PRESETS (DRONE PHOTOGRAMMETRY SENSORS)
+# ============================================================================
+
+CAMERA_CALIBRATION_PRESETS: Dict[str, CameraInteriorOrientation] = {
+    "dji_zenmuse_p1_35mm": CameraInteriorOrientation(
+        camera_id="DJI-ZENMUSE-P1-35MM",
+        focal_length_mm=35.0,
+        focal_length_px=8000.0,
+        principal_point_x_px=4096.0,
+        principal_point_y_px=2730.0,
+        radial_distortion_k1=-0.024,
+        radial_distortion_k2=0.015,
+        radial_distortion_k3=-0.003,
+        tangential_distortion_p1=0.0001,
+        tangential_distortion_p2=0.0001,
+        sensor_width_mm=35.9,
+        sensor_height_mm=24.0
+    ),
+    "dji_phantom_4_rtk": CameraInteriorOrientation(
+        camera_id="DJI-PHANTOM-4-RTK",
+        focal_length_mm=8.8,
+        focal_length_px=3666.67,
+        principal_point_x_px=2736.0,
+        principal_point_y_px=1824.0,
+        radial_distortion_k1=-0.125,
+        radial_distortion_k2=0.105,
+        radial_distortion_k3=-0.021,
+        tangential_distortion_p1=0.0002,
+        tangential_distortion_p2=0.0002,
+        sensor_width_mm=13.2,
+        sensor_height_mm=8.8
+    ),
+    "dji_mavic_3_enterprise": CameraInteriorOrientation(
+        camera_id="DJI-MAVIC-3-ENTERPRISE",
+        focal_length_mm=12.29,
+        focal_length_px=3724.24,
+        principal_point_x_px=2644.0,
+        principal_point_y_px=1984.0,
+        radial_distortion_k1=-0.082,
+        radial_distortion_k2=0.064,
+        radial_distortion_k3=-0.012,
+        tangential_distortion_p1=0.0001,
+        tangential_distortion_p2=0.0001,
+        sensor_width_mm=17.3,
+        sensor_height_mm=13.0
+    ),
+    "sony_rx1r_ii": CameraInteriorOrientation(
+        camera_id="SONY-RX1R-II",
+        focal_length_mm=35.0,
+        focal_length_px=7777.78,
+        principal_point_x_px=3968.0,
+        principal_point_y_px=2648.0,
+        radial_distortion_k1=-0.018,
+        radial_distortion_k2=0.010,
+        radial_distortion_k3=-0.002,
+        tangential_distortion_p1=0.00005,
+        tangential_distortion_p2=0.00005,
+        sensor_width_mm=35.9,
+        sensor_height_mm=24.0
+    )
+}
+
+def get_camera_calibration_preset(camera_id: str) -> Optional[CameraInteriorOrientation]:
+    """Retrieves standardized camera interior orientation parameters by ID or alias."""
+    cid = str(camera_id).lower().replace("-", "_").strip()
+    if cid in CAMERA_CALIBRATION_PRESETS:
+        return CAMERA_CALIBRATION_PRESETS[cid]
+    for key, spec in CAMERA_CALIBRATION_PRESETS.items():
+        if spec.camera_id.lower().replace("-", "_") == cid:
+            return spec
+    return None
+
+def list_camera_calibration_presets() -> List[CameraInteriorOrientation]:
+    """Returns list of registered standard camera calibration presets."""
+    return list(CAMERA_CALIBRATION_PRESETS.values())
+
+
+# ============================================================================
+# GEOTECHNICAL SOIL MECHANICS PRESETS (SLOPE STABILITY)
+# ============================================================================
+
+class SoilMechanicsPreset(BaseModel):
+    """Geotechnical shear strength and unit weight parameters for slope stability modelling."""
+    key: str = Field(..., description="Machine-readable soil preset identifier")
+    name: str = Field(..., description="Descriptive human-readable title")
+    cohesion_kpa: float = Field(..., ge=0.0, description="Effective soil cohesion c' in kPa")
+    friction_angle_deg: float = Field(..., ge=0.0, le=60.0, description="Effective internal friction angle phi' in degrees")
+    soil_unit_weight_kn_m3: float = Field(..., ge=10.0, le=35.0, description="Total moist soil unit weight gamma in kN/m^3")
+    description: str = Field(..., description="Engineering classification and typical geotechnical application")
+
+SOIL_MECHANICS_PRESETS: Dict[str, SoilMechanicsPreset] = {
+    "compacted_clay_core": SoilMechanicsPreset(
+        key="compacted_clay_core",
+        name="Compacted Clay Core (Impervious)",
+        cohesion_kpa=25.0,
+        friction_angle_deg=22.0,
+        soil_unit_weight_kn_m3=20.0,
+        description="Low-permeability clay core barrier with high cohesive shear strength."
+    ),
+    "silty_sand_shell": SoilMechanicsPreset(
+        key="silty_sand_shell",
+        name="Silty Sand Shell (Semi-Pervious)",
+        cohesion_kpa=5.0,
+        friction_angle_deg=32.0,
+        soil_unit_weight_kn_m3=19.0,
+        description="Granular embankment structural fill with moderate internal friction angle."
+    ),
+    "rockfill_embankment": SoilMechanicsPreset(
+        key="rockfill_embankment",
+        name="Rockfill Embankment Zone",
+        cohesion_kpa=0.0,
+        friction_angle_deg=40.0,
+        soil_unit_weight_kn_m3=21.0,
+        description="Crushed rock shoulder material characterized by high frictional resistance without cohesion."
+    ),
+    "mine_tailings_silt": SoilMechanicsPreset(
+        key="mine_tailings_silt",
+        name="Mine Tailings Silt/Slurry",
+        cohesion_kpa=2.0,
+        friction_angle_deg=26.0,
+        soil_unit_weight_kn_m3=17.5,
+        description="Unconsolidated or fine hydraulically deposited tailings prone to liquefaction and seepage instability."
+    ),
+    "compacted_earthfill": SoilMechanicsPreset(
+        key="compacted_earthfill",
+        name="Compacted Earthfill (Standard)",
+        cohesion_kpa=12.0,
+        friction_angle_deg=30.0,
+        soil_unit_weight_kn_m3=19.0,
+        description="Standard engineered fill material for dam embankments, levees, and roadway slopes."
+    )
+}
+
+def get_soil_preset(key: str) -> Optional[SoilMechanicsPreset]:
+    """Retrieves standard soil mechanics parameters by key."""
+    k = str(key).lower().strip()
+    return SOIL_MECHANICS_PRESETS.get(k)
+
+def list_soil_presets() -> List[SoilMechanicsPreset]:
+    """Returns list of all standard soil mechanics presets."""
+    return list(SOIL_MECHANICS_PRESETS.values())
+
+
+# ============================================================================
+# DYNAMIC TILE URL BUILDERS (TWI, SLOPE STABILITY & WATER QUALITY)
+# ============================================================================
+
+def build_twi_tile_url(
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1",
+    rescale: str = "2.0,12.0",
+    colormap: str = "spectral"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Topographic Wetness Index layer."""
+    return f"{base_prefix}/tiles/terrain/twi/{z}/{x}/{y}.png?rescale={rescale}&colormap={colormap}"
+
+def build_slope_stability_tile_url(
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1",
+    rescale: str = "0.8,2.0",
+    colormap: str = "rdylbu"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Infinite Slope Factor of Safety stability layer."""
+    return f"{base_prefix}/tiles/terrain/slope-stability/{z}/{x}/{y}.png?rescale={rescale}&colormap={colormap}"
+
+def build_water_quality_tile_url(
+    metric: Union[str, WaterQualityMetric],
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    collection: Optional[str] = None,
+    item_id: Optional[str] = None,
+    base_prefix: str = "/api/v1",
+    rescale: Optional[str] = None,
+    colormap: Optional[str] = None
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for reservoir water quality / algal bloom indicators."""
+    m_str = metric.value if hasattr(metric, "value") else str(metric).lower()
+    default_rescale = "-0.1,0.4" if m_str == "ndci" else ("-0.2,0.3" if m_str == "ndti" else "0.0,50.0")
+    default_colormap = "spectral" if m_str == "ndci" else ("turbo" if m_str == "ndti" else "viridis")
+    r_val = rescale or default_rescale
+    c_val = colormap or default_colormap
+    if collection and item_id:
+        return f"{base_prefix}/tiles/water-quality/{collection}/{item_id}/{m_str}/{z}/{x}/{y}.png?rescale={r_val}&colormap={c_val}"
+    return f"{base_prefix}/tiles/water-quality/{m_str}/{z}/{x}/{y}.png?rescale={r_val}&colormap={c_val}"
 

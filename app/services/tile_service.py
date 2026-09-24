@@ -51,7 +51,12 @@ DEFAULT_INDEX_RANGES = {
     "lst_diff": (-5.0, 5.0),
     "sar_vv_diff": (-6.0, 6.0),
     "elevation_diff": (-10.0, 10.0),
-    "difference": (-0.3, 0.3)
+    "difference": (-0.3, 0.3),
+    "twi": (2.0, 14.0),
+    "slope_stability": (0.8, 2.5),
+    "fs": (0.8, 2.5),
+    "water_quality": (0.0, 0.4),
+    "ndti": (-0.3, 0.3)
 }
 
 class TileService:
@@ -283,6 +288,15 @@ class TileService:
                     val = -18.0 + base_variation * 14.0
             elif col_clean in {"diff", "difference"} or col_clean.startswith("diff_") or "diff" in idx_clean:
                 val = (base_variation - 0.5) * 0.6
+            elif col_clean in {"twi"} or idx_clean in {"twi"}:
+                val = 2.0 + base_variation * 12.0
+            elif col_clean in {"slope_stability", "slope-stability"} or idx_clean in {"slope_stability", "slope-stability", "fs"}:
+                val = 0.85 + base_variation * 1.65
+            elif col_clean in {"water_quality", "water-quality"} or idx_clean in {"ndci", "ndti", "water_quality"}:
+                if idx_clean == "ndti":
+                    val = -0.25 + base_variation * 0.45
+                else:
+                    val = 0.02 + base_variation * 0.35
             else:
                 val = base_variation
 
@@ -411,6 +425,73 @@ class TileService:
             rescale=rescale or "-0.3,0.3",
             pre=pre_scene_id,
             post=post_scene_id
+        )
+
+    def render_twi_tile(
+        self,
+        z: int,
+        x: int,
+        y: int,
+        colormap: str = "spectral",
+        rescale: Optional[str] = "2,14"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Topographic Wetness Index (TWI)."""
+        return self.render_tile(
+            collection="twi",
+            item_id="twi",
+            z=z,
+            x=x,
+            y=y,
+            index="twi",
+            colormap=colormap or "spectral",
+            rescale=rescale or "2,14"
+        )
+
+    def render_slope_stability_tile(
+        self,
+        z: int,
+        x: int,
+        y: int,
+        colormap: str = "rdylbu",
+        rescale: Optional[str] = "0.8,2.5"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for infinite slope Factor of Safety (FS)."""
+        return self.render_tile(
+            collection="slope_stability",
+            item_id="slope_stability",
+            z=z,
+            x=x,
+            y=y,
+            index="slope_stability",
+            colormap=colormap or "rdylbu",
+            rescale=rescale or "0.8,2.5"
+        )
+
+    def render_water_quality_tile(
+        self,
+        metric: str = "ndci",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: str = "turbo",
+        rescale: Optional[str] = "0.0,0.4",
+        collection: Optional[str] = None,
+        item_id: Optional[str] = None
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for water quality and algal bloom index."""
+        clean_metric = (metric or "ndci").lower().strip()
+        default_rescale = "0.0,0.4" if clean_metric != "ndti" else "-0.3,0.3"
+        target_collection = collection or "water_quality"
+        target_item = item_id or clean_metric
+        return self.render_tile(
+            collection=target_collection,
+            item_id=target_item,
+            z=z,
+            x=x,
+            y=y,
+            index=clean_metric,
+            colormap=colormap or "turbo",
+            rescale=rescale or default_rescale
         )
 
 tile_service = TileService()

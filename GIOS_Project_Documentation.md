@@ -99,6 +99,12 @@ Every pixel rendered on screen adheres to strict remote sensing physics and biop
 | `GET` | `/api/v1/integration/geotechnical/summary` | Asset-level geotechnical sensor network health & anomaly summary |
 | `POST` | `/api/v1/analysis/bathymetry/eac` | Reservoir bathymetry & Elevation-Area-Capacity (EAC) curve analytics |
 | `POST` | `/api/v1/tiles/cache/preload` | Multi-scale tile pyramid cache pre-generation & warming |
+| `POST` | `/api/v1/drone/gcp/quality` | Drone photogrammetry GCP residual & RMSE quality assessment |
+| `GET` | `/api/v1/drone/camera/calibration` | Aerial photogrammetry interior orientation parameters |
+| `POST` | `/api/v1/analysis/twi` | Beven-Kirkby Topographic Wetness Index (TWI) calculation |
+| `POST` | `/api/v1/analysis/slope-stability` | Infinite slope stability Factor of Safety ($FS$) & tier classification |
+| `POST` | `/api/v1/analysis/hls/calibrate` | Harmonized Landsat-Sentinel-2 (HLS) multi-sensor cross-calibration |
+| `POST` | `/api/v1/analysis/water-quality` | HAB water quality indices (NDCI, NDTI) & Carlson/OECD trophic state |
 | `GET` | `/api/v1/annotations` | Geotechnical field inspection defect annotations (RFC 7946 GeoJSON) |
 | `POST` | `/api/v1/work-orders` | Automated maintenance work order dispatch & ticket tracking |
 | `GET` | `/api/v1/subscriptions` | Automated continuous AOI monitoring subscriptions & alert triggers |
@@ -111,8 +117,8 @@ Every pixel rendered on screen adheres to strict remote sensing physics and biop
 
 ## 5. Verification & Quality Assurance
 
-- **Unit & Integration Test Suite**: 113 tests passing across `test_schemas.py` (86), `test_api.py` (17), `test_scientific_rigor.py` (6), and `test_tile_server.py` (4) in ~6.5s with 0 failures and 0 warnings.
-- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,852 modules in 7.25s with 0 errors).
+- **Unit & Integration Test Suite**: 135 tests passing across `test_schemas.py` (97), `test_api.py` (28), `test_scientific_rigor.py` (6), and `test_tile_server.py` (4) in ~18s with 0 failures and 0 warnings.
+- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,853 modules in 10.62s with 0 errors).
 - **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, cache storage, database integrity, and host system RAM.
 - **Live Production Telemetry**: Continuous surveillance confirms System Status HEALTHY with 0 active anomalies and stable headroom.
 

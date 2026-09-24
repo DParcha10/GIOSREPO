@@ -214,7 +214,52 @@ from app.models.schemas import (
     TileCachePreloadRequest,
     TileCachePreloadResponse,
     calculate_tile_pyramid_coords,
-    calculate_tile_pyramid_count
+    calculate_tile_pyramid_count,
+    GCPRole,
+    GCPTargetType,
+    GCPCoordinate,
+    GCPResidual,
+    RMSEMetrics,
+    CameraInteriorOrientation,
+    GCPQualityAssessmentRequest,
+    GCPQualityAssessmentResponse,
+    calculate_gcp_residuals_and_rmse,
+    gcp_to_geojson_feature,
+    gcps_to_feature_collection,
+    SlopeStabilityTier,
+    TWIAnalysisRequest,
+    TWIAnalysisResponse,
+    SlopeStabilityRequest,
+    SlopeStabilityResponse,
+    calculate_topographic_wetness_index,
+    calculate_slope_factor_of_safety,
+    classify_slope_stability_tier,
+    HLSPlatform,
+    HLSBandSpec,
+    HLS_TRANSFORMATION_COEFFICIENTS,
+    HLSBandCalibrationRequest,
+    HLSBandCalibrationResponse,
+    cross_calibrate_spectral_band,
+    WaterQualityMetric,
+    TrophicState,
+    TrophicCategoryDetail,
+    WaterQualityAnalysisRequest,
+    WaterQualityAnalysisResponse,
+    calculate_ndci,
+    calculate_ndti,
+    classify_trophic_state,
+    CyanobacteriaAlertLevel,
+    classify_cyanobacteria_alert,
+    CAMERA_CALIBRATION_PRESETS,
+    get_camera_calibration_preset,
+    list_camera_calibration_presets,
+    SoilMechanicsPreset,
+    SOIL_MECHANICS_PRESETS,
+    get_soil_preset,
+    list_soil_presets,
+    build_twi_tile_url,
+    build_slope_stability_tile_url,
+    build_water_quality_tile_url
 )
 from app.config import settings
 
@@ -2383,6 +2428,439 @@ class TestGIOSCoreSchemas(unittest.TestCase):
 
         r8 = format_api_route("tiles_difference_short", metric="ndmi_diff", z=12, x=10, y=20)
         self.assertEqual(r8, "/api/v1/tiles/difference/ndmi_diff/12/10/20.png")
+
+    def test_gcp_quality_assessment_and_camera_calibration_contracts(self):
+        """Verify GCPCoordinate, GCPResidual, CameraInteriorOrientation, and RMSE calculations."""
+        cam = CameraInteriorOrientation(
+            camera_id="DJI-ZENMUSE-P1-01",
+            focal_length_mm=35.0,
+            focal_length_px=7954.5,
+            principal_point_x_px=4096.0,
+            principal_point_y_px=2730.0,
+            radial_distortion_k1=-0.012,
+            radial_distortion_k2=0.005,
+            radial_distortion_k3=0.0,
+            tangential_distortion_p1=0.0001,
+            tangential_distortion_p2=-0.0001,
+            sensor_width_mm=35.9,
+            sensor_height_mm=24.0
+        )
+        self.assertEqual(cam.camera_id, "DJI-ZENMUSE-P1-01")
+        self.assertEqual(cam.focal_length_mm, 35.0)
+
+        measured = [
+            GCPCoordinate(point_id="GCP-01", role=GCPRole.CONTROL, x_east=672000.0, y_north=4104000.0, z_elev=165.0, lat=37.06, lng=-121.07),
+            GCPCoordinate(point_id="GCP-02", role=GCPRole.CONTROL, x_east=672500.0, y_north=4104500.0, z_elev=166.0, lat=37.065, lng=-121.065),
+            GCPCoordinate(point_id="CP-01", role=GCPRole.CHECK, x_east=672200.0, y_north=4104200.0, z_elev=165.5, lat=37.062, lng=-121.068)
+        ]
+        estimated = [
+            {"point_id": "GCP-01", "x_east": 672000.02, "y_north": 4104000.01, "z_elev": 165.03, "reprojection_error_px": 0.35},
+            {"point_id": "GCP-02", "x_east": 672499.98, "y_north": 4104500.02, "z_elev": 165.98, "reprojection_error_px": 0.41},
+            {"point_id": "CP-01", "x_east": 672200.03, "y_north": 4104199.97, "z_elev": 165.54, "reprojection_error_px": 0.48}
+        ]
+
+        residuals, ctrl_rmse, check_rmse = calculate_gcp_residuals_and_rmse(measured, estimated)
+        self.assertEqual(len(residuals), 3)
+        self.assertIsNotNone(ctrl_rmse)
+        self.assertIsNotNone(check_rmse)
+        self.assertEqual(ctrl_rmse.point_count, 2)
+        self.assertEqual(check_rmse.point_count, 1)
+        self.assertLess(ctrl_rmse.rmse_3d_m, 0.05)  # Survey grade achieved
+
+        req = GCPQualityAssessmentRequest(
+            ortho_id="ORTHO-DAM-01",
+            control_points=measured,
+            estimated_positions=estimated,
+            camera_calibration=cam
+        )
+        self.assertEqual(req.ortho_id, "ORTHO-DAM-01")
+
+        resp = GCPQualityAssessmentResponse(
+            ortho_id="ORTHO-DAM-01",
+            control_rmse=ctrl_rmse,
+            check_rmse=check_rmse,
+            residuals=residuals,
+            survey_grade_achieved=(ctrl_rmse.rmse_3d_m <= 0.05),
+            camera_calibration=cam,
+            assessed_at="2026-09-24T12:00:00Z"
+        )
+        self.assertTrue(resp.survey_grade_achieved)
+
+        # GeoJSON serialization
+        feature = gcp_to_geojson_feature(measured[0])
+        self.assertEqual(feature["type"], "Feature")
+        self.assertEqual(feature["id"], "GCP-01")
+        self.assertEqual(feature["geometry"]["coordinates"], [-121.07, 37.06])
+
+        fc = gcps_to_feature_collection(measured)
+        self.assertEqual(fc["type"], "FeatureCollection")
+        self.assertEqual(len(fc["features"]), 3)
+
+    def test_topographic_wetness_index_and_slope_stability_contracts(self):
+        """Verify TWI, infinite slope Factor of Safety modeling, and stability classifications."""
+        # TWI calculation
+        twi_steep = calculate_topographic_wetness_index(catchment_area_m2=500.0, slope_degrees=25.0)
+        twi_flat = calculate_topographic_wetness_index(catchment_area_m2=5000.0, slope_degrees=1.0)
+        self.assertGreater(twi_flat, twi_steep)
+
+        # TWI Request with bbox conversion
+        twi_req = TWIAnalysisRequest(
+            asset_id="DAM-01",
+            bbox=[-121.2, 36.95, -120.95, 37.15],
+            grid_resolution_m=10.0
+        )
+        self.assertIsNotNone(twi_req.geometry)
+        self.assertEqual(twi_req.geometry["type"], "Polygon")
+
+        twi_resp = TWIAnalysisResponse(
+            asset_id="DAM-01",
+            mean_twi=6.45,
+            min_twi=1.80,
+            max_twi=14.20,
+            saturated_area_hectares=12.5,
+            saturation_percentage=8.2,
+            tile_url_template="/api/v1/tiles/terrain/twi/{z}/{x}/{y}.png",
+            created_at="2026-09-24T12:00:00Z"
+        )
+        self.assertEqual(twi_resp.asset_id, "DAM-01")
+        self.assertEqual(twi_resp.mean_twi, 6.45)
+
+        # Slope Stability Factor of Safety
+        # Moderate slope, good cohesion: expect stable (FS >= 1.5)
+        fs_stable = calculate_slope_factor_of_safety(
+            slope_deg=18.0,
+            cohesion_kpa=15.0,
+            friction_angle_deg=32.0,
+            unit_weight_soil=19.5,
+            saturation_m=0.3,
+            depth_m=2.5
+        )
+        self.assertGreaterEqual(fs_stable, 1.50)
+        self.assertEqual(classify_slope_stability_tier(fs_stable), SlopeStabilityTier.STABLE)
+
+        # Flat slope (<0.1 deg): expect 99.0
+        fs_flat = calculate_slope_factor_of_safety(slope_deg=0.05)
+        self.assertEqual(fs_flat, 99.0)
+
+        # Steep saturated slope: expect critical
+        fs_critical = calculate_slope_factor_of_safety(
+            slope_deg=45.0,
+            cohesion_kpa=2.0,
+            friction_angle_deg=25.0,
+            unit_weight_soil=18.0,
+            saturation_m=1.0,
+            depth_m=4.0
+        )
+        self.assertLessEqual(fs_critical, 1.00)
+        self.assertEqual(classify_slope_stability_tier(fs_critical), SlopeStabilityTier.FAILURE_CRITICAL)
+
+        # Slope Stability Request with bbox conversion
+        slope_req = SlopeStabilityRequest(
+            asset_id="EMBANKMENT-SL-01",
+            bbox=[-121.15, 37.02, -121.05, 37.08],
+            cohesion_kpa=14.0
+        )
+        self.assertIsNotNone(slope_req.geometry)
+
+        slope_resp = SlopeStabilityResponse(
+            asset_id="EMBANKMENT-SL-01",
+            mean_factor_of_safety=1.72,
+            min_factor_of_safety=1.15,
+            critical_area_hectares=1.8,
+            stability_tier=SlopeStabilityTier.STABLE,
+            tier_breakdown={"stable": 92.4, "marginally_stable": 5.8, "advisory": 1.8, "failure_critical": 0.0},
+            tile_url_template="/api/v1/tiles/terrain/slope-stability/{z}/{x}/{y}.png",
+            created_at="2026-09-24T12:00:00Z"
+        )
+        self.assertEqual(slope_resp.stability_tier, SlopeStabilityTier.STABLE)
+
+    def test_harmonized_landsat_sentinel_hls_calibration_contracts(self):
+        """Verify HLS cross-sensor spectral regression coefficients and harmonization transforms."""
+        self.assertIn("blue", HLS_TRANSFORMATION_COEFFICIENTS)
+        self.assertIn("green", HLS_TRANSFORMATION_COEFFICIENTS)
+        self.assertIn("red", HLS_TRANSFORMATION_COEFFICIENTS)
+        self.assertIn("nir", HLS_TRANSFORMATION_COEFFICIENTS)
+        self.assertIn("swir1", HLS_TRANSFORMATION_COEFFICIENTS)
+        self.assertIn("swir2", HLS_TRANSFORMATION_COEFFICIENTS)
+
+        oli_nir = [0.300, 0.400, 0.500]
+        # Forward transform (OLI to MSI): MSI = 0.9825 * OLI - 0.0183
+        msi_nir = cross_calibrate_spectral_band(
+            values=oli_nir,
+            band_name="nir",
+            source_platform=HLSPlatform.LANDSAT_OLI,
+            target_platform=HLSPlatform.SENTINEL_MSI
+        )
+        self.assertEqual(len(msi_nir), 3)
+        self.assertAlmostEqual(msi_nir[0], round(0.9825 * 0.300 - 0.0183, 4), places=3)
+
+        # Inverse transform (MSI to OLI): OLI = (MSI - (-0.0183)) / 0.9825
+        back_oli = cross_calibrate_spectral_band(
+            values=msi_nir,
+            band_name="nir",
+            source_platform=HLSPlatform.SENTINEL_MSI,
+            target_platform=HLSPlatform.LANDSAT_OLI
+        )
+        self.assertAlmostEqual(back_oli[0], 0.300, places=2)
+
+        # Request & Response models
+        hls_req = HLSBandCalibrationRequest(
+            source_platform=HLSPlatform.LANDSAT_OLI,
+            target_platform=HLSPlatform.SENTINEL_MSI,
+            band_name="red",
+            reflectance_values=[0.05, 0.12, 0.25]
+        )
+        self.assertEqual(hls_req.band_name, "red")
+
+        hls_resp = HLSBandCalibrationResponse(
+            source_platform=HLSPlatform.LANDSAT_OLI,
+            target_platform=HLSPlatform.SENTINEL_MSI,
+            band_name="red",
+            calibrated_values=[0.0494, 0.1197, 0.2504],
+            mean_calibrated=0.1398,
+            bias_correction_applied=-0.0002,
+            formula_applied="MSI = 1.0050 * OLI - 0.0009"
+        )
+        self.assertEqual(hls_resp.source_platform, HLSPlatform.LANDSAT_OLI)
+
+    def test_water_quality_and_trophic_state_contracts(self):
+        """Verify NDCI, NDTI, limnological trophic states, and water quality analysis schemas."""
+        # NDCI formula: (B05 - B04)/(B05 + B04)
+        ndci_val = calculate_ndci(red=0.040, rededge1=0.060)
+        self.assertAlmostEqual(ndci_val, 0.200, places=3)
+
+        # NDTI formula: (B04 - B03)/(B04 + B03)
+        ndti_val = calculate_ndti(green=0.050, red=0.040)
+        self.assertAlmostEqual(ndti_val, -0.111, places=3)
+
+        # Trophic state classifications
+        self.assertEqual(classify_trophic_state(-0.05), TrophicState.OLIGOTROPHIC)
+        self.assertEqual(classify_trophic_state(0.08), TrophicState.MESOTROPHIC)
+        self.assertEqual(classify_trophic_state(0.18), TrophicState.EUTROPHIC)
+        self.assertEqual(classify_trophic_state(0.35), TrophicState.HYPEREUTROPHIC)
+
+        # Request with bbox auto-conversion
+        wq_req = WaterQualityAnalysisRequest(
+            asset_id="SAN-LUIS-RESERVOIR",
+            item_id="S2A_MSIL2A_20260901",
+            bbox=[-121.15, 37.02, -121.05, 37.08],
+            metric=WaterQualityMetric.NDCI
+        )
+        self.assertIsNotNone(wq_req.geometry)
+
+        # Response
+        wq_resp = WaterQualityAnalysisResponse(
+            asset_id="SAN-LUIS-RESERVOIR",
+            item_id="S2A_MSIL2A_20260901",
+            primary_metric=WaterQualityMetric.NDCI,
+            mean_value=0.075,
+            estimated_chlorophyll_a_ugl=5.2,
+            dominant_trophic_state=TrophicState.MESOTROPHIC,
+            bloom_detected=False,
+            bloom_area_hectares=8.5,
+            trophic_breakdown=[
+                TrophicCategoryDetail(state=TrophicState.OLIGOTROPHIC, label="Oligotrophic", area_hectares=1800.0, percentage=45.0, chl_a_range_ugl="< 2.6"),
+                TrophicCategoryDetail(state=TrophicState.MESOTROPHIC, label="Mesotrophic", area_hectares=2000.0, percentage=50.0, chl_a_range_ugl="2.6 - 7.3"),
+                TrophicCategoryDetail(state=TrophicState.EUTROPHIC, label="Eutrophic", area_hectares=200.0, percentage=5.0, chl_a_range_ugl="7.3 - 20.0")
+            ],
+            tile_url_template="/api/v1/tiles/water-quality/ndci/{z}/{x}/{y}.png",
+            created_at="2026-09-24T12:00:00Z"
+        )
+        self.assertEqual(wq_resp.dominant_trophic_state, TrophicState.MESOTROPHIC)
+        self.assertFalse(wq_resp.bloom_detected)
+
+    def test_t67_canonical_route_contracts(self):
+        """Verify format_api_route formatting for all 6 new T-67 canonical route contracts."""
+        r1 = format_api_route("drone_gcp_quality")
+        self.assertEqual(r1, "/api/v1/drone/gcp/quality")
+
+        r2 = format_api_route("drone_camera_calibration", camera_id="DJI-P1-01")
+        self.assertEqual(r2, "/api/v1/drone/camera/calibration/DJI-P1-01")
+
+        r3 = format_api_route("analysis_twi")
+        self.assertEqual(r3, "/api/v1/analysis/terrain/twi")
+
+        r4 = format_api_route("analysis_slope_stability")
+        self.assertEqual(r4, "/api/v1/analysis/terrain/slope-stability")
+
+        r5 = format_api_route("analysis_hls_calibrate")
+        self.assertEqual(r5, "/api/v1/analysis/hls/calibrate")
+
+        r6 = format_api_route("analysis_water_quality")
+        self.assertEqual(r6, "/api/v1/analysis/water-quality")
+
+    def test_cyanobacteria_alert_and_bloom_risk(self):
+        """Verify WHO / EPA cyanobacteria cell density and microcystin risk classification tiers."""
+        self.assertEqual(CyanobacteriaAlertLevel.LOW.value, "low")
+        self.assertEqual(CyanobacteriaAlertLevel.MODERATE.value, "moderate")
+        self.assertEqual(CyanobacteriaAlertLevel.HIGH.value, "high")
+        self.assertEqual(CyanobacteriaAlertLevel.VERY_HIGH.value, "very_high")
+
+        # Classification thresholds
+        self.assertEqual(classify_cyanobacteria_alert(4.5), CyanobacteriaAlertLevel.LOW)
+        self.assertEqual(classify_cyanobacteria_alert(9.9), CyanobacteriaAlertLevel.LOW)
+        self.assertEqual(classify_cyanobacteria_alert(10.0), CyanobacteriaAlertLevel.MODERATE)
+        self.assertEqual(classify_cyanobacteria_alert(35.0), CyanobacteriaAlertLevel.MODERATE)
+        self.assertEqual(classify_cyanobacteria_alert(50.0), CyanobacteriaAlertLevel.HIGH)
+        self.assertEqual(classify_cyanobacteria_alert(85.0), CyanobacteriaAlertLevel.HIGH)
+        self.assertEqual(classify_cyanobacteria_alert(100.0), CyanobacteriaAlertLevel.VERY_HIGH)
+        self.assertEqual(classify_cyanobacteria_alert(250.0), CyanobacteriaAlertLevel.VERY_HIGH)
+
+    def test_camera_calibration_presets(self):
+        """Verify standard drone camera interior calibration parameter presets and lookup helpers."""
+        self.assertIn("dji_zenmuse_p1_35mm", CAMERA_CALIBRATION_PRESETS)
+        self.assertIn("dji_phantom_4_rtk", CAMERA_CALIBRATION_PRESETS)
+        self.assertIn("dji_mavic_3_enterprise", CAMERA_CALIBRATION_PRESETS)
+        self.assertIn("sony_rx1r_ii", CAMERA_CALIBRATION_PRESETS)
+
+        # Lookup by key and by camera_id
+        p1 = get_camera_calibration_preset("dji_zenmuse_p1_35mm")
+        self.assertIsNotNone(p1)
+        self.assertEqual(p1.camera_id, "DJI-ZENMUSE-P1-35MM")
+        self.assertEqual(p1.focal_length_mm, 35.0)
+        self.assertEqual(p1.principal_point_x_px, 4096.0)
+
+        p1_by_id = get_camera_calibration_preset("DJI-ZENMUSE-P1-35MM")
+        self.assertIsNotNone(p1_by_id)
+        self.assertEqual(p1_by_id.focal_length_mm, 35.0)
+
+        # List presets
+        presets = list_camera_calibration_presets()
+        self.assertEqual(len(presets), 4)
+        for p in presets:
+            self.assertGreater(p.focal_length_mm, 0.0)
+            self.assertGreater(p.focal_length_px, 0.0)
+            self.assertGreater(p.sensor_width_mm, 0.0)
+
+    def test_soil_mechanics_presets_and_slope_stability(self):
+        """Verify standard geotechnical soil mechanics presets and slope stability calculations."""
+        self.assertIn("compacted_clay_core", SOIL_MECHANICS_PRESETS)
+        self.assertIn("silty_sand_shell", SOIL_MECHANICS_PRESETS)
+        self.assertIn("rockfill_embankment", SOIL_MECHANICS_PRESETS)
+        self.assertIn("mine_tailings_silt", SOIL_MECHANICS_PRESETS)
+        self.assertIn("compacted_earthfill", SOIL_MECHANICS_PRESETS)
+
+        clay = get_soil_preset("compacted_clay_core")
+        self.assertIsNotNone(clay)
+        self.assertEqual(clay.cohesion_kpa, 25.0)
+        self.assertEqual(clay.friction_angle_deg, 22.0)
+
+        # Clay core on 25 degree slope: expect FS >= 1.5 (stable)
+        fs_clay = calculate_slope_factor_of_safety(
+            slope_deg=25.0,
+            cohesion_kpa=clay.cohesion_kpa,
+            friction_angle_deg=clay.friction_angle_deg,
+            unit_weight_soil=clay.soil_unit_weight_kn_m3,
+            saturation_m=0.3,
+            depth_m=3.0
+        )
+        self.assertGreaterEqual(fs_clay, 1.50)
+
+        # Mine tailings on 35 degree saturated slope: expect critical (FS <= 1.0)
+        tailings = get_soil_preset("mine_tailings_silt")
+        self.assertIsNotNone(tailings)
+        fs_tailings = calculate_slope_factor_of_safety(
+            slope_deg=35.0,
+            cohesion_kpa=tailings.cohesion_kpa,
+            friction_angle_deg=tailings.friction_angle_deg,
+            unit_weight_soil=tailings.soil_unit_weight_kn_m3,
+            saturation_m=0.9,
+            depth_m=4.0
+        )
+        self.assertLessEqual(fs_tailings, 1.00)
+
+        presets = list_soil_presets()
+        self.assertEqual(len(presets), 5)
+
+    def test_dynamic_tile_url_builders_for_terrain_and_water(self):
+        """Verify dynamic XYZ streaming tile URL builders for TWI, slope stability, and water quality."""
+        # TWI tile URL
+        twi_url = build_twi_tile_url(12, 1042, 1628)
+        self.assertEqual(twi_url, "/api/v1/tiles/terrain/twi/12/1042/1628.png?rescale=2.0,12.0&colormap=spectral")
+
+        # Slope stability tile URL
+        slope_url = build_slope_stability_tile_url(12, 1042, 1628)
+        self.assertEqual(slope_url, "/api/v1/tiles/terrain/slope-stability/12/1042/1628.png?rescale=0.8,2.0&colormap=rdylbu")
+
+        # Water quality generic tile URL
+        wq_url = build_water_quality_tile_url("ndci", 12, 1042, 1628)
+        self.assertEqual(wq_url, "/api/v1/tiles/water-quality/ndci/12/1042/1628.png?rescale=-0.1,0.4&colormap=spectral")
+
+        # Water quality scene-specific tile URL
+        wq_scene_url = build_water_quality_tile_url(
+            metric=WaterQualityMetric.NDCI,
+            z=12,
+            x=1042,
+            y=1628,
+            collection="sentinel-2-l2a",
+            item_id="S2A_MSIL2A_20260901"
+        )
+        self.assertEqual(wq_scene_url, "/api/v1/tiles/water-quality/sentinel-2-l2a/S2A_MSIL2A_20260901/ndci/12/1042/1628.png?rescale=-0.1,0.4&colormap=spectral")
+
+    def test_canonical_route_contracts_expansion(self):
+        """Verify format_api_route for all newly registered route contracts and aliases."""
+        self.assertEqual(format_api_route("drone_gcp_geojson"), "/api/v1/drone/gcp/geojson")
+        self.assertEqual(format_api_route("drone_gcp_quality_short"), "/api/v1/drone/gcp-quality")
+        self.assertEqual(format_api_route("drone_camera_calibration_list"), "/api/v1/drone/camera/calibration")
+        self.assertEqual(format_api_route("drone_camera_calibration_short"), "/api/v1/drone/camera-calibration")
+        self.assertEqual(format_api_route("analysis_twi_short"), "/api/v1/analysis/twi")
+        self.assertEqual(format_api_route("analysis_slope_stability_short"), "/api/v1/analysis/slope-stability")
+        self.assertEqual(format_api_route("analysis_hls_calibrate_short"), "/api/v1/analysis/hls-calibrate")
+        self.assertEqual(format_api_route("tiles_twi", z=12, x=100, y=200), "/api/v1/tiles/terrain/twi/12/100/200.png")
+        self.assertEqual(format_api_route("tiles_slope_stability", z=12, x=100, y=200), "/api/v1/tiles/terrain/slope-stability/12/100/200.png")
+        self.assertEqual(format_api_route("tiles_water_quality", metric="ndci", z=12, x=100, y=200), "/api/v1/tiles/water-quality/ndci/12/100/200.png")
+        self.assertEqual(format_api_route("tiles_water_quality_scene", collection="sentinel-2-l2a", item_id="S2A_01", metric="ndci", z=12, x=100, y=200), "/api/v1/tiles/water-quality/sentinel-2-l2a/S2A_01/ndci/12/100/200.png")
+        self.assertEqual(format_api_route("geotechnical_soil_presets"), "/api/v1/analysis/terrain/soil-presets")
+
+
+    def test_parse_bbox_geojson_and_dict_features(self):
+        """Verify parse_bbox handles GeoJSON Features, Geometries, nested bboxes, and directional keys."""
+        # 1. GeoJSON Feature dictionary
+        feature_dict = {
+            "type": "Feature",
+            "properties": {"name": "Test AOI"},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [-121.25, 37.05],
+                    [-121.05, 37.05],
+                    [-121.05, 37.15],
+                    [-121.25, 37.15],
+                    [-121.25, 37.05]
+                ]]
+            }
+        }
+        res_feat = parse_bbox(feature_dict)
+        self.assertEqual(res_feat, (-121.25, 37.05, -121.05, 37.15))
+
+        # 2. GeoJSON Geometry dictionary directly
+        geom_dict = {
+            "type": "Polygon",
+            "coordinates": [[
+                [-122.0, 38.0],
+                [-121.8, 38.0],
+                [-121.8, 38.2],
+                [-122.0, 38.2],
+                [-122.0, 38.0]
+            ]]
+        }
+        res_geom = parse_bbox(geom_dict)
+        self.assertEqual(res_geom, (-122.0, 38.0, -121.8, 38.2))
+
+        # 3. Dict with nested bbox list
+        nested_bbox_dict = {"bbox": [-120.5, 36.5, -120.0, 37.0]}
+        res_nested = parse_bbox(nested_bbox_dict)
+        self.assertEqual(res_nested, (-120.5, 36.5, -120.0, 37.0))
+
+        # 4. Dict with west/south/east/north
+        cardinal_dict = {"west": -121.5, "south": 37.1, "east": -121.0, "north": 37.4}
+        res_card = parse_bbox(cardinal_dict)
+        self.assertEqual(res_card, (-121.5, 37.1, -121.0, 37.4))
+
+        # 5. Dict with min_x/min_y/max_x/max_y
+        minmax_dict = {"min_x": -121.4, "min_y": 36.8, "max_x": -120.8, "max_y": 37.2}
+        res_minmax = parse_bbox(minmax_dict)
+        self.assertEqual(res_minmax, (-121.4, 36.8, -120.8, 37.2))
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

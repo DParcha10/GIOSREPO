@@ -79,7 +79,19 @@ class DataAcquisitionService:
         if bbox is not None:
             bbox = parse_bbox(bbox)
 
-        cache_key = {"bbox": bbox, "start": start_date, "end": end_date, "col": collection, "cloud": max_cloud, "sign": sign_assets}
+        col_clean = collection.lower().strip()
+        if "landsat" in col_clean:
+            target_collection = "landsat-c2-l2"
+        elif "sar" in col_clean or "sentinel-1" in col_clean or "rtc" in col_clean:
+            target_collection = "sentinel-1-rtc"
+        elif "dem" in col_clean or "cop" in col_clean:
+            target_collection = "cop-dem-glo-30"
+        elif "sentinel" in col_clean:
+            target_collection = "sentinel-2-l2a"
+        else:
+            target_collection = collection
+
+        cache_key = {"bbox": bbox, "start": start_date, "end": end_date, "col": target_collection, "cloud": max_cloud, "sign": sign_assets}
         cached = cache_manager.get("stac_search", cache_key)
         if cached:
             return cached
@@ -89,7 +101,7 @@ class DataAcquisitionService:
                 warnings.filterwarnings("ignore")
                 client = Client.open(self.catalog_url)
                 search = client.search(
-                    collections=[collection],
+                    collections=[target_collection],
                     bbox=bbox,
                     datetime=f"{start_date}/{end_date}",
                     query={"eo:cloud_cover": {"lt": max_cloud}},
@@ -114,7 +126,7 @@ class DataAcquisitionService:
                     "id": item.id,
                     "datetime": item.datetime.isoformat() if item.datetime else str(item.properties.get("datetime")),
                     "cloud_cover": float(item.properties.get("eo:cloud_cover", 0.0)),
-                    "collection": collection,
+                    "collection": target_collection,
                     "thumbnail_url": thumb.href if thumb else None,
                     "assets": assets_dict,
                     "_stac_item": item
@@ -128,20 +140,28 @@ class DataAcquisitionService:
             logger.warning("Planetary Computer STAC search exception (using resilient fallback): %s", e)
 
         # Graceful fallback scenes if external network is unavailable or restricted
+        if "landsat" in target_collection.lower():
+            prefix = "LC09_L2SP"
+        elif "sar" in target_collection.lower() or "sentinel-1" in target_collection.lower():
+            prefix = "S1A_IW_GRDH"
+        elif "dem" in target_collection.lower():
+            prefix = "COP_DEM_GLO_30"
+        else:
+            prefix = "S2A_MSIL2A"
         fallback = [
             {
-                "id": f"S2A_MSIL2A_{start_date.replace('-','')}_T10SEJ",
+                "id": f"{prefix}_{start_date.replace('-','')}_T10SEJ",
                 "datetime": f"{start_date}T18:45:00Z",
                 "cloud_cover": 4.2,
-                "collection": collection,
+                "collection": target_collection,
                 "thumbnail_url": None,
                 "assets": {}
             },
             {
-                "id": f"S2B_MSIL2A_{end_date.replace('-','')}_T10SEJ",
+                "id": f"{prefix}_{end_date.replace('-','')}_T10SEJ",
                 "datetime": f"{end_date}T18:42:00Z",
                 "cloud_cover": 1.8,
-                "collection": collection,
+                "collection": target_collection,
                 "thumbnail_url": None,
                 "assets": {}
             }
@@ -227,7 +247,7 @@ class DataAcquisitionService:
             elif isinstance(it, str) and it.strip():
                 try:
                     client = Client.open(self.catalog_url)
-                    stac_item = client.get_collection(collection).get_item(it.strip())
+                    stac_item = client.get_collection(col_key).get_item(it.strip())
                     if stac_item:
                         pc.sign_inplace(stac_item)
                         stac_items_to_load.append(stac_item)
@@ -371,7 +391,11 @@ class DataAcquisitionService:
                 ds[var_name].attrs["spectrum_domain"] = spec.spectrum_domain
                 ds[var_name].attrs["common_name"] = spec.common_name
 
-        # Trigger garbage collection for intermediate chunk memory
+        # Proactively release references to STAC items and intermediate objects
+        try:
+            del stac_items_to_load
+        except Exception:
+            pass
         gc.collect()
         return ds
 
