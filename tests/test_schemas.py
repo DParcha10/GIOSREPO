@@ -147,7 +147,25 @@ from app.models.schemas import (
     TerrainAnalysisResponse,
     SARPolarization,
     SARAnalysisRequest,
-    SARAnalysisResponse
+    SARAnalysisResponse,
+    TransectSampleMethod,
+    TransectPoint,
+    TransectProfileSummary,
+    TransectAnalysisRequest,
+    TransectAnalysisResponse,
+    sample_polyline_equidistant,
+    VolumeCalculationMode,
+    VolumetricAnalysisRequest,
+    VolumetricAnalysisResponse,
+    calculate_cut_fill_volumes,
+    ExportRasterFormat,
+    DataExportRequest,
+    DataExportResponse,
+    format_export_filename,
+    AnimationPlaybackMode,
+    AnimationKeyframe,
+    AnimationSequenceConfig,
+    build_animation_keyframes
 )
 from app.config import settings
 
@@ -1664,6 +1682,197 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             format_api_route("tiles_terrain", metric="elevation", z=13, x=1310, y=3165),
             "/api/v1/tiles/terrain/elevation/13/1310/3165.png"
         )
+
+    def test_transect_cross_section_contracts_and_sampling(self):
+        """Verify engineering transect cross-section models and equidistant geodesic sampling."""
+        self.assertEqual(TransectSampleMethod.EQUIDISTANT_GEODESIC.value, "equidistant_geodesic")
+        self.assertEqual(TransectSampleMethod.VERTEX_ONLY.value, "vertex_only")
+
+        # Test polyline sampling
+        polyline = [
+            (37.058, -121.074),
+            (37.060, -121.070),
+            (37.062, -121.066)
+        ]
+        samples = sample_polyline_equidistant(polyline, sample_count=10)
+        self.assertEqual(len(samples), 10)
+        self.assertAlmostEqual(samples[0][0], 37.058, places=4)
+        self.assertAlmostEqual(samples[0][1], -121.074, places=4)
+        self.assertAlmostEqual(samples[-1][0], 37.062, places=4)
+        self.assertAlmostEqual(samples[-1][1], -121.066, places=4)
+
+        # Test GeoJSON LineString input
+        geojson_line = {
+            "type": "LineString",
+            "coordinates": [[-121.074, 37.058], [-121.070, 37.060], [-121.066, 37.062]]
+        }
+        samples_geojson = sample_polyline_equidistant(geojson_line, sample_count=10)
+        self.assertEqual(len(samples_geojson), 10)
+        self.assertAlmostEqual(samples_geojson[0][0], 37.058, places=4)
+
+        # Test models
+        pt = TransectPoint(
+            distance_m=125.5,
+            lat=37.0585,
+            lon=-121.073,
+            elevation_m=182.4,
+            slope_deg=5.2,
+            metric_value=0.38
+        )
+        self.assertEqual(pt.distance_m, 125.5)
+        self.assertEqual(pt.elevation_m, 182.4)
+
+        summary = TransectProfileSummary(
+            total_distance_m=1250.0,
+            min_elevation_m=140.0,
+            max_elevation_m=220.0,
+            elevation_gain_m=80.0,
+            elevation_loss_m=0.0,
+            mean_slope_deg=4.2,
+            max_slope_deg=12.5,
+            min_metric_value=0.12,
+            max_metric_value=0.55
+        )
+        self.assertEqual(summary.total_distance_m, 1250.0)
+
+        req = TransectAnalysisRequest(
+            polyline=[(37.058, -121.074), (37.062, -121.066)],
+            metric=SpectralIndex.NDMI,
+            sample_count=25
+        )
+        self.assertEqual(req.metric, SpectralIndex.NDMI)
+        self.assertEqual(req.sample_count, 25)
+
+        resp = TransectAnalysisResponse(
+            metric="ndmi",
+            total_distance_m=1250.0,
+            sample_count=1,
+            summary=summary,
+            points=[pt]
+        )
+        self.assertEqual(resp.metric, "ndmi")
+        self.assertEqual(len(resp.points), 1)
+
+    def test_volumetric_cut_fill_earthwork_contracts(self):
+        """Verify volumetric calculation models and cut-fill earthwork integration algorithm."""
+        self.assertEqual(VolumeCalculationMode.CUT_FILL.value, "cut_fill")
+        self.assertEqual(VolumeCalculationMode.RESERVOIR_STORAGE.value, "reservoir_storage")
+        self.assertEqual(VolumeCalculationMode.EMBANKMENT_FILL.value, "embankment_fill")
+
+        req = VolumetricAnalysisRequest(
+            bbox=(-121.08, 37.05, -121.06, 37.07),
+            reference_elevation_m=200.0,
+            mode=VolumeCalculationMode.CUT_FILL,
+            grid_resolution_m=10.0
+        )
+        self.assertEqual(req.reference_elevation_m, 200.0)
+        self.assertEqual(req.grid_resolution_m, 10.0)
+
+        # Elevation grid: 4 cells of 10m x 10m (100 m2 each)
+        # 2 cells above 200m (+10m, +5m -> cut = 15m * 100m2 = 1500 m3)
+        # 2 cells below 200m (-4m, -6m -> fill = 10m * 100m2 = 1000 m3)
+        elev_grid = [210.0, 205.0, 196.0, 194.0]
+        res = calculate_cut_fill_volumes(elev_grid, reference_elevation_m=200.0, cell_size_m=10.0)
+        self.assertEqual(res["cut_volume_m3"], 1500.0)
+        self.assertEqual(res["fill_volume_m3"], 1000.0)
+        self.assertEqual(res["net_volume_m3"], 500.0)
+        self.assertEqual(res["surface_area_m2"], 400.0)
+        self.assertEqual(res["surface_area_hectares"], 0.04)
+        self.assertAlmostEqual(res["mean_elevation_m"], 201.25, places=2)
+
+        resp = VolumetricAnalysisResponse(
+            mode="cut_fill",
+            reference_elevation_m=200.0,
+            **res
+        )
+        self.assertEqual(resp.net_volume_m3, 500.0)
+        self.assertEqual(resp.cut_volume_m3, 1500.0)
+
+    def test_data_export_contracts_and_filename_generator(self):
+        """Verify data export requests, responses, and canonical filename formatting."""
+        self.assertEqual(ExportRasterFormat.GEOTIFF.value, "geotiff")
+        self.assertEqual(ExportRasterFormat.COG.value, "cog")
+        self.assertEqual(ExportRasterFormat.PNG_RGBA.value, "png_rgba")
+        self.assertEqual(ExportRasterFormat.GEOJSON_VECTOR.value, "geojson_vector")
+        self.assertEqual(ExportRasterFormat.CSV_TABULAR.value, "csv_tabular")
+
+        req = DataExportRequest(
+            bbox=(-121.1, 37.0, -121.0, 37.1),
+            collection=SatelliteCollection.SENTINEL_2,
+            item_id="S2A_MSIL2A_20260820",
+            index=SpectralIndex.NDMI,
+            format=ExportRasterFormat.GEOTIFF
+        )
+        self.assertEqual(req.collection, SatelliteCollection.SENTINEL_2)
+        self.assertEqual(req.format, ExportRasterFormat.GEOTIFF)
+
+        fn = format_export_filename(
+            collection=SatelliteCollection.SENTINEL_2,
+            item_id="S2A_MSIL2A_20260820",
+            format_type=ExportRasterFormat.GEOTIFF,
+            index=SpectralIndex.NDMI
+        )
+        self.assertEqual(fn, "gios_sentinel-2-l2a_S2A_MSIL2A_20260820_ndmi.tif")
+
+        resp = DataExportResponse(
+            export_id="EXP-12345",
+            status="ready",
+            format="geotiff",
+            download_url="https://api.gios.internal/exports/exp-12345.tif",
+            filename=fn,
+            file_size_bytes=8388608,
+            crs="EPSG:4326",
+            bbox=(-121.1, 37.0, -121.0, 37.1),
+            created_at="2026-09-23T18:00:00Z",
+            expires_at="2026-09-24T18:00:00Z"
+        )
+        self.assertEqual(resp.export_id, "EXP-12345")
+        self.assertEqual(resp.filename, fn)
+
+    def test_animation_sequence_and_keyframe_builder(self):
+        """Verify multi-temporal animation keyframe generation and configuration."""
+        self.assertEqual(AnimationPlaybackMode.LOOP.value, "loop")
+        self.assertEqual(AnimationPlaybackMode.PING_PONG.value, "ping_pong")
+        self.assertEqual(AnimationPlaybackMode.STEP.value, "step")
+
+        scenes = [
+            {"id": "SCENE-02", "datetime": "2026-08-15T18:00:00Z", "cloud_cover": 2.1, "collection": "sentinel-2-l2a"},
+            {"id": "SCENE-01", "datetime": "2026-08-01T18:00:00Z", "cloud_cover": 0.5, "collection": "sentinel-2-l2a"}
+        ]
+        frames = build_animation_keyframes(
+            scenes=scenes,
+            z=13,
+            x=1310,
+            y=3165,
+            index=SpectralIndex.NDMI,
+            colormap=TileColormap.SPECTRAL
+        )
+        self.assertEqual(len(frames), 2)
+        # Chronological ordering
+        self.assertEqual(frames[0].scene_id, "SCENE-01")
+        self.assertEqual(frames[0].timestamp, "2026-08-01")
+        self.assertEqual(frames[1].scene_id, "SCENE-02")
+        self.assertEqual(frames[1].timestamp, "2026-08-15")
+        self.assertIn("index=ndmi", frames[0].tile_url)
+        self.assertIn("colormap=spectral", frames[0].tile_url)
+
+        seq = AnimationSequenceConfig(
+            collection=SatelliteCollection.SENTINEL_2,
+            start_date="2026-08-01",
+            end_date="2026-08-30",
+            fps=3.0,
+            playback_mode=AnimationPlaybackMode.LOOP,
+            frames=frames
+        )
+        self.assertEqual(seq.fps, 3.0)
+        self.assertEqual(len(seq.frames), 2)
+
+    def test_extended_canonical_api_route_contracts(self):
+        """Verify format_api_route resolves all newly registered API route contracts."""
+        self.assertEqual(format_api_route("analysis_transect"), "/api/v1/analysis/transect")
+        self.assertEqual(format_api_route("analysis_volumetric"), "/api/v1/analysis/volumetric")
+        self.assertEqual(format_api_route("analysis_export"), "/api/v1/analysis/export")
+        self.assertEqual(format_api_route("analysis_animation_sequence"), "/api/v1/analysis/animation-sequence")
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

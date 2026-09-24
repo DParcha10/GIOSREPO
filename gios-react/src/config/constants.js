@@ -734,7 +734,16 @@ export const API_ENDPOINTS = {
   ANALYSIS_TRANSECT: '/api/v1/analysis/transect',
   ANALYSIS_VOLUMETRIC: '/api/v1/analysis/volumetric',
   ANALYSIS_EXPORT: '/api/v1/analysis/export',
-  ANALYSIS_ANIMATION_SEQUENCE: '/api/v1/analysis/animation-sequence'
+  ANALYSIS_ANIMATION_SEQUENCE: '/api/v1/analysis/animation-sequence',
+  ANALYSIS_COMPOSITE: '/api/v1/analysis/composite',
+  TILES_COMPOSITE: (compositeId, z, x, y) => `/api/v1/tiles/composite/${compositeId}/${z}/${x}/${y}.png`,
+  ANNOTATIONS: '/api/v1/annotations',
+  ANNOTATION_DETAIL: (annotationId) => `/api/v1/annotations/${annotationId}`,
+  WORK_ORDERS: '/api/v1/work-orders',
+  SUBSCRIPTIONS: '/api/v1/subscriptions',
+  SUBSCRIPTION_DETAIL: (subscriptionId) => `/api/v1/subscriptions/${subscriptionId}`,
+  ANALYSIS_VRT: '/api/v1/analysis/vrt',
+  TILES_VRT: (vrtId, z, x, y) => `/api/v1/tiles/vrt/${vrtId}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -772,6 +781,14 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.metric || 'elevation', params.z, params.x, params.y);
       case 'TILES_SAR':
         return endpoint(params.polarization || 'vv', params.z, params.x, params.y);
+      case 'TILES_COMPOSITE':
+        return endpoint(params.compositeId || params.composite_id, params.z, params.x, params.y);
+      case 'ANNOTATION_DETAIL':
+        return endpoint(params.annotationId || params.annotation_id);
+      case 'SUBSCRIPTION_DETAIL':
+        return endpoint(params.subscriptionId || params.subscription_id);
+      case 'TILES_VRT':
+        return endpoint(params.vrtId || params.vrt_id, params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -1956,5 +1973,176 @@ export const buildAnimationKeyframes = (scenes, z, x, y, options = {}) => {
     };
   });
 };
+
+/**
+ * Statistical and quality pixel reducers for multi-temporal compositing.
+ */
+export const COMPOSITE_REDUCERS = {
+  MEDIAN: 'median',
+  GREENEST_PIXEL: 'greenest_pixel',
+  CLEAREST_PIXEL: 'clearest_pixel',
+  MOST_RECENT: 'most_recent',
+  MAX_NDMI: 'max_ndmi',
+  MIN_LST: 'min_lst'
+};
+
+/**
+ * Constructs canonical XYZ tile URL for streaming a multi-temporal composite.
+ * 
+ * @param {string} compositeId - Composite identifier
+ * @param {number|string} z - Zoom level
+ * @param {number|string} x - Tile X
+ * @param {number|string} y - Tile Y
+ * @param {Object} [options={}] - Options (index, colormap, rescale)
+ * @returns {string} Formatted tile URL
+ */
+export const buildCompositeTileUrl = (compositeId, z, x, y, options = {}) => {
+  const params = new URLSearchParams();
+  if (options.index) params.set('index', options.index);
+  if (options.colormap) params.set('colormap', options.colormap);
+  if (options.rescale) params.set('rescale', options.rescale);
+
+  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return `${base}/api/v1/tiles/composite/${compositeId}/${z}/${x}/${y}.png${qs}`;
+};
+
+/**
+ * Geotechnical defect classifications for dams and critical infrastructure.
+ */
+export const DEFECT_CATEGORIES = {
+  SEEPAGE_BOIL: 'seepage_boil',
+  CREST_CRACK: 'crest_crack',
+  SLOPE_SLUMP: 'slope_slump',
+  PIPING_VOID: 'piping_void',
+  EROSION_GULLY: 'erosion_gully',
+  SUBSIDENCE: 'subsidence',
+  VEGETATION_ANOMALY: 'vegetation_anomaly'
+};
+
+/**
+ * Risk severity tiers for geotechnical defect annotations.
+ */
+export const DEFECT_SEVERITIES = {
+  CRITICAL: 'critical',
+  HIGH: 'high',
+  MODERATE: 'moderate',
+  LOW: 'low'
+};
+
+/**
+ * Lifecycle tracking states for geotechnical defect annotations.
+ */
+export const DEFECT_STATUSES = {
+  OPEN: 'open',
+  INVESTIGATING: 'investigating',
+  WORK_ORDER_ISSUED: 'work_order_issued',
+  REPAIRED: 'repaired',
+  VERIFIED: 'verified'
+};
+
+/**
+ * Converts a geotechnical defect annotation object into an RFC 7946 GeoJSON Feature.
+ * 
+ * @param {Object} annotation - Geotechnical annotation object
+ * @returns {Object|null} GeoJSON Feature object
+ */
+export const annotationToGeoJsonFeature = (annotation) => {
+  if (!annotation) return null;
+  const lat = Number(annotation.lat || 0);
+  const lng = Number(annotation.lng || 0);
+  const annId = String(annotation.annotation_id || annotation.id || '');
+
+  return {
+    type: 'Feature',
+    id: annId,
+    geometry: {
+      type: 'Point',
+      coordinates: [lng, lat]
+    },
+    properties: {
+      annotation_id: annId,
+      title: annotation.title || '',
+      category: annotation.category || 'seepage_boil',
+      severity: annotation.severity || 'moderate',
+      status: annotation.status || 'open',
+      asset_id: annotation.asset_id || '',
+      elevation_m: annotation.elevation_m || null,
+      drone_ortho_id: annotation.drone_ortho_id || null,
+      photo_urls: Array.isArray(annotation.photo_urls) ? annotation.photo_urls : [],
+      notes: annotation.notes || '',
+      inspector: annotation.inspector || 'Field Engineer',
+      created_at: annotation.created_at || new Date().toISOString(),
+      updated_at: annotation.updated_at || new Date().toISOString()
+    }
+  };
+};
+
+/**
+ * Converts an array of geotechnical defect annotations into an RFC 7946 GeoJSON FeatureCollection.
+ * 
+ * @param {Array<Object>} [annotations=[]] - Array of geotechnical annotations
+ * @returns {Object} GeoJSON FeatureCollection object
+ */
+export const annotationsToFeatureCollection = (annotations = []) => {
+  const features = Array.isArray(annotations)
+    ? annotations.map(annotationToGeoJsonFeature).filter(Boolean)
+    : [];
+  return {
+    type: 'FeatureCollection',
+    features
+  };
+};
+
+/**
+ * Trigger conditions for automated AOI satellite monitoring subscriptions.
+ */
+export const SUBSCRIPTION_TRIGGER_TYPES = {
+  Z_SCORE_ANOMALY: 'z_score_anomaly',
+  NEW_SCENE_INGESTED: 'new_scene_ingested',
+  INDEX_THRESHOLD: 'index_threshold'
+};
+
+/**
+ * Outbound alerting dispatch channels.
+ */
+export const NOTIFICATION_CHANNELS = {
+  WEBHOOK: 'webhook',
+  EMAIL: 'email',
+  SLACK: 'slack',
+  IN_APP_ALERT: 'in_app_alert'
+};
+
+/**
+ * Seamline blending algorithms for multi-scene virtual raster mosaics.
+ */
+export const SEAMLINE_MODES = {
+  FEATHER: 'feather',
+  NEAREST: 'nearest',
+  VORONOI_CUT: 'voronoi_cut',
+  AVERAGE: 'average'
+};
+
+/**
+ * Constructs canonical XYZ tile URL for streaming a Virtual Raster (VRT) mosaic.
+ * 
+ * @param {string} vrtId - Virtual raster dataset identifier
+ * @param {number|string} z - Zoom level
+ * @param {number|string} x - Tile X
+ * @param {number|string} y - Tile Y
+ * @param {Object} [options={}] - Options (index, colormap, rescale)
+ * @returns {string} Formatted tile URL
+ */
+export const buildVrtTileUrl = (vrtId, z, x, y, options = {}) => {
+  const params = new URLSearchParams();
+  if (options.index) params.set('index', options.index);
+  if (options.colormap) params.set('colormap', options.colormap);
+  if (options.rescale) params.set('rescale', options.rescale);
+
+  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return `${base}/api/v1/tiles/vrt/${vrtId}/${z}/${x}/${y}.png${qs}`;
+};
+
 
 

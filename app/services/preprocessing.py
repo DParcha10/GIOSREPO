@@ -8,7 +8,11 @@ class PreprocessingService:
     @staticmethod
     def _get_spatial_dilation_structure(ndim: int) -> np.ndarray:
         """Returns morphological structuring element operating strictly on spatial Y, X dimensions."""
-        if ndim <= 2:
+        if ndim <= 0:
+            return np.ones((), dtype=bool)
+        elif ndim == 1:
+            return np.ones((3,), dtype=bool)
+        elif ndim == 2:
             return np.ones((3, 3), dtype=bool)
         return np.ones((1,) * (ndim - 2) + (3, 3), dtype=bool)
 
@@ -26,6 +30,8 @@ class PreprocessingService:
         """
         # Check if dataset is xarray.Dataset
         if hasattr(dataset, "data_vars"):
+            if hasattr(dataset, "attrs") and dataset.attrs.get("cloud_shadow_masked"):
+                return dataset
             qa_name = None
             for name in ["qa_pixel", "QA_PIXEL", "qa", "QA", "pixel_qa", "PIXEL_QA"]:
                 if name in dataset:
@@ -126,6 +132,8 @@ class PreprocessingService:
         invalid_classes = {0, 1, 3, 8, 9, 10, 11}
 
         if hasattr(dataset, "data_vars"):
+            if hasattr(dataset, "attrs") and dataset.attrs.get("cloud_shadow_masked"):
+                return dataset
             scl_name = None
             for name in ["scl", "SCL", "scl_20m", "SCL_20M", "scl_60m"]:
                 if name in dataset:

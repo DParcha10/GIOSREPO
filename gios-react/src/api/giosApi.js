@@ -96,7 +96,18 @@ export {
   EXPORT_RASTER_FORMATS,
   formatExportFilename,
   ANIMATION_PLAYBACK_MODES,
-  buildAnimationKeyframes
+  buildAnimationKeyframes,
+  COMPOSITE_REDUCERS,
+  buildCompositeTileUrl,
+  DEFECT_CATEGORIES,
+  DEFECT_SEVERITIES,
+  DEFECT_STATUSES,
+  annotationToGeoJsonFeature,
+  annotationsToFeatureCollection,
+  SUBSCRIPTION_TRIGGER_TYPES,
+  NOTIFICATION_CHANNELS,
+  SEAMLINE_MODES,
+  buildVrtTileUrl
 } from '../config/constants.js';
 
 /**
@@ -889,6 +900,85 @@ const demoAdapter = async (config) => {
         playback_mode: 'loop',
         frames: []
       };
+      else if (url.includes('/api/v1/analysis/composite')) data = {
+        composite_id: 'COMP-DEMO-01',
+        status: 'ready',
+        reducer: 'median',
+        collection: 'sentinel-2-l2a',
+        scene_count: 5,
+        contributing_scenes: ['S2A_20260601', 'S2A_20260615', 'S2A_20260701', 'S2A_20260715', 'S2A_20260801'],
+        bbox: [-121.2, 36.95, -120.95, 37.15],
+        time_window: '2026-06-01 to 2026-08-30',
+        tile_url_template: '/api/v1/tiles/composite/COMP-DEMO-01/{z}/{x}/{y}.png',
+        created_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/annotations')) {
+        data = [
+          {
+            annotation_id: 'ANN-SAN-LUIS-01',
+            title: 'Downstream Embankment Toe Seepage Boil',
+            category: 'seepage_boil',
+            severity: 'critical',
+            status: 'investigating',
+            lat: 37.0582,
+            lng: -121.0744,
+            elevation_m: 154.2,
+            asset_id: 'SAN-LUIS-DAM-01',
+            drone_ortho_id: 'ORTHO-SLD-202609',
+            photo_urls: ['/assets/inspection_toe_boil.jpg'],
+            notes: 'High-turbidity sand boil detected 15m downstream of toe berm. Piezometer P-04 shows +1.8m pressure head surge.',
+            inspector: 'Senior Geotechnical Engineer',
+            created_at: new Date(Date.now() - 86400000).toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ];
+      }
+      else if (url.includes('/api/v1/work-orders')) {
+        data = [
+          {
+            work_order_id: 'WO-2026-0042',
+            annotation_id: 'ANN-SAN-LUIS-01',
+            asset_id: 'SAN-LUIS-DAM-01',
+            priority: 'critical',
+            description: 'Deploy weighted gravel inverted filter ring around boil perimeter; monitor piezometric relief wells.',
+            assigned_crew: 'Heavy Dam Safety Response Crew 2',
+            target_completion_date: '2026-09-26',
+            status: 'dispatched',
+            estimated_hours: 18.0,
+            created_at: new Date().toISOString()
+          }
+        ];
+      }
+      else if (url.includes('/api/v1/subscriptions')) {
+        data = [
+          {
+            subscription_id: 'SUB-SLD-MOISTURE',
+            name: 'San Luis Dam Toe Moisture Anomaly Watch',
+            asset_id: 'SAN-LUIS-DAM-01',
+            collection: 'sentinel-2-l2a',
+            indices: ['ndmi', 'mndwi'],
+            trigger_type: 'z_score_anomaly',
+            z_score_threshold: 2.5,
+            channels: ['webhook', 'in_app_alert'],
+            webhook_url: 'https://emergency.ca.gov/webhooks/dams/san-luis',
+            is_active: true,
+            created_at: new Date(Date.now() - 604800000).toISOString(),
+            last_checked_at: new Date().toISOString(),
+            alerts_triggered_count: 2
+          }
+        ];
+      }
+      else if (url.includes('/api/v1/analysis/vrt')) data = {
+        vrt_id: 'VRT-DEMO-MGRS-01',
+        status: 'ready',
+        source_scene_count: 2,
+        source_scenes: ['S2A_10SEJ_20260820', 'S2A_10SEK_20260820'],
+        seamline_mode: 'feather',
+        bbox: [-121.5, 36.8, -120.8, 37.3],
+        target_crs: 'EPSG:3857',
+        tile_url_template: '/api/v1/tiles/vrt/VRT-DEMO-MGRS-01/{z}/{x}/{y}.png',
+        created_at: new Date().toISOString()
+      };
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
@@ -1482,6 +1572,206 @@ export const requestDataExport = async (params) => {
  */
 export const fetchAnimationSequence = async (params) => {
   const response = await giosApi.post('/api/v1/analysis/animation-sequence', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} TemporalCompositeRequest
+ * @property {[number, number, number, number]|number[]|string} bbox - Target geographic bounding box [min_lon, min_lat, max_lon, max_lat]
+ * @property {string} [collection='sentinel-2-l2a'] - Target satellite imagery collection
+ * @property {string} start_date - Temporal window start date (YYYY-MM-DD)
+ * @property {string} end_date - Temporal window end date (YYYY-MM-DD)
+ * @property {'median'|'greenest_pixel'|'clearest_pixel'|'most_recent'|'max_ndmi'|'min_lst'} [reducer='median'] - Pixel reduction algorithm
+ * @property {number} [max_cloud_cover=30.0] - Maximum allowable scene cloud cover percentage
+ * @property {string} [index] - Optional spectral index
+ * @property {string} [colormap] - Optional rendering colormap
+ * @property {string} [rescale] - Optional display contrast rescale
+ */
+
+/**
+ * @typedef {Object} TemporalCompositeResponse
+ * @property {string} composite_id - Unique composite identifier
+ * @property {string} status - Processing status ('ready')
+ * @property {string} reducer - Applied pixel reduction algorithm
+ * @property {string} collection - Source satellite collection
+ * @property {number} scene_count - Number of contributing scenes
+ * @property {Array<string>} contributing_scenes - List of scene IDs
+ * @property {[number, number, number, number]} bbox - Spatial envelope bounds
+ * @property {string} time_window - Formatted temporal interval string
+ * @property {string} tile_url_template - XYZ tile template URL
+ * @property {string} created_at - ISO 8601 creation timestamp
+ */
+
+/**
+ * @typedef {Object} GeotechnicalAnnotation
+ * @property {string} annotation_id - Unique defect annotation identifier
+ * @property {string} title - Short summary title
+ * @property {'seepage_boil'|'crest_crack'|'slope_slump'|'piping_void'|'erosion_gully'|'subsidence'|'vegetation_anomaly'} category - Defect category
+ * @property {'critical'|'high'|'moderate'|'low'} severity - Severity tier
+ * @property {'open'|'investigating'|'work_order_issued'|'repaired'|'verified'} status - Workflow state
+ * @property {number} lat - Latitude coordinate
+ * @property {number} lng - Longitude coordinate
+ * @property {number|null} [elevation_m] - Elevation ASL in meters
+ * @property {string} asset_id - Associated infrastructure asset ID
+ * @property {string|null} [drone_ortho_id] - Associated drone survey ID
+ * @property {Array<string>} [photo_urls] - Inspection photo URLs
+ * @property {string} [notes] - Narrative notes
+ * @property {string} [inspector] - Inspector identifier
+ * @property {string} created_at - ISO 8601 timestamp
+ * @property {string} updated_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} CreateAnnotationRequest
+ * @property {string} title - Defect title
+ * @property {'seepage_boil'|'crest_crack'|'slope_slump'|'piping_void'|'erosion_gully'|'subsidence'|'vegetation_anomaly'} category - Defect category
+ * @property {'critical'|'high'|'moderate'|'low'} severity - Risk severity
+ * @property {number} lat - Latitude
+ * @property {number} lng - Longitude
+ * @property {number} [elevation_m] - Surface elevation
+ * @property {string} asset_id - Asset identifier
+ * @property {string} [drone_ortho_id] - Drone survey reference
+ * @property {Array<string>} [photo_urls] - Photo evidence
+ * @property {string} [notes] - Inspector observations
+ * @property {string} [inspector] - Inspector name
+ */
+
+/**
+ * @typedef {Object} MaintenanceWorkOrder
+ * @property {string} work_order_id - Work order identifier
+ * @property {string} annotation_id - Linked annotation ID
+ * @property {string} asset_id - Infrastructure asset ID
+ * @property {'critical'|'high'|'moderate'|'low'} priority - Work priority
+ * @property {string} description - Work instructions
+ * @property {string} assigned_crew - Repair team
+ * @property {string} target_completion_date - Target deadline (YYYY-MM-DD)
+ * @property {'draft'|'dispatched'|'completed'|'closed'} status - Order status
+ * @property {number|null} [estimated_hours] - Labor hours estimate
+ * @property {string} created_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} AOISubscriptionRequest
+ * @property {string} name - Subscription label
+ * @property {[number, number, number, number]|number[]|string} bbox - Monitored bounding box
+ * @property {string} [asset_id] - Optional asset ID
+ * @property {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {Array<string>} [indices=['ndmi']] - Spectral indices
+ * @property {'z_score_anomaly'|'new_scene_ingested'|'index_threshold'} [trigger_type='z_score_anomaly'] - Trigger condition
+ * @property {number} [z_score_threshold=2.5] - Z-score sensitivity
+ * @property {Array<string>} [channels=['in_app_alert']] - Notification channels
+ * @property {string} [webhook_url] - HTTP POST webhook URL
+ * @property {boolean} [is_active=true] - Active flag
+ */
+
+/**
+ * @typedef {Object} VRTAnalysisRequest
+ * @property {Array<string>} source_scenes - List of STAC scene IDs to mosaic
+ * @property {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {'feather'|'nearest'|'voronoi_cut'|'average'} [seamline_mode='feather'] - Blending algorithm
+ * @property {string} [target_crs='EPSG:3857'] - Output coordinate reference system
+ * @property {string} [index] - Spectral index to compute across mosaic
+ * @property {string} [colormap] - Colormap palette
+ * @property {string} [rescale] - Rescale min,max
+ */
+
+/**
+ * Requests multi-temporal cloud-free composite synthesis.
+ * 
+ * @param {TemporalCompositeRequest} params - Composite request parameters
+ * @returns {Promise<TemporalCompositeResponse>} Generated composite metadata and tile template
+ */
+export const requestTemporalComposite = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/composite', params);
+  return response.data;
+};
+
+/**
+ * Fetches geotagged geotechnical defect annotations.
+ * 
+ * @param {Object} [params={}] - Filter parameters (asset_id, category, severity, status)
+ * @returns {Promise<Array<GeotechnicalAnnotation>>} List of defect annotations
+ */
+export const fetchGeotechnicalAnnotations = async (params = {}) => {
+  const response = await giosApi.get('/api/v1/annotations', { params });
+  return response.data;
+};
+
+/**
+ * Submits a new geotagged geotechnical defect annotation.
+ * 
+ * @param {CreateAnnotationRequest} params - Defect details
+ * @returns {Promise<GeotechnicalAnnotation>} Created annotation record
+ */
+export const createGeotechnicalAnnotation = async (params) => {
+  const response = await giosApi.post('/api/v1/annotations', params);
+  return response.data;
+};
+
+/**
+ * Updates lifecycle status of a geotechnical defect annotation.
+ * 
+ * @param {string} annotationId - Target annotation ID
+ * @param {'open'|'investigating'|'work_order_issued'|'repaired'|'verified'} status - New status
+ * @param {string} [notes] - Optional status remarks
+ * @returns {Promise<GeotechnicalAnnotation>} Updated annotation record
+ */
+export const updateGeotechnicalAnnotationStatus = async (annotationId, status, notes = null) => {
+  const response = await giosApi.patch(`/api/v1/annotations/${annotationId}`, { status, notes });
+  return response.data;
+};
+
+/**
+ * Dispatches an actionable maintenance work order from a defect annotation.
+ * 
+ * @param {Object} params - Work order parameters
+ * @returns {Promise<MaintenanceWorkOrder>} Dispatched work order record
+ */
+export const createMaintenanceWorkOrder = async (params) => {
+  const response = await giosApi.post('/api/v1/work-orders', params);
+  return response.data;
+};
+
+/**
+ * Fetches registered maintenance work orders.
+ * 
+ * @param {Object} [params={}] - Filter parameters (asset_id, status, priority)
+ * @returns {Promise<Array<MaintenanceWorkOrder>>} List of maintenance work orders
+ */
+export const fetchMaintenanceWorkOrders = async (params = {}) => {
+  const response = await giosApi.get('/api/v1/work-orders', { params });
+  return response.data;
+};
+
+/**
+ * Creates an automated continuous satellite monitoring subscription over an AOI.
+ * 
+ * @param {AOISubscriptionRequest} params - Subscription parameters
+ * @returns {Promise<Object>} Created subscription record
+ */
+export const createAOISubscription = async (params) => {
+  const response = await giosApi.post('/api/v1/subscriptions', params);
+  return response.data;
+};
+
+/**
+ * Fetches all registered automated AOI monitoring subscriptions.
+ * 
+ * @returns {Promise<Array<Object>>} List of active subscriptions
+ */
+export const fetchAOISubscriptions = async () => {
+  const response = await giosApi.get('/api/v1/subscriptions');
+  return response.data;
+};
+
+/**
+ * Requests multi-granule Virtual Raster (VRT) mosaic configuration and analysis.
+ * 
+ * @param {VRTAnalysisRequest} params - VRT mosaic parameters
+ * @returns {Promise<Object>} Generated VRT metadata and tile streaming template
+ */
+export const requestVrtAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/vrt', params);
   return response.data;
 };
 

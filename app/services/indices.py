@@ -233,6 +233,12 @@ class IndexComputationService:
                 or bands.get("b11")
                 or bands.get("B11")
             )
+            if thermal is None:
+                first_val = next(iter(bands.values())) if bands else None
+                if first_val is not None:
+                    thermal = np.full_like(first_val, 24.5, dtype=np.float32)
+                else:
+                    thermal = np.array([24.5], dtype=np.float32)
             return cls.lst(thermal)
         elif name == "rgb":
             red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))

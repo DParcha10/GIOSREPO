@@ -10,10 +10,11 @@ Comprehensive shared contracts for GIOS v2.5:
 - Automated Hazard Alerting & Webhooks
 """
 import math
+import re
 from enum import Enum
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Union, Sequence
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ============================================================================
 # ENUMS
@@ -533,6 +534,15 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "analysis_volumetric": "/api/v1/analysis/volumetric",
     "analysis_export": "/api/v1/analysis/export",
     "analysis_animation_sequence": "/api/v1/analysis/animation-sequence",
+    "analysis_composite": "/api/v1/analysis/composite",
+    "tiles_composite": "/api/v1/tiles/composite/{composite_id}/{z}/{x}/{y}.png",
+    "annotations": "/api/v1/annotations",
+    "annotation_detail": "/api/v1/annotations/{annotation_id}",
+    "work_orders": "/api/v1/work-orders",
+    "subscriptions": "/api/v1/subscriptions",
+    "subscription_detail": "/api/v1/subscriptions/{subscription_id}",
+    "analysis_vrt": "/api/v1/analysis/vrt",
+    "tiles_vrt": "/api/v1/tiles/vrt/{vrt_id}/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -2220,17 +2230,33 @@ class TransectProfileSummary(BaseModel):
 
 class TransectAnalysisRequest(BaseModel):
     """Request payload for extracting cross-sectional profiles along an embankment or hazard boundary."""
-    polyline: Union[List[Tuple[float, float]], List[List[float]], Dict[str, Any]] = Field(
-        ...,
+    polyline: Optional[Union[List[Tuple[float, float]], List[List[float]], Dict[str, Any]]] = Field(
+        default=None,
         description="Sequence of (lat, lon) coordinates or GeoJSON LineString geometry"
+    )
+    coordinates: Optional[Any] = Field(
+        default=None,
+        description="Alternative alias for polyline coordinates"
     )
     metric: Union[TerrainMetric, SpectralIndex, str] = Field(
         default=TerrainMetric.ELEVATION,
         description="Analyzed parameter along transect (elevation, slope, ndmi, etc.)"
     )
     sample_count: int = Field(default=50, ge=2, le=500, description="Number of equidistant sample points along transect")
+    sample_method: Optional[Union[TransectSampleMethod, str]] = Field(
+        default=TransectSampleMethod.EQUIDISTANT_GEODESIC,
+        description="Sampling method along transect polyline"
+    )
     collection: SatelliteCollection = Field(default=SatelliteCollection.COP_DEM, description="Primary sensor or elevation source")
     item_id: Optional[str] = Field(default=None, description="Optional scene or orthomosaic ID")
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_polyline_input(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("polyline") and data.get("coordinates"):
+                data["polyline"] = data["coordinates"]
+        return data
 
 class TransectAnalysisResponse(BaseModel):
     """Response payload for engineering transect cross-section analysis."""
@@ -2362,10 +2388,22 @@ class VolumetricAnalysisRequest(BaseModel):
         le=100.0,
         description="Grid cell resolution in meters for volume integration"
     )
+    cell_size_m: Optional[float] = Field(
+        default=None,
+        description="Alternative alias for grid_resolution_m"
+    )
     collection: SatelliteCollection = Field(
         default=SatelliteCollection.COP_DEM,
         description="Digital elevation model collection"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_grid_resolution(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "grid_resolution_m" not in data and "cell_size_m" in data:
+                data["grid_resolution_m"] = data["cell_size_m"]
+        return data
 
 class VolumetricAnalysisResponse(BaseModel):
     """Response payload for volumetric earthwork integration."""
@@ -2545,6 +2583,26 @@ class AnimationSequenceConfig(BaseModel):
     playback_mode: AnimationPlaybackMode = Field(default=AnimationPlaybackMode.LOOP, description="Animation playback mode")
     frames: List[AnimationKeyframe] = Field(default_factory=list, description="Ordered sequence of animation keyframes")
 
+class AnimationSequenceRequest(BaseModel):
+    """Request payload for multi-temporal animation keyframe sequence."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2, description="Satellite collection")
+    start_date: Optional[str] = Field(default=None, description="Sequence start date (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(default=None, description="Sequence end date (YYYY-MM-DD)")
+    bbox: Optional[Union[Tuple[float, float, float, float], List[float], str, Dict[str, Any]]] = Field(
+        default=None,
+        description="Target spatial bounds [min_lon, min_lat, max_lon, max_lat]"
+    )
+    z: int = Field(default=12, ge=0, le=24, description="Map zoom level")
+    x: Optional[int] = Field(default=None, ge=0, description="Mercator tile X coordinate")
+    y: Optional[int] = Field(default=None, ge=0, description="Mercator tile Y coordinate")
+    lat: Optional[float] = Field(default=None, description="Center latitude coordinate")
+    lon: Optional[float] = Field(default=None, description="Center longitude coordinate")
+    fps: float = Field(default=2.0, ge=0.1, le=30.0, description="Playback frame rate")
+    playback_mode: AnimationPlaybackMode = Field(default=AnimationPlaybackMode.LOOP, description="Animation playback mode")
+    index: Union[SpectralIndex, str] = Field(default=SpectralIndex.RGB, description="Rendered spectral index")
+    colormap: Optional[Union[TileColormap, str]] = Field(default=None, description="Applied colormap palette")
+    rescale: Optional[str] = Field(default=None, description="Contrast stretch min,max")
+
 def build_animation_keyframes(
     scenes: Sequence[Any],
     z: int,
@@ -2592,5 +2650,380 @@ def build_animation_keyframes(
         ))
 
     return frames
+
+
+# ============================================================================
+# QUALITY MOSAICING & TEMPORAL COMPOSITES CONTRACTS
+# ============================================================================
+
+class CompositeReducer(str, Enum):
+    """Statistical and quality pixel reducers for multi-temporal compositing."""
+    MEDIAN = "median"
+    GREENEST_PIXEL = "greenest_pixel"      # Max NDVI
+    CLEAREST_PIXEL = "clearest_pixel"      # Min cloud probability
+    MOST_RECENT = "most_recent"            # Latest valid cloud-free observation
+    MAX_NDMI = "max_ndmi"                  # Peak moisture anomaly
+    MIN_LST = "min_lst"                    # Coolest thermal observation
+
+class TemporalCompositeRequest(BaseModel):
+    """Request payload for multi-temporal cloud-free raster composite generation."""
+    bbox: Union[Tuple[float, float, float, float], List[float], str] = Field(
+        ...,
+        description="Target geographic bounding box [min_lon, min_lat, max_lon, max_lat]"
+    )
+    collection: SatelliteCollection = Field(
+        default=SatelliteCollection.SENTINEL_2,
+        description="Target satellite imagery collection"
+    )
+    start_date: str = Field(..., description="Temporal window start date (YYYY-MM-DD)")
+    end_date: str = Field(..., description="Temporal window end date (YYYY-MM-DD)")
+    reducer: CompositeReducer = Field(
+        default=CompositeReducer.MEDIAN,
+        description="Pixel reduction algorithm"
+    )
+    max_cloud_cover: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=100.0,
+        description="Maximum scene cloud cover threshold in percent"
+    )
+    index: Optional[SpectralIndex] = Field(default=None, description="Optional spectral index to composite")
+    colormap: Optional[TileColormap] = Field(default=None, description="Optional rendering colormap")
+    rescale: Optional[str] = Field(default=None, description="Optional contrast stretch min,max")
+
+class TemporalCompositeResponse(BaseModel):
+    """Response payload for multi-temporal composite synthesis."""
+    composite_id: str = Field(..., description="Unique composite task or dataset identifier")
+    status: str = Field(default="ready", description="Composite status (ready, processing)")
+    reducer: CompositeReducer = Field(..., description="Applied pixel reduction algorithm")
+    collection: str = Field(..., description="Source satellite collection")
+    scene_count: int = Field(..., description="Number of scenes ingested into composite")
+    contributing_scenes: List[str] = Field(default_factory=list, description="IDs of contributing scenes")
+    bbox: Tuple[float, float, float, float] = Field(..., description="Spatial envelope bounds")
+    time_window: str = Field(..., description="Temporal interval string YYYY-MM-DD to YYYY-MM-DD")
+    tile_url_template: str = Field(..., description="XYZ tile template URL for streaming composite")
+    created_at: str = Field(..., description="ISO 8601 generation timestamp")
+
+def build_composite_tile_url(
+    composite_id: str,
+    z: int,
+    x: int,
+    y: int,
+    index: Optional[Union[str, SpectralIndex]] = None,
+    colormap: Optional[Union[str, TileColormap]] = None,
+    rescale: Optional[str] = None
+) -> str:
+    """Builds canonical XYZ tile URL for streaming a temporal composite."""
+    route = format_api_route("tiles_composite", composite_id=composite_id, z=z, x=x, y=y)
+    params = []
+    if index:
+        idx_str = index.value if hasattr(index, "value") else str(index).lower().strip()
+        params.append(f"index={idx_str}")
+    if colormap:
+        cm_str = colormap.value if hasattr(colormap, "value") else str(colormap).lower().strip()
+        params.append(f"colormap={cm_str}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if params:
+        return f"{route}?{'&'.join(params)}"
+    return route
+
+
+# ============================================================================
+# GEOTECHNICAL FIELD INSPECTION & DEFECT ANNOTATION CONTRACTS
+# ============================================================================
+
+class DefectCategory(str, Enum):
+    """Geotechnical defect classifications for dams, levees, and hazard perimeters."""
+    SEEPAGE_BOIL = "seepage_boil"
+    CREST_CRACK = "crest_crack"
+    SLOPE_SLUMP = "slope_slump"
+    PIPING_VOID = "piping_void"
+    EROSION_GULLY = "erosion_gully"
+    SUBSIDENCE = "subsidence"
+    VEGETATION_ANOMALY = "vegetation_anomaly"
+
+class DefectSeverity(str, Enum):
+    """Risk severity levels for geotechnical defects."""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MODERATE = "moderate"
+    LOW = "low"
+
+class DefectStatus(str, Enum):
+    """Lifecycle tracking states for geotechnical defect annotations."""
+    OPEN = "open"
+    INVESTIGATING = "investigating"
+    WORK_ORDER_ISSUED = "work_order_issued"
+    REPAIRED = "repaired"
+    VERIFIED = "verified"
+
+class GeotechnicalAnnotation(BaseModel):
+    """Geotagged defect annotation pinned to a dam embankment or hazard zone."""
+    annotation_id: str = Field(..., description="Unique defect annotation identifier")
+    title: str = Field(..., description="Short summary title of the defect")
+    category: DefectCategory = Field(..., description="Geotechnical defect classification")
+    severity: DefectSeverity = Field(..., description="Risk severity tier")
+    status: DefectStatus = Field(default=DefectStatus.OPEN, description="Current workflow state")
+    lat: float = Field(..., ge=-90.0, le=90.0, description="Latitude in WGS84 degrees")
+    lng: float = Field(..., ge=-180.0, le=180.0, description="Longitude in WGS84 degrees")
+    elevation_m: Optional[float] = Field(default=None, description="Surface elevation in meters ASL")
+    asset_id: str = Field(..., description="Associated critical infrastructure asset ID")
+    drone_ortho_id: Optional[str] = Field(default=None, description="Optional drone orthomosaic survey reference")
+    photo_urls: List[str] = Field(default_factory=list, description="Inspection evidence photos or drone crops")
+    notes: str = Field(default="", description="Inspector narrative and geotechnical observations")
+    inspector: str = Field(default="Field Engineer", description="Inspector identifier or username")
+    created_at: str = Field(..., description="ISO 8601 creation timestamp")
+    updated_at: str = Field(..., description="ISO 8601 last update timestamp")
+
+class CreateAnnotationRequest(BaseModel):
+    """Payload for submitting a new geotechnical defect observation."""
+    title: str = Field(..., min_length=3, description="Descriptive title")
+    category: DefectCategory = Field(..., description="Defect category")
+    severity: DefectSeverity = Field(..., description="Risk severity level")
+    lat: float = Field(..., ge=-90.0, le=90.0, description="Latitude")
+    lng: float = Field(..., ge=-180.0, le=180.0, description="Longitude")
+    elevation_m: Optional[float] = Field(default=None, description="Elevation ASL")
+    asset_id: str = Field(..., description="Infrastructure asset ID")
+    drone_ortho_id: Optional[str] = Field(default=None, description="Drone survey ID")
+    photo_urls: List[str] = Field(default_factory=list, description="Evidence photo URLs")
+    notes: str = Field(default="", description="Field notes")
+    inspector: Optional[str] = Field(default="Field Engineer", description="Inspector name")
+
+class UpdateAnnotationStatusRequest(BaseModel):
+    """Payload for updating defect annotation lifecycle status."""
+    status: DefectStatus = Field(..., description="New lifecycle state")
+    notes: Optional[str] = Field(default=None, description="Optional status change remarks")
+
+class MaintenanceWorkOrder(BaseModel):
+    """Actionable maintenance work order dispatched from a geotechnical defect."""
+    work_order_id: str = Field(..., description="Unique work order identifier")
+    annotation_id: str = Field(..., description="Linked defect annotation ID")
+    asset_id: str = Field(..., description="Infrastructure asset identifier")
+    priority: DefectSeverity = Field(..., description="Work order priority tier")
+    description: str = Field(..., description="Remediation instructions and work scope")
+    assigned_crew: str = Field(default="Geotechnical Repair Crew", description="Assigned engineering crew")
+    target_completion_date: str = Field(..., description="Target completion deadline (YYYY-MM-DD)")
+    status: str = Field(default="draft", description="Work order status: draft, dispatched, completed, closed")
+    estimated_hours: Optional[float] = Field(default=None, description="Estimated labor hours")
+    created_at: str = Field(..., description="ISO 8601 creation timestamp")
+
+class CreateWorkOrderRequest(BaseModel):
+    """Payload for issuing a maintenance work order from an annotation."""
+    annotation_id: str = Field(..., description="Defect annotation ID")
+    priority: DefectSeverity = Field(..., description="Priority tier")
+    description: str = Field(..., description="Work scope and instructions")
+    assigned_crew: Optional[str] = Field(default="Geotechnical Repair Crew", description="Assigned repair team")
+    target_completion_date: str = Field(..., description="Target completion deadline (YYYY-MM-DD)")
+    estimated_hours: Optional[float] = Field(default=None, description="Estimated labor hours")
+
+def annotation_to_geojson_feature(annotation: Union[GeotechnicalAnnotation, Dict[str, Any]]) -> Dict[str, Any]:
+    """Converts a GeotechnicalAnnotation model or dict into an RFC 7946 GeoJSON Feature."""
+    if isinstance(annotation, BaseModel):
+        data = annotation.model_dump()
+    else:
+        data = dict(annotation)
+
+    lat = float(data.get("lat", 0.0))
+    lng = float(data.get("lng", 0.0))
+    ann_id = str(data.get("annotation_id", ""))
+
+    return {
+        "type": "Feature",
+        "id": ann_id,
+        "geometry": {
+            "type": "Point",
+            "coordinates": [lng, lat]
+        },
+        "properties": {
+            "annotation_id": ann_id,
+            "title": data.get("title", ""),
+            "category": data.get("category", ""),
+            "severity": data.get("severity", ""),
+            "status": data.get("status", ""),
+            "asset_id": data.get("asset_id", ""),
+            "elevation_m": data.get("elevation_m"),
+            "drone_ortho_id": data.get("drone_ortho_id"),
+            "photo_urls": data.get("photo_urls", []),
+            "notes": data.get("notes", ""),
+            "inspector": data.get("inspector", ""),
+            "created_at": data.get("created_at", ""),
+            "updated_at": data.get("updated_at", "")
+        }
+    }
+
+def annotations_to_feature_collection(
+    annotations: Sequence[Union[GeotechnicalAnnotation, Dict[str, Any]]]
+) -> Dict[str, Any]:
+    """Converts a list of GeotechnicalAnnotations into an RFC 7946 GeoJSON FeatureCollection."""
+    features = [annotation_to_geojson_feature(a) for a in annotations]
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }
+
+
+# ============================================================================
+# AUTOMATED AOI MONITORING SUBSCRIPTIONS & ALERT TRIGGER CONTRACTS
+# ============================================================================
+
+class SubscriptionTriggerType(str, Enum):
+    """Trigger conditions for automated AOI satellite monitoring subscriptions."""
+    Z_SCORE_ANOMALY = "z_score_anomaly"          # Seasonal MAD z-score exceeding threshold
+    NEW_SCENE_INGESTED = "new_scene_ingested"    # Each new cloud-free scene publication
+    INDEX_THRESHOLD = "index_threshold"          # Absolute index value breach
+
+class NotificationChannel(str, Enum):
+    """Outbound alerting dispatch channels."""
+    WEBHOOK = "webhook"
+    EMAIL = "email"
+    SLACK = "slack"
+    IN_APP_ALERT = "in_app_alert"
+
+class AOISubscriptionRequest(BaseModel):
+    """Payload for creating a continuous monitoring subscription over an AOI."""
+    name: str = Field(..., min_length=3, description="Subscription label")
+    bbox: Union[Tuple[float, float, float, float], List[float], str] = Field(
+        ...,
+        description="Monitored geographic bounding box [min_lon, min_lat, max_lon, max_lat]"
+    )
+    asset_id: Optional[str] = Field(default=None, description="Optional monitored asset ID")
+    collection: SatelliteCollection = Field(
+        default=SatelliteCollection.SENTINEL_2,
+        description="Target satellite imagery collection"
+    )
+    indices: List[SpectralIndex] = Field(
+        default_factory=lambda: [SpectralIndex.NDMI],
+        description="List of biophysical spectral indices to monitor"
+    )
+    trigger_type: SubscriptionTriggerType = Field(
+        default=SubscriptionTriggerType.Z_SCORE_ANOMALY,
+        description="Condition triggering alert dispatch"
+    )
+    z_score_threshold: float = Field(
+        default=2.5,
+        ge=1.0,
+        le=5.0,
+        description="Seasonal MAD z-score sensitivity threshold"
+    )
+    channels: List[NotificationChannel] = Field(
+        default_factory=lambda: [NotificationChannel.IN_APP_ALERT],
+        description="Notification channels"
+    )
+    webhook_url: Optional[str] = Field(default=None, description="Target HTTP POST URL for webhooks")
+    is_active: bool = Field(default=True, description="Subscription active state")
+
+class AOISubscriptionResponse(BaseModel):
+    """Response payload acknowledging an AOI monitoring subscription."""
+    subscription_id: str = Field(..., description="Unique subscription identifier")
+    name: str = Field(..., description="Subscription label")
+    asset_id: Optional[str] = Field(default=None, description="Monitored asset ID")
+    collection: str = Field(..., description="Target satellite collection")
+    indices: List[str] = Field(..., description="Monitored indices")
+    trigger_type: SubscriptionTriggerType = Field(..., description="Trigger condition")
+    z_score_threshold: float = Field(..., description="Z-score threshold")
+    channels: List[str] = Field(..., description="Active notification channels")
+    webhook_url: Optional[str] = Field(default=None, description="Webhook endpoint URL")
+    is_active: bool = Field(..., description="Active flag")
+    created_at: str = Field(..., description="ISO 8601 creation timestamp")
+    last_checked_at: Optional[str] = Field(default=None, description="Last automated scan timestamp")
+    alerts_triggered_count: int = Field(default=0, description="Total alerts dispatched to date")
+
+class SubscriptionAlertPayload(BaseModel):
+    """Standardized webhook notification payload dispatched when an anomaly is detected."""
+    subscription_id: str = Field(..., description="Source subscription identifier")
+    asset_id: Optional[str] = Field(default=None, description="Associated asset identifier")
+    trigger_type: SubscriptionTriggerType = Field(..., description="Triggered condition")
+    z_score: Optional[float] = Field(default=None, description="Observed seasonal z-score")
+    index: Optional[SpectralIndex] = Field(default=None, description="Triggering spectral index")
+    message: str = Field(..., description="Human-readable notification text")
+    scene_id: str = Field(..., description="STAC scene observation ID")
+    thumbnail_url: Optional[str] = Field(default=None, description="Rendered thumbnail preview URL")
+    triggered_at: str = Field(..., description="ISO 8601 alert timestamp")
+
+
+# ============================================================================
+# VIRTUAL RASTER (VRT) MULTI-GRANULE MOSAICING & MGRS GRID SCAFFOLDING
+# ============================================================================
+
+class SeamlineMode(str, Enum):
+    """Seamline blending algorithms for multi-scene virtual raster mosaics."""
+    FEATHER = "feather"            # Distance-weighted feathering across scene overlaps
+    NEAREST = "nearest"            # Nearest neighbor boundary cut
+    VORONOI_CUT = "voronoi_cut"    # Minimum-energy Voronoi graph-cut seamline
+    AVERAGE = "average"            # Linear average over overlapping pixel regions
+
+class MGRSTileSpec(BaseModel):
+    """Military Grid Reference System (MGRS) tile specification for Sentinel-2 alignment."""
+    tile_id: str = Field(..., description="MGRS 5-character tile identifier (e.g., '10SEJ')")
+    utm_zone: int = Field(..., description="UTM zone number (1-60)")
+    latitude_band: str = Field(..., description="UTM latitude band character")
+    square_id: str = Field(..., description="100km square identification")
+    epsg_code: int = Field(..., description="Target EPSG coordinate reference code")
+    bbox: Tuple[float, float, float, float] = Field(..., description="WGS84 bounding envelope")
+
+class VRTDatasetSpec(BaseModel):
+    """Specification for a virtual multi-scene raster mosaic dataset."""
+    vrt_id: str = Field(..., description="Unique VRT dataset identifier")
+    target_crs: str = Field(default="EPSG:3857", description="Mosaic output coordinate reference system")
+    resolution_m: float = Field(default=10.0, ge=0.01, description="Target pixel ground resolution in meters")
+    source_scenes: List[str] = Field(..., min_length=1, description="List of source STAC item IDs")
+    seamline_mode: SeamlineMode = Field(default=SeamlineMode.FEATHER, description="Seamline blending algorithm")
+    bbox: Tuple[float, float, float, float] = Field(..., description="Combined spatial bounding envelope")
+    band_count: int = Field(default=4, ge=1, description="Number of aligned raster bands")
+    created_at: str = Field(..., description="ISO 8601 specification timestamp")
+
+class VRTAnalysisRequest(BaseModel):
+    """Request payload for configuring and analyzing a multi-scene virtual raster mosaic."""
+    source_scenes: List[str] = Field(..., min_length=1, description="List of STAC scene IDs to mosaic")
+    collection: SatelliteCollection = Field(
+        default=SatelliteCollection.SENTINEL_2,
+        description="Satellite collection"
+    )
+    seamline_mode: SeamlineMode = Field(
+        default=SeamlineMode.FEATHER,
+        description="Seamline blending algorithm"
+    )
+    target_crs: str = Field(default="EPSG:3857", description="Output CRS")
+    index: Optional[SpectralIndex] = Field(default=None, description="Optional index to calculate across mosaic")
+    colormap: Optional[TileColormap] = Field(default=None, description="Applied colormap palette")
+    rescale: Optional[str] = Field(default=None, description="Contrast stretch min,max")
+
+class VRTAnalysisResponse(BaseModel):
+    """Response acknowledging virtual raster mosaic generation."""
+    vrt_id: str = Field(..., description="Unique VRT dataset identifier")
+    status: str = Field(default="ready", description="Processing state")
+    source_scene_count: int = Field(..., description="Number of mosaiced granules")
+    source_scenes: List[str] = Field(..., description="Mosaiced scene IDs")
+    seamline_mode: SeamlineMode = Field(..., description="Applied seamline algorithm")
+    bbox: Tuple[float, float, float, float] = Field(..., description="Mosaic spatial envelope")
+    target_crs: str = Field(..., description="Target coordinate reference system")
+    tile_url_template: str = Field(..., description="XYZ tile template URL for streaming the VRT")
+    created_at: str = Field(..., description="ISO 8601 generation timestamp")
+
+def build_vrt_tile_url(
+    vrt_id: str,
+    z: int,
+    x: int,
+    y: int,
+    index: Optional[Union[str, SpectralIndex]] = None,
+    colormap: Optional[Union[str, TileColormap]] = None,
+    rescale: Optional[str] = None
+) -> str:
+    """Builds canonical XYZ tile URL for streaming a Virtual Raster (VRT) mosaic."""
+    route = format_api_route("tiles_vrt", vrt_id=vrt_id, z=z, x=x, y=y)
+    params = []
+    if index:
+        idx_str = index.value if hasattr(index, "value") else str(index).lower().strip()
+        params.append(f"index={idx_str}")
+    if colormap:
+        cm_str = colormap.value if hasattr(colormap, "value") else str(colormap).lower().strip()
+        params.append(f"colormap={cm_str}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if params:
+        return f"{route}?{'&'.join(params)}"
+    return route
+
 
 
