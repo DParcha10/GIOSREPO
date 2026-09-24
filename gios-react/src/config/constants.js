@@ -743,7 +743,18 @@ export const API_ENDPOINTS = {
   SUBSCRIPTIONS: '/api/v1/subscriptions',
   SUBSCRIPTION_DETAIL: (subscriptionId) => `/api/v1/subscriptions/${subscriptionId}`,
   ANALYSIS_VRT: '/api/v1/analysis/vrt',
-  TILES_VRT: (vrtId, z, x, y) => `/api/v1/tiles/vrt/${vrtId}/${z}/${x}/${y}.png`
+  TILES_VRT: (vrtId, z, x, y) => `/api/v1/tiles/vrt/${vrtId}/${z}/${x}/${y}.png`,
+  ANALYSIS_CHANGE_DETECTION: '/api/v1/analysis/change-detection',
+  TILES_DIFFERENCE: (collection, preSceneId, postSceneId, metric, z, x, y) => `/api/v1/tiles/difference/${collection}/${preSceneId}/${postSceneId}/${metric}/${z}/${x}/${y}.png`,
+  TILES_DIFFERENCE_SHORT: (metric, z, x, y) => `/api/v1/tiles/difference/${metric}/${z}/${x}/${y}.png`,
+  INTEGRATION_GEOTECHNICAL_SENSORS: '/api/v1/integration/geotechnical/sensors',
+  INTEGRATION_SENSORS: '/api/v1/integration/geotechnical/sensors',
+  INTEGRATION_GEOTECHNICAL_READINGS: (sensorId) => `/api/v1/integration/geotechnical/sensors/${sensorId}/readings`,
+  INTEGRATION_SENSOR_READINGS: (sensorId) => `/api/v1/integration/geotechnical/sensors/${sensorId}/readings`,
+  INTEGRATION_GEOTECHNICAL_SUMMARY: (assetId) => `/api/v1/integration/geotechnical/summary/${assetId}`,
+  INTEGRATION_SENSOR_SUMMARY: (assetId) => `/api/v1/integration/geotechnical/summary/${assetId}`,
+  ANALYSIS_BATHYMETRY_EAC: '/api/v1/analysis/bathymetry/eac',
+  TILES_CACHE_PRELOAD: '/api/v1/tiles/cache/preload'
 };
 
 /**
@@ -789,6 +800,16 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.subscriptionId || params.subscription_id);
       case 'TILES_VRT':
         return endpoint(params.vrtId || params.vrt_id, params.z, params.x, params.y);
+      case 'TILES_DIFFERENCE':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.preSceneId || params.pre_scene_id, params.postSceneId || params.post_scene_id, params.metric || 'ndmi_diff', params.z, params.x, params.y);
+      case 'TILES_DIFFERENCE_SHORT':
+        return endpoint(params.metric || 'ndmi_diff', params.z, params.x, params.y);
+      case 'INTEGRATION_GEOTECHNICAL_READINGS':
+      case 'INTEGRATION_SENSOR_READINGS':
+        return endpoint(params.sensorId || params.sensor_id);
+      case 'INTEGRATION_GEOTECHNICAL_SUMMARY':
+      case 'INTEGRATION_SENSOR_SUMMARY':
+        return endpoint(params.assetId || params.asset_id);
       default:
         return endpoint(params);
     }
@@ -2142,6 +2163,379 @@ export const buildVrtTileUrl = (vrtId, z, x, y, options = {}) => {
   const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
   const qs = params.toString() ? `?${params.toString()}` : '';
   return `${base}/api/v1/tiles/vrt/${vrtId}/${z}/${x}/${y}.png${qs}`;
+};
+
+/**
+ * Supported biophysical and radar metrics for bitemporal change differencing.
+ */
+export const CHANGE_DETECTION_METRICS = {
+  NDVI_DIFF: 'ndvi_diff',
+  NDMI_DIFF: 'ndmi_diff',
+  MNDWI_DIFF: 'mndwi_diff',
+  NBR_DIFF: 'nbr_diff',
+  SAR_VV_DIFF: 'sar_vv_diff',
+  LST_DIFF: 'lst_diff'
+};
+
+/**
+ * Categorical magnitude tiers for bitemporal change detection.
+ */
+export const CHANGE_CATEGORIES = {
+  SIGNIFICANT_INCREASE: 'significant_increase',
+  MODERATE_INCREASE: 'moderate_increase',
+  STABLE: 'stable',
+  MODERATE_DECREASE: 'moderate_decrease',
+  SIGNIFICANT_DECREASE: 'significant_decrease'
+};
+
+/**
+ * Classifies an array of numeric difference values into categorical change distribution details.
+ * 
+ * @param {Array<number>} diffValues - Array of numeric differences
+ * @param {Object} [options={}] - Classification options
+ * @param {number} [options.thresholdPositive=0.15] - Moderate positive threshold
+ * @param {number} [options.thresholdNegative=-0.15] - Moderate negative threshold
+ * @param {number} [options.thresholdExtreme=0.30] - Significant change threshold (+/-)
+ * @param {number} [options.pixelAreaM2=100.0] - Ground area per pixel in m^2 (default 10m Sentinel-2)
+ * @returns {Array<Object>} Categorical change details
+ */
+export const calculateChangeDetectionClasses = (diffValues, options = {}) => {
+  if (!Array.isArray(diffValues) || diffValues.length === 0) return [];
+  const thPos = options.thresholdPositive ?? 0.15;
+  const thNeg = options.thresholdNegative ?? -0.15;
+  const thExt = options.thresholdExtreme ?? 0.30;
+  const pixelAreaM2 = options.pixelAreaM2 ?? 100.0;
+  const m2ToHa = 0.0001;
+
+  const counts = {
+    [CHANGE_CATEGORIES.SIGNIFICANT_INCREASE]: 0,
+    [CHANGE_CATEGORIES.MODERATE_INCREASE]: 0,
+    [CHANGE_CATEGORIES.STABLE]: 0,
+    [CHANGE_CATEGORIES.MODERATE_DECREASE]: 0,
+    [CHANGE_CATEGORIES.SIGNIFICANT_DECREASE]: 0
+  };
+
+  let validCount = 0;
+  for (const v of diffValues) {
+    if (v === null || v === undefined || Number.isNaN(Number(v))) continue;
+    const num = Number(v);
+    validCount += 1;
+    if (num >= thExt) {
+      counts[CHANGE_CATEGORIES.SIGNIFICANT_INCREASE] += 1;
+    } else if (num >= thPos) {
+      counts[CHANGE_CATEGORIES.MODERATE_INCREASE] += 1;
+    } else if (num <= -thExt) {
+      counts[CHANGE_CATEGORIES.SIGNIFICANT_DECREASE] += 1;
+    } else if (num <= thNeg) {
+      counts[CHANGE_CATEGORIES.MODERATE_DECREASE] += 1;
+    } else {
+      counts[CHANGE_CATEGORIES.STABLE] += 1;
+    }
+  }
+
+  if (validCount === 0) return [];
+
+  const labels = {
+    [CHANGE_CATEGORIES.SIGNIFICANT_INCREASE]: 'Significant Increase',
+    [CHANGE_CATEGORIES.MODERATE_INCREASE]: 'Moderate Increase',
+    [CHANGE_CATEGORIES.STABLE]: 'Stable / No Significant Change',
+    [CHANGE_CATEGORIES.MODERATE_DECREASE]: 'Moderate Decrease',
+    [CHANGE_CATEGORIES.SIGNIFICANT_DECREASE]: 'Significant Decrease'
+  };
+
+  const bounds = {
+    [CHANGE_CATEGORIES.SIGNIFICANT_INCREASE]: [thExt, null],
+    [CHANGE_CATEGORIES.MODERATE_INCREASE]: [thPos, thExt],
+    [CHANGE_CATEGORIES.STABLE]: [thNeg, thPos],
+    [CHANGE_CATEGORIES.MODERATE_DECREASE]: [-thExt, thNeg],
+    [CHANGE_CATEGORIES.SIGNIFICANT_DECREASE]: [null, -thExt]
+  };
+
+  return [
+    CHANGE_CATEGORIES.SIGNIFICANT_INCREASE,
+    CHANGE_CATEGORIES.MODERATE_INCREASE,
+    CHANGE_CATEGORIES.STABLE,
+    CHANGE_CATEGORIES.MODERATE_DECREASE,
+    CHANGE_CATEGORIES.SIGNIFICANT_DECREASE
+  ].map((cat) => {
+    const cnt = counts[cat];
+    const pct = Number(((cnt / validCount) * 100.0).toFixed(2));
+    const ha = Number((cnt * pixelAreaM2 * m2ToHa).toFixed(3));
+    const b = bounds[cat];
+    return {
+      category: cat,
+      label: labels[cat],
+      min_change: b[0],
+      max_change: b[1],
+      area_hectares: ha,
+      percentage: pct,
+      pixel_count: cnt
+    };
+  });
+};
+
+/**
+ * Builds canonical XYZ tile URL for streaming a bitemporal difference raster.
+ * 
+ * @param {string} collection - Satellite collection (e.g. 'sentinel-2-l2a')
+ * @param {string} preSceneId - Baseline scene STAC ID
+ * @param {string} postSceneId - Comparison scene STAC ID
+ * @param {string} metric - Difference metric (e.g. 'ndmi_diff')
+ * @param {number|string} z - Zoom level
+ * @param {number|string} x - Tile X
+ * @param {number|string} y - Tile Y
+ * @param {Object} [options={}] - Options (rescale, colormap)
+ * @returns {string} Formatted difference tile URL
+ */
+export const buildDifferenceTileUrl = (collection, preSceneId, postSceneId, metric, z, x, y, options = {}) => {
+  const params = new URLSearchParams();
+  if (options.rescale) params.set('rescale', options.rescale);
+  if (options.colormap) params.set('colormap', options.colormap);
+
+  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const m = String(metric || 'ndmi_diff').toLowerCase();
+  return `${base}/api/v1/tiles/difference/${collection}/${preSceneId}/${postSceneId}/${m}/${z}/${x}/${y}.png${qs}`;
+};
+
+/**
+ * In-situ geotechnical sensor classifications for critical infrastructure.
+ */
+export const GEOTECHNICAL_SENSOR_TYPES = {
+  PIEZOMETER: 'piezometer',
+  INCLINOMETER: 'inclinometer',
+  SEEPAGE_WEIR: 'seepage_weir',
+  STAGE_GAUGE: 'stage_gauge',
+  SETTLEMENT_PLATE: 'settlement_plate'
+};
+
+/**
+ * Operational monitoring status tiers for geotechnical sensor telemetry.
+ */
+export const SENSOR_READING_STATUSES = {
+  NORMAL: 'normal',
+  ADVISORY: 'advisory',
+  ALERT: 'alert',
+  CRITICAL: 'critical'
+};
+
+/**
+ * Converts a geotechnical sensor object into an RFC 7946 GeoJSON Feature.
+ * 
+ * @param {Object} sensor - Geotechnical sensor object
+ * @returns {Object|null} GeoJSON Feature
+ */
+export const sensorToGeoJsonFeature = (sensor) => {
+  if (!sensor) return null;
+  const lat = Number(sensor.lat || 0);
+  const lng = Number(sensor.lng || 0);
+  const sId = String(sensor.sensor_id || sensor.id || '');
+
+  return {
+    type: 'Feature',
+    id: sId,
+    geometry: {
+      type: 'Point',
+      coordinates: [lng, lat]
+    },
+    properties: {
+      sensor_id: sId,
+      name: sensor.name || '',
+      sensor_type: sensor.sensor_type || 'piezometer',
+      asset_id: sensor.asset_id || '',
+      elevation_m: sensor.installation_elevation_m ?? null,
+      depth_m: sensor.installation_depth_m ?? null,
+      unit: sensor.unit || '',
+      current_value: sensor.current_value ?? null,
+      status: sensor.status || 'normal',
+      alert_threshold_high: sensor.alert_threshold_high ?? null,
+      critical_threshold_high: sensor.critical_threshold_high ?? null,
+      last_reading_time: sensor.last_reading_time || null
+    }
+  };
+};
+
+/**
+ * Converts an array of geotechnical sensors into an RFC 7946 GeoJSON FeatureCollection.
+ * 
+ * @param {Array<Object>} [sensors=[]] - Array of geotechnical sensors
+ * @returns {Object} GeoJSON FeatureCollection
+ */
+export const sensorsToFeatureCollection = (sensors = []) => {
+  const features = Array.isArray(sensors)
+    ? sensors.map(sensorToGeoJsonFeature).filter(Boolean)
+    : [];
+  return {
+    type: 'FeatureCollection',
+    features
+  };
+};
+
+/**
+ * Calculates Elevation-Area-Capacity (EAC) bathymetric curve points from a DEM grid.
+ * 
+ * @param {Array<number>} elevationGrid - Array of elevation values (meters)
+ * @param {number} cellSizeM - Grid cell resolution in meters (e.g. 10m or 30m)
+ * @param {number} datumMin - Pool bottom datum elevation (m)
+ * @param {number} datumMax - Maximum spillway elevation (m)
+ * @param {Object} [options={}] - Options (step, currentPool)
+ * @returns {Object} Object containing curvePoints and summary metrics
+ */
+export const calculateElevationStorageCapacity = (elevationGrid, cellSizeM, datumMin, datumMax, options = {}) => {
+  if (!Array.isArray(elevationGrid) || elevationGrid.length === 0) {
+    return { curvePoints: [], metrics: { max_capacity_m3: 0, max_surface_area_ha: 0 } };
+  }
+  const validElevations = elevationGrid.filter((e) => e !== null && e !== undefined && !Number.isNaN(Number(e))).map(Number);
+  if (validElevations.length === 0) {
+    return { curvePoints: [], metrics: { max_capacity_m3: 0, max_surface_area_ha: 0 } };
+  }
+
+  const step = options.step ?? 5.0;
+  const currentPool = options.currentPool ?? null;
+  const cellAreaM2 = Number(cellSizeM) * Number(cellSizeM);
+  const m2ToHa = 0.0001;
+  const m3ToAf = 0.000810714;
+
+  const stages = [];
+  let currZ = datumMin;
+  while (currZ <= datumMax + 1e-5) {
+    stages.push(Number(currZ.toFixed(2)));
+    currZ += step;
+  }
+  if (stages[stages.length - 1] < datumMax) {
+    stages.push(Number(datumMax.toFixed(2)));
+  }
+
+  const curvePoints = [];
+  let cumulativeVolumeM3 = 0.0;
+  let prevAreaM2 = 0.0;
+  let prevStage = datumMin;
+
+  for (let i = 0; i < stages.length; i++) {
+    const z = stages[i];
+    let submergedCells = 0;
+    for (let j = 0; j < validElevations.length; j++) {
+      if (validElevations[j] <= z) submergedCells += 1;
+    }
+    const areaM2 = submergedCells * cellAreaM2;
+    const areaHa = Number((areaM2 * m2ToHa).toFixed(3));
+
+    if (i > 0) {
+      const dh = z - prevStage;
+      if (dh > 0) {
+        const incVol = (dh / 3.0) * (prevAreaM2 + areaM2 + Math.sqrt(prevAreaM2 * areaM2));
+        cumulativeVolumeM3 += incVol;
+      }
+    }
+
+    prevAreaM2 = areaM2;
+    prevStage = z;
+    const volAf = Number((cumulativeVolumeM3 * m3ToAf).toFixed(2));
+
+    curvePoints.push({
+      elevation_m: z,
+      surface_area_ha: areaHa,
+      storage_volume_m3: Number(cumulativeVolumeM3.toFixed(2)),
+      storage_volume_acre_feet: volAf
+    });
+  }
+
+  const maxCap = curvePoints.length > 0 ? curvePoints[curvePoints.length - 1].storage_volume_m3 : 0.0;
+  const maxArea = curvePoints.length > 0 ? curvePoints[curvePoints.length - 1].surface_area_ha : 0.0;
+
+  const metrics = {
+    max_capacity_m3: maxCap,
+    max_surface_area_ha: maxArea
+  };
+
+  if (currentPool !== null && curvePoints.length > 0) {
+    let currSubmerged = 0;
+    for (let j = 0; j < validElevations.length; j++) {
+      if (validElevations[j] <= currentPool) currSubmerged += 1;
+    }
+    const currAreaM2 = currSubmerged * cellAreaM2;
+    metrics.current_surface_area_ha = Number((currAreaM2 * m2ToHa).toFixed(3));
+
+    let currVol = 0.0;
+    for (let i = 0; i < curvePoints.length - 1; i++) {
+      const p1 = curvePoints[i];
+      const p2 = curvePoints[i + 1];
+      if (p1.elevation_m <= currentPool && currentPool <= p2.elevation_m) {
+        const span = p2.elevation_m - p1.elevation_m;
+        if (span > 0) {
+          const frac = (currentPool - p1.elevation_m) / span;
+          currVol = p1.storage_volume_m3 + frac * (p2.storage_volume_m3 - p1.storage_volume_m3);
+        }
+        break;
+      }
+    }
+    if (currentPool >= curvePoints[curvePoints.length - 1].elevation_m) {
+      currVol = curvePoints[curvePoints.length - 1].storage_volume_m3;
+    }
+
+    metrics.current_storage_m3 = Number(currVol.toFixed(2));
+    if (maxCap > 0) {
+      metrics.capacity_utilization_pct = Number(((currVol / maxCap) * 100.0).toFixed(2));
+    }
+  }
+
+  return { curvePoints, metrics };
+};
+
+/**
+ * Calculates Web Mercator slippy tile coordinates (z, x, y) covering a geographic bounding box at a given zoom.
+ * 
+ * @param {number} minLon - Western longitude
+ * @param {number} minLat - Southern latitude
+ * @param {number} maxLon - Eastern longitude
+ * @param {number} maxLat - Northern latitude
+ * @param {number} zoom - Zoom level
+ * @returns {Array<[number, number, number]>} List of [z, x, y] tuples
+ */
+export const calculateTilePyramidCoords = (minLon, minLat, maxLon, maxLat, zoom) => {
+  const [x1, y2] = latLonToTile(minLat, minLon, zoom);
+  const [x2, y1] = latLonToTile(maxLat, maxLon, zoom);
+
+  const xMin = Math.min(x1, x2);
+  const xMax = Math.max(x1, x2);
+  const yMin = Math.min(y1, y2);
+  const yMax = Math.max(y1, y2);
+
+  const coords = [];
+  for (let x = xMin; x <= xMax; x++) {
+    for (let y = yMin; y <= yMax; y++) {
+      coords.push([zoom, x, y]);
+    }
+  }
+  return coords;
+};
+
+/**
+ * Calculates aggregate tile counts across a pyramid of zoom levels for cache pre-warming.
+ * 
+ * @param {number} minLon - Western longitude
+ * @param {number} minLat - Southern latitude
+ * @param {number} maxLon - Eastern longitude
+ * @param {number} maxLat - Northern latitude
+ * @param {number} minZoom - Minimum zoom level
+ * @param {number} maxZoom - Maximum zoom level
+ * @returns {Object} Pyramid tile count summary and per-zoom breakdown
+ */
+export const calculateTilePyramidCount = (minLon, minLat, maxLon, maxLat, minZoom, maxZoom) => {
+  let total = 0;
+  const zoomCounts = {};
+  for (let z = minZoom; z <= maxZoom; z++) {
+    const tiles = calculateTilePyramidCoords(minLon, minLat, maxLon, maxLat, z);
+    const count = tiles.length;
+    zoomCounts[z] = count;
+    total += count;
+  }
+  return {
+    min_zoom: minZoom,
+    max_zoom: maxZoom,
+    total_tiles: total,
+    zoom_tile_counts: zoomCounts
+  };
 };
 
 

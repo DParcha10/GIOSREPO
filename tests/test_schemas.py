@@ -165,7 +165,56 @@ from app.models.schemas import (
     AnimationPlaybackMode,
     AnimationKeyframe,
     AnimationSequenceConfig,
-    build_animation_keyframes
+    build_animation_keyframes,
+    CompositeReducer,
+    TemporalCompositeRequest,
+    TemporalCompositeResponse,
+    build_composite_tile_url,
+    DefectCategory,
+    DefectSeverity,
+    DefectStatus,
+    GeotechnicalAnnotation,
+    CreateAnnotationRequest,
+    UpdateAnnotationStatusRequest,
+    MaintenanceWorkOrder,
+    CreateWorkOrderRequest,
+    annotation_to_geojson_feature,
+    annotations_to_feature_collection,
+    SubscriptionTriggerType,
+    NotificationChannel,
+    AOISubscriptionRequest,
+    AOISubscriptionResponse,
+    SubscriptionAlertPayload,
+    SeamlineMode,
+    MGRSTileSpec,
+    VRTDatasetSpec,
+    VRTAnalysisRequest,
+    VRTAnalysisResponse,
+    build_vrt_tile_url,
+    ChangeDetectionMetric,
+    ChangeCategory,
+    ChangeCategoryDetail,
+    ChangeDetectionRequest,
+    ChangeDetectionResponse,
+    calculate_change_detection_classes,
+    build_difference_tile_url,
+    GeotechnicalSensorType,
+    SensorReadingStatus,
+    GeotechnicalSensor,
+    SensorReading,
+    GeotechnicalNetworkSummary,
+    CreateGeotechnicalSensorRequest,
+    sensor_to_geojson_feature,
+    sensors_to_feature_collection,
+    EACDataPoint,
+    EACAnalysisRequest,
+    EACAnalysisResponse,
+    calculate_elevation_storage_capacity,
+    TilePyramidBounds,
+    TileCachePreloadRequest,
+    TileCachePreloadResponse,
+    calculate_tile_pyramid_coords,
+    calculate_tile_pyramid_count
 )
 from app.config import settings
 
@@ -1873,6 +1922,467 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(format_api_route("analysis_volumetric"), "/api/v1/analysis/volumetric")
         self.assertEqual(format_api_route("analysis_export"), "/api/v1/analysis/export")
         self.assertEqual(format_api_route("analysis_animation_sequence"), "/api/v1/analysis/animation-sequence")
+        self.assertEqual(format_api_route("analysis_composite"), "/api/v1/analysis/composite")
+        self.assertEqual(format_api_route("tiles_composite", composite_id="COMP-01", z=12, x=100, y=200), "/api/v1/tiles/composite/COMP-01/12/100/200.png")
+        self.assertEqual(format_api_route("annotations"), "/api/v1/annotations")
+        self.assertEqual(format_api_route("annotation_detail", annotation_id="ANN-01"), "/api/v1/annotations/ANN-01")
+        self.assertEqual(format_api_route("work_orders"), "/api/v1/work-orders")
+        self.assertEqual(format_api_route("subscriptions"), "/api/v1/subscriptions")
+        self.assertEqual(format_api_route("subscription_detail", subscription_id="SUB-01"), "/api/v1/subscriptions/SUB-01")
+        self.assertEqual(format_api_route("analysis_vrt"), "/api/v1/analysis/vrt")
+        self.assertEqual(format_api_route("tiles_vrt", vrt_id="VRT-01", z=12, x=100, y=200), "/api/v1/tiles/vrt/VRT-01/12/100/200.png")
+
+    def test_temporal_composites_and_reducers(self):
+        """Verify CompositeReducer and TemporalCompositeRequest/Response contracts."""
+        self.assertEqual(CompositeReducer.MEDIAN.value, "median")
+        self.assertEqual(CompositeReducer.GREENEST_PIXEL.value, "greenest_pixel")
+        self.assertEqual(CompositeReducer.CLEAREST_PIXEL.value, "clearest_pixel")
+        self.assertEqual(CompositeReducer.MOST_RECENT.value, "most_recent")
+        self.assertEqual(CompositeReducer.MAX_NDMI.value, "max_ndmi")
+        self.assertEqual(CompositeReducer.MIN_LST.value, "min_lst")
+
+        req = TemporalCompositeRequest(
+            bbox=(-121.2, 36.95, -120.95, 37.15),
+            start_date="2026-06-01",
+            end_date="2026-08-30",
+            reducer=CompositeReducer.GREENEST_PIXEL,
+            max_cloud_cover=20.0,
+            index=SpectralIndex.NDVI,
+            colormap=TileColormap.VIRIDIS
+        )
+        self.assertEqual(req.reducer, CompositeReducer.GREENEST_PIXEL)
+        self.assertEqual(req.collection, SatelliteCollection.SENTINEL_2)
+
+        resp = TemporalCompositeResponse(
+            composite_id="COMP-001",
+            status="ready",
+            reducer=CompositeReducer.GREENEST_PIXEL,
+            collection="sentinel-2-l2a",
+            scene_count=4,
+            contributing_scenes=["S2A_01", "S2A_02", "S2A_03", "S2A_04"],
+            bbox=(-121.2, 36.95, -120.95, 37.15),
+            time_window="2026-06-01 to 2026-08-30",
+            tile_url_template="/api/v1/tiles/composite/COMP-001/{z}/{x}/{y}.png",
+            created_at="2026-09-24T00:00:00Z"
+        )
+        self.assertEqual(resp.scene_count, 4)
+        self.assertEqual(resp.composite_id, "COMP-001")
+
+        tile_url = build_composite_tile_url("COMP-001", z=12, x=100, y=200, index="ndvi", colormap="viridis")
+        self.assertIn("/api/v1/tiles/composite/COMP-001/12/100/200.png", tile_url)
+        self.assertIn("index=ndvi", tile_url)
+        self.assertIn("colormap=viridis", tile_url)
+
+    def test_geotechnical_annotations_and_defect_categories(self):
+        """Verify DefectCategory, GeotechnicalAnnotation, and GeoJSON conversion contracts."""
+        self.assertEqual(DefectCategory.SEEPAGE_BOIL.value, "seepage_boil")
+        self.assertEqual(DefectCategory.CREST_CRACK.value, "crest_crack")
+        self.assertEqual(DefectCategory.SLOPE_SLUMP.value, "slope_slump")
+        self.assertEqual(DefectCategory.PIPING_VOID.value, "piping_void")
+        self.assertEqual(DefectSeverity.CRITICAL.value, "critical")
+        self.assertEqual(DefectStatus.OPEN.value, "open")
+
+        ann = GeotechnicalAnnotation(
+            annotation_id="ANN-001",
+            title="Toe Seepage Boil",
+            category=DefectCategory.SEEPAGE_BOIL,
+            severity=DefectSeverity.CRITICAL,
+            status=DefectStatus.INVESTIGATING,
+            lat=37.0582,
+            lng=-121.0744,
+            elevation_m=154.2,
+            asset_id="SAN-LUIS-DAM-01",
+            photo_urls=["https://example.com/photo1.jpg"],
+            notes="Turbid boil observed 15m downstream of toe.",
+            inspector="Geotechnical Lead",
+            created_at="2026-09-24T00:00:00Z",
+            updated_at="2026-09-24T00:00:00Z"
+        )
+        self.assertEqual(ann.category, DefectCategory.SEEPAGE_BOIL)
+        self.assertEqual(ann.severity, DefectSeverity.CRITICAL)
+
+        # RFC 7946 GeoJSON Feature conversion
+        feature = annotation_to_geojson_feature(ann)
+        self.assertEqual(feature["type"], "Feature")
+        self.assertEqual(feature["geometry"]["type"], "Point")
+        self.assertEqual(feature["geometry"]["coordinates"], [-121.0744, 37.0582])
+        self.assertEqual(feature["properties"]["category"], "seepage_boil")
+        self.assertEqual(feature["properties"]["severity"], "critical")
+
+        fc = annotations_to_feature_collection([ann])
+        self.assertEqual(fc["type"], "FeatureCollection")
+        self.assertEqual(len(fc["features"]), 1)
+
+    def test_maintenance_work_orders(self):
+        """Verify MaintenanceWorkOrder and CreateWorkOrderRequest contracts."""
+        req = CreateWorkOrderRequest(
+            annotation_id="ANN-001",
+            priority=DefectSeverity.CRITICAL,
+            description="Install weighted inverted filter ring around boil perimeter.",
+            assigned_crew="Dam Emergency Crew Alpha",
+            target_completion_date="2026-09-26",
+            estimated_hours=16.0
+        )
+        self.assertEqual(req.priority, DefectSeverity.CRITICAL)
+        self.assertEqual(req.estimated_hours, 16.0)
+
+        wo = MaintenanceWorkOrder(
+            work_order_id="WO-2026-001",
+            annotation_id="ANN-001",
+            asset_id="SAN-LUIS-DAM-01",
+            priority=DefectSeverity.CRITICAL,
+            description="Install weighted inverted filter ring around boil perimeter.",
+            assigned_crew="Dam Emergency Crew Alpha",
+            target_completion_date="2026-09-26",
+            status="dispatched",
+            estimated_hours=16.0,
+            created_at="2026-09-24T00:00:00Z"
+        )
+        self.assertEqual(wo.work_order_id, "WO-2026-001")
+        self.assertEqual(wo.status, "dispatched")
+
+    def test_aoi_monitoring_subscriptions_and_alert_payload(self):
+        """Verify AOISubscription and SubscriptionAlertPayload contracts."""
+        self.assertEqual(SubscriptionTriggerType.Z_SCORE_ANOMALY.value, "z_score_anomaly")
+        self.assertEqual(NotificationChannel.WEBHOOK.value, "webhook")
+
+        sub_req = AOISubscriptionRequest(
+            name="San Luis Seepage Perimeter",
+            bbox=[-121.15, 37.0, -121.0, 37.1],
+            asset_id="SAN-LUIS-DAM-01",
+            collection=SatelliteCollection.SENTINEL_2,
+            indices=[SpectralIndex.NDMI, SpectralIndex.MNDWI],
+            trigger_type=SubscriptionTriggerType.Z_SCORE_ANOMALY,
+            z_score_threshold=2.5,
+            channels=[NotificationChannel.WEBHOOK, NotificationChannel.IN_APP_ALERT],
+            webhook_url="https://monitoring.ca.gov/webhooks"
+        )
+        self.assertEqual(sub_req.z_score_threshold, 2.5)
+        self.assertEqual(len(sub_req.indices), 2)
+
+        sub_resp = AOISubscriptionResponse(
+            subscription_id="SUB-001",
+            name="San Luis Seepage Perimeter",
+            asset_id="SAN-LUIS-DAM-01",
+            collection="sentinel-2-l2a",
+            indices=["ndmi", "mndwi"],
+            trigger_type=SubscriptionTriggerType.Z_SCORE_ANOMALY,
+            z_score_threshold=2.5,
+            channels=["webhook", "in_app_alert"],
+            webhook_url="https://monitoring.ca.gov/webhooks",
+            is_active=True,
+            created_at="2026-09-24T00:00:00Z",
+            alerts_triggered_count=3
+        )
+        self.assertEqual(sub_resp.alerts_triggered_count, 3)
+
+        alert_payload = SubscriptionAlertPayload(
+            subscription_id="SUB-001",
+            asset_id="SAN-LUIS-DAM-01",
+            trigger_type=SubscriptionTriggerType.Z_SCORE_ANOMALY,
+            z_score=3.2,
+            index=SpectralIndex.NDMI,
+            message="Seasonal moisture anomaly detected at toe.",
+            scene_id="S2A_MSIL2A_20260920",
+            triggered_at="2026-09-24T00:00:00Z"
+        )
+        self.assertEqual(alert_payload.z_score, 3.2)
+
+    def test_vrt_mosaics_and_mgrs_alignment(self):
+        """Verify VRT dataset specifications and MGRS tile alignment contracts."""
+        self.assertEqual(SeamlineMode.FEATHER.value, "feather")
+        self.assertEqual(SeamlineMode.VORONOI_CUT.value, "voronoi_cut")
+
+        mgrs = MGRSTileSpec(
+            tile_id="10SEJ",
+            utm_zone=10,
+            latitude_band="S",
+            square_id="EJ",
+            epsg_code=32610,
+            bbox=(-121.5, 36.8, -120.8, 37.3)
+        )
+        self.assertEqual(mgrs.tile_id, "10SEJ")
+        self.assertEqual(mgrs.epsg_code, 32610)
+
+        vrt_spec = VRTDatasetSpec(
+            vrt_id="VRT-001",
+            target_crs="EPSG:3857",
+            resolution_m=10.0,
+            source_scenes=["S2A_10SEJ_20260820", "S2A_10SEK_20260820"],
+            seamline_mode=SeamlineMode.FEATHER,
+            bbox=(-121.5, 36.8, -120.8, 37.3),
+            band_count=4,
+            created_at="2026-09-24T00:00:00Z"
+        )
+        self.assertEqual(vrt_spec.vrt_id, "VRT-001")
+        self.assertEqual(len(vrt_spec.source_scenes), 2)
+
+        vrt_tile_url = build_vrt_tile_url("VRT-001", z=12, x=100, y=200, index="ndmi", colormap="spectral")
+        self.assertIn("/api/v1/tiles/vrt/VRT-001/12/100/200.png", vrt_tile_url)
+        self.assertIn("index=ndmi", vrt_tile_url)
+
+    def test_bitemporal_change_detection_contracts(self):
+        """Verify ChangeDetectionMetric, ChangeCategory, ChangeDetectionRequest/Response, and classification utilities."""
+        self.assertEqual(ChangeDetectionMetric.NDVI_DIFF.value, "ndvi_diff")
+        self.assertEqual(ChangeDetectionMetric.NDMI_DIFF.value, "ndmi_diff")
+        self.assertEqual(ChangeDetectionMetric.MNDWI_DIFF.value, "mndwi_diff")
+        self.assertEqual(ChangeDetectionMetric.NBR_DIFF.value, "nbr_diff")
+        self.assertEqual(ChangeDetectionMetric.SAR_VV_DIFF.value, "sar_vv_diff")
+        self.assertEqual(ChangeDetectionMetric.LST_DIFF.value, "lst_diff")
+        self.assertEqual(ChangeCategory.SIGNIFICANT_INCREASE.value, "significant_increase")
+        self.assertEqual(ChangeCategory.STABLE.value, "stable")
+        self.assertEqual(ChangeCategory.SIGNIFICANT_DECREASE.value, "significant_decrease")
+
+        # ChangeDetectionRequest validation with alias resolution
+        req = ChangeDetectionRequest(
+            collection="sentinel-2-l2a",
+            pre_item_id="S2A_MSIL2A_20250815",
+            post_item_id="S2A_MSIL2A_20260815",
+            metric=ChangeDetectionMetric.NDMI_DIFF,
+            threshold_positive=0.15,
+            threshold_negative=-0.15
+        )
+        self.assertEqual(req.pre_scene_id, "S2A_MSIL2A_20250815")
+        self.assertEqual(req.post_scene_id, "S2A_MSIL2A_20260815")
+        self.assertEqual(req.metric, ChangeDetectionMetric.NDMI_DIFF)
+
+        # Classification helper
+        values = [0.35, 0.20, 0.05, -0.02, -0.18, -0.42]
+        cats = calculate_change_detection_classes(values, threshold_positive=0.15, threshold_negative=-0.15, threshold_extreme=0.30)
+        self.assertEqual(len(cats), 5)
+        cat_map = {c.category: c for c in cats}
+        self.assertEqual(cat_map[ChangeCategory.SIGNIFICANT_INCREASE].pixel_count, 1)
+        self.assertEqual(cat_map[ChangeCategory.MODERATE_INCREASE].pixel_count, 1)
+        self.assertEqual(cat_map[ChangeCategory.STABLE].pixel_count, 2)
+        self.assertEqual(cat_map[ChangeCategory.MODERATE_DECREASE].pixel_count, 1)
+        self.assertEqual(cat_map[ChangeCategory.SIGNIFICANT_DECREASE].pixel_count, 1)
+
+        # Test bbox auto-conversion to GeoJSON geometry
+        req_bbox = ChangeDetectionRequest(
+            pre_item_id="S2A_PRE",
+            post_item_id="S2A_POST",
+            bbox=[-121.2, 36.95, -120.95, 37.15]
+        )
+        self.assertIsNotNone(req_bbox.bbox)
+        self.assertEqual(req_bbox.bbox.min_lon, -121.2)
+        self.assertIsNotNone(req_bbox.geometry)
+        self.assertEqual(req_bbox.geometry["type"], "Polygon")
+        self.assertEqual(len(req_bbox.geometry["coordinates"][0]), 5)
+
+        # Difference tile URL builder
+        tile_url = build_difference_tile_url("sentinel-2-l2a", "PRE1", "POST1", "ndmi_difference", 12, 100, 200, rescale="-0.5,0.5", colormap="turbo")
+        self.assertIn("/api/v1/tiles/difference/sentinel-2-l2a/PRE1/POST1/ndmi_difference/12/100/200.png", tile_url)
+        self.assertIn("rescale=-0.5,0.5", tile_url)
+        self.assertIn("colormap=turbo", tile_url)
+
+    def test_geotechnical_in_situ_instrumentation_contracts(self):
+        """Verify GeotechnicalSensor, SensorReading, GeotechnicalNetworkSummary, and GeoJSON converters."""
+        self.assertEqual(GeotechnicalSensorType.PIEZOMETER.value, "piezometer")
+        self.assertEqual(GeotechnicalSensorType.INCLINOMETER.value, "inclinometer")
+        self.assertEqual(GeotechnicalSensorType.SEEPAGE_WEIR.value, "seepage_weir")
+        self.assertEqual(GeotechnicalSensorType.STAGE_GAUGE.value, "stage_gauge")
+        self.assertEqual(GeotechnicalSensorType.SETTLEMENT_PLATE.value, "settlement_plate")
+        self.assertEqual(SensorReadingStatus.NORMAL.value, "normal")
+        self.assertEqual(SensorReadingStatus.CRITICAL.value, "critical")
+
+        sensor = GeotechnicalSensor(
+            sensor_id="PZ-SL-101",
+            name="Embankment Crest Piezometer 101",
+            sensor_type=GeotechnicalSensorType.PIEZOMETER,
+            asset_id="SAN-LUIS-DAM-01",
+            lat=37.0582,
+            lng=-121.0744,
+            installation_elevation_m=165.0,
+            installation_depth_m=35.0,
+            unit="kPa",
+            current_value=142.5,
+            alert_threshold_high=200.0,
+            critical_threshold_high=260.0,
+            status=SensorReadingStatus.NORMAL,
+            last_reading_time="2026-09-24T00:00:00Z"
+        )
+        self.assertEqual(sensor.sensor_id, "PZ-SL-101")
+        self.assertEqual(sensor.unit, "kPa")
+
+        # GeoJSON Feature conversion
+        feature = sensor_to_geojson_feature(sensor)
+        self.assertEqual(feature["type"], "Feature")
+        self.assertEqual(feature["geometry"]["coordinates"], [-121.0744, 37.0582])
+        self.assertEqual(feature["properties"]["sensor_id"], "PZ-SL-101")
+        self.assertEqual(feature["properties"]["sensor_type"], "piezometer")
+        self.assertEqual(feature["properties"]["current_value"], 142.5)
+
+        fc = sensors_to_feature_collection([sensor])
+        self.assertEqual(fc["type"], "FeatureCollection")
+        self.assertEqual(len(fc["features"]), 1)
+
+        # Test CreateGeotechnicalSensorRequest with optional thresholds and values
+        create_req = CreateGeotechnicalSensorRequest(
+            sensor_id="PZ-SL-102",
+            name="Piezometer P-02",
+            sensor_type=GeotechnicalSensorType.PIEZOMETER,
+            asset_id="SAN-LUIS-DAM-01",
+            lat=37.0585,
+            lng=-121.0740,
+            installation_elevation_m=160.0,
+            unit="kPa",
+            current_value=125.0,
+            alert_threshold_low=50.0,
+            alert_threshold_high=180.0
+        )
+        self.assertEqual(create_req.current_value, 125.0)
+        self.assertEqual(create_req.alert_threshold_low, 50.0)
+        self.assertEqual(create_req.status, SensorReadingStatus.NORMAL)
+
+        summary = GeotechnicalNetworkSummary(
+            asset_id="SAN-LUIS-DAM-01",
+            total_sensors=12,
+            sensors_normal=10,
+            sensors_advisory=2,
+            sensors_alert=0,
+            sensors_critical=0,
+            max_pore_pressure_kpa=185.0,
+            total_seepage_flow_lps=14.2,
+            phreatic_surface_warning=False,
+            last_updated="2026-09-24T00:00:00Z"
+        )
+        self.assertEqual(summary.total_sensors, 12)
+        self.assertFalse(summary.phreatic_surface_warning)
+
+    def test_reservoir_bathymetry_eac_contracts(self):
+        """Verify EACDataPoint, EACAnalysisRequest, EACAnalysisResponse, and frustum integration."""
+        dp = EACDataPoint(
+            elevation_m=150.0,
+            surface_area_ha=120.5,
+            storage_volume_m3=4500000.0,
+            storage_volume_acre_feet=3648.2
+        )
+        self.assertEqual(dp.elevation_m, 150.0)
+        self.assertEqual(dp.surface_area_ha, 120.5)
+
+        req = EACAnalysisRequest(
+            asset_id="SAN-LUIS-RES-01",
+            datum_min_elevation_m=100.0,
+            datum_max_elevation_m=200.0,
+            step_elevation_m=10.0,
+            current_pool_elevation_m=165.0
+        )
+        self.assertEqual(req.datum_min_elevation_m, 100.0)
+        self.assertEqual(req.datum_max_elevation_m, 200.0)
+
+        # Test bbox auto-conversion to GeoJSON geometry
+        req_eac_bbox = EACAnalysisRequest(
+            asset_id="SAN-LUIS-RES-01",
+            bbox=[-121.15, 37.02, -121.05, 37.08],
+            datum_min_elevation_m=100.0,
+            datum_max_elevation_m=200.0
+        )
+        self.assertIsNotNone(req_eac_bbox.bbox)
+        self.assertIsNotNone(req_eac_bbox.geometry)
+        self.assertEqual(req_eac_bbox.geometry["type"], "Polygon")
+
+        # Validation error when min >= max
+        with self.assertRaises(ValueError):
+            EACAnalysisRequest(
+                asset_id="SAN-LUIS-RES-01",
+                datum_min_elevation_m=200.0,
+                datum_max_elevation_m=100.0
+            )
+
+        # Frustum integration math
+        elev_grid = [105.0, 115.0, 125.0, 145.0, 160.0, 180.0, 195.0]
+        curve, metrics = calculate_elevation_storage_capacity(
+            elevation_grid=elev_grid,
+            cell_size_m=30.0,
+            datum_min=100.0,
+            datum_max=200.0,
+            step=20.0,
+            current_pool=150.0
+        )
+        self.assertGreater(len(curve), 0)
+        self.assertIn("max_capacity_m3", metrics)
+        self.assertIn("max_surface_area_ha", metrics)
+        self.assertIn("current_storage_m3", metrics)
+
+    def test_tile_pyramid_cache_and_bounds_contracts(self):
+        """Verify TilePyramidBounds, TileCachePreloadRequest, and slippy map coordinate calculations."""
+        bounds = calculate_tile_pyramid_count(
+            min_lon=-121.2, min_lat=36.95, max_lon=-120.95, max_lat=37.15,
+            min_zoom=10, max_zoom=12
+        )
+        self.assertIsInstance(bounds, TilePyramidBounds)
+        self.assertEqual(bounds.min_zoom, 10)
+        self.assertEqual(bounds.max_zoom, 12)
+        self.assertGreater(bounds.total_tiles, 0)
+        self.assertIn(10, bounds.zoom_tile_counts)
+        self.assertIn(11, bounds.zoom_tile_counts)
+        self.assertIn(12, bounds.zoom_tile_counts)
+
+        coords_z11 = calculate_tile_pyramid_coords(-121.2, 36.95, -120.95, 37.15, zoom=11)
+        self.assertGreater(len(coords_z11), 0)
+        for z, x, y in coords_z11:
+            self.assertEqual(z, 11)
+            self.assertIsInstance(x, int)
+            self.assertIsInstance(y, int)
+
+        preload_req = TileCachePreloadRequest(
+            collection=SatelliteCollection.SENTINEL_2,
+            item_id="S2A_MSIL2A_20260901",
+            bbox=[-121.2, 36.95, -120.95, 37.15],
+            min_zoom=10,
+            max_zoom=12,
+            indices=[SpectralIndex.NDMI],
+            colormaps=[TileColormap.SPECTRAL]
+        )
+        self.assertEqual(preload_req.min_zoom, 10)
+        self.assertEqual(preload_req.max_zoom, 12)
+
+        # Invalid zoom range error
+        with self.assertRaises(ValueError):
+            TileCachePreloadRequest(
+                item_id="S2A_MSIL2A_20260901",
+                bbox=[-121.2, 36.95, -120.95, 37.15],
+                min_zoom=14,
+                max_zoom=10
+            )
+
+    def test_new_canonical_route_contracts_and_difference_tile_url(self):
+        """Verify format_api_route formatting for all 7 new canonical contracts."""
+        r1 = format_api_route("analysis_change_detection")
+        self.assertEqual(r1, "/api/v1/analysis/change-detection")
+
+        r2 = format_api_route(
+            "tiles_difference",
+            collection="sentinel-2-l2a",
+            pre_scene_id="PRE",
+            post_scene_id="POST",
+            metric="ndmi_difference",
+            z=12,
+            x=10,
+            y=20
+        )
+        self.assertEqual(r2, "/api/v1/tiles/difference/sentinel-2-l2a/PRE/POST/ndmi_difference/12/10/20.png")
+
+        r3 = format_api_route("integration_geotechnical_sensors")
+        self.assertEqual(r3, "/api/v1/integration/geotechnical/sensors")
+        self.assertEqual(format_api_route("integration_sensors"), "/api/v1/integration/geotechnical/sensors")
+
+        r4 = format_api_route("integration_geotechnical_readings", sensor_id="PZ-101")
+        self.assertEqual(r4, "/api/v1/integration/geotechnical/sensors/PZ-101/readings")
+        self.assertEqual(format_api_route("integration_sensor_readings", sensor_id="PZ-101"), "/api/v1/integration/geotechnical/sensors/PZ-101/readings")
+
+        r5 = format_api_route("integration_geotechnical_summary", asset_id="DAM-01")
+        self.assertEqual(r5, "/api/v1/integration/geotechnical/summary/DAM-01")
+        self.assertEqual(format_api_route("integration_sensor_summary", asset_id="DAM-01"), "/api/v1/integration/geotechnical/summary/DAM-01")
+
+        r6 = format_api_route("analysis_bathymetry_eac")
+        self.assertEqual(r6, "/api/v1/analysis/bathymetry/eac")
+
+        r7 = format_api_route("tiles_cache_preload")
+        self.assertEqual(r7, "/api/v1/tiles/cache/preload")
+
+        r8 = format_api_route("tiles_difference_short", metric="ndmi_diff", z=12, x=10, y=20)
+        self.assertEqual(r8, "/api/v1/tiles/difference/ndmi_diff/12/10/20.png")
 
     def test_no_circular_imports(self):
         """Verify schemas and config can be imported alongside all application modules without cycle."""

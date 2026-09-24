@@ -543,6 +543,17 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "subscription_detail": "/api/v1/subscriptions/{subscription_id}",
     "analysis_vrt": "/api/v1/analysis/vrt",
     "tiles_vrt": "/api/v1/tiles/vrt/{vrt_id}/{z}/{x}/{y}.png",
+    "analysis_change_detection": "/api/v1/analysis/change-detection",
+    "tiles_difference": "/api/v1/tiles/difference/{collection}/{pre_scene_id}/{post_scene_id}/{metric}/{z}/{x}/{y}.png",
+    "tiles_difference_short": "/api/v1/tiles/difference/{metric}/{z}/{x}/{y}.png",
+    "integration_geotechnical_sensors": "/api/v1/integration/geotechnical/sensors",
+    "integration_sensors": "/api/v1/integration/geotechnical/sensors",
+    "integration_geotechnical_readings": "/api/v1/integration/geotechnical/sensors/{sensor_id}/readings",
+    "integration_sensor_readings": "/api/v1/integration/geotechnical/sensors/{sensor_id}/readings",
+    "integration_geotechnical_summary": "/api/v1/integration/geotechnical/summary/{asset_id}",
+    "integration_sensor_summary": "/api/v1/integration/geotechnical/summary/{asset_id}",
+    "analysis_bathymetry_eac": "/api/v1/analysis/bathymetry/eac",
+    "tiles_cache_preload": "/api/v1/tiles/cache/preload",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1629,7 +1640,7 @@ class ZonalStatsRealRequest(BaseModel):
     """Request payload for polygon zonal statistics clipped over a STAC data cube."""
     geometry: Dict[str, Any] = Field(..., description="GeoJSON Polygon geometry")
     collection: str = Field(default="sentinel-2-l2a", description="Satellite collection identifier")
-    item_id: str = Field(..., description="STAC Item ID")
+    item_id: Optional[str] = Field(default=None, description="STAC Item ID")
     index: SpectralIndex = Field(default=SpectralIndex.NDMI, description="Target spectral index")
 
 class ZonalDistributionStats(BaseModel):
@@ -3024,6 +3035,614 @@ def build_vrt_tile_url(
     if params:
         return f"{route}?{'&'.join(params)}"
     return route
+
+
+# ============================================================================
+# BITEMPORAL CHANGE DETECTION & DIFFERENCING MATRIX SCAFFOLDING
+# ============================================================================
+
+class ChangeDetectionMetric(str, Enum):
+    """Supported biophysical and radar metrics for bitemporal change differencing."""
+    NDVI_DIFF = "ndvi_diff"        # Vegetation health / vigor change
+    NDMI_DIFF = "ndmi_diff"        # Canopy & soil moisture change
+    MNDWI_DIFF = "mndwi_diff"      # Surface water & flood inundation change
+    NBR_DIFF = "nbr_diff"          # Fire burn severity / vegetation mortality
+    SAR_VV_DIFF = "sar_vv_diff"    # Radar backscatter roughness & moisture change
+    LST_DIFF = "lst_diff"          # Thermal surface temperature change
+
+class ChangeCategory(str, Enum):
+    """Categorical classification tiers for bitemporal difference magnitudes."""
+    SIGNIFICANT_INCREASE = "significant_increase"
+    MODERATE_INCREASE = "moderate_increase"
+    STABLE = "stable"
+    MODERATE_DECREASE = "moderate_decrease"
+    SIGNIFICANT_DECREASE = "significant_decrease"
+
+class ChangeCategoryDetail(BaseModel):
+    """Detailed spatial breakdown for a discrete change detection magnitude tier."""
+    category: ChangeCategory = Field(..., description="Change classification category enum")
+    label: str = Field(..., description="Human-readable category title")
+    min_change: Optional[float] = Field(default=None, description="Lower difference bound")
+    max_change: Optional[float] = Field(default=None, description="Upper difference bound")
+    area_hectares: float = Field(..., ge=0.0, description="Surface area in hectares")
+    percentage: float = Field(..., ge=0.0, le=100.0, description="Percentage of total valid AOI area")
+    pixel_count: int = Field(default=0, ge=0, description="Number of classified raster pixels")
+
+class ChangeDetectionRequest(BaseModel):
+    """Request payload for multi-temporal bitemporal change detection and differencing."""
+    collection: SatelliteCollection = Field(
+        default=SatelliteCollection.SENTINEL_2,
+        description="Target satellite imagery collection"
+    )
+    pre_scene_id: str = Field(..., min_length=1, description="Baseline / pre-event STAC scene ID")
+    post_scene_id: str = Field(..., min_length=1, description="Comparison / post-event STAC scene ID")
+    metric: ChangeDetectionMetric = Field(
+        default=ChangeDetectionMetric.NDMI_DIFF,
+        description="Biophysical or radar difference metric"
+    )
+    geometry: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Optional GeoJSON Polygon geometry restricting analysis AOI"
+    )
+    bbox: Optional[BoundingBox] = Field(
+        default=None,
+        description="Optional bounding box [min_lon, min_lat, max_lon, max_lat] restricting analysis AOI"
+    )
+    threshold_positive: float = Field(
+        default=0.15,
+        description="Threshold defining moderate positive change"
+    )
+    threshold_negative: float = Field(
+        default=-0.15,
+        description="Threshold defining moderate negative change"
+    )
+    threshold_extreme: float = Field(
+        default=0.30,
+        description="Threshold defining significant change (+/-)"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reconcile_scene_aliases(cls, data: Any) -> Any:
+        """Seamlessly map frontend payload aliases (pre_item_id -> pre_scene_id, post_item_id -> post_scene_id, bbox -> geometry)."""
+        if isinstance(data, dict):
+            if "pre_item_id" in data and "pre_scene_id" not in data:
+                data["pre_scene_id"] = data["pre_item_id"]
+            if "post_item_id" in data and "post_scene_id" not in data:
+                data["post_scene_id"] = data["post_item_id"]
+            if "bbox" in data and data["bbox"] is not None:
+                if not isinstance(data["bbox"], BoundingBox):
+                    t = parse_bbox(data["bbox"])
+                    data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
+                if not data.get("geometry"):
+                    b = data["bbox"]
+                    data["geometry"] = {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [b.min_lon, b.min_lat],
+                            [b.max_lon, b.min_lat],
+                            [b.max_lon, b.max_lat],
+                            [b.min_lon, b.max_lat],
+                            [b.min_lon, b.min_lat]
+                        ]]
+                    }
+        return data
+
+class ChangeDetectionResponse(BaseModel):
+    """Response payload containing bitemporal change statistics, area metrics, and tile URL."""
+    request_id: str = Field(..., description="Unique change detection analysis identifier")
+    collection: str = Field(..., description="Analyzed satellite collection")
+    pre_scene_id: str = Field(..., description="Baseline scene ID")
+    post_scene_id: str = Field(..., description="Comparison scene ID")
+    metric: ChangeDetectionMetric = Field(..., description="Evaluated change metric")
+    mean_difference: float = Field(..., description="Spatial mean difference across AOI")
+    median_difference: float = Field(..., description="Spatial median difference across AOI")
+    std_difference: float = Field(..., description="Standard deviation of difference")
+    total_area_hectares: float = Field(..., description="Total analyzed area in hectares")
+    area_increased_ha: float = Field(..., description="Area exhibiting positive change in hectares")
+    area_decreased_ha: float = Field(..., description="Area exhibiting negative change in hectares")
+    area_stable_ha: float = Field(..., description="Area exhibiting stable / no change in hectares")
+    categories: List[ChangeCategoryDetail] = Field(default_factory=list, description="Categorical magnitude distribution")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for difference raster visualization")
+    created_at: str = Field(..., description="ISO 8601 generation timestamp")
+
+def calculate_change_detection_classes(
+    diff_values: Sequence[float],
+    threshold_positive: float = 0.15,
+    threshold_negative: float = -0.15,
+    threshold_extreme: float = 0.30,
+    pixel_area_m2: float = 100.0
+) -> List[ChangeCategoryDetail]:
+    """Classifies a numeric sequence of difference values into standardized change categories."""
+    if not diff_values:
+        return []
+    
+    counts = {
+        ChangeCategory.SIGNIFICANT_INCREASE: 0,
+        ChangeCategory.MODERATE_INCREASE: 0,
+        ChangeCategory.STABLE: 0,
+        ChangeCategory.MODERATE_DECREASE: 0,
+        ChangeCategory.SIGNIFICANT_DECREASE: 0
+    }
+    
+    valid_count = 0
+    for v in diff_values:
+        if v is None or math.isnan(v):
+            continue
+        valid_count += 1
+        if v >= threshold_extreme:
+            counts[ChangeCategory.SIGNIFICANT_INCREASE] += 1
+        elif v >= threshold_positive:
+            counts[ChangeCategory.MODERATE_INCREASE] += 1
+        elif v <= -threshold_extreme:
+            counts[ChangeCategory.SIGNIFICANT_DECREASE] += 1
+        elif v <= threshold_negative:
+            counts[ChangeCategory.MODERATE_DECREASE] += 1
+        else:
+            counts[ChangeCategory.STABLE] += 1
+            
+    if valid_count == 0:
+        return []
+        
+    m2_to_ha = 0.0001
+    labels = {
+        ChangeCategory.SIGNIFICANT_INCREASE: "Significant Increase",
+        ChangeCategory.MODERATE_INCREASE: "Moderate Increase",
+        ChangeCategory.STABLE: "Stable / No Significant Change",
+        ChangeCategory.MODERATE_DECREASE: "Moderate Decrease",
+        ChangeCategory.SIGNIFICANT_DECREASE: "Significant Decrease"
+    }
+    bounds = {
+        ChangeCategory.SIGNIFICANT_INCREASE: (threshold_extreme, None),
+        ChangeCategory.MODERATE_INCREASE: (threshold_positive, threshold_extreme),
+        ChangeCategory.STABLE: (threshold_negative, threshold_positive),
+        ChangeCategory.MODERATE_DECREASE: (-threshold_extreme, threshold_negative),
+        ChangeCategory.SIGNIFICANT_DECREASE: (None, -threshold_extreme)
+    }
+    
+    details = []
+    for cat in [
+        ChangeCategory.SIGNIFICANT_INCREASE,
+        ChangeCategory.MODERATE_INCREASE,
+        ChangeCategory.STABLE,
+        ChangeCategory.MODERATE_DECREASE,
+        ChangeCategory.SIGNIFICANT_DECREASE
+    ]:
+        cnt = counts[cat]
+        pct = round((cnt / valid_count) * 100.0, 2)
+        ha = round(cnt * pixel_area_m2 * m2_to_ha, 3)
+        b = bounds[cat]
+        details.append(ChangeCategoryDetail(
+            category=cat,
+            label=labels[cat],
+            min_change=b[0],
+            max_change=b[1],
+            area_hectares=ha,
+            percentage=pct,
+            pixel_count=cnt
+        ))
+    return details
+
+def build_difference_tile_url(
+    collection: str,
+    pre_scene_id: str,
+    post_scene_id: str,
+    metric: Union[str, ChangeDetectionMetric],
+    z: int,
+    x: int,
+    y: int,
+    rescale: Optional[str] = None,
+    colormap: Optional[Union[str, TileColormap]] = None
+) -> str:
+    """Builds canonical XYZ tile URL for streaming a bitemporal difference raster."""
+    metric_str = metric.value if hasattr(metric, "value") else str(metric).lower().strip()
+    route = format_api_route(
+        "tiles_difference",
+        collection=collection,
+        pre_scene_id=pre_scene_id,
+        post_scene_id=post_scene_id,
+        metric=metric_str,
+        z=z,
+        x=x,
+        y=y
+    )
+    params = []
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if colormap:
+        cm_str = colormap.value if hasattr(colormap, "value") else str(colormap).lower().strip()
+        params.append(f"colormap={cm_str}")
+    if params:
+        return f"{route}?{'&'.join(params)}"
+    return route
+
+
+# ============================================================================
+# GEOTECHNICAL IN-SITU INSTRUMENTATION & SENSOR FUSION SCAFFOLDING
+# ============================================================================
+
+class GeotechnicalSensorType(str, Enum):
+    """In-situ geotechnical instrumentation categories for dam safety and slope stability."""
+    PIEZOMETER = "piezometer"             # Vibrating wire / standpipe pore water pressure (kPa / m head)
+    INCLINOMETER = "inclinometer"         # Subsurface lateral casing deflection / displacement (mm)
+    SEEPAGE_WEIR = "seepage_weir"         # V-notch / rectangular weir seepage flow discharge (L/s, cfs)
+    STAGE_GAUGE = "stage_gauge"           # Reservoir pool water surface elevation (m, ft)
+    SETTLEMENT_PLATE = "settlement_plate" # Crest / embankment vertical settlement / subsidence (mm)
+
+class SensorReadingStatus(str, Enum):
+    """Operational monitoring status tiers for geotechnical sensor telemetry."""
+    NORMAL = "normal"                     # Reading within baseline thresholds
+    ADVISORY = "advisory"                 # Mild threshold deviation; surveillance recommended
+    ALERT = "alert"                       # Exceeds operational alarm threshold; investigation required
+    CRITICAL = "critical"                 # Exceeds maximum design safety limit; emergency action required
+
+class GeotechnicalSensor(BaseModel):
+    """In-situ geotechnical sensor metadata and live state record."""
+    sensor_id: str = Field(..., description="Unique sensor instrument identifier (e.g. 'PZ-SL-101')")
+    name: str = Field(..., description="Descriptive instrument name and station location")
+    sensor_type: GeotechnicalSensorType = Field(..., description="Instrument classification enum")
+    asset_id: str = Field(..., description="Associated infrastructure asset ID (e.g. 'SAN-LUIS-DAM-01')")
+    lat: float = Field(..., ge=-90.0, le=90.0, description="Latitude in WGS84 decimal degrees")
+    lng: float = Field(..., ge=-180.0, le=180.0, description="Longitude in WGS84 decimal degrees")
+    installation_elevation_m: float = Field(..., description="Instrument collar / ground elevation in meters")
+    installation_depth_m: Optional[float] = Field(default=None, description="Depth below collar in meters")
+    unit: str = Field(..., description="Physical measurement unit (e.g. 'kPa', 'm', 'mm', 'L/s')")
+    current_value: Optional[float] = Field(default=None, description="Latest recorded telemetry value")
+    alert_threshold_low: Optional[float] = Field(default=None, description="Low warning threshold")
+    alert_threshold_high: Optional[float] = Field(default=None, description="High warning threshold")
+    critical_threshold_high: Optional[float] = Field(default=None, description="Critical upper safety limit")
+    status: SensorReadingStatus = Field(default=SensorReadingStatus.NORMAL, description="Current operational state")
+    last_reading_time: Optional[str] = Field(default=None, description="ISO 8601 timestamp of last reading")
+
+class SensorReading(BaseModel):
+    """Individual time-series reading from an in-situ geotechnical sensor."""
+    reading_id: str = Field(..., description="Unique observation ID")
+    sensor_id: str = Field(..., description="Source instrument identifier")
+    timestamp: str = Field(..., description="ISO 8601 reading timestamp")
+    value: float = Field(..., description="Primary telemetry reading")
+    unit: str = Field(..., description="Measurement unit")
+    pore_pressure_kpa: Optional[float] = Field(default=None, description="Computed pore water pressure in kPa")
+    phreatic_head_m: Optional[float] = Field(default=None, description="Computed phreatic water surface elevation in meters")
+    flow_rate_lps: Optional[float] = Field(default=None, description="Measured seepage flow rate in liters per second")
+    displacement_mm: Optional[float] = Field(default=None, description="Measured displacement in millimeters")
+    status: SensorReadingStatus = Field(default=SensorReadingStatus.NORMAL, description="Reading alert status")
+
+class GeotechnicalNetworkSummary(BaseModel):
+    """Aggregated geotechnical instrument network health summary for an asset."""
+    asset_id: str = Field(..., description="Infrastructure asset identifier")
+    total_sensors: int = Field(..., ge=0, description="Total instrument count")
+    sensors_normal: int = Field(default=0, ge=0, description="Sensors in normal status")
+    sensors_advisory: int = Field(default=0, ge=0, description="Sensors in advisory status")
+    sensors_alert: int = Field(default=0, ge=0, description="Sensors in alert status")
+    sensors_critical: int = Field(default=0, ge=0, description="Sensors in critical status")
+    max_pore_pressure_kpa: Optional[float] = Field(default=None, description="Highest observed pore pressure in kPa")
+    total_seepage_flow_lps: Optional[float] = Field(default=None, description="Total aggregated embankment seepage in L/s")
+    phreatic_surface_warning: bool = Field(default=False, description="Flag indicating phreatic line elevated above safety threshold")
+    last_updated: str = Field(..., description="ISO 8601 summary timestamp")
+
+class CreateGeotechnicalSensorRequest(BaseModel):
+    """Request payload to register a new in-situ geotechnical sensor."""
+    sensor_id: str = Field(..., min_length=2, description="Unique instrument identifier")
+    name: str = Field(..., min_length=2, description="Instrument name / collar location")
+    sensor_type: GeotechnicalSensorType = Field(..., description="Instrument classification enum")
+    asset_id: str = Field(..., min_length=2, description="Associated asset identifier")
+    lat: float = Field(..., ge=-90.0, le=90.0, description="WGS84 latitude")
+    lng: float = Field(..., ge=-180.0, le=180.0, description="WGS84 longitude")
+    installation_elevation_m: float = Field(..., description="Collar elevation in meters")
+    installation_depth_m: Optional[float] = Field(default=None, description="Tip installation depth in meters")
+    unit: str = Field(..., description="Measurement unit (e.g. 'kPa', 'mm', 'L/s', 'm')")
+    current_value: Optional[float] = Field(default=None, description="Initial or current telemetry reading value")
+    alert_threshold_low: Optional[float] = Field(default=None, description="Low warning threshold")
+    alert_threshold_high: Optional[float] = Field(default=None, description="High warning threshold")
+    critical_threshold_high: Optional[float] = Field(default=None, description="Critical upper safety limit")
+    status: SensorReadingStatus = Field(default=SensorReadingStatus.NORMAL, description="Initial sensor operational status")
+
+def sensor_to_geojson_feature(sensor: Union[GeotechnicalSensor, Dict[str, Any]]) -> Dict[str, Any]:
+    """Converts a GeotechnicalSensor model or dict into an RFC 7946 GeoJSON Feature."""
+    if isinstance(sensor, BaseModel):
+        data = sensor.model_dump()
+    else:
+        data = dict(sensor)
+    
+    lat = float(data.get("lat", 0.0))
+    lng = float(data.get("lng", 0.0))
+    s_id = str(data.get("sensor_id", ""))
+    s_type = data.get("sensor_type")
+    type_str = s_type.value if hasattr(s_type, "value") else str(s_type or "")
+    s_status = data.get("status")
+    status_str = s_status.value if hasattr(s_status, "value") else str(s_status or "normal")
+
+    return {
+        "type": "Feature",
+        "id": s_id,
+        "geometry": {
+            "type": "Point",
+            "coordinates": [lng, lat]
+        },
+        "properties": {
+            "sensor_id": s_id,
+            "name": data.get("name", ""),
+            "sensor_type": type_str,
+            "asset_id": data.get("asset_id", ""),
+            "elevation_m": data.get("installation_elevation_m"),
+            "depth_m": data.get("installation_depth_m"),
+            "unit": data.get("unit", ""),
+            "current_value": data.get("current_value"),
+            "status": status_str,
+            "alert_threshold_low": data.get("alert_threshold_low"),
+            "alert_threshold_high": data.get("alert_threshold_high"),
+            "critical_threshold_high": data.get("critical_threshold_high"),
+            "last_reading_time": data.get("last_reading_time")
+        }
+    }
+
+def sensors_to_feature_collection(sensors: Sequence[Union[GeotechnicalSensor, Dict[str, Any]]]) -> Dict[str, Any]:
+    """Converts a sequence of GeotechnicalSensor models into an RFC 7946 GeoJSON FeatureCollection."""
+    features = [sensor_to_geojson_feature(s) for s in sensors]
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }
+
+
+# ============================================================================
+# RESERVOIR BATHYMETRY & ELEVATION-AREA-CAPACITY (EAC) CURVE ANALYTICS
+# ============================================================================
+
+class EACDataPoint(BaseModel):
+    """Discrete stage elevation curve point correlating surface area and cumulative storage volume."""
+    elevation_m: float = Field(..., description="Stage / water surface elevation in meters above datum")
+    surface_area_ha: float = Field(..., ge=0.0, description="Reservoir surface water area in hectares")
+    storage_volume_m3: float = Field(..., ge=0.0, description="Cumulative reservoir storage volume in cubic meters")
+    storage_volume_acre_feet: float = Field(..., ge=0.0, description="Cumulative storage volume in acre-feet")
+
+class EACAnalysisRequest(BaseModel):
+    """Request payload to calculate Elevation-Area-Capacity (EAC) bathymetric curves for a reservoir."""
+    asset_id: str = Field(..., min_length=1, description="Target reservoir or dam asset identifier")
+    geometry: Optional[Dict[str, Any]] = Field(default=None, description="Optional GeoJSON Polygon bounding reservoir pool")
+    bbox: Optional[BoundingBox] = Field(default=None, description="Optional bounding box envelope bounding reservoir pool")
+    datum_min_elevation_m: float = Field(..., description="Minimum pool bottom elevation in meters")
+    datum_max_elevation_m: float = Field(..., description="Maximum crest / spillway elevation in meters")
+    step_elevation_m: float = Field(default=5.0, gt=0.1, le=50.0, description="Elevation step increment in meters")
+    current_pool_elevation_m: Optional[float] = Field(default=None, description="Current measured pool stage elevation")
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_bbox_field(cls, data: Any) -> Any:
+        """Parses bbox input and auto-populates polygon geometry if missing."""
+        if isinstance(data, dict) and "bbox" in data and data["bbox"] is not None:
+            raw = data["bbox"]
+            if not isinstance(raw, BoundingBox):
+                t = parse_bbox(raw)
+                data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
+            if not data.get("geometry"):
+                b = data["bbox"]
+                data["geometry"] = {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [b.min_lon, b.min_lat],
+                        [b.max_lon, b.min_lat],
+                        [b.max_lon, b.max_lat],
+                        [b.min_lon, b.max_lat],
+                        [b.min_lon, b.min_lat]
+                    ]]
+                }
+        return data
+
+    @model_validator(mode="after")
+    def validate_elevation_range(self) -> "EACAnalysisRequest":
+        """Ensures min elevation is strictly below max elevation."""
+        if self.datum_min_elevation_m >= self.datum_max_elevation_m:
+            raise ValueError(f"datum_min_elevation_m ({self.datum_min_elevation_m}) must be strictly less than datum_max_elevation_m ({self.datum_max_elevation_m})")
+        return self
+
+class EACAnalysisResponse(BaseModel):
+    """Response payload containing reservoir stage-storage-area bathymetric analytics."""
+    asset_id: str = Field(..., description="Target reservoir asset ID")
+    datum_min_elevation_m: float = Field(..., description="Pool bottom elevation in meters")
+    datum_max_elevation_m: float = Field(..., description="Maximum spillway elevation in meters")
+    current_pool_elevation_m: Optional[float] = Field(default=None, description="Current pool stage elevation")
+    current_storage_m3: Optional[float] = Field(default=None, description="Current storage volume in m^3")
+    current_surface_area_ha: Optional[float] = Field(default=None, description="Current water surface area in ha")
+    max_capacity_m3: float = Field(..., description="Maximum storage capacity in m^3 at spillway level")
+    max_surface_area_ha: float = Field(..., description="Maximum surface area in ha at spillway level")
+    capacity_utilization_pct: Optional[float] = Field(default=None, description="Percentage of reservoir capacity utilized")
+    curve_points: List[EACDataPoint] = Field(default_factory=list, description="Computed Elevation-Area-Capacity discrete points")
+    created_at: str = Field(..., description="ISO 8601 calculation timestamp")
+
+def calculate_elevation_storage_capacity(
+    elevation_grid: Sequence[float],
+    cell_size_m: float,
+    datum_min: float,
+    datum_max: float,
+    step: float = 5.0,
+    current_pool: Optional[float] = None
+) -> Tuple[List[EACDataPoint], Dict[str, float]]:
+    """Calculates Elevation-Area-Capacity (EAC) curve from a digital elevation model grid.
+    
+    Uses conical frustum integration: V = sum(delta_h / 3 * (A1 + A2 + sqrt(A1 * A2)))
+    between consecutive stage contours.
+    """
+    valid_elevations = [e for e in elevation_grid if e is not None and not math.isnan(e)]
+    if not valid_elevations:
+        return ([], {})
+        
+    cell_area_m2 = cell_size_m * cell_size_m
+    m2_to_ha = 0.0001
+    m3_to_af = 0.000810714
+    
+    stages = []
+    curr_z = datum_min
+    while curr_z <= datum_max + 1e-5:
+        stages.append(round(curr_z, 2))
+        curr_z += step
+    if stages[-1] < datum_max:
+        stages.append(round(datum_max, 2))
+        
+    curve_points: List[EACDataPoint] = []
+    cumulative_volume_m3 = 0.0
+    prev_area_m2 = 0.0
+    prev_stage = datum_min
+
+    for i, z in enumerate(stages):
+        submerged_cells = sum(1 for e in valid_elevations if e <= z)
+        area_m2 = submerged_cells * cell_area_m2
+        area_ha = round(area_m2 * m2_to_ha, 3)
+        
+        if i > 0:
+            dh = z - prev_stage
+            if dh > 0:
+                inc_vol = (dh / 3.0) * (prev_area_m2 + area_m2 + math.sqrt(prev_area_m2 * area_m2))
+                cumulative_volume_m3 += inc_vol
+                
+        prev_area_m2 = area_m2
+        prev_stage = z
+        vol_af = round(cumulative_volume_m3 * m3_to_af, 2)
+        
+        curve_points.append(EACDataPoint(
+            elevation_m=z,
+            surface_area_ha=area_ha,
+            storage_volume_m3=round(cumulative_volume_m3, 2),
+            storage_volume_acre_feet=vol_af
+        ))
+        
+    max_cap = curve_points[-1].storage_volume_m3 if curve_points else 0.0
+    max_area = curve_points[-1].surface_area_ha if curve_points else 0.0
+    
+    metrics = {
+        "max_capacity_m3": max_cap,
+        "max_surface_area_ha": max_area
+    }
+    
+    if current_pool is not None and curve_points:
+        curr_submerged = sum(1 for e in valid_elevations if e <= current_pool)
+        curr_area_m2 = curr_submerged * cell_area_m2
+        curr_area_ha = round(curr_area_m2 * m2_to_ha, 3)
+        
+        curr_vol = 0.0
+        for i in range(len(curve_points) - 1):
+            p1 = curve_points[i]
+            p2 = curve_points[i + 1]
+            if p1.elevation_m <= current_pool <= p2.elevation_m:
+                span = p2.elevation_m - p1.elevation_m
+                if span > 0:
+                    frac = (current_pool - p1.elevation_m) / span
+                    curr_vol = p1.storage_volume_m3 + frac * (p2.storage_volume_m3 - p1.storage_volume_m3)
+                break
+        if current_pool >= curve_points[-1].elevation_m:
+            curr_vol = curve_points[-1].storage_volume_m3
+            
+        metrics["current_storage_m3"] = round(curr_vol, 2)
+        metrics["current_surface_area_ha"] = curr_area_ha
+        if max_cap > 0:
+            metrics["capacity_utilization_pct"] = round((curr_vol / max_cap) * 100.0, 2)
+            
+    return (curve_points, metrics)
+
+
+# ============================================================================
+# MULTI-SCALE TILE PYRAMID CACHE & PRE-FETCH SCAFFOLDING
+# ============================================================================
+
+class TilePyramidBounds(BaseModel):
+    """Specification of slippy map tile bounds across a zoom level pyramid."""
+    min_zoom: int = Field(..., ge=0, le=24, description="Minimum zoom level")
+    max_zoom: int = Field(..., ge=0, le=24, description="Maximum zoom level")
+    total_tiles: int = Field(..., ge=0, description="Total aggregate 256x256 tiles in pyramid")
+    zoom_tile_counts: Dict[int, int] = Field(default_factory=dict, description="Per-zoom tile count breakdown")
+
+class TileCachePreloadRequest(BaseModel):
+    """Request payload to pre-warm the local tile disk cache for an Area of Interest."""
+    collection: SatelliteCollection = Field(
+        default=SatelliteCollection.SENTINEL_2,
+        description="Target satellite collection"
+    )
+    item_id: str = Field(..., min_length=1, description="STAC item ID or drone orthomosaic ID")
+    bbox: BoundingBox = Field(..., description="Geographic bounding box envelope")
+    min_zoom: int = Field(default=10, ge=0, le=22, description="Pyramid start zoom level")
+    max_zoom: int = Field(default=14, ge=0, le=22, description="Pyramid maximum zoom level")
+    indices: List[SpectralIndex] = Field(
+        default_factory=lambda: [SpectralIndex.NDMI, SpectralIndex.NDVI],
+        description="Spectral indices to pre-cache"
+    )
+    colormaps: List[TileColormap] = Field(
+        default_factory=lambda: [TileColormap.SPECTRAL],
+        description="Colormaps to pre-render"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_bbox_field(cls, data: Any) -> Any:
+        """Parses bbox input from list, tuple, string, or dict."""
+        if isinstance(data, dict) and "bbox" in data:
+            raw = data["bbox"]
+            if not isinstance(raw, BoundingBox):
+                t = parse_bbox(raw)
+                data["bbox"] = BoundingBox(min_lon=t[0], min_lat=t[1], max_lon=t[2], max_lat=t[3])
+        return data
+
+    @model_validator(mode="after")
+    def validate_zoom_range(self) -> "TileCachePreloadRequest":
+        """Ensures min_zoom <= max_zoom."""
+        if self.min_zoom > self.max_zoom:
+            raise ValueError(f"min_zoom ({self.min_zoom}) must be less than or equal to max_zoom ({self.max_zoom})")
+        return self
+
+class TileCachePreloadResponse(BaseModel):
+    """Response acknowledging tile cache preloading job queue."""
+    job_id: str = Field(..., description="Unique preload background job identifier")
+    item_id: str = Field(..., description="Target scene item ID")
+    total_tiles_to_cache: int = Field(..., ge=0, description="Total tiles to generate across pyramid")
+    estimated_size_mb: float = Field(..., ge=0.0, description="Estimated disk cache size in megabytes")
+    zoom_breakdown: Dict[int, int] = Field(default_factory=dict, description="Tiles per zoom level")
+    status: str = Field(default="queued", description="Job execution status ('queued', 'running', 'completed')")
+    created_at: str = Field(..., description="ISO 8601 submission timestamp")
+
+def calculate_tile_pyramid_coords(
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+    zoom: int
+) -> List[Tuple[int, int, int]]:
+    """Calculates all Web Mercator (z, x, y) tile coordinates covering a geographic bounding box at a given zoom."""
+    x1, y2 = lat_lon_to_tile(min_lat, min_lon, zoom)
+    x2, y1 = lat_lon_to_tile(max_lat, max_lon, zoom)
+    
+    x_min = min(x1, x2)
+    x_max = max(x1, x2)
+    y_min = min(y1, y2)
+    y_max = max(y1, y2)
+    
+    coords = []
+    for x in range(x_min, x_max + 1):
+        for y in range(y_min, y_max + 1):
+            coords.append((zoom, x, y))
+    return coords
+
+def calculate_tile_pyramid_count(
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+    min_zoom: int,
+    max_zoom: int
+) -> TilePyramidBounds:
+    """Calculates total tile counts across a range of slippy map zoom levels."""
+    total = 0
+    counts: Dict[int, int] = {}
+    for z in range(min_zoom, max_zoom + 1):
+        tiles = calculate_tile_pyramid_coords(min_lon, min_lat, max_lon, max_lat, z)
+        c = len(tiles)
+        counts[z] = c
+        total += c
+    return TilePyramidBounds(
+        min_zoom=min_zoom,
+        max_zoom=max_zoom,
+        total_tiles=total,
+        zoom_tile_counts=counts
+    )
+
 
 
 

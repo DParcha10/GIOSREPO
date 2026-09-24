@@ -107,7 +107,18 @@ export {
   SUBSCRIPTION_TRIGGER_TYPES,
   NOTIFICATION_CHANNELS,
   SEAMLINE_MODES,
-  buildVrtTileUrl
+  buildVrtTileUrl,
+  CHANGE_DETECTION_METRICS,
+  CHANGE_CATEGORIES,
+  calculateChangeDetectionClasses,
+  buildDifferenceTileUrl,
+  GEOTECHNICAL_SENSOR_TYPES,
+  SENSOR_READING_STATUSES,
+  sensorToGeoJsonFeature,
+  sensorsToFeatureCollection,
+  calculateElevationStorageCapacity,
+  calculateTilePyramidCoords,
+  calculateTilePyramidCount
 } from '../config/constants.js';
 
 /**
@@ -979,6 +990,186 @@ const demoAdapter = async (config) => {
         tile_url_template: '/api/v1/tiles/vrt/VRT-DEMO-MGRS-01/{z}/{x}/{y}.png',
         created_at: new Date().toISOString()
       };
+      else if (url.includes('/api/v1/analysis/change-detection')) data = {
+        request_id: 'CHG-DEMO-01',
+        collection: 'sentinel-2-l2a',
+        pre_scene_id: 'S2A_MSIL2A_20260515',
+        post_scene_id: 'S2A_MSIL2A_20260820',
+        metric: 'ndmi_diff',
+        mean_difference: 0.142,
+        median_difference: 0.128,
+        std_difference: 0.088,
+        total_area_hectares: 245.8,
+        area_increased_ha: 84.2,
+        area_decreased_ha: 18.5,
+        area_stable_ha: 143.1,
+        categories: [
+          { category: 'significant_increase', label: 'Significant Increase', min_change: 0.30, max_change: null, area_hectares: 32.4, percentage: 13.18, pixel_count: 3240 },
+          { category: 'moderate_increase', label: 'Moderate Increase', min_change: 0.15, max_change: 0.30, area_hectares: 51.8, percentage: 21.07, pixel_count: 5180 },
+          { category: 'stable', label: 'Stable / No Significant Change', min_change: -0.15, max_change: 0.15, area_hectares: 143.1, percentage: 58.22, pixel_count: 14310 },
+          { category: 'moderate_decrease', label: 'Moderate Decrease', min_change: -0.30, max_change: -0.15, area_hectares: 12.5, percentage: 5.09, pixel_count: 1250 },
+          { category: 'significant_decrease', label: 'Significant Decrease', min_change: null, max_change: -0.30, area_hectares: 6.0, percentage: 2.44, pixel_count: 600 }
+        ],
+        tile_url_template: '/api/v1/tiles/difference/sentinel-2-l2a/S2A_MSIL2A_20260515/S2A_MSIL2A_20260820/ndmi_diff/{z}/{x}/{y}.png',
+        created_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/integration/geotechnical/summary')) data = {
+        asset_id: 'SAN-LUIS-DAM-01',
+        total_sensors: 12,
+        sensors_normal: 10,
+        sensors_advisory: 1,
+        sensors_alert: 1,
+        sensors_critical: 0,
+        max_pore_pressure_kpa: 142.5,
+        total_seepage_flow_lps: 4.82,
+        phreatic_surface_warning: true,
+        last_updated: new Date().toISOString()
+      };
+      else if (url.includes('/readings')) data = [
+        { reading_id: 'RD-01', sensor_id: 'PZ-SL-101', timestamp: '2026-08-01T00:00:00Z', reading_value: 128.4, unit: 'kPa', status: 'normal', temperature_c: 18.2 },
+        { reading_id: 'RD-02', sensor_id: 'PZ-SL-101', timestamp: '2026-08-05T00:00:00Z', reading_value: 131.2, unit: 'kPa', status: 'normal', temperature_c: 18.5 },
+        { reading_id: 'RD-03', sensor_id: 'PZ-SL-101', timestamp: '2026-08-10T00:00:00Z', reading_value: 133.0, unit: 'kPa', status: 'normal', temperature_c: 19.1 },
+        { reading_id: 'RD-04', sensor_id: 'PZ-SL-101', timestamp: '2026-08-15T00:00:00Z', reading_value: 136.8, unit: 'kPa', status: 'advisory', temperature_c: 19.4 },
+        { reading_id: 'RD-05', sensor_id: 'PZ-SL-101', timestamp: '2026-08-20T00:00:00Z', reading_value: 140.5, unit: 'kPa', status: 'alert', temperature_c: 20.0 },
+        { reading_id: 'RD-06', sensor_id: 'PZ-SL-101', timestamp: '2026-08-25T00:00:00Z', reading_value: 142.5, unit: 'kPa', status: 'alert', temperature_c: 20.2 }
+      ];
+      else if (url.includes('/api/v1/integration/geotechnical/sensors')) {
+        if (config.method === 'post') {
+          const body = typeof config.data === 'string' ? JSON.parse(config.data) : (config.data || {});
+          data = {
+            sensor_id: body.sensor_id || `PZ-SL-${Date.now().toString().slice(-4)}`,
+            name: body.name || 'New In-Situ Sensor',
+            sensor_type: body.sensor_type || 'piezometer',
+            asset_id: body.asset_id || 'SAN-LUIS-DAM-01',
+            lat: Number(body.lat || 37.058),
+            lng: Number(body.lng || -121.074),
+            installation_elevation_m: Number(body.installation_elevation_m || 150.0),
+            installation_depth_m: body.installation_depth_m ? Number(body.installation_depth_m) : null,
+            unit: body.unit || 'kPa',
+            current_value: Number(body.current_value || 120.0),
+            alert_threshold_low: body.alert_threshold_low ? Number(body.alert_threshold_low) : null,
+            alert_threshold_high: body.alert_threshold_high ? Number(body.alert_threshold_high) : null,
+            critical_threshold_high: body.critical_threshold_high ? Number(body.critical_threshold_high) : null,
+            status: body.status || 'normal',
+            last_reading_time: new Date().toISOString()
+          };
+        } else {
+          data = [
+            {
+              sensor_id: 'PZ-SL-101',
+              name: 'Piezometer P-01 (Embankment Toe)',
+              sensor_type: 'piezometer',
+              asset_id: 'SAN-LUIS-DAM-01',
+              lat: 37.0582,
+              lng: -121.0744,
+              installation_elevation_m: 154.2,
+              installation_depth_m: 24.5,
+              unit: 'kPa',
+              current_value: 142.5,
+              alert_threshold_low: 50.0,
+              alert_threshold_high: 135.0,
+              critical_threshold_high: 160.0,
+              status: 'alert',
+              last_reading_time: new Date().toISOString()
+            },
+            {
+              sensor_id: 'SW-SL-01',
+              name: 'Seepage Weir SW-01 (Left Toe Ditch)',
+              sensor_type: 'seepage_weir',
+              asset_id: 'SAN-LUIS-DAM-01',
+              lat: 37.0575,
+              lng: -121.0732,
+              installation_elevation_m: 148.0,
+              installation_depth_m: null,
+              unit: 'L/s',
+              current_value: 4.82,
+              alert_threshold_low: 0.1,
+              alert_threshold_high: 6.0,
+              critical_threshold_high: 10.0,
+              status: 'normal',
+              last_reading_time: new Date().toISOString()
+            },
+            {
+              sensor_id: 'IN-SL-03',
+              name: 'Inclinometer I-03 (Downstream Slope)',
+              sensor_type: 'inclinometer',
+              asset_id: 'SAN-LUIS-DAM-01',
+              lat: 37.0590,
+              lng: -121.0760,
+              installation_elevation_m: 162.0,
+              installation_depth_m: 35.0,
+              unit: 'mm',
+              current_value: 3.12,
+              alert_threshold_low: null,
+              alert_threshold_high: 5.0,
+              critical_threshold_high: 10.0,
+              status: 'advisory',
+              last_reading_time: new Date().toISOString()
+            },
+            {
+              sensor_id: 'SG-SL-01',
+              name: 'Stage Gauge SG-01 (Forebay Intake)',
+              sensor_type: 'stage_gauge',
+              asset_id: 'SAN-LUIS-DAM-01',
+              lat: 37.0560,
+              lng: -121.0715,
+              installation_elevation_m: 165.5,
+              installation_depth_m: null,
+              unit: 'm',
+              current_value: 152.4,
+              alert_threshold_low: 125.0,
+              alert_threshold_high: 164.0,
+              critical_threshold_high: 165.0,
+              status: 'normal',
+              last_reading_time: new Date().toISOString()
+            },
+            {
+              sensor_id: 'SP-SL-02',
+              name: 'Settlement Plate SP-02 (Crest Station 24+00)',
+              sensor_type: 'settlement_plate',
+              asset_id: 'SAN-LUIS-DAM-01',
+              lat: 37.0601,
+              lng: -121.0782,
+              installation_elevation_m: 167.8,
+              installation_depth_m: 5.0,
+              unit: 'mm',
+              current_value: 12.8,
+              alert_threshold_low: null,
+              alert_threshold_high: 25.0,
+              critical_threshold_high: 40.0,
+              status: 'normal',
+              last_reading_time: new Date().toISOString()
+            }
+          ];
+        }
+      }
+      else if (url.includes('/api/v1/analysis/bathymetry/eac')) data = {
+        asset_id: 'SAN-LUIS-RESERVOIR',
+        datum_min_elevation_m: 120.0,
+        datum_max_elevation_m: 165.0,
+        current_pool_elevation_m: 152.4,
+        current_storage_m3: 1650000000.0,
+        current_surface_area_ha: 4850.0,
+        max_capacity_m3: 2470000000.0,
+        max_surface_area_ha: 5200.0,
+        capacity_utilization_pct: 66.8,
+        curve_points: [
+          { elevation_m: 120.0, surface_area_ha: 0.0, storage_volume_m3: 0.0, storage_volume_acre_feet: 0.0 },
+          { elevation_m: 135.0, surface_area_ha: 2100.0, storage_volume_m3: 450000000.0, storage_volume_acre_feet: 364821.3 },
+          { elevation_m: 150.0, surface_area_ha: 4300.0, storage_volume_m3: 1420000000.0, storage_volume_acre_feet: 1151213.9 },
+          { elevation_m: 165.0, surface_area_ha: 5200.0, storage_volume_m3: 2470000000.0, storage_volume_acre_feet: 2002463.6 }
+        ],
+        created_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/tiles/cache/preload')) data = {
+        job_id: 'PRELOAD-SLD-01',
+        item_id: 'S2A_MSIL2A_20260820',
+        total_tiles_to_cache: 145,
+        estimated_size_mb: 8.7,
+        zoom_breakdown: { '10': 1, '11': 4, '12': 16, '13': 44, '14': 80 },
+        status: 'queued',
+        created_at: new Date().toISOString()
+      };
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
@@ -1772,6 +1963,207 @@ export const fetchAOISubscriptions = async () => {
  */
 export const requestVrtAnalysis = async (params) => {
   const response = await giosApi.post('/api/v1/analysis/vrt', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} ChangeCategoryDetail
+ * @property {'significant_increase'|'moderate_increase'|'stable'|'moderate_decrease'|'significant_decrease'} category - Category enum
+ * @property {string} label - Human-readable label
+ * @property {number|null} [min_change] - Lower difference bound
+ * @property {number|null} [max_change] - Upper difference bound
+ * @property {number} area_hectares - Area in hectares
+ * @property {number} percentage - Percentage of valid AOI
+ * @property {number} [pixel_count] - Pixel count
+ */
+
+/**
+ * @typedef {Object} ChangeDetectionRequest
+ * @property {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {string} pre_scene_id - Baseline STAC item ID
+ * @property {string} post_scene_id - Comparison STAC item ID
+ * @property {'ndvi_diff'|'ndmi_diff'|'mndwi_diff'|'nbr_diff'|'sar_vv_diff'|'lst_diff'} [metric='ndmi_diff'] - Difference metric
+ * @property {Object} [geometry] - Optional GeoJSON Polygon bounding AOI
+ * @property {number} [threshold_positive=0.15] - Moderate positive threshold
+ * @property {number} [threshold_negative=-0.15] - Moderate negative threshold
+ * @property {number} [threshold_extreme=0.30] - Significant change threshold
+ */
+
+/**
+ * @typedef {Object} ChangeDetectionResponse
+ * @property {string} request_id - Unique analysis ID
+ * @property {string} collection - Analyzed satellite collection
+ * @property {string} pre_scene_id - Baseline scene ID
+ * @property {string} post_scene_id - Comparison scene ID
+ * @property {string} metric - Evaluated difference metric
+ * @property {number} mean_difference - Mean difference
+ * @property {number} median_difference - Median difference
+ * @property {number} std_difference - Standard deviation
+ * @property {number} total_area_hectares - Total area in ha
+ * @property {number} area_increased_ha - Area of positive change in ha
+ * @property {number} area_decreased_ha - Area of negative change in ha
+ * @property {number} area_stable_ha - Area of stable state in ha
+ * @property {Array<ChangeCategoryDetail>} categories - Categorical distribution breakdown
+ * @property {string} tile_url_template - Dynamic XYZ tile URL template
+ * @property {string} created_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} GeotechnicalSensor
+ * @property {string} sensor_id - Unique instrument identifier
+ * @property {string} name - Instrument location / station title
+ * @property {'piezometer'|'inclinometer'|'seepage_weir'|'stage_gauge'|'settlement_plate'} sensor_type - Classification
+ * @property {string} asset_id - Infrastructure asset ID
+ * @property {number} lat - Latitude
+ * @property {number} lng - Longitude
+ * @property {number} installation_elevation_m - Collar elevation
+ * @property {number|null} [installation_depth_m] - Tip depth
+ * @property {string} unit - Measurement unit
+ * @property {number|null} [current_value] - Latest reading
+ * @property {number|null} [alert_threshold_low] - Low warning threshold
+ * @property {number|null} [alert_threshold_high] - High warning threshold
+ * @property {number|null} [critical_threshold_high] - Critical limit
+ * @property {'normal'|'advisory'|'alert'|'critical'} status - Operational status
+ * @property {string|null} [last_reading_time] - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} GeotechnicalNetworkSummary
+ * @property {string} asset_id - Asset identifier
+ * @property {number} total_sensors - Total sensor count
+ * @property {number} sensors_normal - Normal count
+ * @property {number} sensors_advisory - Advisory count
+ * @property {number} sensors_alert - Alert count
+ * @property {number} sensors_critical - Critical count
+ * @property {number|null} [max_pore_pressure_kpa] - Maximum pore pressure in kPa
+ * @property {number|null} [total_seepage_flow_lps] - Total seepage flow in L/s
+ * @property {boolean} phreatic_surface_warning - Elevated phreatic surface warning
+ * @property {string} last_updated - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} EACAnalysisRequest
+ * @property {string} asset_id - Target reservoir asset ID
+ * @property {Object} [geometry] - Optional GeoJSON Polygon bounding pool
+ * @property {number} datum_min_elevation_m - Bottom datum elevation
+ * @property {number} datum_max_elevation_m - Maximum spillway elevation
+ * @property {number} [step_elevation_m=5.0] - Elevation step
+ * @property {number|null} [current_pool_elevation_m] - Current pool stage elevation
+ */
+
+/**
+ * @typedef {Object} EACAnalysisResponse
+ * @property {string} asset_id - Reservoir asset ID
+ * @property {number} datum_min_elevation_m - Minimum pool bottom elevation
+ * @property {number} datum_max_elevation_m - Spillway elevation
+ * @property {number|null} [current_pool_elevation_m] - Current pool stage elevation
+ * @property {number|null} [current_storage_m3] - Current storage volume in m^3
+ * @property {number|null} [current_surface_area_ha] - Current surface water area in ha
+ * @property {number} max_capacity_m3 - Maximum capacity at spillway level in m^3
+ * @property {number} max_surface_area_ha - Maximum surface area at spillway level in ha
+ * @property {number|null} [capacity_utilization_pct] - Capacity utilization percentage
+ * @property {Array<{elevation_m: number, surface_area_ha: number, storage_volume_m3: number, storage_volume_acre_feet: number}>} curve_points - EAC curve points
+ * @property {string} created_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} TileCachePreloadRequest
+ * @property {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {string} item_id - Target scene item ID
+ * @property {[number, number, number, number]|number[]|string} bbox - Bounding box
+ * @property {number} [min_zoom=10] - Start zoom level
+ * @property {number} [max_zoom=14] - Max zoom level
+ * @property {Array<string>} [indices=['ndmi', 'ndvi']] - Indices to pre-render
+ * @property {Array<string>} [colormaps=['spectral']] - Colormaps to pre-render
+ */
+
+/**
+ * @typedef {Object} TileCachePreloadResponse
+ * @property {string} job_id - Preload job identifier
+ * @property {string} item_id - Target scene item ID
+ * @property {number} total_tiles_to_cache - Total tile count
+ * @property {number} estimated_size_mb - Estimated disk storage in MB
+ * @property {Record<string, number>} zoom_breakdown - Per-zoom tile breakdown
+ * @property {string} status - Job status ('queued', 'running', 'completed')
+ * @property {string} created_at - ISO 8601 timestamp
+ */
+
+/**
+ * Requests bitemporal change detection and difference matrix analytics.
+ * 
+ * @param {ChangeDetectionRequest} params - Change detection parameters
+ * @returns {Promise<ChangeDetectionResponse>} Computed change statistics and tile URL
+ */
+export const requestChangeDetectionAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/change-detection', params);
+  return response.data;
+};
+
+/**
+ * Fetches in-situ geotechnical sensors for an asset or category.
+ * 
+ * @param {Object} [params={}] - Filter parameters (asset_id, sensor_type, status)
+ * @returns {Promise<Array<GeotechnicalSensor>>} List of geotechnical sensors
+ */
+export const fetchGeotechnicalSensors = async (params = {}) => {
+  const response = await giosApi.get('/api/v1/integration/geotechnical/sensors', { params });
+  return response.data;
+};
+
+/**
+ * Fetches historical telemetry readings for an in-situ geotechnical sensor.
+ * 
+ * @param {string} sensorId - Instrument ID
+ * @param {Object} [params={}] - Filter parameters (start_date, end_date, limit)
+ * @returns {Promise<Array<Object>>} List of sensor readings
+ */
+export const fetchGeotechnicalSensorReadings = async (sensorId, params = {}) => {
+  const response = await giosApi.get(`/api/v1/integration/geotechnical/sensors/${sensorId}/readings`, { params });
+  return response.data;
+};
+
+/**
+ * Fetches aggregated geotechnical instrumentation network summary for an infrastructure asset.
+ * 
+ * @param {string} assetId - Asset identifier (e.g. 'SAN-LUIS-DAM-01')
+ * @returns {Promise<GeotechnicalNetworkSummary>} Geotechnical network health summary
+ */
+export const fetchGeotechnicalNetworkSummary = async (assetId) => {
+  const response = await giosApi.get(`/api/v1/integration/geotechnical/summary/${assetId}`);
+  return response.data;
+};
+
+/**
+ * Registers a new in-situ geotechnical sensor for an asset.
+ * 
+ * @param {Object} params - Sensor registration parameters
+ * @returns {Promise<GeotechnicalSensor>} Registered geotechnical sensor
+ */
+export const createGeotechnicalSensor = async (params) => {
+  const response = await giosApi.post('/api/v1/integration/geotechnical/sensors', params);
+  return response.data;
+};
+
+
+/**
+ * Calculates reservoir bathymetric Elevation-Area-Capacity (EAC) curves.
+ * 
+ * @param {EACAnalysisRequest} params - EAC calculation parameters
+ * @returns {Promise<EACAnalysisResponse>} Bathymetric curve points and capacity metrics
+ */
+export const calculateBathymetryEAC = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/bathymetry/eac', params);
+  return response.data;
+};
+
+/**
+ * Dispatches a tile cache pre-warm preload job over an Area of Interest.
+ * 
+ * @param {TileCachePreloadRequest} params - Tile cache preloading parameters
+ * @returns {Promise<TileCachePreloadResponse>} Preload job status and estimated tiles
+ */
+export const preloadTileCache = async (params) => {
+  const response = await giosApi.post('/api/v1/tiles/cache/preload', params);
   return response.data;
 };
 

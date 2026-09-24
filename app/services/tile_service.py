@@ -44,7 +44,14 @@ DEFAULT_INDEX_RANGES = {
     "lst": (10.0, 45.0),
     "savi": (0.0, 0.8),
     "evi": (0.0, 0.8),
-    "rgb": (0.0, 0.3)
+    "rgb": (0.0, 0.3),
+    "ndmi_diff": (-0.3, 0.3),
+    "ndvi_diff": (-0.3, 0.3),
+    "mndwi_diff": (-0.3, 0.3),
+    "lst_diff": (-5.0, 5.0),
+    "sar_vv_diff": (-6.0, 6.0),
+    "elevation_diff": (-10.0, 10.0),
+    "difference": (-0.3, 0.3)
 }
 
 class TileService:
@@ -274,6 +281,8 @@ class TileService:
                     val = -8.0 + base_variation * 6.0
                 else:
                     val = -18.0 + base_variation * 14.0
+            elif col_clean in {"diff", "difference"} or col_clean.startswith("diff_") or "diff" in idx_clean:
+                val = (base_variation - 0.5) * 0.6
             else:
                 val = base_variation
 
@@ -374,6 +383,34 @@ class TileService:
             index=polarization,
             colormap=colormap,
             rescale=rescale
+        )
+
+    def render_difference_tile(
+        self,
+        collection: str,
+        pre_scene_id: str,
+        post_scene_id: str,
+        metric: str,
+        z: int,
+        x: int,
+        y: int,
+        colormap: str = "rdylbu",
+        rescale: Optional[str] = "-0.3,0.3"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for bitemporal difference raster."""
+        clean_metric = metric.lower().strip()
+        item_id = f"{pre_scene_id}_{post_scene_id}"
+        return self.render_tile(
+            collection=f"diff_{collection}",
+            item_id=item_id,
+            z=z,
+            x=x,
+            y=y,
+            index=clean_metric,
+            colormap=colormap or "rdylbu",
+            rescale=rescale or "-0.3,0.3",
+            pre=pre_scene_id,
+            post=post_scene_id
         )
 
 tile_service = TileService()
