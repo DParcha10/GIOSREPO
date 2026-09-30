@@ -26,10 +26,27 @@ def is_port_listening(port: int, host: str = "127.0.0.1", timeout: float = 1.0) 
     except (socket.timeout, ConnectionRefusedError, OSError):
         return False
 
+def can_bind_port(port: int, host: str = "0.0.0.0") -> bool:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((host, port))
+        s.close()
+        return True
+    except OSError:
+        return False
+
 def start_backend():
     if is_port_listening(8000):
         print("Backend already listening on port 8000.")
         return
+
+    # Check for lingering TIME_WAIT sockets and wait briefly if needed
+    for attempt in range(5):
+        if can_bind_port(8000):
+            break
+        print(f"Port 8000 socket not yet available (attempt {attempt + 1}/5), waiting 1s...")
+        time.sleep(1)
 
     print("Launching FastAPI backend on port 8000 (detached)...")
     out_f = open(BACKEND_OUT, "a", encoding="utf-8")
@@ -45,6 +62,16 @@ def start_backend():
         close_fds=False if os.name == "nt" else True
     )
     print(f"Backend spawned with PID: {proc.pid}")
+    
+    # Verify backend startup
+    for _ in range(8):
+        if is_port_listening(8000):
+            print("Backend confirmed listening on port 8000.")
+            return
+        if proc.poll() is not None:
+            print(f"Backend process {proc.pid} exited prematurely with code {proc.returncode}.")
+            return
+        time.sleep(1)
 
 def start_frontend():
     if is_port_listening(5173):

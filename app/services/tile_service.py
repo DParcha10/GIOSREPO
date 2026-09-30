@@ -63,7 +63,21 @@ DEFAULT_INDEX_RANGES = {
     "coherence": (0.0, 1.0),
     "bap_composite": (0.0, 1.0),
     "bap_score": (0.0, 1.0),
-    "thermal_lst": (15.0, 45.0)
+    "thermal_lst": (15.0, 45.0),
+    "chm": (0.0, 25.0),
+    "canopy_height": (0.0, 25.0),
+    "true_ortho": (0.0, 255.0),
+    "byoc": (0.0, 1.0),
+    "cva": (0.0, 0.5),
+    "cva_magnitude": (0.0, 0.5),
+    "ndsi": (-0.3, 0.3),
+    "si1": (0.0, 0.4),
+    "si2": (0.0, 0.6),
+    "crsi": (0.0, 0.8),
+    "soil_salinity": (-0.3, 0.3),
+    "thermal_hotspots": (300.0, 400.0),
+    "hotspots": (300.0, 400.0),
+    "frp": (0.0, 100.0)
 }
 
 class TileService:
@@ -304,6 +318,27 @@ class TileService:
                     val = -0.25 + base_variation * 0.45
                 else:
                     val = 0.02 + base_variation * 0.35
+            elif col_clean in {"chm", "point-cloud-chm", "terrain-chm"} or idx_clean in {"chm", "canopy_height"}:
+                val = np.clip(base_variation * 18.0 + (np.sin(xx * 20.0) > 0.3) * 6.0, 0.0, 30.0)
+            elif col_clean in {"true_ortho", "true-ortho"} or idx_clean in {"true_ortho", "true-ortho"}:
+                val = base_variation * 255.0
+            elif col_clean in {"byoc"} or idx_clean in {"byoc"}:
+                val = base_variation
+            elif col_clean in {"cva", "change-cva", "change_cva"} or "cva" in idx_clean:
+                val = np.clip(base_variation * 0.45, 0.0, 1.0)
+            elif col_clean in {"soil_salinity", "soil-salinity", "salinity"} or idx_clean in {"ndsi", "si1", "si2", "crsi", "salinity"}:
+                if idx_clean == "si1":
+                    val = 0.05 + base_variation * 0.35
+                elif idx_clean == "si2":
+                    val = 0.10 + base_variation * 0.45
+                elif idx_clean == "crsi":
+                    val = 0.05 + base_variation * 0.65
+                else:
+                    val = -0.20 + base_variation * 0.45
+            elif col_clean in {"thermal_hotspots", "thermal-hotspots", "hotspots"} or idx_clean in {"thermal_hotspots", "hotspots", "frp"}:
+                base_t = 295.0 + base_variation * 30.0
+                fire_peak = ((np.sin(xx * 25.0) > 0.85) & (np.cos(yy * 25.0) > 0.85)).astype(np.float32) * 65.0
+                val = base_t + fire_peak
             else:
                 val = base_variation
 
@@ -572,4 +607,144 @@ class TileService:
             rescale=rescale or "0.0,1.0"
         )
 
+    def render_chm_tile(
+        self,
+        asset_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: str = "viridis",
+        rescale: Optional[str] = "0.0,25.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Canopy Height Model (CHM)."""
+        return self.render_tile(
+            collection="point-cloud-chm",
+            item_id=asset_id,
+            z=z,
+            x=x,
+            y=y,
+            index="chm",
+            colormap=colormap or "viridis",
+            rescale=rescale or "0.0,25.0"
+        )
+
+    def render_true_ortho_tile(
+        self,
+        mosaic_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = "0.0,255.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for seamless true orthomosaic."""
+        return self.render_tile(
+            collection="true-ortho",
+            item_id=mosaic_id,
+            z=z,
+            x=x,
+            y=y,
+            index="true_ortho",
+            colormap=colormap or "spectral",
+            rescale=rescale or "0.0,255.0"
+        )
+
+    def render_byoc_tile(
+        self,
+        bucket_id: str,
+        item_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "viridis",
+        rescale: Optional[str] = "0.0,1.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for external Bring Your Own COG asset."""
+        return self.render_tile(
+            collection="byoc",
+            item_id=f"{bucket_id}/{item_id}",
+            z=z,
+            x=x,
+            y=y,
+            index="byoc",
+            colormap=colormap or "viridis",
+            rescale=rescale or "0.0,1.0"
+        )
+
+    def render_cva_tile(
+        self,
+        pre_scene_id: str,
+        post_scene_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "turbo",
+        rescale: Optional[str] = "0.0,0.5"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Change Vector Analysis (CVA) magnitude."""
+        return self.render_tile(
+            collection="cva",
+            item_id=f"{pre_scene_id}_{post_scene_id}",
+            z=z,
+            x=x,
+            y=y,
+            index="cva",
+            colormap=colormap or "turbo",
+            rescale=rescale or "0.0,0.5"
+        )
+
+    def render_soil_salinity_tile(
+        self,
+        collection: Optional[str] = "sentinel-2-l2a",
+        item_id: Optional[str] = "salinity",
+        metric: Optional[str] = "ndsi",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "spectral",
+        rescale: Optional[str] = "-0.3,0.3"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for soil salinity index (NDSI, SI-1, SI-2, CRSI)."""
+        clean_metric = (metric or "ndsi").lower().strip()
+        default_rescale = "-0.3,0.3"
+        if clean_metric == "si1":
+            default_rescale = "0.0,0.4"
+        elif clean_metric == "si2":
+            default_rescale = "0.0,0.6"
+        elif clean_metric == "crsi":
+            default_rescale = "0.0,0.8"
+        return self.render_tile(
+            collection="soil_salinity",
+            item_id=item_id or "salinity",
+            z=z,
+            x=x,
+            y=y,
+            index=clean_metric,
+            colormap=colormap or "spectral",
+            rescale=rescale or default_rescale
+        )
+
+    def render_thermal_hotspot_tile(
+        self,
+        collection: Optional[str] = "landsat-c2-l2",
+        item_id: Optional[str] = "thermal",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "inferno",
+        rescale: Optional[str] = "300.0,400.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for active thermal hotspots and FRP."""
+        return self.render_tile(
+            collection="thermal_hotspots",
+            item_id=item_id or "thermal",
+            z=z,
+            x=x,
+            y=y,
+            index="thermal_hotspots",
+            colormap=colormap or "inferno",
+            rescale=rescale or "300.0,400.0"
+        )
+
 tile_service = TileService()
+

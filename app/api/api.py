@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.routes import data, analysis, timeseries, integration, events, drone, agent, satellite, wildfire, operations
+from app.api.routes import data, analysis, timeseries, integration, events, drone, agent, satellite, wildfire, operations, byoc
 
 api_router = APIRouter()
 api_router.include_router(events.router)
@@ -15,4 +15,6 @@ api_router.include_router(wildfire.router)
 api_router.include_router(operations.annotations_router)
 api_router.include_router(operations.work_orders_router)
 api_router.include_router(operations.subscriptions_router)
+api_router.include_router(byoc.router)
+
 

@@ -5,7 +5,7 @@ $pythonExe = "C:\Users\Dina\AppData\Local\Programs\Python\Python313\python.exe"
 $scriptPath = "C:\Users\Dina\GIOS\start_persistent_services.py"
 
 Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-    CommandLine = "$pythonExe $scriptPath"
+    CommandLine = "`"$pythonExe`" `"$scriptPath`""
     CurrentDirectory = "C:\Users\Dina\GIOS"
 } | Out-Null
 

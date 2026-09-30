@@ -168,7 +168,39 @@ export {
   classifyInSarDeformationTier,
   buildInsarTileUrl,
   PHENOLOGY_FIT_MODELS,
-  fitHarmonicPhenology
+  fitHarmonicPhenology,
+  COREGISTRATION_RESAMPLING_KERNELS,
+  COREGISTRATION_STATUSES,
+  calculatePhaseCorrelationShift,
+  ELEVATION_MODEL_TYPES,
+  POINT_CLOUD_FORMATS,
+  POINT_CLASSIFICATION_CODES,
+  buildChmTileUrl,
+  SEAMLINE_ALGORITHMS,
+  RADIOMETRIC_BLENDING_MODES,
+  calculateSeamlineEnergy,
+  buildTrueOrthoTileUrl,
+  BYOC_STORAGE_PROVIDERS,
+  BYOC_SYNC_STATUSES,
+  buildByocTileUrl,
+  TREND_SIGNIFICANCE_TIERS,
+  TREND_DIRECTIONS,
+  calculateMannKendallTrend,
+  ATMOSPHERIC_CORRECTION_MODELS,
+  calculateDos1SurfaceReflectance,
+  CVA_MAGNITUDE_TIERS,
+  CVA_DIRECTION_SECTORS,
+  calculateChangeVector,
+  buildCvaTileUrl,
+  SALINITY_INDEX_TYPES,
+  SALINITY_HAZARD_TIERS,
+  calculateSalinityIndices,
+  classifySalinityHazard,
+  buildSalinityTileUrl,
+  THERMAL_HOTSPOT_CONFIDENCES,
+  calculateFireRadiativePower,
+  detectThermalHotspots,
+  buildThermalHotspotTileUrl
 } from '../config/constants.js';
 
 /**
@@ -1476,6 +1508,75 @@ const demoAdapter = async (config) => {
           registered_at: new Date().toISOString()
         }
       ];
+      else if (url.includes('/api/v1/analysis/timeseries/mann-kendall') || url.includes('/api/v1/analysis/mann-kendall')) data = {
+        metric_name: 'ndvi',
+        sample_size: 24,
+        s_statistic: -84.0,
+        variance_s: 1610.0,
+        z_score: -2.0686,
+        p_value: 0.038584,
+        kendall_tau: -0.3043,
+        sens_slope: -0.0042,
+        annual_change_rate: -0.0504,
+        direction: 'decreasing',
+        significance_tier: 'significant',
+        is_significant: true,
+        evaluated_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/atmospheric/dos1') || url.includes('/api/v1/analysis/dos1')) data = {
+        item_id: 'S2A_MSIL2A_20260820T184211',
+        model_applied: 'dos1',
+        sun_zenith_deg: 35.0,
+        earth_sun_distance_au: 1.0,
+        band_haze_values: { blue: 0.042, green: 0.028, red: 0.019, nir: 0.008, swir1: 0.004, swir2: 0.002 },
+        mean_surface_reflectance: { blue: 0.038, green: 0.052, red: 0.041, nir: 0.320, swir1: 0.142, swir2: 0.081 },
+        atmospheric_transmittance: 1.0,
+        corrected_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/change/cva') || url.includes('/api/v1/analysis/cva')) data = {
+        pre_scene_id: 'S2A_MSIL2A_20250815',
+        post_scene_id: 'S2A_MSIL2A_20260820',
+        mean_magnitude: 0.245,
+        max_magnitude: 0.682,
+        magnitude_threshold: 0.15,
+        changed_area_hectares: 184.5,
+        changed_area_pct: 28.4,
+        magnitude_tier: 'moderate_change',
+        sector_breakdown: { vegetation_growth: 12.4, soil_drying: 45.2, water_inundation: 8.6, defoliation_burn: 33.8 },
+        tile_url_template: '/api/v1/tiles/change/cva/S2A_MSIL2A_20250815/S2A_MSIL2A_20260820/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/soil/salinity') || url.includes('/api/v1/analysis/salinity')) data = {
+        item_id: 'S2A_MSIL2A_20260820T184211',
+        index_type: 'ndsi',
+        mean_salinity_index: 0.112,
+        saline_area_hectares: 86.4,
+        saline_area_pct: 18.2,
+        primary_hazard_tier: 'moderately_saline',
+        hazard_tiers: [
+          { tier: 'non_saline', label: 'Non-Saline (< 2 dS/m)', percentage: 62.4, hectares: 296.0 },
+          { tier: 'slightly_saline', label: 'Slightly Saline (2-4 dS/m)', percentage: 19.4, hectares: 92.0 },
+          { tier: 'moderately_saline', label: 'Moderately Saline (4-8 dS/m)', percentage: 12.2, hectares: 57.9 },
+          { tier: 'strongly_saline', label: 'Strongly Saline (8-16 dS/m)', percentage: 4.8, hectares: 22.8 },
+          { tier: 'extremely_saline', label: 'Extremely Saline (>= 16 dS/m)', percentage: 1.2, hectares: 5.7 }
+        ],
+        tile_url_template: '/api/v1/tiles/soil/salinity/sentinel-2-l2a/S2A_MSIL2A_20260820T184211/ndsi/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/thermal/hotspots') || url.includes('/api/v1/analysis/hotspots')) data = {
+        item_id: 'LC09_L2SP_043034_20260820',
+        total_hotspots_detected: 8,
+        total_frp_mw: 142.8,
+        mean_frp_mw: 17.85,
+        max_brightness_temp_k: 368.5,
+        high_confidence_count: 6,
+        hotspots: [
+          { lat: 37.058, lng: -121.074, t_mir_k: 368.5, t_tir_k: 312.4, delta_t_k: 56.1, frp_mw: 42.5, confidence: 'high' },
+          { lat: 37.062, lng: -121.070, t_mir_k: 345.2, t_tir_k: 310.8, delta_t_k: 34.4, frp_mw: 28.1, confidence: 'high' }
+        ],
+        tile_url_template: '/api/v1/tiles/thermal/hotspots/landsat-c2-l2/LC09_L2SP_043034_20260820/{z}/{x}/{y}.png',
+        detected_at: new Date().toISOString()
+      };
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
@@ -2785,7 +2886,389 @@ export const requestBapComposite = async (params) => {
   return response.data;
 };
 
+/**
+ * @typedef {Object} CoRegistrationRequest
+ * @property {string} reference_scene_id - Master reference scene ID
+ * @property {string} target_scene_id - Slave scene ID to align
+ * @property {number} [window_size_px=256] - Window size in pixels
+ * @property {number} [grid_spacing_px=128] - Grid spacing in pixels
+ * @property {'nearest'|'bilinear'|'cubic'|'cubicspline'|'lanczos'|'average'} [resampling_kernel='cubic'] - Resampling kernel
+ * @property {number} [max_shift_px=15.0] - Maximum allowable shift
+ * @property {number} [coherence_min=0.40] - Minimum coherence threshold
+ * @property {Object} [bbox] - Spatial bounding box
+ */
+
+/**
+ * @typedef {Object} CoRegistrationResponse
+ * @property {string} reference_scene_id - Master reference scene ID
+ * @property {string} target_scene_id - Slave target scene ID
+ * @property {'converged'|'failed'|'low_coherence'|'sub_pixel_aligned'} status - Convergence status
+ * @property {number} shift_x_px - Shift in X in pixels
+ * @property {number} shift_y_px - Shift in Y in pixels
+ * @property {number} shift_x_m - Shift in X in meters
+ * @property {number} shift_y_m - Shift in Y in meters
+ * @property {number} total_shift_m - Euclidean shift magnitude in meters
+ * @property {number} rmse_px - Residual RMSE in pixels
+ * @property {number} valid_tie_points - Valid tie point count
+ * @property {string} resampling_applied - Applied resampling kernel
+ * @property {string} aligned_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} PointFilterRequest
+ * @property {string} point_cloud_id - Point cloud identifier
+ * @property {'las'|'laz'|'copc'|'ept'} [format='copc'] - Format
+ * @property {Object} [filter_params] - Morphological filter parameters
+ * @property {Object} [bbox] - Spatial bounds
+ */
+
+/**
+ * @typedef {Object} PointFilterResponse
+ * @property {string} point_cloud_id - Point cloud ID
+ * @property {number} total_points - Total point count
+ * @property {number} ground_points - Ground point count
+ * @property {number} non_ground_points - Non-ground point count
+ * @property {number} ground_ratio_pct - Ground point percentage
+ * @property {number} dtm_resolution_m - DTM grid resolution in meters
+ * @property {string} classified_copc_url - Streaming COPC URL
+ * @property {string} processed_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} CHMAnalysisRequest
+ * @property {string} asset_id - Asset identifier
+ * @property {string} dsm_item_id - DSM item ID
+ * @property {string} dtm_item_id - DTM item ID
+ * @property {number} [grid_resolution_m=1.0] - Cell size in meters
+ * @property {Object} [bbox] - Spatial bounds
+ */
+
+/**
+ * @typedef {Object} CHMAnalysisResponse
+ * @property {string} asset_id - Asset ID
+ * @property {number} mean_height_m - Mean height in meters
+ * @property {number} max_height_m - Max height in meters
+ * @property {number} vegetation_area_ha - Tall vegetation area in ha
+ * @property {number} infrastructure_encroachment_ha - Encroachment area in ha
+ * @property {Record<string, number>} height_percentiles - Height percentiles
+ * @property {string} tile_url_template - Tile template URL
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} OcclusionMaskRequest
+ * @property {string} ortho_id - Orthomosaic ID
+ * @property {string} dsm_id - DSM ID
+ * @property {number} [sun_zenith_deg=35.0] - Sun zenith angle
+ * @property {number} [sun_azimuth_deg=135.0] - Sun azimuth angle
+ * @property {number} [sensor_off_nadir_deg=5.0] - Sensor off-nadir angle
+ * @property {Object} [bbox] - Spatial bounds
+ */
+
+/**
+ * @typedef {Object} OcclusionMaskResponse
+ * @property {string} ortho_id - Orthomosaic ID
+ * @property {number} occluded_pixel_count - Blind pixel count
+ * @property {number} occluded_area_pct - Occluded percentage
+ * @property {boolean} true_ortho_ready - True ortho readiness
+ * @property {string} evaluated_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} SeamlineOptimizationRequest
+ * @property {Array<string>} granule_ids - Overlapping granule IDs
+ * @property {'voronoi'|'dijkstra_shortest'|'graph_cut_energy'|'minimum_error_boundary'} [algorithm='graph_cut_energy'] - Algorithm
+ * @property {'feather'|'multi_band_pyramid'|'no_blending'} [blending_mode='multi_band_pyramid'] - Blending mode
+ * @property {number} [feather_buffer_px=15] - Feather buffer width in pixels
+ * @property {Object} [bbox] - Spatial bounds
+ */
+
+/**
+ * @typedef {Object} SeamlineOptimizationResponse
+ * @property {string} mosaic_id - Mosaic ID
+ * @property {number} seamline_count - Seamline count
+ * @property {number} total_seamline_length_m - Total seamline length in meters
+ * @property {string} algorithm_applied - Applied algorithm
+ * @property {number} mean_radiometric_gradient_difference - Mean gradient energy
+ * @property {string} tile_url_template - Tile template URL
+ * @property {string} generated_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} BYOCBucketRegistrationRequest
+ * @property {string} bucket_name - Bucket name
+ * @property {'aws_s3'|'gcs'|'azure_blob'} [provider='aws_s3'] - Cloud provider
+ * @property {string} [region='us-west-2'] - Cloud region
+ * @property {string} [prefix] - Folder prefix
+ * @property {string} [credentials_role_arn] - IAM role ARN
+ * @property {string} display_name - Display label
+ * @property {boolean} [is_public=false] - Public accessibility flag
+ */
+
+/**
+ * @typedef {Object} BYOCBucketRegistrationResponse
+ * @property {string} bucket_id - Bucket ID
+ * @property {string} bucket_name - Bucket name
+ * @property {string} provider - Cloud provider
+ * @property {'connected'|'syncing'|'ready'|'access_denied'|'error'} status - Status
+ * @property {string} registered_at - ISO 8601 timestamp
+ */
+
+/**
+ * Executes automated sub-pixel geometric co-registration using Fourier phase correlation.
+ * 
+ * @param {CoRegistrationRequest} params - Co-registration parameters
+ * @returns {Promise<CoRegistrationResponse>} Shift displacement and RMSE metrics
+ */
+export const requestCoRegistrationAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geometric/coregistration', params);
+  return response.data;
+};
+
+/**
+ * Classifies bare-earth ground points from 3D LiDAR/photogrammetric point clouds.
+ * 
+ * @param {PointFilterRequest} params - Point filter parameters
+ * @returns {Promise<PointFilterResponse>} Classification statistics and COPC URL
+ */
+export const filterPointCloudGround = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/point-cloud/filter', params);
+  return response.data;
+};
+
+/**
+ * Calculates Canopy Height Model (CHM = DSM - DTM) and vegetation encroachment.
+ * 
+ * @param {CHMAnalysisRequest} params - CHM analysis parameters
+ * @returns {Promise<CHMAnalysisResponse>} Height percentiles and streaming tile template
+ */
+export const calculateCanopyHeightModel = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/point-cloud/chm', params);
+  return response.data;
+};
+
+/**
+ * Evaluates visibility and occlusion blind spots for true orthorectification.
+ * 
+ * @param {OcclusionMaskRequest} params - Occlusion mask parameters
+ * @returns {Promise<OcclusionMaskResponse>} Occlusion area percentage and readiness flag
+ */
+export const evaluateOrthorectificationOcclusion = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/ortho/occlusion', params);
+  return response.data;
+};
+
+/**
+ * Discovers and optimizes seamless mosaic cutlines via graph-cut energy minimization.
+ * 
+ * @param {SeamlineOptimizationRequest} params - Seamline parameters
+ * @returns {Promise<SeamlineOptimizationResponse>} Optimized seamlines and tile template
+ */
+export const optimizeMosaicSeamlines = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/ortho/seamlines', params);
+  return response.data;
+};
+
+/**
+ * Connects an external AWS S3, GCS, or Azure Blob bucket containing Cloud-Optimized GeoTIFFs.
+ * 
+ * @param {BYOCBucketRegistrationRequest} params - Bucket registration parameters
+ * @returns {Promise<BYOCBucketRegistrationResponse>} Registered bucket record
+ */
+export const registerByocBucket = async (params) => {
+  const response = await giosApi.post('/api/v1/byoc/buckets', params);
+  return response.data;
+};
+
+/**
+ * Fetches the list of registered Bring Your Own COG cloud storage buckets.
+ * 
+ * @param {Object} [params={}] - Optional query filters
+ * @returns {Promise<Array<Object>>} Registered BYOC buckets
+ */
+export const fetchByocBuckets = async (params = {}) => {
+  const response = await giosApi.get('/api/v1/byoc/buckets', { params });
+  return response.data;
+};
+
+/**
+ * Triggers a catalog synchronization scan across an external BYOC storage bucket.
+ * 
+ * @param {string} bucketId - Bucket ID
+ * @returns {Promise<Object>} Discovered and indexed COG assets
+ */
+export const syncByocBucketCatalog = async (bucketId) => {
+  const response = await giosApi.post(`/api/v1/byoc/buckets/${bucketId}/sync`);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} MannKendallAnalysisRequest
+ * @property {Array<number>} values - Chronological time-series observation values
+ * @property {Array<string>} [dates] - Optional ISO 8601 acquisition dates
+ * @property {string} [metric_name='ndvi'] - Name of environmental metric
+ * @property {number} [alpha=0.05] - Significance hypothesis test alpha level
+ */
+
+/**
+ * @typedef {Object} MannKendallAnalysisResponse
+ * @property {number} sample_size - Count of valid observations
+ * @property {number} s_statistic - Mann-Kendall S statistic
+ * @property {number} variance_s - Theoretical variance Var(S) with tie correction
+ * @property {number} z_score - Standardized Z_MK score
+ * @property {number} p_value - Two-tailed asymptotic p-value
+ * @property {number} kendall_tau - Kendall rank correlation coefficient
+ * @property {number} sens_slope - Sen's non-parametric median slope per timestep
+ * @property {number} annual_change_rate - Estimated annualized change rate
+ * @property {'increasing'|'decreasing'|'stable'} direction - Trend trajectory
+ * @property {'not_significant'|'weakly_significant'|'significant'|'highly_significant'} significance_tier - Statistical significance tier
+ * @property {boolean} is_significant - Whether p_value <= alpha
+ */
+
+/**
+ * Executes non-parametric Mann-Kendall trend test and Sen's slope evaluation over time series.
+ * 
+ * @param {MannKendallAnalysisRequest} params - Mann-Kendall request parameters
+ * @returns {Promise<MannKendallAnalysisResponse>} Test statistics (S, Var(S), Z, p-value, Sen's slope, significance)
+ */
+export const analyzeMannKendallTrend = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/timeseries/mann-kendall', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} DOS1CorrectionRequest
+ * @property {string} collection - Satellite collection identifier
+ * @property {string} item_id - STAC Item ID
+ * @property {Object} bands_dn - Map of band names to raw digital numbers
+ * @property {number} [sun_elevation_deg=45.0] - Sun elevation angle in degrees
+ * @property {number} [earth_sun_distance_au=1.0] - Earth-Sun distance in AU
+ * @property {'dos1'|'dos2'|'dos3'|'dos4'|'apparent_reflectance'} [model='dos1'] - Atmospheric correction model
+ */
+
+/**
+ * @typedef {Object} DOS1CorrectionResponse
+ * @property {string} item_id - Target scene STAC ID
+ * @property {string} model - Applied correction model
+ * @property {number} sun_zenith_deg - Solar zenith angle in degrees
+ * @property {Object} haze_path_radiance - Estimated dark-object path radiance per band
+ * @property {Object} surface_reflectance - Calibrated Bottom-of-Atmosphere (BOA) surface reflectance
+ * @property {string} processed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Executes Chavez (1988) Dark Object Subtraction (DOS1) atmospheric correction on satellite scene.
+ * 
+ * @param {DOS1CorrectionRequest} params - DOS1 request parameters
+ * @returns {Promise<DOS1CorrectionResponse>} Atmospheric haze path radiance and BOA surface reflectance
+ */
+export const executeDos1Correction = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/atmospheric/dos1', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} CVAAnalysisRequest
+ * @property {string} pre_scene_id - Pre-event baseline STAC item ID
+ * @property {string} post_scene_id - Post-event comparison STAC item ID
+ * @property {Object} pre_bands - Pre-event surface reflectance values
+ * @property {Object} post_bands - Post-event surface reflectance values
+ * @property {number} [change_threshold=0.15] - Euclidean change magnitude cutoff
+ */
+
+/**
+ * @typedef {Object} CVAAnalysisResponse
+ * @property {string} pre_scene_id - Baseline scene ID
+ * @property {string} post_scene_id - Comparison scene ID
+ * @property {number} magnitude - Euclidean spectral change magnitude ||ΔR||
+ * @property {number} direction_deg - Change trajectory vector angle in degrees
+ * @property {number} delta_red - Change in red band reflectance
+ * @property {number} delta_nir - Change in NIR band reflectance
+ * @property {'soil_drying'|'vegetation_growth'|'water_inundation'|'defoliation_burn'} sector - Spectral quadrant sector
+ * @property {'no_change'|'low_change'|'moderate_change'|'significant_change'|'extreme_change'} magnitude_tier - Change magnitude tier
+ * @property {boolean} is_significant_change - Whether magnitude exceeds threshold
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ */
+
+/**
+ * Evaluates multi-spectral Change Vector Analysis (CVA) Euclidean magnitude and direction angles.
+ * 
+ * @param {CVAAnalysisRequest} params - CVA request parameters
+ * @returns {Promise<CVAAnalysisResponse>} CVA change magnitude, affected area, and sector distribution
+ */
+export const analyzeChangeVector = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/change/cva', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} SoilSalinityAnalysisRequest
+ * @property {string} collection - Satellite collection identifier
+ * @property {string} item_id - Target scene STAC ID
+ * @property {number} blue - Blue band surface reflectance
+ * @property {number} green - Green band surface reflectance
+ * @property {number} red - Red band surface reflectance
+ * @property {number} nir - NIR band surface reflectance
+ */
+
+/**
+ * @typedef {Object} SoilSalinityAnalysisResponse
+ * @property {string} item_id - Target scene STAC ID
+ * @property {Object} indices - Computed salinity indices (ndsi, si1, si2, crsi)
+ * @property {'non_saline'|'slightly_saline'|'moderately_saline'|'strongly_saline'|'extremely_saline'} hazard_tier - Agricultural salinity hazard tier
+ * @property {string} hazard_label - Descriptive hazard label with ECe guidelines
+ * @property {string} hazard_color - Hex color representation
+ * @property {string} badge_class - Tailwind badge styling classes
+ * @property {boolean} is_degraded - Whether soil exceeds degradation threshold (NDSI >= 0.0)
+ * @property {string} tile_url_template - Dynamic XYZ tile URL template
+ */
+
+/**
+ * Computes biophysical soil salinity indices (NDSI, SI-1, SI-2, CRSI) and land degradation hazard tiers.
+ * 
+ * @param {SoilSalinityAnalysisRequest} params - Soil salinity request parameters
+ * @returns {Promise<SoilSalinityAnalysisResponse>} Salinity index distribution and agricultural hazard breakdown
+ */
+export const analyzeSoilSalinity = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/soil/salinity', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} ThermalHotspotRequest
+ * @property {string} [collection='landsat-c2-l2'] - Satellite collection
+ * @property {string} item_id - Target scene STAC identifier
+ * @property {Array<number>|Object} bbox - Target bounding box or GeoJSON geometry
+ * @property {number} [min_temperature_k=310.0] - Minimum MIR brightness temperature cutoff in K
+ * @property {number} [min_delta_t_k=10.0] - Minimum MIR - TIR temperature differential in K
+ */
+
+/**
+ * @typedef {Object} ThermalHotspotResponse
+ * @property {string} item_id - Target scene ID
+ * @property {number} total_hotspots_detected - Total count of active thermal anomalies
+ * @property {number} total_frp_mw - Total integrated Fire Radiative Power in Megawatts
+ * @property {number} mean_frp_mw - Mean FRP per hotspot in Megawatts
+ * @property {number} max_brightness_temp_k - Maximum detected MIR brightness temperature in Kelvin
+ * @property {number} high_confidence_count - Number of hotspots rated as high confidence
+ * @property {Array<Object>} hotspots - Georeferenced thermal hotspot anomalies
+ * @property {string} tile_url_template - Dynamic XYZ tile URL pattern
+ * @property {string} detected_at - ISO 8601 timestamp
+ */
+
+/**
+ * Discovers active thermal fire hotspots and estimates Fire Radiative Power (FRP) in Megawatts.
+ * 
+ * @param {ThermalHotspotRequest} params - Thermal hotspot request parameters
+ * @returns {Promise<ThermalHotspotResponse>} Hotspot anomalies list, total FRP, and maximum temperature
+ */
+export const detectThermalHotspotsAnalysis = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/thermal/hotspots', params);
+  return response.data;
+};
+
 export default giosApi;
+
 
 
 

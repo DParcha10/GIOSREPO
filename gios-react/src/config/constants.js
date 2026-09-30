@@ -798,7 +798,20 @@ export const API_ENDPOINTS = {
   BYOC_BUCKETS: '/api/v1/byoc/buckets',
   BYOC_BUCKET_DETAIL: (bucketId) => `/api/v1/byoc/buckets/${bucketId}`,
   BYOC_BUCKET_SYNC: (bucketId) => `/api/v1/byoc/buckets/${bucketId}/sync`,
-  TILES_BYOC: (bucketId, itemId, z, x, y) => `/api/v1/tiles/byoc/${bucketId}/${itemId}/${z}/${x}/${y}.png`
+  TILES_BYOC: (bucketId, itemId, z, x, y) => `/api/v1/tiles/byoc/${bucketId}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_MANN_KENDALL: '/api/v1/analysis/timeseries/mann-kendall',
+  ANALYSIS_MANN_KENDALL_SHORT: '/analysis/timeseries/mann-kendall',
+  ANALYSIS_ATMOSPHERIC_DOS1: '/api/v1/analysis/atmospheric/dos1',
+  ANALYSIS_ATMOSPHERIC_DOS1_SHORT: '/analysis/atmospheric/dos1',
+  ANALYSIS_CVA: '/api/v1/analysis/change/cva',
+  ANALYSIS_CVA_SHORT: '/analysis/change/cva',
+  TILES_CVA: (preSceneId, postSceneId, z, x, y) => `/api/v1/tiles/change/cva/${preSceneId}/${postSceneId}/${z}/${x}/${y}.png`,
+  ANALYSIS_SOIL_SALINITY: '/api/v1/analysis/soil/salinity',
+  ANALYSIS_SOIL_SALINITY_SHORT: '/analysis/soil/salinity',
+  TILES_SOIL_SALINITY: (collection, itemId, metric, z, x, y) => `/api/v1/tiles/soil/salinity/${collection}/${itemId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_THERMAL_HOTSPOTS: '/api/v1/analysis/thermal/hotspots',
+  ANALYSIS_THERMAL_HOTSPOTS_SHORT: '/analysis/thermal/hotspots',
+  TILES_THERMAL_HOTSPOTS: (collection, itemId, z, x, y) => `/api/v1/tiles/thermal/hotspots/${collection}/${itemId}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -878,6 +891,12 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.bucketId || params.bucket_id || 'bucket-01');
       case 'TILES_BYOC':
         return endpoint(params.bucketId || params.bucket_id || 'bucket-01', params.itemId || params.item_id || 'item-01', params.z, params.x, params.y);
+      case 'TILES_CVA':
+        return endpoint(params.preSceneId || params.pre_scene_id || 'PRE-01', params.postSceneId || params.post_scene_id || 'POST-01', params.z, params.x, params.y);
+      case 'TILES_SOIL_SALINITY':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'item-01', params.metric || 'ndsi', params.z, params.x, params.y);
+      case 'TILES_THERMAL_HOTSPOTS':
+        return endpoint(params.collection || 'landsat-c2-l2', params.itemId || params.item_id || 'item-01', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -3217,6 +3236,8 @@ export const LST_CALCULATION_METHODS = {
   MONO_WINDOW: 'mono_window'
 };
 
+export const LST_CALCULATION_MODELS = LST_CALCULATION_METHODS;
+
 export const calculateFractionalVegetationCover = (ndvi, ndviSoil = 0.05, ndviVeg = 0.70) => {
   const n = Number(ndvi);
   if (n <= ndviSoil) return 0.0;
@@ -3565,6 +3586,442 @@ export const buildByocTileUrl = (bucketId, itemId, z, x, y, options = {}) => {
   }
   return url;
 };
+
+// ============================================================================
+// T-82: NON-PARAMETRIC MANN-KENDALL TREND & SEN'S SLOPE ANALYSIS
+// ============================================================================
+
+export const TREND_SIGNIFICANCE_TIERS = {
+  NOT_SIGNIFICANT: 'not_significant',
+  WEAKLY_SIGNIFICANT: 'weakly_significant',
+  SIGNIFICANT: 'significant',
+  HIGHLY_SIGNIFICANT: 'highly_significant'
+};
+
+export const TREND_DIRECTIONS = {
+  INCREASING: 'increasing',
+  DECREASING: 'decreasing',
+  STABLE: 'stable'
+};
+
+/**
+ * Calculates non-parametric Mann-Kendall trend statistic (S, Var(S), Z, p-value) and Sen's slope.
+ * 
+ * @param {Array<number>} values - Chronological time series values
+ * @param {Object} [options={}] - Options (alpha)
+ * @returns {Object} Mann-Kendall evaluation summary
+ */
+export const calculateMannKendallTrend = (values, options = {}) => {
+  const alpha = options.alpha ?? 0.05;
+  if (!Array.isArray(values)) {
+    return {
+      sample_size: 0,
+      s_statistic: 0,
+      variance_s: 1.0,
+      z_score: 0,
+      p_value: 1.0,
+      kendall_tau: 0,
+      sens_slope: 0,
+      annual_change_rate: 0,
+      direction: TREND_DIRECTIONS.STABLE,
+      significance_tier: TREND_SIGNIFICANCE_TIERS.NOT_SIGNIFICANT,
+      is_significant: false
+    };
+  }
+
+  const cleanVals = values
+    .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
+    .map(Number);
+  const n = cleanVals.length;
+
+  if (n < 3) {
+    return {
+      sample_size: n,
+      s_statistic: 0,
+      variance_s: 1.0,
+      z_score: 0,
+      p_value: 1.0,
+      kendall_tau: 0,
+      sens_slope: 0,
+      annual_change_rate: 0,
+      direction: TREND_DIRECTIONS.STABLE,
+      significance_tier: TREND_SIGNIFICANCE_TIERS.NOT_SIGNIFICANT,
+      is_significant: false
+    };
+  }
+
+  let s = 0;
+  const pairwiseSlopes = [];
+  for (let k = 0; k < n - 1; k++) {
+    for (let j = k + 1; j < n; j++) {
+      const diff = cleanVals[j] - cleanVals[k];
+      if (diff > 0) s += 1;
+      else if (diff < 0) s -= 1;
+      const dx = j - k;
+      if (dx > 0) {
+        pairwiseSlopes.push(diff / dx);
+      }
+    }
+  }
+
+  const valCounts = {};
+  for (const v of cleanVals) {
+    valCounts[v] = (valCounts[v] || 0) + 1;
+  }
+  let tieTerm = 0;
+  for (const cnt of Object.values(valCounts)) {
+    if (cnt > 1) {
+      tieTerm += cnt * (cnt - 1) * (2 * cnt + 5);
+    }
+  }
+
+  let varS = (n * (n - 1) * (2 * n + 5) - tieTerm) / 18.0;
+  varS = Math.max(varS, 1e-6);
+
+  let z = 0;
+  if (s > 0) {
+    z = (s - 1.0) / Math.sqrt(varS);
+  } else if (s < 0) {
+    z = (s + 1.0) / Math.sqrt(varS);
+  }
+
+  const absZ = Math.abs(z);
+  const t = 1.0 / (1.0 + 0.3275911 * (absZ / Math.SQRT2));
+  const poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t;
+  const erfVal = 1.0 - poly * Math.exp(-0.5 * absZ * absZ);
+  let pVal = 1.0 - erfVal;
+  pVal = Math.max(0.0, Math.min(1.0, pVal));
+
+  const totalPairs = (n * (n - 1)) / 2.0;
+  const tau = totalPairs > 0 ? s / totalPairs : 0.0;
+
+  let sensSlope = 0;
+  if (pairwiseSlopes.length > 0) {
+    pairwiseSlopes.sort((a, b) => a - b);
+    const mid = Math.floor(pairwiseSlopes.length / 2);
+    sensSlope = pairwiseSlopes.length % 2 === 1
+      ? pairwiseSlopes[mid]
+      : (pairwiseSlopes[mid - 1] + pairwiseSlopes[mid]) / 2.0;
+  }
+
+  const annualRate = sensSlope * 12.0;
+  const isSig = pVal <= alpha;
+  let direction = TREND_DIRECTIONS.STABLE;
+  if (isSig) {
+    direction = s > 0 ? TREND_DIRECTIONS.INCREASING : TREND_DIRECTIONS.DECREASING;
+  }
+
+  let tier = TREND_SIGNIFICANCE_TIERS.NOT_SIGNIFICANT;
+  if (pVal < 0.01) {
+    tier = TREND_SIGNIFICANCE_TIERS.HIGHLY_SIGNIFICANT;
+  } else if (pVal < 0.05) {
+    tier = TREND_SIGNIFICANCE_TIERS.SIGNIFICANT;
+  } else if (pVal < 0.10) {
+    tier = TREND_SIGNIFICANCE_TIERS.WEAKLY_SIGNIFICANT;
+  }
+
+  return {
+    sample_size: n,
+    s_statistic: s,
+    variance_s: Number(varS.toFixed(4)),
+    z_score: Number(z.toFixed(4)),
+    p_value: Number(pVal.toFixed(6)),
+    kendall_tau: Number(tau.toFixed(4)),
+    sens_slope: Number(sensSlope.toFixed(6)),
+    annual_change_rate: Number(annualRate.toFixed(4)),
+    direction,
+    significance_tier: tier,
+    is_significant: isSig
+  };
+};
+
+// ============================================================================
+// T-82: ATMOSPHERIC CORRECTION & DARK OBJECT SUBTRACTION (DOS1)
+// ============================================================================
+
+export const ATMOSPHERIC_CORRECTION_MODELS = {
+  DOS1: 'dos1',
+  DOS2: 'dos2',
+  DOS3: 'dos3',
+  DOS4: 'dos4',
+  APPARENT_REFLECTANCE: 'apparent_reflectance'
+};
+
+export const calculateDos1SurfaceReflectance = (
+  radiance,
+  pathRadiance,
+  solarZenithDeg,
+  options = {}
+) => {
+  const rad = Math.max(0.0, Number(radiance));
+  const haze = Math.max(0.0, Number(pathRadiance));
+  const zenithRad = (Number(solarZenithDeg) * Math.PI) / 180.0;
+  const cosZenith = Math.cos(zenithRad);
+  const esun = options.esun ?? 1969.0;
+  const earthSunDistAu = options.earthSunDistAu ?? 1.0;
+  const tauV = options.tauV ?? 1.0;
+
+  if (cosZenith <= 0.001 || esun <= 0.0 || tauV <= 0.0) {
+    return 0.0;
+  }
+
+  const netRad = Math.max(0.0, rad - haze);
+  const d2 = earthSunDistAu * earthSunDistAu;
+  const numerator = Math.PI * netRad * d2;
+  const denominator = esun * cosZenith * tauV;
+
+  const rho = denominator > 0 ? numerator / denominator : 0.0;
+  return Number(Math.max(0.0, Math.min(1.0, rho)).toFixed(4));
+};
+
+// ============================================================================
+// T-82: MULTI-SPECTRAL CHANGE VECTOR ANALYSIS (CVA)
+// ============================================================================
+
+export const CVA_MAGNITUDE_TIERS = {
+  NO_CHANGE: 'no_change',
+  LOW_CHANGE: 'low_change',
+  MODERATE_CHANGE: 'moderate_change',
+  SIGNIFICANT_CHANGE: 'significant_change',
+  EXTREME_CHANGE: 'extreme_change'
+};
+
+export const CVA_DIRECTION_SECTORS = {
+  SOIL_DRYING: 'soil_drying',
+  VEGETATION_GROWTH: 'vegetation_growth',
+  WATER_INUNDATION: 'water_inundation',
+  DEFOLIATION_BURN: 'defoliation_burn'
+};
+
+export const calculateChangeVector = (preBands = {}, postBands = {}) => {
+  const commonBands = Object.keys(preBands).filter((b) => b in postBands);
+  if (commonBands.length === 0) {
+    return {
+      magnitude: 0.0,
+      direction_deg: 0.0,
+      sector: CVA_DIRECTION_SECTORS.SOIL_DRYING,
+      magnitude_tier: CVA_MAGNITUDE_TIERS.NO_CHANGE
+    };
+  }
+
+  let sumSq = 0.0;
+  for (const b of commonBands) {
+    const diff = Number(postBands[b]) - Number(preBands[b]);
+    sumSq += diff * diff;
+  }
+  const mag = Math.sqrt(sumSq);
+
+  const dRed = Number(postBands.red || 0) - Number(preBands.red || 0);
+  const dNir = Number(postBands.nir || 0) - Number(preBands.nir || 0);
+  const angleRad = Math.atan2(dNir, dRed);
+  const angleDeg = (angleRad * 180.0) / Math.PI;
+
+  let sector = CVA_DIRECTION_SECTORS.SOIL_DRYING;
+  if (dRed >= 0.0 && dNir >= 0.0) {
+    sector = CVA_DIRECTION_SECTORS.SOIL_DRYING;
+  } else if (dRed < 0.0 && dNir >= 0.0) {
+    sector = CVA_DIRECTION_SECTORS.VEGETATION_GROWTH;
+  } else if (dRed < 0.0 && dNir < 0.0) {
+    sector = CVA_DIRECTION_SECTORS.WATER_INUNDATION;
+  } else {
+    sector = CVA_DIRECTION_SECTORS.DEFOLIATION_BURN;
+  }
+
+  let tier = CVA_MAGNITUDE_TIERS.NO_CHANGE;
+  if (mag < 0.05) tier = CVA_MAGNITUDE_TIERS.NO_CHANGE;
+  else if (mag < 0.15) tier = CVA_MAGNITUDE_TIERS.LOW_CHANGE;
+  else if (mag < 0.30) tier = CVA_MAGNITUDE_TIERS.MODERATE_CHANGE;
+  else if (mag < 0.50) tier = CVA_MAGNITUDE_TIERS.SIGNIFICANT_CHANGE;
+  else tier = CVA_MAGNITUDE_TIERS.EXTREME_CHANGE;
+
+  return {
+    magnitude: Number(mag.toFixed(4)),
+    direction_deg: Number(angleDeg.toFixed(2)),
+    delta_red: Number(dRed.toFixed(4)),
+    delta_nir: Number(dNir.toFixed(4)),
+    sector,
+    magnitude_tier: tier
+  };
+};
+
+export const buildCvaTileUrl = (preSceneId, postSceneId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const rescale = options.rescale || '0.0,0.5';
+  const colormap = options.colormap || 'turbo';
+  return `${basePrefix}/tiles/change/cva/${preSceneId}/${postSceneId}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
+// ============================================================================
+// T-82: SOIL SALINITY & LAND DEGRADATION NEUTRALITY (LDN)
+// ============================================================================
+
+export const SALINITY_INDEX_TYPES = {
+  NDSI: 'ndsi',
+  SI1: 'si1',
+  SI2: 'si2',
+  CRSI: 'crsi'
+};
+
+export const SALINITY_HAZARD_TIERS = {
+  NON_SALINE: 'non_saline',
+  SLIGHTLY_SALINE: 'slightly_saline',
+  MODERATELY_SALINE: 'moderately_saline',
+  STRONGLY_SALINE: 'strongly_saline',
+  EXTREMELY_SALINE: 'extremely_saline'
+};
+
+export const calculateSalinityIndices = (blue, green, red, nir) => {
+  const b = Math.max(0.0, Number(blue));
+  const g = Math.max(0.0, Number(green));
+  const r = Math.max(0.0, Number(red));
+  const n = Math.max(0.0, Number(nir));
+
+  const ndsiDenom = r + n + 1e-6;
+  const ndsi = (r - n) / ndsiDenom;
+
+  const si1 = Math.sqrt(Math.max(0.0, g * r));
+  const si2 = Math.sqrt(Math.max(0.0, g * g + r * r + n * n));
+
+  const crsiNum = n * r - g * b;
+  const crsiDenom = n * r + g * b + 1e-6;
+  const crsiRatio = crsiNum / crsiDenom;
+  const crsi = Math.sqrt(Math.max(0.0, crsiRatio));
+
+  return {
+    ndsi: Number(ndsi.toFixed(4)),
+    si1: Number(si1.toFixed(4)),
+    si2: Number(si2.toFixed(4)),
+    crsi: Number(crsi.toFixed(4))
+  };
+};
+
+export const classifySalinityHazard = (ndsiVal) => {
+  const val = Number(ndsiVal);
+  if (val < -0.15) {
+    return {
+      tier: SALINITY_HAZARD_TIERS.NON_SALINE,
+      label: 'Non-Saline (< 2 dS/m)',
+      color: '#2ca25f',
+      badgeClass: 'bg-emerald-950/80 text-emerald-300 border-emerald-800',
+      badge_class: 'bg-emerald-950/80 text-emerald-300 border-emerald-800',
+      is_degraded: false
+    };
+  } else if (val < 0.0) {
+    return {
+      tier: SALINITY_HAZARD_TIERS.SLIGHTLY_SALINE,
+      label: 'Slightly Saline (2-4 dS/m)',
+      color: '#fdbb84',
+      badgeClass: 'bg-yellow-950/80 text-yellow-300 border-yellow-800',
+      badge_class: 'bg-yellow-950/80 text-yellow-300 border-yellow-800',
+      is_degraded: false
+    };
+  } else if (val < 0.15) {
+    return {
+      tier: SALINITY_HAZARD_TIERS.MODERATELY_SALINE,
+      label: 'Moderately Saline (4-8 dS/m)',
+      color: '#fc8d59',
+      badgeClass: 'bg-amber-950/80 text-amber-300 border-amber-800',
+      badge_class: 'bg-amber-950/80 text-amber-300 border-amber-800',
+      is_degraded: true
+    };
+  } else if (val < 0.30) {
+    return {
+      tier: SALINITY_HAZARD_TIERS.STRONGLY_SALINE,
+      label: 'Strongly Saline (8-16 dS/m)',
+      color: '#e34a33',
+      badgeClass: 'bg-orange-950/80 text-orange-300 border-orange-800',
+      badge_class: 'bg-orange-950/80 text-orange-300 border-orange-800',
+      is_degraded: true
+    };
+  } else {
+    return {
+      tier: SALINITY_HAZARD_TIERS.EXTREMELY_SALINE,
+      label: 'Extremely Saline (>= 16 dS/m)',
+      color: '#b30000',
+      badgeClass: 'bg-red-950/80 text-red-300 border-red-800',
+      badge_class: 'bg-red-950/80 text-red-300 border-red-800',
+      is_degraded: true
+    };
+  }
+};
+
+export const buildSalinityTileUrl = (collection, itemId, metric, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const rescale = options.rescale || '-0.3,0.3';
+  const colormap = options.colormap || 'spectral';
+  return `${basePrefix}/tiles/soil/salinity/${collection}/${itemId}/${metric}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
+// ============================================================================
+// T-82: WILDFIRE THERMAL HOTSPOTS & FIRE RADIATIVE POWER (FRP)
+// ============================================================================
+
+export const THERMAL_HOTSPOT_CONFIDENCES = {
+  LOW: 'low',
+  NOMINAL: 'nominal',
+  HIGH: 'high'
+};
+
+export const calculateFireRadiativePower = (tMirK, tBgK, options = {}) => {
+  const tMir = Number(tMirK);
+  const tBg = Number(tBgK);
+  const pixelAreaM2 = options.pixelAreaM2 ?? 900.0;
+  const sensorCoeffA = options.sensorCoeffA ?? 3.0e-9;
+
+  if (tMir <= tBg || tBg <= 0.0 || sensorCoeffA <= 0.0) {
+    return 0.0;
+  }
+
+  const sigma = 5.670374419e-8;
+  const diffT4 = Math.pow(tMir, 4) - Math.pow(tBg, 4);
+  const coeff = (pixelAreaM2 * sigma) / sensorCoeffA;
+  const frpWatts = coeff * diffT4;
+  const frpMw = frpWatts * 1e-6;
+  return Number(Math.max(0.0, frpMw).toFixed(2));
+};
+
+export const detectThermalHotspots = (tMirK, tTirK, tBgK, options = {}) => {
+  const tM = Number(tMirK);
+  const tT = Number(tTirK);
+  const tB = Number(tBgK);
+  const minTempK = options.minTempK ?? 310.0;
+  const minDeltaK = options.minDeltaK ?? 10.0;
+  const pixelAreaM2 = options.pixelAreaM2 ?? 900.0;
+  const deltaT = tM - tT;
+
+  const isHotspot = tM >= minTempK && deltaT >= minDeltaK;
+  if (!isHotspot) {
+    return {
+      is_hotspot: false,
+      delta_t_k: Number(deltaT.toFixed(2)),
+      frp_mw: 0.0,
+      confidence: THERMAL_HOTSPOT_CONFIDENCES.LOW
+    };
+  }
+
+  const frp = calculateFireRadiativePower(tM, tB, { pixelAreaM2 });
+  let conf = THERMAL_HOTSPOT_CONFIDENCES.LOW;
+  if (tM >= 330.0 && deltaT >= 25.0) {
+    conf = THERMAL_HOTSPOT_CONFIDENCES.HIGH;
+  } else if (tM >= 315.0 && deltaT >= 15.0) {
+    conf = THERMAL_HOTSPOT_CONFIDENCES.NOMINAL;
+  }
+
+  return {
+    is_hotspot: true,
+    delta_t_k: Number(deltaT.toFixed(2)),
+    frp_mw: frp,
+    confidence: conf
+  };
+};
+
+export const buildThermalHotspotTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const rescale = options.rescale || '300.0,400.0';
+  const colormap = options.colormap || 'inferno';
+  return `${basePrefix}/tiles/thermal/hotspots/${collection}/${itemId}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
 
 
 

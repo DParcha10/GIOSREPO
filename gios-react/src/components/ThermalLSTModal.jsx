@@ -151,6 +151,7 @@ export default function ThermalLSTModal({
     if (isOpen && !lstResult && !loadingLst) {
       handleExecuteLstTransfer();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const handleCopyUrl = () => {

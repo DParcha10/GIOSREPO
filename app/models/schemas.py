@@ -24,6 +24,7 @@ class SatelliteCollection(str, Enum):
     """Supported satellite and aerial imagery collections."""
     SENTINEL_2 = "sentinel-2-l2a"
     LANDSAT_C2_L2 = "landsat-c2-l2"
+    LANDSAT = "landsat-c2-l2"
     DRONE_ORTHO = "drone-ortho"
     DRONE = "drone"
     WILDFIRE = "wildfire"
@@ -598,6 +599,19 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "byoc_bucket_detail": "/api/v1/byoc/buckets/{bucket_id}",
     "byoc_bucket_sync": "/api/v1/byoc/buckets/{bucket_id}/sync",
     "tiles_byoc": "/api/v1/tiles/byoc/{bucket_id}/{item_id}/{z}/{x}/{y}.png",
+    "analysis_mann_kendall": "/api/v1/analysis/timeseries/mann-kendall",
+    "analysis_mann_kendall_short": "/analysis/timeseries/mann-kendall",
+    "analysis_atmospheric_dos1": "/api/v1/analysis/atmospheric/dos1",
+    "analysis_atmospheric_dos1_short": "/analysis/atmospheric/dos1",
+    "analysis_cva": "/api/v1/analysis/change/cva",
+    "analysis_cva_short": "/analysis/change/cva",
+    "tiles_cva": "/api/v1/tiles/change/cva/{pre_scene_id}/{post_scene_id}/{z}/{x}/{y}.png",
+    "analysis_soil_salinity": "/api/v1/analysis/soil/salinity",
+    "analysis_soil_salinity_short": "/analysis/soil/salinity",
+    "tiles_soil_salinity": "/api/v1/tiles/soil/salinity/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png",
+    "analysis_thermal_hotspots": "/api/v1/analysis/thermal/hotspots",
+    "analysis_thermal_hotspots_short": "/analysis/thermal/hotspots",
+    "tiles_thermal_hotspots": "/api/v1/tiles/thermal/hotspots/{collection}/{item_id}/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -5408,6 +5422,568 @@ def build_byoc_tile_url(
     if params:
         return f"{url}?{'&'.join(params)}"
     return url
+
+
+# ============================================================================
+# T-82: NON-PARAMETRIC MANN-KENDALL TREND & SEN'S SLOPE ANALYSIS SCHEMAS
+# ============================================================================
+
+class TrendSignificanceTier(str, Enum):
+    """Statistical significance classification for non-parametric trend tests."""
+    NOT_SIGNIFICANT = "not_significant"
+    WEAKLY_SIGNIFICANT = "weakly_significant"
+    SIGNIFICANT = "significant"
+    HIGHLY_SIGNIFICANT = "highly_significant"
+
+class TrendDirection(str, Enum):
+    """Directionality of environmental time-series trajectory."""
+    INCREASING = "increasing"
+    DECREASING = "decreasing"
+    STABLE = "stable"
+
+class MannKendallAnalysisRequest(BaseModel):
+    """Request payload for non-parametric Mann-Kendall trend & Sen's slope analysis."""
+    values: List[float] = Field(..., min_length=3, description="Chronological time series observations")
+    dates: Optional[List[str]] = Field(default=None, description="Optional ISO 8601 acquisition dates")
+    metric_name: str = Field(default="ndvi", description="Target biophysical metric name")
+    alpha: float = Field(default=0.05, ge=0.001, le=0.20, description="Significance threshold level (e.g. 0.05 for 95% confidence)")
+
+class MannKendallAnalysisResponse(BaseModel):
+    """Response payload for Mann-Kendall trend detection and Sen's robust slope."""
+    metric_name: str = Field(..., description="Target metric evaluated")
+    sample_size: int = Field(..., description="Number of valid chronological observations evaluated")
+    s_statistic: float = Field(..., description="Mann-Kendall S test statistic sum of sign differences")
+    variance_s: float = Field(..., description="Theoretical variance Var(S) with tie corrections")
+    z_score: float = Field(..., description="Standard normal test statistic Z_MK")
+    p_value: float = Field(..., description="Two-tailed asymptotic p-value")
+    kendall_tau: float = Field(..., description="Kendall rank correlation coefficient tau")
+    sens_slope: float = Field(..., description="Sen's non-parametric median slope estimator per observation")
+    annual_change_rate: float = Field(..., description="Projected annual rate of change (scaled to 12 observations/year)")
+    direction: TrendDirection = Field(..., description="Trend directionality")
+    significance_tier: TrendSignificanceTier = Field(..., description="Significance tier classification")
+    is_significant: bool = Field(..., description="Whether trend is statistically significant at alpha level")
+    evaluated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of evaluation")
+
+def calculate_mann_kendall_trend(
+    values: Sequence[float],
+    dates: Optional[Sequence[str]] = None,
+    alpha: float = 0.05
+) -> Dict[str, Any]:
+    """Calculates non-parametric Mann-Kendall test statistic (S, Var(S), Z, p-value) and Sen's slope."""
+    clean_vals = [float(v) for v in values if v is not None and not math.isnan(float(v))]
+    n = len(clean_vals)
+    if n < 3:
+        return {
+            "sample_size": n,
+            "s_statistic": 0.0,
+            "variance_s": 1.0,
+            "z_score": 0.0,
+            "p_value": 1.0,
+            "kendall_tau": 0.0,
+            "sens_slope": 0.0,
+            "annual_change_rate": 0.0,
+            "direction": TrendDirection.STABLE.value,
+            "significance_tier": TrendSignificanceTier.NOT_SIGNIFICANT.value,
+            "is_significant": False
+        }
+
+    # 1. Mann-Kendall S statistic
+    s = 0
+    pairwise_slopes: List[float] = []
+    for k in range(n - 1):
+        for j in range(k + 1, n):
+            diff = clean_vals[j] - clean_vals[k]
+            if diff > 0:
+                s += 1
+            elif diff < 0:
+                s -= 1
+            dx = float(j - k)
+            if dx > 0:
+                pairwise_slopes.append(diff / dx)
+
+    # 2. Variance of S with tie adjustment
+    val_counts: Dict[float, int] = {}
+    for v in clean_vals:
+        val_counts[v] = val_counts.get(v, 0) + 1
+
+    tie_term = sum(cnt * (cnt - 1) * (2 * cnt + 5) for cnt in val_counts.values() if cnt > 1)
+    var_s = (float(n) * (n - 1) * (2 * n + 5) - float(tie_term)) / 18.0
+    var_s = max(var_s, 1e-6)
+
+    # 3. Standardized Z_MK
+    if s > 0:
+        z = (float(s) - 1.0) / math.sqrt(var_s)
+    elif s < 0:
+        z = (float(s) + 1.0) / math.sqrt(var_s)
+    else:
+        z = 0.0
+
+    # Two-tailed p-value via error function approximation of standard normal CDF
+    p_val = math.erfc(abs(z) / math.sqrt(2.0))
+    p_val = max(0.0, min(1.0, p_val))
+
+    # 4. Kendall Tau
+    total_pairs = float(n * (n - 1)) / 2.0
+    tau = float(s) / total_pairs if total_pairs > 0 else 0.0
+
+    # 5. Sen's robust slope (median of pairwise slopes)
+    if pairwise_slopes:
+        pairwise_slopes.sort()
+        mid = len(pairwise_slopes) // 2
+        if len(pairwise_slopes) % 2 == 1:
+            sens_slope = pairwise_slopes[mid]
+        else:
+            sens_slope = (pairwise_slopes[mid - 1] + pairwise_slopes[mid]) / 2.0
+    else:
+        sens_slope = 0.0
+
+    annual_rate = sens_slope * 12.0
+
+    # 6. Direction and significance tier
+    is_sig = bool(p_val <= alpha)
+    if is_sig:
+        direction = TrendDirection.INCREASING.value if s > 0 else TrendDirection.DECREASING.value
+    else:
+        direction = TrendDirection.STABLE.value
+
+    if p_val < 0.01:
+        tier = TrendSignificanceTier.HIGHLY_SIGNIFICANT.value
+    elif p_val < 0.05:
+        tier = TrendSignificanceTier.SIGNIFICANT.value
+    elif p_val < 0.10:
+        tier = TrendSignificanceTier.WEAKLY_SIGNIFICANT.value
+    else:
+        tier = TrendSignificanceTier.NOT_SIGNIFICANT.value
+
+    return {
+        "sample_size": n,
+        "s_statistic": float(s),
+        "variance_s": round(var_s, 4),
+        "z_score": round(z, 4),
+        "p_value": round(p_val, 6),
+        "kendall_tau": round(tau, 4),
+        "sens_slope": round(sens_slope, 6),
+        "annual_change_rate": round(annual_rate, 4),
+        "direction": direction,
+        "significance_tier": tier,
+        "is_significant": is_sig
+    }
+
+
+# ============================================================================
+# T-82: ATMOSPHERIC CORRECTION & DARK OBJECT SUBTRACTION (DOS1) SCHEMAS
+# ============================================================================
+
+class AtmosphericCorrectionModel(str, Enum):
+    """Atmospheric correction and radiative transfer modeling approaches."""
+    DOS1 = "dos1"
+    DOS2 = "dos2"
+    DOS3 = "dos3"
+    DOS4 = "dos4"
+    APPARENT_REFLECTANCE = "apparent_reflectance"
+
+class DOS1CorrectionRequest(BaseModel):
+    """Request payload for Dark Object Subtraction (DOS1) atmospheric correction."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2, description="Satellite imagery collection")
+    item_id: str = Field(..., description="STAC scene identifier")
+    sun_zenith_deg: float = Field(default=35.0, ge=0.0, le=85.0, description="Solar zenith angle in degrees")
+    earth_sun_distance_au: float = Field(default=1.0, ge=0.95, le=1.05, description="Earth-Sun distance in astronomical units")
+    dark_object_dn_threshold: int = Field(default=100, ge=1, le=2000, description="Upper threshold for identifying dark object shadow/water pixels")
+    bands: List[str] = Field(
+        default_factory=lambda: ["blue", "green", "red", "nir", "swir1", "swir2"],
+        description="Spectral bands to atmospheric correct"
+    )
+
+class DOS1CorrectionResponse(BaseModel):
+    """Response payload acknowledging DOS1 atmospheric correction parameters."""
+    item_id: str = Field(..., description="Target scene ID")
+    model_applied: AtmosphericCorrectionModel = Field(default=AtmosphericCorrectionModel.DOS1, description="Atmospheric correction model")
+    sun_zenith_deg: float = Field(..., description="Sun zenith angle in degrees")
+    earth_sun_distance_au: float = Field(..., description="Earth-Sun distance in AU")
+    band_haze_values: Dict[str, float] = Field(..., description="Estimated atmospheric path radiance (L_haze) per band")
+    mean_surface_reflectance: Dict[str, float] = Field(..., description="Mean Bottom-of-Atmosphere (BOA) surface reflectance")
+    atmospheric_transmittance: float = Field(default=1.0, description="Atmospheric transmittance along view path (tau_v)")
+    corrected_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of atmospheric correction")
+
+def calculate_dos1_surface_reflectance(
+    radiance: float,
+    path_radiance: float,
+    solar_zenith_deg: float,
+    esun: float = 1969.0,
+    earth_sun_dist_au: float = 1.0,
+    tau_v: float = 1.0
+) -> float:
+    """Calculates BOA surface reflectance using Chavez (1988) Dark Object Subtraction 1 (DOS1):
+    rho = (pi * (L_sat - L_haze) * d^2) / (ESUN * cos(theta_s) * tau_v).
+    """
+    rad = max(0.0, float(radiance))
+    haze = max(0.0, float(path_radiance))
+    theta_rad = math.radians(float(solar_zenith_deg))
+    cos_theta = math.cos(theta_rad)
+    if cos_theta <= 0.001 or esun <= 0.0 or tau_v <= 0.0:
+        return 0.0
+
+    net_rad = max(0.0, rad - haze)
+    d2 = float(earth_sun_dist_au) ** 2
+    numerator = math.pi * net_rad * d2
+    denominator = float(esun) * cos_theta * float(tau_v)
+
+    rho = numerator / denominator if denominator > 0 else 0.0
+    return round(max(0.0, min(1.0, rho)), 4)
+
+
+# ============================================================================
+# T-82: MULTI-SPECTRAL CHANGE VECTOR ANALYSIS (CVA) SCHEMAS
+# ============================================================================
+
+class CVAMagnitudeTier(str, Enum):
+    """Categorical classification of change vector Euclidean magnitude."""
+    NO_CHANGE = "no_change"
+    LOW_CHANGE = "low_change"
+    MODERATE_CHANGE = "moderate_change"
+    SIGNIFICANT_CHANGE = "significant_change"
+    EXTREME_CHANGE = "extreme_change"
+
+class CVADirectionSector(str, Enum):
+    """Spectral quadrant/sector indicating ecological transition process."""
+    SOIL_DRYING = "soil_drying"
+    VEGETATION_GROWTH = "vegetation_growth"
+    WATER_INUNDATION = "water_inundation"
+    DEFOLIATION_BURN = "defoliation_burn"
+
+class CVAAnalysisRequest(BaseModel):
+    """Request payload for multi-spectral Change Vector Analysis (CVA)."""
+    bbox: Union[Tuple[float, float, float, float], List[float], str, Dict[str, Any]] = Field(
+        ...,
+        description="Target Area of Interest bounding box or GeoJSON geometry"
+    )
+    pre_scene_id: str = Field(..., description="Baseline pre-event STAC item ID")
+    post_scene_id: str = Field(..., description="Comparison post-event STAC item ID")
+    bands: List[str] = Field(default_factory=lambda: ["red", "nir"], description="Spectral band dimensions for change space")
+    magnitude_threshold: float = Field(default=0.15, ge=0.01, le=1.0, description="Minimum Euclidean magnitude to declare spectral change")
+    aoi_id: Optional[str] = Field(default="AOI-DEFAULT", description="Area of interest identifier")
+
+class CVAAnalysisResponse(BaseModel):
+    """Response payload for Change Vector Analysis."""
+    pre_scene_id: str = Field(..., description="Pre-event scene ID")
+    post_scene_id: str = Field(..., description="Post-event scene ID")
+    mean_magnitude: float = Field(..., description="Mean Euclidean change vector magnitude across AOI")
+    max_magnitude: float = Field(..., description="Maximum detected change vector magnitude")
+    magnitude_threshold: float = Field(..., description="Applied change threshold")
+    changed_area_hectares: float = Field(..., description="Area with magnitude exceeding threshold in hectares")
+    changed_area_pct: float = Field(..., description="Percentage of footprint classified as changed")
+    magnitude_tier: CVAMagnitudeTier = Field(..., description="Overall severity tier of detected spectral change")
+    sector_breakdown: Dict[str, float] = Field(..., description="Percentage distribution across direction sectors")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL pattern for CVA magnitude raster")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of analysis")
+
+def calculate_change_vector(
+    pre_bands: Dict[str, float],
+    post_bands: Dict[str, float]
+) -> Dict[str, Any]:
+    """Calculates multi-spectral change vector Euclidean magnitude and direction angle (e.g. Red vs NIR)."""
+    common_bands = [b for b in pre_bands if b in post_bands]
+    if not common_bands:
+        return {
+            "magnitude": 0.0,
+            "direction_deg": 0.0,
+            "sector": CVADirectionSector.SOIL_DRYING.value,
+            "magnitude_tier": CVAMagnitudeTier.NO_CHANGE.value
+        }
+
+    sum_sq = 0.0
+    for b in common_bands:
+        diff = float(post_bands[b]) - float(pre_bands[b])
+        sum_sq += diff * diff
+    mag = math.sqrt(sum_sq)
+
+    d_red = float(post_bands.get("red", 0.0)) - float(pre_bands.get("red", 0.0))
+    d_nir = float(post_bands.get("nir", 0.0)) - float(pre_bands.get("nir", 0.0))
+    angle_rad = math.atan2(d_nir, d_red)
+    angle_deg = math.degrees(angle_rad)
+
+    if d_red >= 0.0 and d_nir >= 0.0:
+        sector = CVADirectionSector.SOIL_DRYING.value
+    elif d_red < 0.0 and d_nir >= 0.0:
+        sector = CVADirectionSector.VEGETATION_GROWTH.value
+    elif d_red < 0.0 and d_nir < 0.0:
+        sector = CVADirectionSector.WATER_INUNDATION.value
+    else:
+        sector = CVADirectionSector.DEFOLIATION_BURN.value
+
+    if mag < 0.05:
+        tier = CVAMagnitudeTier.NO_CHANGE.value
+    elif mag < 0.15:
+        tier = CVAMagnitudeTier.LOW_CHANGE.value
+    elif mag < 0.30:
+        tier = CVAMagnitudeTier.MODERATE_CHANGE.value
+    elif mag < 0.50:
+        tier = CVAMagnitudeTier.SIGNIFICANT_CHANGE.value
+    else:
+        tier = CVAMagnitudeTier.EXTREME_CHANGE.value
+
+    return {
+        "magnitude": round(mag, 4),
+        "direction_deg": round(angle_deg, 2),
+        "delta_red": round(d_red, 4),
+        "delta_nir": round(d_nir, 4),
+        "sector": sector,
+        "magnitude_tier": tier
+    }
+
+def build_cva_tile_url(
+    pre_scene_id: str,
+    post_scene_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1",
+    rescale: str = "0.0,0.5",
+    colormap: str = "turbo"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Change Vector Analysis magnitude."""
+    return f"{base_prefix}/tiles/change/cva/{pre_scene_id}/{post_scene_id}/{z}/{x}/{y}.png?rescale={rescale}&colormap={colormap}"
+
+
+# ============================================================================
+# T-82: SOIL SALINITY & LAND DEGRADATION NEUTRALITY (LDN) SCHEMAS
+# ============================================================================
+
+class SalinityIndexType(str, Enum):
+    """Biophysical soil salinity indices derived from optical bands."""
+    NDSI = "ndsi"
+    SI1 = "si1"
+    SI2 = "si2"
+    CRSI = "crsi"
+
+class SalinityHazardTier(str, Enum):
+    """Soil salinity hazard classification based on electrical conductivity."""
+    NON_SALINE = "non_saline"
+    SLIGHTLY_SALINE = "slightly_saline"
+    MODERATELY_SALINE = "moderately_saline"
+    STRONGLY_SALINE = "strongly_saline"
+    EXTREMELY_SALINE = "extremely_saline"
+
+class SoilSalinityAnalysisRequest(BaseModel):
+    """Request payload for soil salinity and land degradation mapping."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2, description="Satellite data collection")
+    item_id: str = Field(..., description="STAC scene identifier")
+    bbox: Union[Tuple[float, float, float, float], List[float], str, Dict[str, Any]] = Field(
+        ...,
+        description="Target Area of Interest bounding box or GeoJSON geometry"
+    )
+    index_type: SalinityIndexType = Field(default=SalinityIndexType.NDSI, description="Salinity index to compute")
+
+class SoilSalinityAnalysisResponse(BaseModel):
+    """Response payload for soil salinity hazard evaluation."""
+    item_id: str = Field(..., description="Analyzed scene identifier")
+    index_type: SalinityIndexType = Field(..., description="Evaluated salinity index")
+    mean_salinity_index: float = Field(..., description="Mean index value across AOI")
+    saline_area_hectares: float = Field(..., description="Area exhibiting moderate to extreme salinity in hectares")
+    saline_area_pct: float = Field(..., description="Percentage of footprint affected by salinity")
+    primary_hazard_tier: SalinityHazardTier = Field(..., description="Dominant soil salinity hazard tier")
+    hazard_tiers: List[Dict[str, Any]] = Field(default_factory=list, description="Categorical breakdown of salinity hazard tiers")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL pattern for salinity raster")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of analysis")
+
+def calculate_salinity_indices(
+    blue: float,
+    green: float,
+    red: float,
+    nir: float
+) -> Dict[str, float]:
+    """Calculates standard remote sensing soil salinity indices (NDSI, SI-1, SI-2, CRSI)."""
+    b = max(0.0, float(blue))
+    g = max(0.0, float(green))
+    r = max(0.0, float(red))
+    n = max(0.0, float(nir))
+
+    ndsi_denom = r + n + 1e-6
+    ndsi = (r - n) / ndsi_denom
+
+    si1 = math.sqrt(max(0.0, g * r))
+    si2 = math.sqrt(max(0.0, g * g + r * r + n * n))
+
+    crsi_num = n * r - g * b
+    crsi_denom = n * r + g * b + 1e-6
+    crsi_ratio = crsi_num / crsi_denom
+    crsi = math.sqrt(max(0.0, crsi_ratio))
+
+    return {
+        "ndsi": round(ndsi, 4),
+        "si1": round(si1, 4),
+        "si2": round(si2, 4),
+        "crsi": round(crsi, 4)
+    }
+
+def classify_salinity_hazard(ndsi_val: float) -> Dict[str, Any]:
+    """Classifies soil salinity risk from NDSI value into agricultural hazard tiers."""
+    val = float(ndsi_val)
+    if val < -0.15:
+        tier = SalinityHazardTier.NON_SALINE
+        label = "Non-Saline (< 2 dS/m)"
+        color = "#2ca25f"
+        badge = "bg-emerald-950/80 text-emerald-300 border-emerald-800"
+    elif val < 0.0:
+        tier = SalinityHazardTier.SLIGHTLY_SALINE
+        label = "Slightly Saline (2-4 dS/m)"
+        color = "#fdbb84"
+        badge = "bg-yellow-950/80 text-yellow-300 border-yellow-800"
+    elif val < 0.15:
+        tier = SalinityHazardTier.MODERATELY_SALINE
+        label = "Moderately Saline (4-8 dS/m)"
+        color = "#fc8d59"
+        badge = "bg-amber-950/80 text-amber-300 border-amber-800"
+    elif val < 0.30:
+        tier = SalinityHazardTier.STRONGLY_SALINE
+        label = "Strongly Saline (8-16 dS/m)"
+        color = "#e34a33"
+        badge = "bg-orange-950/80 text-orange-300 border-orange-800"
+    else:
+        tier = SalinityHazardTier.EXTREMELY_SALINE
+        label = "Extremely Saline (>= 16 dS/m)"
+        color = "#b30000"
+        badge = "bg-red-950/80 text-red-300 border-red-800"
+
+    return {
+        "tier": tier.value,
+        "label": label,
+        "color": color,
+        "badge_class": badge,
+        "is_degraded": bool(val >= 0.0)
+    }
+
+def build_salinity_tile_url(
+    collection: str,
+    item_id: str,
+    metric: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1",
+    rescale: str = "-0.3,0.3",
+    colormap: str = "spectral"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for soil salinity maps."""
+    return f"{base_prefix}/tiles/soil/salinity/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png?rescale={rescale}&colormap={colormap}"
+
+
+# ============================================================================
+# T-82: WILDFIRE THERMAL HOTSPOTS & FIRE RADIATIVE POWER (FRP) SCHEMAS
+# ============================================================================
+
+class ThermalHotspotConfidence(str, Enum):
+    """Detection confidence level for active thermal infrared hotspots."""
+    LOW = "low"
+    NOMINAL = "nominal"
+    HIGH = "high"
+
+class ThermalHotspotPoint(BaseModel):
+    """Single geolocated active fire / thermal hotspot anomaly record."""
+    lat: float = Field(..., description="Latitude coordinate")
+    lng: float = Field(..., description="Longitude coordinate")
+    t_mir_k: float = Field(..., description="Mid-Infrared brightness temperature in Kelvin")
+    t_tir_k: float = Field(..., description="Thermal Infrared brightness temperature in Kelvin")
+    delta_t_k: float = Field(..., description="Differential temperature T_MIR - T_TIR in Kelvin")
+    frp_mw: float = Field(..., description="Estimated Fire Radiative Power in Megawatts")
+    confidence: ThermalHotspotConfidence = Field(default=ThermalHotspotConfidence.NOMINAL, description="Detection confidence")
+
+class ThermalHotspotRequest(BaseModel):
+    """Request payload for contextual thermal fire hotspot and FRP detection."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.LANDSAT_C2_L2, description="Satellite collection (Landsat / Sentinel-2)")
+    item_id: str = Field(..., description="Target scene STAC identifier")
+    bbox: Union[Tuple[float, float, float, float], List[float], str, Dict[str, Any]] = Field(
+        ...,
+        description="Target Area of Interest bounding box or GeoJSON geometry"
+    )
+    min_temperature_k: float = Field(default=310.0, ge=280.0, le=450.0, description="Minimum MIR brightness temperature cutoff in K")
+    min_delta_t_k: float = Field(default=10.0, ge=2.0, le=80.0, description="Minimum MIR - TIR temperature differential in K")
+
+class ThermalHotspotResponse(BaseModel):
+    """Response payload for active fire thermal anomaly and FRP detection."""
+    item_id: str = Field(..., description="Target scene ID")
+    total_hotspots_detected: int = Field(..., description="Total count of active thermal anomalies discovered")
+    total_frp_mw: float = Field(..., description="Total integrated Fire Radiative Power in Megawatts")
+    mean_frp_mw: float = Field(..., description="Mean FRP per hotspot in Megawatts")
+    max_brightness_temp_k: float = Field(..., description="Maximum detected MIR brightness temperature in Kelvin")
+    high_confidence_count: int = Field(..., description="Number of hotspots rated as high confidence")
+    hotspots: List[ThermalHotspotPoint] = Field(default_factory=list, description="Georeferenced thermal hotspot anomalies")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL pattern for thermal hotspot overlay")
+    detected_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of detection")
+
+def calculate_fire_radiative_power(
+    t_mir_k: float,
+    t_bg_k: float,
+    pixel_area_m2: float = 900.0,
+    sensor_coeff_a: float = 3.0e-9
+) -> float:
+    """Calculates Fire Radiative Power (FRP) in Megawatts using Wooster et al. (2003, 2005):
+    FRP = (A_pixel * sigma / a) * (T_mir^4 - T_bg^4) * 1e-6 [MW].
+    """
+    t_mir = float(t_mir_k)
+    t_bg = float(t_bg_k)
+    if t_mir <= t_bg or t_bg <= 0.0 or sensor_coeff_a <= 0.0:
+        return 0.0
+
+    sigma = 5.670374419e-8
+    diff_t4 = (t_mir ** 4) - (t_bg ** 4)
+    coeff = (float(pixel_area_m2) * sigma) / float(sensor_coeff_a)
+    frp_watts = coeff * diff_t4
+    frp_mw = frp_watts * 1e-6
+    return round(max(0.0, frp_mw), 2)
+
+def detect_thermal_hotspots(
+    t_mir_k: float,
+    t_tir_k: float,
+    t_bg_k: float,
+    min_temp_k: float = 310.0,
+    min_delta_k: float = 10.0,
+    pixel_area_m2: float = 900.0
+) -> Dict[str, Any]:
+    """Contextual thermal anomaly detection evaluating MIR temperature and MIR - TIR difference."""
+    t_m = float(t_mir_k)
+    t_t = float(t_tir_k)
+    t_b = float(t_bg_k)
+    delta_t = t_m - t_t
+
+    is_hotspot = bool(t_m >= min_temp_k and delta_t >= min_delta_k)
+    if not is_hotspot:
+        return {
+            "is_hotspot": False,
+            "delta_t_k": round(delta_t, 2),
+            "frp_mw": 0.0,
+            "confidence": ThermalHotspotConfidence.LOW.value
+        }
+
+    frp = calculate_fire_radiative_power(t_m, t_b, pixel_area_m2=pixel_area_m2)
+
+    if t_m >= 330.0 and delta_t >= 25.0:
+        conf = ThermalHotspotConfidence.HIGH.value
+    elif t_m >= 315.0 and delta_t >= 15.0:
+        conf = ThermalHotspotConfidence.NOMINAL.value
+    else:
+        conf = ThermalHotspotConfidence.LOW.value
+
+    return {
+        "is_hotspot": True,
+        "delta_t_k": round(delta_t, 2),
+        "frp_mw": frp,
+        "confidence": conf
+    }
+
+def build_thermal_hotspot_tile_url(
+    collection: str,
+    item_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1",
+    rescale: str = "300.0,400.0",
+    colormap: str = "inferno"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for active thermal hotspot anomalies."""
+    return f"{base_prefix}/tiles/thermal/hotspots/{collection}/{item_id}/{z}/{x}/{y}.png?rescale={rescale}&colormap={colormap}"
+
 
 
 

@@ -1,5 +1,5 @@
 # GIOS: Global Intelligence & Observation System
-**Project Dossier & Scientific Specification (v2.5.0 Enterprise Release)**  
+**Project Dossier & Scientific Specification (v2.5.3 Enterprise Release)**  
 *Live Production: [https://gios-react.vercel.app](https://gios-react.vercel.app)*  
 *Backend Engine: FastAPI + rio-tiler + odc-stac + Leaflet Web GIS*
 
@@ -74,6 +74,7 @@ Every pixel rendered on screen adheres to strict remote sensing physics and biop
   │  • Interactive Pixel Inspector (Coordinate probe & spectral profile)    │
   │  • Polygon Zonal Analysis Drawer (Real hectare calculation & histogram) │
   │  • Spectral Studio Controls (Dynamic contrast stretch & colormaps)      │
+  │  • Photogrammetry & Geotechnical Modal Workspaces (InSAR, CHM, BYOC)    │
   └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -105,6 +106,34 @@ Every pixel rendered on screen adheres to strict remote sensing physics and biop
 | `POST` | `/api/v1/analysis/slope-stability` | Infinite slope stability Factor of Safety ($FS$) & tier classification |
 | `POST` | `/api/v1/analysis/hls/calibrate` | Harmonized Landsat-Sentinel-2 (HLS) multi-sensor cross-calibration |
 | `POST` | `/api/v1/analysis/water-quality` | HAB water quality indices (NDCI, NDTI) & Carlson/OECD trophic state |
+| `POST` | `/api/v1/analysis/lst/radiative-transfer` | Radiometric Land Surface Temperature (LST) Artis & Carnahan Planck inversion |
+| `GET` | `/api/v1/tiles/thermal/lst/{collection}/{item_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for calibrated thermal/LST raster layers |
+| `POST` | `/api/v1/analysis/topographic-correction` | Rugged terrain solar illumination geometry ($\cos i$) and C-Correction / Minnaert |
+| `POST` | `/api/v1/analysis/insar/displacement` | Sentinel-1 SAR interferometric phase displacement & annualized velocity |
+| `POST` | `/api/v1/analysis/insar/coherence` | Sentinel-1 SAR interferometric complex coherence magnitude & decorrelation |
+| `GET` | `/api/v1/tiles/sar/insar/{pair_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for SAR InSAR interferograms & deformation |
+| `POST` | `/api/v1/analysis/phenology/extract` | Harmonic Analysis of Time Series (HATS) 2-term Fourier curve fitting & phenometrics |
+| `POST` | `/api/v1/analysis/composites/bap` | Best Available Pixel (BAP) multi-criteria cloud/opacity scored compositing |
+| `GET` | `/api/v1/tiles/composites/bap/{composite_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for Best Available Pixel (BAP) composite mosaics |
+| `POST` | `/api/v1/analysis/geometric/coregistration` | Sub-pixel Fourier phase correlation co-registration (AROSICS peak shifts) |
+| `POST` | `/api/v1/analysis/point-cloud/filter` | Dense point cloud progressive morphological filtering (PMF) & ground classification |
+| `POST` | `/api/v1/analysis/point-cloud/chm` | Canopy Height Model ($\text{CHM} = \max(0, \text{DSM} - \text{DTM})$) and hazard buffers |
+| `GET` | `/api/v1/tiles/terrain/chm/{asset_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for Canopy Height Model (CHM) rasters |
+| `POST` | `/api/v1/analysis/ortho/occlusion` | True orthorectification line-of-sight ray-tracing occlusion masking |
+| `POST` | `/api/v1/analysis/ortho/seamlines` | Graph-cut seamline energy optimization ($E = E_{\text{color}} + \omega \cdot E_{\text{grad}}$) |
+| `GET` | `/api/v1/tiles/ortho/true/{mosaic_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for true orthorectified seamless mosaics |
+| `POST` | `/api/v1/byoc/buckets` | Bring Your Own COG (BYOC) multi-cloud storage registration (AWS S3, GCS, Azure) |
+| `GET` | `/api/v1/byoc/buckets` | List registered external cloud storage buckets |
+| `POST` | `/api/v1/byoc/buckets/{bucket_id}/sync` | Crawl and index external cloud storage COG assets into catalog |
+| `GET` | `/api/v1/tiles/byoc/{bucket_id}/{item_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming directly from external cloud storage COGs |
+| `POST` | `/api/v1/analysis/trend/mann-kendall` | Non-parametric Mann-Kendall trend testing & Sen's median slope estimator |
+| `POST` | `/api/v1/analysis/atmospheric/dos1` | Chavez (1988) Dark Object Subtraction (DOS1) BOA surface reflectance |
+| `POST` | `/api/v1/analysis/change/cva` | Multi-spectral Change Vector Analysis (CVA) magnitude & quadrant trajectory |
+| `GET` | `/api/v1/tiles/change/cva/{pre}/{post}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for multi-spectral change vector analysis |
+| `POST` | `/api/v1/analysis/soil/salinity` | Soil salinity & Land Degradation Neutrality hazard index mapping (NDSI/SI/CRSI) |
+| `GET` | `/api/v1/tiles/soil/salinity/{collection}/{item_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for soil salinity hazard rasters |
+| `POST` | `/api/v1/analysis/wildfire/thermal-hotspots` | Active fire thermal hotspot detection & Wooster Stefan-Boltzmann FRP estimation |
+| `GET` | `/api/v1/tiles/wildfire/thermal-hotspots/{collection}/{item_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for thermal hotspot & fire radiative power overlays |
 | `GET` | `/api/v1/annotations` | Geotechnical field inspection defect annotations (RFC 7946 GeoJSON) |
 | `POST` | `/api/v1/work-orders` | Automated maintenance work order dispatch & ticket tracking |
 | `GET` | `/api/v1/subscriptions` | Automated continuous AOI monitoring subscriptions & alert triggers |
@@ -117,10 +146,11 @@ Every pixel rendered on screen adheres to strict remote sensing physics and biop
 
 ## 5. Verification & Quality Assurance
 
-- **Unit & Integration Test Suite**: 135 tests passing across `test_schemas.py` (97), `test_api.py` (28), `test_scientific_rigor.py` (6), and `test_tile_server.py` (4) in ~18s with 0 failures and 0 warnings.
-- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,853 modules in 10.62s with 0 errors).
+- **Unit & Integration Test Suite**: 153 tests passing across `test_schemas.py` (114), `test_api.py` (28), `test_scientific_rigor.py` (6), `test_stac_signing.py` (1), and `test_tile_server.py` (4) in ~21s with 0 failures, 0 regressions, and 0 warnings.
+- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,858 modules in 10.55s with 0 errors).
 - **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, cache storage, database integrity, and host system RAM.
 - **Live Production Telemetry**: Continuous surveillance confirms System Status HEALTHY with 0 active anomalies and stable headroom.
 
 ---
-*GIOS v2.5.0 — Verified and Approved for Production Deployment.*
+*GIOS v2.5.3 — Verified and Approved for Production Deployment.*
+

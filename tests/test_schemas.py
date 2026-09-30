@@ -291,7 +291,66 @@ from app.models.schemas import (
     fit_harmonic_phenology,
     BAPScoringWeights,
     BAPCompositeRequest,
-    BAPCompositeResponse
+    BAPCompositeResponse,
+    CoRegistrationResamplingKernel,
+    CoRegistrationStatus,
+    CoRegistrationRequest,
+    CoRegistrationResponse,
+    calculate_phase_correlation_shift,
+    ElevationModelType,
+    PointCloudFormat,
+    PointClassificationCode,
+    PointFilterParameters,
+    PointFilterRequest,
+    PointFilterResponse,
+    CHMAnalysisRequest,
+    CHMAnalysisResponse,
+    calculate_canopy_height_model,
+    build_chm_tile_url,
+    SeamlineAlgorithm,
+    RadiometricBlendingMode,
+    OcclusionMaskRequest,
+    OcclusionMaskResponse,
+    SeamlineOptimizationRequest,
+    SeamlineOptimizationResponse,
+    calculate_seamline_energy,
+    build_true_ortho_tile_url,
+    BYOCStorageProvider,
+    BYOCSyncStatus,
+    BYOCBucketRegistrationRequest,
+    BYOCBucketRegistrationResponse,
+    BYOCCatalogItem,
+    BYOCCatalogSyncResponse,
+    build_byoc_tile_url,
+    TrendSignificanceTier,
+    TrendDirection,
+    MannKendallAnalysisRequest,
+    MannKendallAnalysisResponse,
+    calculate_mann_kendall_trend,
+    AtmosphericCorrectionModel,
+    DOS1CorrectionRequest,
+    DOS1CorrectionResponse,
+    calculate_dos1_surface_reflectance,
+    CVAMagnitudeTier,
+    CVADirectionSector,
+    CVAAnalysisRequest,
+    CVAAnalysisResponse,
+    calculate_change_vector,
+    build_cva_tile_url,
+    SalinityIndexType,
+    SalinityHazardTier,
+    SoilSalinityAnalysisRequest,
+    SoilSalinityAnalysisResponse,
+    calculate_salinity_indices,
+    classify_salinity_hazard,
+    build_salinity_tile_url,
+    ThermalHotspotConfidence,
+    ThermalHotspotPoint,
+    ThermalHotspotRequest,
+    ThermalHotspotResponse,
+    calculate_fire_radiative_power,
+    detect_thermal_hotspots,
+    build_thermal_hotspot_tile_url
 )
 from app.config import settings
 
@@ -3176,6 +3235,568 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(resp.scenes_evaluated, 3)
         self.assertAlmostEqual(resp.valid_pixel_pct, 99.8)
 
+    def test_t75_canonical_route_contracts(self):
+        """Verify registration and dynamic formatting for all T-75 canonical API routes."""
+        self.assertIn("analysis_coregistration", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_coregistration_short", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_point_cloud_filter", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_point_cloud_chm", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_point_cloud_chm", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_true_ortho_occlusion", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_ortho_seamlines", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_true_ortho", API_ROUTE_CONTRACTS)
+        self.assertIn("byoc_buckets", API_ROUTE_CONTRACTS)
+        self.assertIn("byoc_bucket_detail", API_ROUTE_CONTRACTS)
+        self.assertIn("byoc_bucket_sync", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_byoc", API_ROUTE_CONTRACTS)
+
+        # Test parameter substitutions
+        chm_tile = format_api_route("tiles_point_cloud_chm", asset_id="DAM-01", z=14, x=2500, y=5800)
+        self.assertEqual(chm_tile, "/api/v1/tiles/terrain/chm/DAM-01/14/2500/5800.png")
+
+        ortho_tile = format_api_route("tiles_true_ortho", mosaic_id="MOSAIC-01", z=15, x=5000, y=11600)
+        self.assertEqual(ortho_tile, "/api/v1/tiles/ortho/true/MOSAIC-01/15/5000/11600.png")
+
+        byoc_tile = format_api_route("tiles_byoc", bucket_id="b-101", item_id="item-55", z=12, x=1024, y=2048)
+        self.assertEqual(byoc_tile, "/api/v1/tiles/byoc/b-101/item-55/12/1024/2048.png")
+
+        bucket_sync = format_api_route("byoc_bucket_sync", bucket_id="b-101")
+        self.assertEqual(bucket_sync, "/api/v1/byoc/buckets/b-101/sync")
+
+    def test_sub_pixel_coregistration_contracts_and_math(self):
+        """Verify sub-pixel phase correlation mathematical calculation, enums, and request/response models."""
+        # 1. Enums
+        self.assertEqual(CoRegistrationResamplingKernel.CUBIC.value, "cubic")
+        self.assertEqual(CoRegistrationResamplingKernel.LANCZOS.value, "lanczos")
+        self.assertEqual(CoRegistrationStatus.SUB_PIXEL_ALIGNED.value, "sub_pixel_aligned")
+        self.assertEqual(CoRegistrationStatus.CONVERGED.value, "converged")
+
+        # 2. Mathematical shift displacement
+        # 0.15 px in X, -0.20 px in Y on a 10m grid -> 1.5m in X, -2.0m in Y, total 2.5m
+        shift = calculate_phase_correlation_shift(0.15, -0.20, pixel_size_m=10.0)
+        self.assertEqual(shift["shift_x_px"], 0.15)
+        self.assertEqual(shift["shift_y_px"], -0.20)
+        self.assertEqual(shift["shift_x_m"], 1.5)
+        self.assertEqual(shift["shift_y_m"], -2.0)
+        self.assertEqual(shift["total_shift_m"], 2.5)
+
+        # 3. Pydantic request and response
+        req = CoRegistrationRequest(
+            reference_scene_id="S2A_10SEJ_20260715",
+            target_scene_id="S2B_10SEJ_20260720",
+            window_size_px=256,
+            grid_spacing_px=128,
+            resampling_kernel=CoRegistrationResamplingKernel.CUBIC,
+            max_shift_px=15.0,
+            coherence_min=0.40
+        )
+        self.assertEqual(req.resampling_kernel, CoRegistrationResamplingKernel.CUBIC)
+
+        resp = CoRegistrationResponse(
+            reference_scene_id=req.reference_scene_id,
+            target_scene_id=req.target_scene_id,
+            status=CoRegistrationStatus.SUB_PIXEL_ALIGNED,
+            shift_x_px=shift["shift_x_px"],
+            shift_y_px=shift["shift_y_px"],
+            shift_x_m=shift["shift_x_m"],
+            shift_y_m=shift["shift_y_m"],
+            total_shift_m=shift["total_shift_m"],
+            rmse_px=0.045,
+            valid_tie_points=128,
+            resampling_applied=CoRegistrationResamplingKernel.CUBIC
+        )
+        self.assertEqual(resp.status, CoRegistrationStatus.SUB_PIXEL_ALIGNED)
+        self.assertEqual(resp.valid_tie_points, 128)
+        self.assertAlmostEqual(resp.total_shift_m, 2.5)
+
+    def test_point_cloud_filtering_and_canopy_height_model(self):
+        """Verify LiDAR/SfM point cloud classification, progressive morphological filtering, and CHM derivation."""
+        # 1. Enums
+        self.assertEqual(ElevationModelType.CHM.value, "chm")
+        self.assertEqual(PointCloudFormat.COPC.value, "copc")
+        self.assertEqual(PointClassificationCode.GROUND.value, 2)
+        self.assertEqual(PointClassificationCode.HIGH_VEGETATION.value, 5)
+
+        # 2. Mathematical CHM calculation
+        chm_val = calculate_canopy_height_model(dsm_elev=125.4, dtm_elev=110.2)
+        self.assertAlmostEqual(chm_val, 15.2, places=2)
+
+        # Non-negative clamping
+        chm_clamped = calculate_canopy_height_model(dsm_elev=100.0, dtm_elev=105.0)
+        self.assertEqual(chm_clamped, 0.0)
+
+        # 3. Tile URL builder
+        tile_url = build_chm_tile_url("SAN-LUIS-DAM-01", 14, 2500, 5800, rescale="0.0,20.0", colormap="viridis")
+        self.assertIn("/api/v1/tiles/terrain/chm/SAN-LUIS-DAM-01/14/2500/5800.png", tile_url)
+        self.assertIn("rescale=0.0,20.0", tile_url)
+
+        # 4. Point filter request & response
+        filter_params = PointFilterParameters(cell_size_m=1.0, slope_threshold_pct=30.0)
+        req = PointFilterRequest(
+            point_cloud_id="PC-SLD-2026-01",
+            format=PointCloudFormat.COPC,
+            filter_params=filter_params
+        )
+        self.assertEqual(req.point_cloud_id, "PC-SLD-2026-01")
+
+        resp = PointFilterResponse(
+            point_cloud_id=req.point_cloud_id,
+            total_points=12450000,
+            ground_points=7850000,
+            non_ground_points=4600000,
+            ground_ratio_pct=63.05,
+            dtm_resolution_m=1.0,
+            classified_copc_url="/api/v1/point-cloud/copc/PC-SLD-2026-01.copc.laz"
+        )
+        self.assertEqual(resp.total_points, 12450000)
+        self.assertAlmostEqual(resp.ground_ratio_pct, 63.05)
+
+        # 5. CHM Analysis request & response
+        chm_req = CHMAnalysisRequest(
+            asset_id="SAN-LUIS-DAM-01",
+            dsm_item_id="DSM-SL-01",
+            dtm_item_id="DTM-SL-01",
+            grid_resolution_m=1.0
+        )
+        chm_resp = CHMAnalysisResponse(
+            asset_id=chm_req.asset_id,
+            mean_height_m=3.45,
+            max_height_m=18.2,
+            vegetation_area_ha=14.8,
+            infrastructure_encroachment_ha=1.25,
+            height_percentiles={"p50": 2.1, "p75": 4.8, "p90": 9.6, "p95": 14.2},
+            tile_url_template="/api/v1/tiles/terrain/chm/SAN-LUIS-DAM-01/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(chm_resp.max_height_m, 18.2)
+        self.assertEqual(chm_resp.height_percentiles["p95"], 14.2)
+
+    def test_true_orthorectification_and_seamline_optimization(self):
+        """Verify visibility ray-tracing occlusion masking, graph-cut seamline energy, and blending contracts."""
+        # 1. Enums
+        self.assertEqual(SeamlineAlgorithm.GRAPH_CUT_ENERGY.value, "graph_cut_energy")
+        self.assertEqual(RadiometricBlendingMode.MULTI_BAND_PYRAMID.value, "multi_band_pyramid")
+
+        # 2. Mathematical seamline energy cost
+        # E = 0.6 * 0.10 + 0.4 * 0.05 = 0.06 + 0.02 = 0.08
+        energy = calculate_seamline_energy(color_diff=0.10, gradient_diff=0.05, weight_color=0.6, weight_grad=0.4)
+        self.assertAlmostEqual(energy, 0.08, places=4)
+
+        # 3. Tile URL builder
+        ortho_tile = build_true_ortho_tile_url("MOSAIC-01", 15, 5000, 11600)
+        self.assertEqual(ortho_tile, "/api/v1/tiles/ortho/true/MOSAIC-01/15/5000/11600.png")
+
+        # 4. Occlusion mask request & response
+        occ_req = OcclusionMaskRequest(
+            ortho_id="DRONE-SL-01",
+            dsm_id="DSM-SL-01",
+            sun_zenith_deg=35.0,
+            sun_azimuth_deg=135.0
+        )
+        occ_resp = OcclusionMaskResponse(
+            ortho_id=occ_req.ortho_id,
+            occluded_pixel_count=14200,
+            occluded_area_pct=2.45,
+            true_ortho_ready=True
+        )
+        self.assertTrue(occ_resp.true_ortho_ready)
+        self.assertEqual(occ_resp.occluded_pixel_count, 14200)
+
+        # 5. Seamline optimization request & response
+        seam_req = SeamlineOptimizationRequest(
+            granule_ids=["GRANULE-01", "GRANULE-02", "GRANULE-03"],
+            algorithm=SeamlineAlgorithm.GRAPH_CUT_ENERGY,
+            blending_mode=RadiometricBlendingMode.MULTI_BAND_PYRAMID,
+            feather_buffer_px=15
+        )
+        seam_resp = SeamlineOptimizationResponse(
+            mosaic_id="MOSAIC-DRONE-SL-2026",
+            seamline_count=8,
+            total_seamline_length_m=1450.0,
+            algorithm_applied=seam_req.algorithm,
+            mean_radiometric_gradient_difference=0.018,
+            tile_url_template="/api/v1/tiles/ortho/true/MOSAIC-DRONE-SL-2026/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(seam_resp.seamline_count, 8)
+        self.assertAlmostEqual(seam_resp.total_seamline_length_m, 1450.0)
+
+    def test_bring_your_own_cog_byoc_storage_catalog(self):
+        """Verify enterprise Bring Your Own COG (BYOC) S3/GCS bucket registration and catalog sync models."""
+        # 1. Enums
+        self.assertEqual(BYOCStorageProvider.AWS_S3.value, "aws_s3")
+        self.assertEqual(BYOCStorageProvider.GOOGLE_CLOUD_STORAGE.value, "gcs")
+        self.assertEqual(BYOCSyncStatus.READY.value, "ready")
+        self.assertEqual(BYOCSyncStatus.CONNECTED.value, "connected")
+
+        # 2. Dynamic BYOC tile URL builder
+        byoc_url = build_byoc_tile_url("bucket-99", "cog-item-01", 14, 2500, 5800, rescale="0,255", colormap="viridis")
+        self.assertIn("/api/v1/tiles/byoc/bucket-99/cog-item-01/14/2500/5800.png", byoc_url)
+        self.assertIn("rescale=0,255", byoc_url)
+        self.assertIn("colormap=viridis", byoc_url)
+
+        # 3. Bucket registration request & response
+        reg_req = BYOCBucketRegistrationRequest(
+            bucket_name="my-drone-surveys-bucket",
+            provider=BYOCStorageProvider.AWS_S3,
+            region="us-west-2",
+            display_name="San Luis Reservoir UAS Surveys"
+        )
+        reg_resp = BYOCBucketRegistrationResponse(
+            bucket_id="byoc-s3-drone-vault-01",
+            bucket_name=reg_req.bucket_name,
+            provider=reg_req.provider,
+            status=BYOCSyncStatus.CONNECTED
+        )
+        self.assertEqual(reg_resp.bucket_id, "byoc-s3-drone-vault-01")
+        self.assertEqual(reg_resp.status, BYOCSyncStatus.CONNECTED)
+
+        # 4. Catalog item & sync response
+        item = BYOCCatalogItem(
+            item_id="byoc-cog-sl-toe-01",
+            bucket_id=reg_resp.bucket_id,
+            relative_path="surveys/san_luis/sl_toe_2cm.tif",
+            file_size_bytes=482000000,
+            crs="EPSG:32610",
+            bbox=(-121.085, 37.052, -121.065, 37.068),
+            resolution_m=0.025,
+            band_count=4,
+            is_valid_cog=True
+        )
+        self.assertTrue(item.is_valid_cog)
+        self.assertEqual(item.resolution_m, 0.025)
+
+        sync_resp = BYOCCatalogSyncResponse(
+            bucket_id=reg_resp.bucket_id,
+            status=BYOCSyncStatus.READY,
+            total_cogs_discovered=24,
+            total_valid_cogs=24,
+            synced_items=[item]
+        )
+        self.assertEqual(sync_resp.total_cogs_discovered, 24)
+        self.assertEqual(len(sync_resp.synced_items), 1)
+
+    def test_t82_canonical_route_contracts(self):
+        """Verify T-82 canonical route registrations and dynamic parameter formatting."""
+        # 1. Verification of all 13 canonical route contracts
+        t82_routes = [
+            ("analysis_mann_kendall", "/api/v1/analysis/timeseries/mann-kendall"),
+            ("analysis_mann_kendall_short", "/analysis/timeseries/mann-kendall"),
+            ("analysis_atmospheric_dos1", "/api/v1/analysis/atmospheric/dos1"),
+            ("analysis_atmospheric_dos1_short", "/analysis/atmospheric/dos1"),
+            ("analysis_cva", "/api/v1/analysis/change/cva"),
+            ("analysis_cva_short", "/analysis/change/cva"),
+            ("tiles_cva", "/api/v1/tiles/change/cva/{pre_scene_id}/{post_scene_id}/{z}/{x}/{y}.png"),
+            ("analysis_soil_salinity", "/api/v1/analysis/soil/salinity"),
+            ("analysis_soil_salinity_short", "/analysis/soil/salinity"),
+            ("tiles_soil_salinity", "/api/v1/tiles/soil/salinity/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png"),
+            ("analysis_thermal_hotspots", "/api/v1/analysis/thermal/hotspots"),
+            ("analysis_thermal_hotspots_short", "/analysis/thermal/hotspots"),
+            ("tiles_thermal_hotspots", "/api/v1/tiles/thermal/hotspots/{collection}/{item_id}/{z}/{x}/{y}.png")
+        ]
+        for key, expected_path in t82_routes:
+            self.assertIn(key, API_ROUTE_CONTRACTS)
+            self.assertEqual(API_ROUTE_CONTRACTS[key], expected_path)
+
+        # 2. Dynamic parameter formatting via format_api_route
+        cva_tile = format_api_route("tiles_cva", pre_scene_id="S2A_20250601", post_scene_id="S2B_20260601", z=14, x=2500, y=5800)
+        self.assertEqual(cva_tile, "/api/v1/tiles/change/cva/S2A_20250601/S2B_20260601/14/2500/5800.png")
+
+        salinity_tile = format_api_route("tiles_soil_salinity", collection="sentinel-2-l2a", item_id="S2A_2026", metric="ndsi", z=12, x=1200, y=2400)
+        self.assertEqual(salinity_tile, "/api/v1/tiles/soil/salinity/sentinel-2-l2a/S2A_2026/ndsi/12/1200/2400.png")
+
+        hotspot_tile = format_api_route("tiles_thermal_hotspots", collection="landsat-c2-l2", item_id="LC09_2026", z=10, x=300, y=600)
+        self.assertEqual(hotspot_tile, "/api/v1/tiles/thermal/hotspots/landsat-c2-l2/LC09_2026/10/300/600.png")
+
+    def test_mann_kendall_trend_contracts_and_math(self):
+        """Verify non-parametric Mann-Kendall trend detection and Sen's slope calculation."""
+        # 1. Enums
+        self.assertEqual(TrendDirection.INCREASING.value, "increasing")
+        self.assertEqual(TrendDirection.DECREASING.value, "decreasing")
+        self.assertEqual(TrendDirection.STABLE.value, "stable")
+        self.assertEqual(TrendSignificanceTier.HIGHLY_SIGNIFICANT.value, "highly_significant")
+        self.assertEqual(TrendSignificanceTier.NOT_SIGNIFICANT.value, "not_significant")
+
+        # 2. Math - Monotonic increasing series
+        inc_data = [0.12, 0.20, 0.28, 0.35, 0.44, 0.52, 0.61, 0.70]
+        res_inc = calculate_mann_kendall_trend(inc_data, alpha=0.05)
+        self.assertGreater(res_inc["s_statistic"], 0)
+        self.assertEqual(res_inc["direction"], TrendDirection.INCREASING.value)
+        self.assertTrue(res_inc["is_significant"])
+        self.assertGreater(res_inc["sens_slope"], 0.0)
+        self.assertIn(res_inc["significance_tier"], [TrendSignificanceTier.HIGHLY_SIGNIFICANT.value, TrendSignificanceTier.SIGNIFICANT.value])
+
+        # 3. Math - Monotonic decreasing series
+        dec_data = [0.80, 0.72, 0.63, 0.55, 0.44, 0.35, 0.25, 0.15]
+        res_dec = calculate_mann_kendall_trend(dec_data, alpha=0.05)
+        self.assertLess(res_dec["s_statistic"], 0)
+        self.assertEqual(res_dec["direction"], TrendDirection.DECREASING.value)
+        self.assertTrue(res_dec["is_significant"])
+        self.assertLess(res_dec["sens_slope"], 0.0)
+
+        # 4. Math - Flat series (ties)
+        flat_data = [0.45, 0.45, 0.45, 0.45, 0.45]
+        res_flat = calculate_mann_kendall_trend(flat_data, alpha=0.05)
+        self.assertEqual(res_flat["s_statistic"], 0.0)
+        self.assertEqual(res_flat["direction"], TrendDirection.STABLE.value)
+        self.assertFalse(res_flat["is_significant"])
+
+        # 5. Math - Short series (< 3 observations)
+        res_short = calculate_mann_kendall_trend([0.1, 0.2])
+        self.assertEqual(res_short["sample_size"], 2)
+        self.assertFalse(res_short["is_significant"])
+
+        # 6. Pydantic request & response
+        req = MannKendallAnalysisRequest(
+            values=inc_data,
+            metric_name="ndvi",
+            alpha=0.05
+        )
+        self.assertEqual(req.metric_name, "ndvi")
+
+        resp = MannKendallAnalysisResponse(
+            metric_name=req.metric_name,
+            sample_size=res_inc["sample_size"],
+            s_statistic=res_inc["s_statistic"],
+            variance_s=res_inc["variance_s"],
+            z_score=res_inc["z_score"],
+            p_value=res_inc["p_value"],
+            kendall_tau=res_inc["kendall_tau"],
+            sens_slope=res_inc["sens_slope"],
+            annual_change_rate=res_inc["annual_change_rate"],
+            direction=TrendDirection(res_inc["direction"]),
+            significance_tier=TrendSignificanceTier(res_inc["significance_tier"]),
+            is_significant=res_inc["is_significant"]
+        )
+        self.assertEqual(resp.direction, TrendDirection.INCREASING)
+        self.assertTrue(resp.is_significant)
+
+    def test_dos1_atmospheric_correction_contracts_and_math(self):
+        """Verify Dark Object Subtraction (DOS1) Chavez radiative transfer models."""
+        # 1. Enum
+        self.assertEqual(AtmosphericCorrectionModel.DOS1.value, "dos1")
+        self.assertEqual(AtmosphericCorrectionModel.APPARENT_REFLECTANCE.value, "apparent_reflectance")
+
+        # 2. Math - Normal BOA reflectance calculation
+        # Radiance 45.0 W/(m^2*sr*um), haze 12.0, solar zenith 30 deg, ESUN 1969
+        boa_rho = calculate_dos1_surface_reflectance(
+            radiance=45.0,
+            path_radiance=12.0,
+            solar_zenith_deg=30.0,
+            esun=1969.0,
+            earth_sun_dist_au=1.0,
+            tau_v=1.0
+        )
+        self.assertGreater(boa_rho, 0.0)
+        self.assertLess(boa_rho, 1.0)
+
+        # 3. Math - Edge cases: radiance <= haze, night/grazing solar zenith
+        zero_rho = calculate_dos1_surface_reflectance(radiance=10.0, path_radiance=15.0, solar_zenith_deg=30.0)
+        self.assertEqual(zero_rho, 0.0)
+
+        grazing_rho = calculate_dos1_surface_reflectance(radiance=50.0, path_radiance=10.0, solar_zenith_deg=90.0)
+        self.assertEqual(grazing_rho, 0.0)
+
+        # 4. Request & response models
+        req = DOS1CorrectionRequest(
+            collection=SatelliteCollection.SENTINEL_2,
+            item_id="S2A_MSIL2A_20260714",
+            sun_zenith_deg=32.5,
+            earth_sun_distance_au=1.016,
+            dark_object_dn_threshold=120,
+            bands=["blue", "green", "red", "nir"]
+        )
+        self.assertEqual(req.item_id, "S2A_MSIL2A_20260714")
+        self.assertEqual(req.sun_zenith_deg, 32.5)
+
+        resp = DOS1CorrectionResponse(
+            item_id=req.item_id,
+            model_applied=AtmosphericCorrectionModel.DOS1,
+            sun_zenith_deg=req.sun_zenith_deg,
+            earth_sun_distance_au=req.earth_sun_distance_au,
+            band_haze_values={"blue": 14.2, "green": 9.1, "red": 5.4, "nir": 1.8},
+            mean_surface_reflectance={"blue": 0.045, "green": 0.082, "red": 0.063, "nir": 0.285}
+        )
+        self.assertEqual(resp.model_applied, AtmosphericCorrectionModel.DOS1)
+        self.assertIn("nir", resp.mean_surface_reflectance)
+
+    def test_change_vector_analysis_cva_contracts_and_math(self):
+        """Verify multi-spectral Change Vector Analysis (CVA) magnitude and directional sector classification."""
+        # 1. Enums
+        self.assertEqual(CVAMagnitudeTier.NO_CHANGE.value, "no_change")
+        self.assertEqual(CVAMagnitudeTier.SIGNIFICANT_CHANGE.value, "significant_change")
+        self.assertEqual(CVADirectionSector.SOIL_DRYING.value, "soil_drying")
+        self.assertEqual(CVADirectionSector.VEGETATION_GROWTH.value, "vegetation_growth")
+        self.assertEqual(CVADirectionSector.WATER_INUNDATION.value, "water_inundation")
+        self.assertEqual(CVADirectionSector.DEFOLIATION_BURN.value, "defoliation_burn")
+
+        # 2. Math - Sector 1: Soil drying (d_red >= 0, d_nir >= 0)
+        cva_drying = calculate_change_vector({"red": 0.10, "nir": 0.20}, {"red": 0.25, "nir": 0.35})
+        self.assertEqual(cva_drying["sector"], CVADirectionSector.SOIL_DRYING.value)
+        self.assertGreater(cva_drying["magnitude"], 0.20)
+
+        # 3. Math - Sector 2: Vegetation growth (d_red < 0, d_nir >= 0)
+        cva_growth = calculate_change_vector({"red": 0.25, "nir": 0.20}, {"red": 0.10, "nir": 0.45})
+        self.assertEqual(cva_growth["sector"], CVADirectionSector.VEGETATION_GROWTH.value)
+
+        # 4. Math - Sector 3: Water inundation (d_red < 0, d_nir < 0)
+        cva_water = calculate_change_vector({"red": 0.30, "nir": 0.40}, {"red": 0.15, "nir": 0.10})
+        self.assertEqual(cva_water["sector"], CVADirectionSector.WATER_INUNDATION.value)
+
+        # 5. Math - Sector 4: Defoliation / Burn (d_red >= 0, d_nir < 0)
+        cva_burn = calculate_change_vector({"red": 0.10, "nir": 0.50}, {"red": 0.30, "nir": 0.15})
+        self.assertEqual(cva_burn["sector"], CVADirectionSector.DEFOLIATION_BURN.value)
+        self.assertEqual(cva_burn["magnitude_tier"], CVAMagnitudeTier.SIGNIFICANT_CHANGE.value)
+
+        # 6. Dynamic CVA tile URL builder
+        cva_tile = build_cva_tile_url("S2A_PRE", "S2B_POST", 14, 2500, 5800, rescale="0.0,0.6", colormap="turbo")
+        self.assertIn("/api/v1/tiles/change/cva/S2A_PRE/S2B_POST/14/2500/5800.png", cva_tile)
+        self.assertIn("rescale=0.0,0.6", cva_tile)
+        self.assertIn("colormap=turbo", cva_tile)
+
+        # 7. Request & response models
+        req = CVAAnalysisRequest(
+            bbox=(-121.2, 37.1, -121.0, 37.3),
+            pre_scene_id="S2A_20250701",
+            post_scene_id="S2B_20260701",
+            bands=["red", "nir"],
+            magnitude_threshold=0.15
+        )
+        resp = CVAAnalysisResponse(
+            pre_scene_id=req.pre_scene_id,
+            post_scene_id=req.post_scene_id,
+            mean_magnitude=0.22,
+            max_magnitude=0.68,
+            magnitude_threshold=0.15,
+            changed_area_hectares=1420.5,
+            changed_area_pct=18.4,
+            magnitude_tier=CVAMagnitudeTier.MODERATE_CHANGE,
+            sector_breakdown={"vegetation_growth": 45.0, "soil_drying": 30.0, "defoliation_burn": 25.0},
+            tile_url_template="/api/v1/tiles/change/cva/{pre_scene_id}/{post_scene_id}/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.pre_scene_id, "S2A_20250701")
+        self.assertEqual(resp.magnitude_tier, CVAMagnitudeTier.MODERATE_CHANGE)
+
+    def test_soil_salinity_contracts_and_math(self):
+        """Verify soil salinity indices (NDSI, SI-1, SI-2, CRSI) and land degradation hazard tier classification."""
+        # 1. Enums
+        self.assertEqual(SalinityIndexType.NDSI.value, "ndsi")
+        self.assertEqual(SalinityIndexType.CRSI.value, "crsi")
+        self.assertEqual(SalinityHazardTier.NON_SALINE.value, "non_saline")
+        self.assertEqual(SalinityHazardTier.EXTREMELY_SALINE.value, "extremely_saline")
+
+        # 2. Math - Multi-spectral salinity indices
+        indices = calculate_salinity_indices(blue=0.08, green=0.12, red=0.18, nir=0.10)
+        self.assertIn("ndsi", indices)
+        self.assertIn("si1", indices)
+        self.assertIn("si2", indices)
+        self.assertIn("crsi", indices)
+        # NDSI = (red - nir) / (red + nir) = (0.18 - 0.10) / (0.28) ~ 0.2857
+        self.assertAlmostEqual(indices["ndsi"], 0.2857, delta=0.002)
+
+        # 3. Hazard classification
+        h_non = classify_salinity_hazard(-0.25)
+        self.assertEqual(h_non["tier"], SalinityHazardTier.NON_SALINE.value)
+        self.assertFalse(h_non["is_degraded"])
+
+        h_slight = classify_salinity_hazard(-0.05)
+        self.assertEqual(h_slight["tier"], SalinityHazardTier.SLIGHTLY_SALINE.value)
+        self.assertFalse(h_slight["is_degraded"])
+
+        h_mod = classify_salinity_hazard(0.08)
+        self.assertEqual(h_mod["tier"], SalinityHazardTier.MODERATELY_SALINE.value)
+        self.assertTrue(h_mod["is_degraded"])
+
+        h_ext = classify_salinity_hazard(0.35)
+        self.assertEqual(h_ext["tier"], SalinityHazardTier.EXTREMELY_SALINE.value)
+        self.assertTrue(h_ext["is_degraded"])
+
+        # 4. Salinity tile URL builder
+        sal_url = build_salinity_tile_url("sentinel-2-l2a", "S2A_2026_SAL", "ndsi", 12, 1200, 2400)
+        self.assertIn("/api/v1/tiles/soil/salinity/sentinel-2-l2a/S2A_2026_SAL/ndsi/12/1200/2400.png", sal_url)
+        self.assertIn("colormap=spectral", sal_url)
+
+        # 5. Request & response models
+        req = SoilSalinityAnalysisRequest(
+            collection=SatelliteCollection.SENTINEL_2,
+            item_id="S2A_2026_SAL",
+            bbox=(-119.8, 36.2, -119.5, 36.5),
+            index_type=SalinityIndexType.NDSI
+        )
+        resp = SoilSalinityAnalysisResponse(
+            item_id=req.item_id,
+            index_type=req.index_type,
+            mean_salinity_index=0.14,
+            saline_area_hectares=2850.0,
+            saline_area_pct=34.2,
+            primary_hazard_tier=SalinityHazardTier.MODERATELY_SALINE,
+            hazard_tiers=[{"tier": "moderately_saline", "area_pct": 34.2}],
+            tile_url_template="/api/v1/tiles/soil/salinity/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.primary_hazard_tier, SalinityHazardTier.MODERATELY_SALINE)
+        self.assertEqual(resp.index_type, SalinityIndexType.NDSI)
+
+    def test_wildfire_thermal_hotspots_contracts_and_math(self):
+        """Verify active fire thermal hotspot detection and Fire Radiative Power (FRP) models."""
+        # 1. Enums
+        self.assertEqual(ThermalHotspotConfidence.LOW.value, "low")
+        self.assertEqual(ThermalHotspotConfidence.NOMINAL.value, "nominal")
+        self.assertEqual(ThermalHotspotConfidence.HIGH.value, "high")
+
+        # 2. Math - Stefan-Boltzmann FRP calculation (Wooster et al.)
+        frp = calculate_fire_radiative_power(t_mir_k=380.0, t_bg_k=300.0, pixel_area_m2=900.0)
+        self.assertGreater(frp, 10.0)
+
+        # Equal or colder MIR than background -> 0.0 FRP
+        zero_frp = calculate_fire_radiative_power(t_mir_k=295.0, t_bg_k=300.0)
+        self.assertEqual(zero_frp, 0.0)
+
+        # 3. Contextual hotspot detection
+        hot_high = detect_thermal_hotspots(t_mir_k=345.0, t_tir_k=315.0, t_bg_k=300.0)
+        self.assertTrue(hot_high["is_hotspot"])
+        self.assertEqual(hot_high["confidence"], ThermalHotspotConfidence.HIGH.value)
+        self.assertGreater(hot_high["frp_mw"], 0.0)
+
+        cold_pt = detect_thermal_hotspots(t_mir_k=302.0, t_tir_k=299.0, t_bg_k=298.0)
+        self.assertFalse(cold_pt["is_hotspot"])
+
+        # 4. Thermal hotspot tile URL builder
+        hotspot_url = build_thermal_hotspot_tile_url("landsat-c2-l2", "LC09_2026_FIRE", 11, 600, 1200)
+        self.assertIn("/api/v1/tiles/thermal/hotspots/landsat-c2-l2/LC09_2026_FIRE/11/600/1200.png", hotspot_url)
+        self.assertIn("colormap=inferno", hotspot_url)
+
+        # 5. Request, response, and point models
+        pt = ThermalHotspotPoint(
+            lat=37.245,
+            lng=-121.112,
+            t_mir_k=352.0,
+            t_tir_k=318.0,
+            delta_t_k=34.0,
+            frp_mw=18.5,
+            confidence=ThermalHotspotConfidence.HIGH
+        )
+        self.assertEqual(pt.confidence, ThermalHotspotConfidence.HIGH)
+
+        req = ThermalHotspotRequest(
+            collection=SatelliteCollection.LANDSAT_C2_L2,
+            item_id="LC09_2026_FIRE",
+            bbox=(-121.3, 37.0, -121.0, 37.3),
+            min_temperature_k=310.0,
+            min_delta_t_k=10.0
+        )
+        resp = ThermalHotspotResponse(
+            item_id=req.item_id,
+            total_hotspots_detected=12,
+            total_frp_mw=145.8,
+            mean_frp_mw=12.15,
+            max_brightness_temp_k=385.0,
+            high_confidence_count=8,
+            hotspots=[pt],
+            tile_url_template="/api/v1/tiles/thermal/hotspots/{collection}/{item_id}/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.total_hotspots_detected, 12)
+        self.assertEqual(resp.high_confidence_count, 8)
+        self.assertEqual(len(resp.hotspots), 1)
+
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -1,5 +1,11 @@
 from fastapi import APIRouter
-from app.models.schemas import TrendRequest, TimeSeriesResponse, parse_bbox
+from app.models.schemas import (
+    TrendRequest,
+    TimeSeriesResponse,
+    parse_bbox,
+    MannKendallAnalysisRequest,
+    MannKendallAnalysisResponse
+)
 from app.services.timeseries import timeseries_service
 import numpy as np
 
@@ -20,3 +26,8 @@ def get_temporal_trend(req: TrendRequest):
         "anomaly_count": res["anomaly_count"],
         "data_points": res["points"]
     }
+
+@router.post("/mann-kendall", response_model=MannKendallAnalysisResponse, include_in_schema=False)
+def post_timeseries_mann_kendall(req: MannKendallAnalysisRequest):
+    from app.api.routes.analysis import analyze_mann_kendall_trend
+    return analyze_mann_kendall_trend(req)

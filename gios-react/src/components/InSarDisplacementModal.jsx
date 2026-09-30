@@ -164,6 +164,7 @@ export default function InSarDisplacementModal({
     if (isOpen && !displacementResult && !loadingDisplacement) {
       handleExecuteDisplacement();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const handleCopyUrl = () => {
