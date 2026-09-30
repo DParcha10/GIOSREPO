@@ -38,10 +38,11 @@ def start_backend():
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"],
         cwd=GIOS_DIR,
+        stdin=subprocess.DEVNULL,
         stdout=out_f,
         stderr=err_f,
         creationflags=DETACHED_FLAGS if os.name == "nt" else 0,
-        close_fds=True
+        close_fds=False if os.name == "nt" else True
     )
     print(f"Backend spawned with PID: {proc.pid}")
 
@@ -58,10 +59,11 @@ def start_frontend():
     proc = subprocess.Popen(
         cmd,
         cwd=REACT_DIR,
+        stdin=subprocess.DEVNULL,
         stdout=out_f,
         stderr=err_f,
         creationflags=DETACHED_FLAGS if os.name == "nt" else 0,
-        close_fds=True
+        close_fds=False if os.name == "nt" else True
     )
     print(f"Frontend spawned with PID: {proc.pid}")
 

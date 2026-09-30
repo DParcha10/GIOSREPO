@@ -151,7 +151,24 @@ export {
   listSoilPresets,
   buildTwiTileUrl,
   buildSlopeStabilityTileUrl,
-  buildWaterQualityTileUrl
+  buildWaterQualityTileUrl,
+  HEAT_HAZARD_LEVELS,
+  LST_CALCULATION_MODELS,
+  calculateFractionalVegetationCover,
+  calculateLandSurfaceEmissivity,
+  calculateLstSingleChannel,
+  classifyHeatHazardLevel,
+  buildLstTileUrl,
+  TOPOGRAPHIC_CORRECTION_MODELS,
+  calculateIlluminationAngle,
+  applyTopographicCCorrection,
+  INSAR_DEFORMATION_TIERS,
+  calculateInSarDisplacementMm,
+  calculateInSarVelocityMmYr,
+  classifyInSarDeformationTier,
+  buildInsarTileUrl,
+  PHENOLOGY_FIT_MODELS,
+  fitHarmonicPhenology
 } from '../config/constants.js';
 
 /**
@@ -1292,6 +1309,173 @@ const demoAdapter = async (config) => {
         tile_url_template: '/api/v1/tiles/water-quality/ndci/{z}/{x}/{y}.png',
         created_at: new Date().toISOString()
       };
+      else if (url.includes('/api/v1/analysis/lst/radiative-transfer')) data = {
+        item_id: 'LC09_L2SP_044034_20260810',
+        method: 'single_channel',
+        mean_lst_c: 32.8,
+        min_lst_c: 24.5,
+        max_lst_c: 44.1,
+        mean_lst_k: 305.95,
+        mean_emissivity: 0.982,
+        mean_fvc: 0.42,
+        uhi_intensity_c: 4.8,
+        heat_hazard_level: 'high_heat',
+        pixel_count: 54200,
+        tile_url_template: '/api/v1/tiles/thermal/lst/landsat-c2-l2/LC09_L2SP_044034_20260810/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/topographic-correction')) data = {
+        item_id: 'S2A_MSIL2A_20260820',
+        model: 'c_correction',
+        solar_zenith_deg: 38.5,
+        solar_azimuth_deg: 142.0,
+        c_parameter_used: 0.18,
+        minnaert_k_used: 0.75,
+        mean_illumination_cos: 0.742,
+        mean_reflectance_before: 0.284,
+        mean_reflectance_after: 0.221,
+        topographic_shadow_area_pct: 4.2,
+        status: 'corrected',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/insar/displacement')) data = {
+        pair_id: 'PAIR-S1-20260808-20260820',
+        primary_scene_id: 'S1A_IW_SLC__1SDV_20260808',
+        secondary_scene_id: 'S1A_IW_SLC__1SDV_20260820',
+        temporal_baseline_days: 12.0,
+        perpendicular_baseline_m: 45.0,
+        mean_coherence: 0.68,
+        mean_displacement_mm: -3.2,
+        max_subsidence_mm: -18.4,
+        max_uplift_mm: 2.1,
+        mean_velocity_mm_yr: -97.3,
+        deformation_tier: 'moderate_subsidence',
+        stable_area_pct: 78.4,
+        tile_url_template: '/api/v1/tiles/sar/insar/PAIR-S1-20260808-20260820/{z}/{x}/{y}.png',
+        evaluated_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/insar/coherence')) data = {
+        pair_id: 'PAIR-S1-20260808-20260820',
+        mean_coherence: 0.68,
+        high_coherence_pct: 64.2,
+        decorrelated_pct: 12.8,
+        structural_stability_score: 87.5,
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/phenology/extract')) data = {
+        aoi_name: 'San Luis Reservoir Watershed',
+        metric: 'ndvi',
+        fit_model: 'harmonic_hats',
+        phenometrics: {
+          base_level: 0.22,
+          peak_level: 0.68,
+          amplitude: 0.46,
+          sos_doy: 95,
+          pos_doy: 195,
+          eos_doy: 295,
+          los_days: 200
+        },
+        r_squared: 0.91,
+        climatological_anomaly_z: -0.42,
+        curve_points: [],
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/composites/bap')) data = {
+        composite_id: 'BAP-S2-2026-DOY200',
+        collection: 'sentinel-2-l2a',
+        scenes_evaluated: 6,
+        target_doy: 200,
+        mean_pixel_score: 0.88,
+        valid_pixel_pct: 99.4,
+        tile_url_template: '/api/v1/tiles/composite/BAP-S2-2026-DOY200/{z}/{x}/{y}.png',
+        created_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/geometric/coregistration') || url.includes('/api/v1/analysis/coregistration')) data = {
+        reference_scene_id: 'S2A_10SEJ_20260715',
+        target_scene_id: 'S2B_10SEJ_20260720',
+        status: 'sub_pixel_aligned',
+        shift_x_px: 0.142,
+        shift_y_px: -0.085,
+        shift_x_m: 1.42,
+        shift_y_m: -0.85,
+        total_shift_m: 1.66,
+        rmse_px: 0.045,
+        valid_tie_points: 128,
+        resampling_applied: 'cubic',
+        aligned_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/point-cloud/filter')) data = {
+        point_cloud_id: 'PC-SLD-2026-01',
+        total_points: 12450000,
+        ground_points: 7850000,
+        non_ground_points: 4600000,
+        ground_ratio_pct: 63.05,
+        dtm_resolution_m: 1.0,
+        classified_copc_url: '/api/v1/point-cloud/copc/PC-SLD-2026-01.copc.laz',
+        processed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/point-cloud/chm')) data = {
+        asset_id: 'SAN-LUIS-DAM-01',
+        mean_height_m: 3.45,
+        max_height_m: 18.2,
+        vegetation_area_ha: 14.8,
+        infrastructure_encroachment_ha: 1.25,
+        height_percentiles: { p50: 2.1, p75: 4.8, p90: 9.6, p95: 14.2 },
+        tile_url_template: '/api/v1/tiles/terrain/chm/SAN-LUIS-DAM-01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/ortho/occlusion')) data = {
+        ortho_id: 'DRONE-SL-EMBANKMENT-01',
+        occluded_pixel_count: 14200,
+        occluded_area_pct: 2.45,
+        true_ortho_ready: true,
+        evaluated_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/ortho/seamlines')) data = {
+        mosaic_id: 'MOSAIC-DRONE-SL-2026',
+        seamline_count: 8,
+        total_seamline_length_m: 1450.0,
+        algorithm_applied: 'graph_cut_energy',
+        mean_radiometric_gradient_difference: 0.018,
+        tile_url_template: '/api/v1/tiles/ortho/true/MOSAIC-DRONE-SL-2026/{z}/{x}/{y}.png',
+        generated_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/byoc/buckets') && config.method === 'post' && url.includes('/sync')) data = {
+        bucket_id: 'byoc-s3-drone-vault-01',
+        status: 'ready',
+        total_cogs_discovered: 24,
+        total_valid_cogs: 24,
+        synced_items: [
+          {
+            item_id: 'byoc-cog-sl-toe-01',
+            bucket_id: 'byoc-s3-drone-vault-01',
+            relative_path: 'surveys/san_luis/sl_toe_2cm.tif',
+            file_size_bytes: 482000000,
+            crs: 'EPSG:32610',
+            bbox: [-121.085, 37.052, -121.065, 37.068],
+            resolution_m: 0.025,
+            band_count: 4,
+            is_valid_cog: true
+          }
+        ],
+        last_synced_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/byoc/buckets') && config.method === 'post') data = {
+        bucket_id: 'byoc-s3-drone-vault-01',
+        bucket_name: 'my-drone-surveys-bucket',
+        provider: 'aws_s3',
+        status: 'connected',
+        registered_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/byoc/buckets')) data = [
+        {
+          bucket_id: 'byoc-s3-drone-vault-01',
+          bucket_name: 'my-drone-surveys-bucket',
+          provider: 'aws_s3',
+          status: 'ready',
+          registered_at: new Date().toISOString()
+        }
+      ];
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
@@ -2532,6 +2716,72 @@ export const fetchCameraCalibrationPresets = async () => {
  */
 export const fetchSoilPresets = async () => {
   const response = await giosApi.get('/api/v1/analysis/terrain/soil-presets');
+  return response.data;
+};
+
+/**
+ * Computes Land Surface Temperature (LST) and surface urban heat island metrics via radiometric transfer.
+ * 
+ * @param {Object} params - LST request parameters
+ * @returns {Promise<Object>} Radiometric temperature results and heat hazard tier
+ */
+export const calculateLstRadiativeTransfer = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/lst/radiative-transfer', params);
+  return response.data;
+};
+
+/**
+ * Normalizes terrain illumination variations using solar angle and digital elevation models.
+ * 
+ * @param {Object} params - Topographic correction parameters
+ * @returns {Promise<Object>} Illumination correction results and shadow coverage
+ */
+export const calculateTopographicCorrection = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/topographic-correction', params);
+  return response.data;
+};
+
+/**
+ * Computes millimetric ground displacement and velocity from SAR interferometric pairs (DInSAR).
+ * 
+ * @param {Object} params - InSAR displacement parameters
+ * @returns {Promise<Object>} Line-of-sight displacement and deformation hazard tier
+ */
+export const calculateInSarDisplacement = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/insar/displacement', params);
+  return response.data;
+};
+
+/**
+ * Evaluates interferometric complex coherence and phase stability across SAR pairs.
+ * 
+ * @param {Object} params - InSAR coherence parameters
+ * @returns {Promise<Object>} Coherence score and decorrelation breakdown
+ */
+export const calculateInSarCoherence = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/insar/coherence', params);
+  return response.data;
+};
+
+/**
+ * Fits multi-temporal harmonic series (HATS) to extract seasonal phenological markers.
+ * 
+ * @param {Object} params - Phenological extraction parameters
+ * @returns {Promise<Object>} Phenometrics and fitted seasonal curve
+ */
+export const extractPhenologicalMetrics = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/phenology/extract', params);
+  return response.data;
+};
+
+/**
+ * Generates a Best Available Pixel (BAP) multi-temporal composite based on multi-criteria scoring.
+ * 
+ * @param {Object} params - BAP composite parameters
+ * @returns {Promise<Object>} Composite metadata and dynamic tile template
+ */
+export const requestBapComposite = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/composites/bap', params);
   return response.data;
 };
 

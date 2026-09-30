@@ -42,10 +42,16 @@ class PreprocessingService:
                 bit_mask = 0
                 for b in range(6):
                     bit_mask |= (1 << b)
-                qa_clean = np.nan_to_num(qa, nan=0)
-                qa_int = qa_clean.astype(np.uint16)
-                raw_mask = ((qa_int & bit_mask) != 0) | np.isnan(qa)
-                del qa_clean
+                if np.issubdtype(qa.dtype, np.floating):
+                    nan_mask = np.isnan(qa)
+                    qa_clean = np.nan_to_num(qa, copy=True, nan=0)
+                    qa_int = qa_clean.astype(np.uint16, copy=False)
+                    del qa_clean
+                else:
+                    nan_mask = np.zeros_like(qa, dtype=bool)
+                    qa_int = qa.astype(np.uint16, copy=False)
+                raw_mask = ((qa_int & bit_mask) != 0) | nan_mask
+                del nan_mask
                 del qa_int
                 del qa
                 if not np.any(raw_mask):
@@ -55,6 +61,7 @@ class PreprocessingService:
                 if dilation_iterations > 0:
                     struct = PreprocessingService._get_spatial_dilation_structure(raw_mask.ndim)
                     dilated_mask = binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
+                    del struct
                 else:
                     dilated_mask = raw_mask
                 del raw_mask
@@ -74,6 +81,7 @@ class PreprocessingService:
                     elif arr.ndim == dilated_mask.ndim + 1 and arr.shape[1:] == dilated_mask.shape:
                         arr[:, dilated_mask] = np.nan
                     dataset[var] = (dataset[var].dims, arr)
+                    del arr
                 del dilated_mask
                 if hasattr(dataset, "attrs"):
                     dataset.attrs["cloud_shadow_masked"] = True
@@ -84,11 +92,22 @@ class PreprocessingService:
         elif isinstance(dataset, dict):
             qa = dataset.get("qa_pixel", dataset.get("QA_PIXEL", dataset.get("qa")))
             if qa is not None:
-                qa_arr = np.asarray(qa, dtype=np.uint16)
+                qa_raw = np.asarray(qa)
                 bit_mask = 0
                 for b in range(6):
                     bit_mask |= (1 << b)
-                raw_mask = (qa_arr & bit_mask) != 0
+                if np.issubdtype(qa_raw.dtype, np.floating):
+                    nan_mask = np.isnan(qa_raw)
+                    qa_clean = np.nan_to_num(qa_raw, copy=True, nan=0)
+                    qa_arr = qa_clean.astype(np.uint16, copy=False)
+                    del qa_clean
+                else:
+                    nan_mask = np.zeros_like(qa_raw, dtype=bool)
+                    qa_arr = qa_raw.astype(np.uint16, copy=False)
+                del qa_raw
+                raw_mask = ((qa_arr & bit_mask) != 0) | nan_mask
+                del nan_mask
+                del qa_arr
                 if dilation_iterations > 0:
                     struct = PreprocessingService._get_spatial_dilation_structure(raw_mask.ndim)
                     dilated_mask = binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
@@ -101,14 +120,23 @@ class PreprocessingService:
                         dataset[k] = arr
                 del raw_mask
                 del dilated_mask
-                del qa_arr
             return dataset
         
         elif isinstance(dataset, np.ndarray):
             bit_mask = 0
             for b in range(6):
                 bit_mask |= (1 << b)
-            raw_mask = (dataset.astype(np.uint16) & bit_mask) != 0
+            if np.issubdtype(dataset.dtype, np.floating):
+                nan_mask = np.isnan(dataset)
+                qa_clean = np.nan_to_num(dataset, copy=True, nan=0)
+                qa_int = qa_clean.astype(np.uint16, copy=False)
+                del qa_clean
+            else:
+                nan_mask = np.zeros_like(dataset, dtype=bool)
+                qa_int = dataset.astype(np.uint16, copy=False)
+            raw_mask = ((qa_int & bit_mask) != 0) | nan_mask
+            del nan_mask
+            del qa_int
             if dilation_iterations > 0:
                 struct = PreprocessingService._get_spatial_dilation_structure(dataset.ndim)
                 return binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
@@ -141,8 +169,10 @@ class PreprocessingService:
                     break
             if scl_name is not None:
                 scl = dataset[scl_name].values
-                raw_mask = np.isin(scl, list(invalid_classes)) | np.isnan(scl)
+                nan_mask = np.isnan(scl) if np.issubdtype(scl.dtype, np.floating) else np.zeros_like(scl, dtype=bool)
+                raw_mask = np.isin(scl, list(invalid_classes)) | nan_mask
                 del scl
+                del nan_mask
                 if not np.any(raw_mask):
                     # Zero clouds or invalid pixels in the scene: fast bypass without allocating memory
                     del raw_mask
@@ -179,7 +209,9 @@ class PreprocessingService:
             scl = dataset.get("scl", dataset.get("SCL", dataset.get("scl_20m", dataset.get("SCL_20M"))))
             if scl is not None:
                 scl_arr = np.asarray(scl)
-                raw_mask = np.isin(scl_arr, list(invalid_classes))
+                nan_mask = np.isnan(scl_arr) if np.issubdtype(scl_arr.dtype, np.floating) else np.zeros_like(scl_arr, dtype=bool)
+                raw_mask = np.isin(scl_arr, list(invalid_classes)) | nan_mask
+                del nan_mask
                 if dilation_iterations > 0:
                     struct = PreprocessingService._get_spatial_dilation_structure(raw_mask.ndim)
                     dilated_mask = binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)
@@ -196,7 +228,9 @@ class PreprocessingService:
             return dataset
 
         elif isinstance(dataset, np.ndarray):
-            raw_mask = np.isin(dataset, list(invalid_classes))
+            nan_mask = np.isnan(dataset) if np.issubdtype(dataset.dtype, np.floating) else np.zeros_like(dataset, dtype=bool)
+            raw_mask = np.isin(dataset, list(invalid_classes)) | nan_mask
+            del nan_mask
             if dilation_iterations > 0:
                 struct = PreprocessingService._get_spatial_dilation_structure(dataset.ndim)
                 return binary_dilation(raw_mask, structure=struct, iterations=dilation_iterations)

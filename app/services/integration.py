@@ -4,6 +4,9 @@ import logging
 import asyncio
 from typing import Dict, Any, Optional
 from app.config import settings
+import os
+import datetime
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -65,5 +68,28 @@ class DataIntegrationService:
         self._cache[site_id] = fallback
         self._cache_time[site_id] = time.time()
         return fallback
+
+    def sign_stac_url(self, url: str) -> str:
+        """Append a SAS token for Azure Blob storage if credentials are set.
+        Falls back to returning the original URL when credentials are missing.
+        """
+        account = os.getenv('AZURE_STORAGE_ACCOUNT')
+        key = os.getenv('AZURE_STORAGE_KEY')
+        if not account or not key:
+            return url
+        # Placeholder token generation (real implementation would use azure.storage.blob)
+        parsed = urlparse(url)
+        query = parse_qs(parsed.query)
+        query.update({
+            'sv': ['2022-11-02'],
+            'ss': ['b'],
+            'srt': ['sco'],
+            'sp': ['rl'],
+            'se': [(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')],
+            'sig': ['dummy_signature']
+        })
+        new_query = urlencode(query, doseq=True)
+        signed = urlunparse(parsed._replace(query=new_query))
+        return signed
 
 integration_service = DataIntegrationService()

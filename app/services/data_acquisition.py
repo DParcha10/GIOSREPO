@@ -100,13 +100,20 @@ class DataAcquisitionService:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore")
                 client = Client.open(self.catalog_url)
-                search = client.search(
-                    collections=[target_collection],
-                    bbox=bbox,
-                    datetime=f"{start_date}/{end_date}",
-                    query={"eo:cloud_cover": {"lt": max_cloud}},
-                    limit=50
-                )
+                search_kwargs = {
+                    "collections": [target_collection],
+                    "bbox": bbox,
+                    "limit": 50
+                }
+                if target_collection in {"sentinel-2-l2a", "landsat-c2-l2"}:
+                    if start_date and end_date:
+                        search_kwargs["datetime"] = f"{start_date}/{end_date}"
+                    if max_cloud is not None:
+                        search_kwargs["query"] = {"eo:cloud_cover": {"lt": max_cloud}}
+                elif target_collection in {"sentinel-1-rtc"}:
+                    if start_date and end_date:
+                        search_kwargs["datetime"] = f"{start_date}/{end_date}"
+                search = client.search(**search_kwargs)
                 items = list(search.items())
             results = []
             for item in items:

@@ -56,7 +56,14 @@ DEFAULT_INDEX_RANGES = {
     "slope_stability": (0.8, 2.5),
     "fs": (0.8, 2.5),
     "water_quality": (0.0, 0.4),
-    "ndti": (-0.3, 0.3)
+    "ndti": (-0.3, 0.3),
+    "insar_displacement": (-30.0, 30.0),
+    "displacement": (-30.0, 30.0),
+    "insar_coherence": (0.0, 1.0),
+    "coherence": (0.0, 1.0),
+    "bap_composite": (0.0, 1.0),
+    "bap_score": (0.0, 1.0),
+    "thermal_lst": (15.0, 45.0)
 }
 
 class TileService:
@@ -492,6 +499,77 @@ class TileService:
             index=clean_metric,
             colormap=colormap or "turbo",
             rescale=rescale or default_rescale
+        )
+
+    def render_thermal_lst_tile(
+        self,
+        collection: str = "landsat-c2-l2",
+        item_id: str = "lst",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: str = "turbo",
+        rescale: Optional[str] = "15.0,45.0",
+        method: Optional[str] = "single_channel"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Land Surface Temperature (LST) thermal layer."""
+        clean_cmap = colormap or "turbo"
+        clean_rescale = rescale or "15.0,45.0"
+        return self.render_tile(
+            collection=collection or "landsat-c2-l2",
+            item_id=item_id or "lst",
+            z=z,
+            x=x,
+            y=y,
+            index="lst",
+            colormap=clean_cmap,
+            rescale=clean_rescale
+        )
+
+    def render_insar_tile(
+        self,
+        pair_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "displacement",
+        colormap: str = "rdylbu",
+        rescale: Optional[str] = "-30.0,30.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Sentinel-1 InSAR line-of-sight displacement or coherence."""
+        clean_metric = (metric or "displacement").lower().strip()
+        default_rescale = "-30.0,30.0" if "disp" in clean_metric else "0.0,1.0"
+        clean_cmap = colormap or ("rdylbu" if "disp" in clean_metric else "viridis")
+        return self.render_tile(
+            collection="sar_insar",
+            item_id=pair_id,
+            z=z,
+            x=x,
+            y=y,
+            index=clean_metric,
+            colormap=clean_cmap,
+            rescale=rescale or default_rescale
+        )
+
+    def render_bap_composite_tile(
+        self,
+        composite_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: str = "spectral",
+        rescale: Optional[str] = "0.0,1.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Best Available Pixel (BAP) parametric composite."""
+        return self.render_tile(
+            collection="bap_composite",
+            item_id=composite_id,
+            z=z,
+            x=x,
+            y=y,
+            index="bap_score",
+            colormap=colormap or "spectral",
+            rescale=rescale or "0.0,1.0"
         )
 
 tile_service = TileService()

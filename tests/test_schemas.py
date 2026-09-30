@@ -1,3 +1,4 @@
+import math
 import re
 """Tests for GIOS v2.5 Core Schemas, Data Models, and API Contracts.
 
@@ -259,7 +260,38 @@ from app.models.schemas import (
     list_soil_presets,
     build_twi_tile_url,
     build_slope_stability_tile_url,
-    build_water_quality_tile_url
+    build_water_quality_tile_url,
+    HeatHazardLevel,
+    LSTCalculationMethod,
+    LSTAnalysisRequest,
+    LSTAnalysisResponse,
+    calculate_fractional_vegetation_cover,
+    calculate_land_surface_emissivity,
+    calculate_lst_single_channel,
+    classify_heat_hazard_level,
+    build_lst_tile_url,
+    TopographicCorrectionModel,
+    TopographicCorrectionRequest,
+    TopographicCorrectionResponse,
+    calculate_illumination_angle,
+    apply_topographic_c_correction,
+    InSARDeformationTier,
+    InSARDisplacementRequest,
+    InSARDisplacementResponse,
+    InSARCoherenceRequest,
+    InSARCoherenceResponse,
+    calculate_insar_displacement_mm,
+    calculate_insar_velocity_mm_yr,
+    classify_insar_deformation_tier,
+    build_insar_tile_url,
+    PhenologyFitModel,
+    Phenometrics,
+    PhenologyAnalysisRequest,
+    PhenologyAnalysisResponse,
+    fit_harmonic_phenology,
+    BAPScoringWeights,
+    BAPCompositeRequest,
+    BAPCompositeResponse
 )
 from app.config import settings
 
@@ -2875,5 +2907,275 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         import main
         self.assertIsNotNone(main.app)
 
+    def test_t74_canonical_route_contracts(self):
+        """Verify all 14 T-74 API route contracts are registered in API_ROUTE_CONTRACTS."""
+        t74_routes = [
+            "analysis_lst_transfer",
+            "analysis_lst_transfer_short",
+            "tiles_thermal_lst",
+            "analysis_topographic_correction",
+            "analysis_topographic_correction_short",
+            "analysis_insar_displacement",
+            "analysis_insar_displacement_short",
+            "analysis_insar_coherence",
+            "analysis_insar_coherence_short",
+            "tiles_sar_insar",
+            "analysis_phenology_extract",
+            "analysis_phenology_extract_short",
+            "analysis_composites_bap",
+            "analysis_composites_bap_short",
+        ]
+        for route_key in t74_routes:
+            self.assertIn(route_key, API_ROUTE_CONTRACTS, f"Missing route contract: {route_key}")
+
+        # Test format_api_route parameter substitution
+        formatted_lst = format_api_route("tiles_thermal_lst", collection="landsat-c2-l2", item_id="LC09_044034", z=11, x=650, y=1240)
+        self.assertEqual(formatted_lst, "/api/v1/tiles/thermal/lst/landsat-c2-l2/LC09_044034/11/650/1240.png")
+
+        formatted_insar = format_api_route("tiles_sar_insar", pair_id="PAIR-S1-01", z=12, x=1300, y=2480)
+        self.assertEqual(formatted_insar, "/api/v1/tiles/sar/insar/PAIR-S1-01/12/1300/2480.png")
+
+    def test_land_surface_temperature_contracts_and_math(self):
+        """Verify LST radiometric transfer formulas, emissivity, FVC, and hazard classification."""
+        # 1. Fractional Vegetation Cover (FVC)
+        fvc_zero = calculate_fractional_vegetation_cover(0.04, ndvi_soil=0.05, ndvi_veg=0.70)
+        self.assertEqual(fvc_zero, 0.0)
+        fvc_one = calculate_fractional_vegetation_cover(0.75, ndvi_soil=0.05, ndvi_veg=0.70)
+        self.assertEqual(fvc_one, 1.0)
+        fvc_mid = calculate_fractional_vegetation_cover(0.45, ndvi_soil=0.05, ndvi_veg=0.70)
+        self.assertAlmostEqual(fvc_mid, 0.3787, places=3)
+
+        # 2. Land Surface Emissivity (LSE)
+        eps_bare = calculate_land_surface_emissivity(0.03, 0.0, eps_soil=0.97, eps_veg=0.99)
+        self.assertEqual(eps_bare, 0.97)
+        eps_dense = calculate_land_surface_emissivity(0.75, 1.0, eps_soil=0.97, eps_veg=0.99)
+        self.assertEqual(eps_dense, 0.99)
+        eps_mixed = calculate_land_surface_emissivity(0.45, fvc_mid, eps_soil=0.97, eps_veg=0.99)
+        self.assertGreater(eps_mixed, 0.97)
+        self.assertLess(eps_mixed, 1.0)
+
+        # 3. Single-channel Planck inversion (Artis & Carnahan)
+        ts_k = calculate_lst_single_channel(brightness_temp_k=305.15, emissivity=eps_mixed)
+        self.assertGreater(ts_k, 300.0)
+        self.assertLess(ts_k, 320.0)
+
+        # 4. Thermal hazard level classification
+        self.assertEqual(classify_heat_hazard_level(43.5, 7.0), HeatHazardLevel.EXTREME_HEAT)
+        self.assertEqual(classify_heat_hazard_level(37.0, 3.5), HeatHazardLevel.HIGH_HEAT)
+        self.assertEqual(classify_heat_hazard_level(31.5, 1.2), HeatHazardLevel.MODERATE_HEAT)
+        self.assertEqual(classify_heat_hazard_level(24.0, 0.0), HeatHazardLevel.NORMAL)
+
+        # 5. Pydantic request & response validation
+        req = LSTAnalysisRequest(
+            collection=SatelliteCollection.LANDSAT_C2_L2,
+            item_id="LC09_L2SP_044034_20260810",
+            method=LSTCalculationMethod.SINGLE_CHANNEL,
+            bbox=[-121.2, 36.95, -120.95, 37.15]
+        )
+        self.assertEqual(req.collection, SatelliteCollection.LANDSAT_C2_L2)
+        self.assertEqual(req.method, LSTCalculationMethod.SINGLE_CHANNEL)
+
+        resp = LSTAnalysisResponse(
+            item_id=req.item_id,
+            method=req.method,
+            mean_lst_c=32.4,
+            min_lst_c=24.1,
+            max_lst_c=41.8,
+            mean_lst_k=305.55,
+            mean_emissivity=0.985,
+            mean_fvc=0.45,
+            uhi_intensity_c=4.4,
+            heat_hazard_level=HeatHazardLevel.HIGH_HEAT,
+            pixel_count=125000,
+            tile_url_template="/api/v1/tiles/thermal/lst/landsat-c2-l2/LC09_044034/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.heat_hazard_level, HeatHazardLevel.HIGH_HEAT)
+        self.assertEqual(resp.pixel_count, 125000)
+
+        # 6. Dynamic tile URL builder
+        tile_url = build_lst_tile_url("landsat-c2-l2", "LC09_044034", 12, 650, 1240)
+        self.assertIn("/api/v1/tiles/thermal/lst/landsat-c2-l2/LC09_044034/12/650/1240.png", tile_url)
+
+    def test_topographic_illumination_correction_contracts_and_math(self):
+        """Verify solar illumination incidence angle (cos i) and semi-empirical C-correction."""
+        # 1. Illumination incidence angle
+        # Flat horizontal surface (slope=0): cos(i) = cos(theta_s)
+        cos_i_flat = calculate_illumination_angle(solar_zenith_deg=30.0, solar_azimuth_deg=180.0, slope_deg=0.0, aspect_deg=0.0)
+        self.assertAlmostEqual(cos_i_flat, math.cos(math.radians(30.0)), places=3)
+
+        # Sun-facing 20 degree slope: cos(i) > cos(theta_s)
+        cos_i_sun = calculate_illumination_angle(solar_zenith_deg=40.0, solar_azimuth_deg=180.0, slope_deg=20.0, aspect_deg=180.0)
+        self.assertGreater(cos_i_sun, math.cos(math.radians(40.0)))
+
+        # 2. C-correction application
+        rad_corrected = apply_topographic_c_correction(radiance=0.25, cos_i=cos_i_sun, solar_zenith_deg=40.0, c_param=0.18)
+        self.assertGreater(rad_corrected, 0.0)
+        self.assertLess(rad_corrected, 1.0)
+
+        # 3. Pydantic request & response
+        req = TopographicCorrectionRequest(
+            collection=SatelliteCollection.SENTINEL_2,
+            item_id="S2A_MSIL2A_20260820",
+            model=TopographicCorrectionModel.C_CORRECTION,
+            solar_zenith_deg=38.5,
+            solar_azimuth_deg=142.0,
+            c_parameter=0.18
+        )
+        self.assertEqual(req.model, TopographicCorrectionModel.C_CORRECTION)
+
+        resp = TopographicCorrectionResponse(
+            item_id=req.item_id,
+            model=req.model,
+            solar_zenith_deg=req.solar_zenith_deg,
+            solar_azimuth_deg=req.solar_azimuth_deg,
+            c_parameter_used=0.18,
+            minnaert_k_used=0.75,
+            mean_illumination_cos=0.745,
+            mean_reflectance_before=0.280,
+            mean_reflectance_after=0.225,
+            topographic_shadow_area_pct=3.8
+        )
+        self.assertEqual(resp.status, "corrected")
+        self.assertAlmostEqual(resp.mean_illumination_cos, 0.745)
+
+    def test_sentinel1_insar_displacement_and_coherence_contracts_and_math(self):
+        """Verify Sentinel-1 DInSAR displacement, deformation rate, coherence, and risk tiers."""
+        # 1. Line-of-sight displacement from differential phase
+        # Differential phase = +1.5 rad -> negative displacement (subsidence)
+        disp_sub = calculate_insar_displacement_mm(diff_phase_rad=1.5, wavelength_mm=55.465)
+        self.assertLess(disp_sub, 0.0)
+        self.assertAlmostEqual(disp_sub, -6.62, places=1)
+
+        # Differential phase = -1.5 rad -> positive displacement (uplift)
+        disp_up = calculate_insar_displacement_mm(diff_phase_rad=-1.5, wavelength_mm=55.465)
+        self.assertGreater(disp_up, 0.0)
+        self.assertAlmostEqual(disp_up, 6.62, places=1)
+
+        # 2. Velocity annualization
+        vel_yr = calculate_insar_velocity_mm_yr(disp_sub, temporal_baseline_days=12.0)
+        self.assertLess(vel_yr, -100.0)
+
+        # 3. Deformation tier classification
+        self.assertEqual(classify_insar_deformation_tier(15.0), InSARDeformationTier.UPLIFT)
+        self.assertEqual(classify_insar_deformation_tier(0.0), InSARDeformationTier.STABLE)
+        self.assertEqual(classify_insar_deformation_tier(-10.0), InSARDeformationTier.MINOR_SUBSIDENCE)
+        self.assertEqual(classify_insar_deformation_tier(-25.0), InSARDeformationTier.MODERATE_SUBSIDENCE)
+        self.assertEqual(classify_insar_deformation_tier(-45.0), InSARDeformationTier.SEVERE_SUBSIDENCE)
+        self.assertEqual(classify_insar_deformation_tier(-75.0), InSARDeformationTier.CRITICAL_FAILURE)
+
+        # 4. Pydantic request & response
+        req = InSARDisplacementRequest(
+            primary_scene_id="S1A_IW_SLC__1SDV_20260808",
+            secondary_scene_id="S1A_IW_SLC__1SDV_20260820",
+            temporal_baseline_days=12.0,
+            perpendicular_baseline_m=45.0
+        )
+        self.assertEqual(req.temporal_baseline_days, 12.0)
+
+        resp = InSARDisplacementResponse(
+            pair_id="PAIR-S1-20260808-20260820",
+            primary_scene_id=req.primary_scene_id,
+            secondary_scene_id=req.secondary_scene_id,
+            temporal_baseline_days=12.0,
+            perpendicular_baseline_m=45.0,
+            mean_coherence=0.72,
+            mean_displacement_mm=-3.4,
+            max_subsidence_mm=-19.2,
+            max_uplift_mm=1.8,
+            mean_velocity_mm_yr=-103.5,
+            deformation_tier=InSARDeformationTier.MODERATE_SUBSIDENCE,
+            stable_area_pct=81.2,
+            tile_url_template="/api/v1/tiles/sar/insar/PAIR-S1-01/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.deformation_tier, InSARDeformationTier.MODERATE_SUBSIDENCE)
+
+        # 5. Coherence request & response
+        coh_req = InSARCoherenceRequest(primary_scene_id=req.primary_scene_id, secondary_scene_id=req.secondary_scene_id)
+        coh_resp = InSARCoherenceResponse(
+            pair_id="PAIR-S1-20260808-20260820",
+            mean_coherence=0.72,
+            high_coherence_pct=68.5,
+            decorrelated_pct=9.4,
+            structural_stability_score=89.2
+        )
+        self.assertEqual(coh_resp.high_coherence_pct, 68.5)
+
+        # 6. Tile builder
+        tile_url = build_insar_tile_url("PAIR-S1-01", 11, 650, 1240)
+        self.assertIn("/api/v1/tiles/sar/insar/PAIR-S1-01/11/650/1240.png", tile_url)
+
+    def test_phenological_harmonic_analysis_and_phenometrics(self):
+        """Verify Harmonic Analysis of Time Series (HATS) Fourier fitting and phenometrics derivation."""
+        # 1. Fallback fitting
+        fb = fit_harmonic_phenology([], [])
+        self.assertIn("phenometrics", fb)
+        self.assertEqual(fb["phenometrics"]["sos_doy"], 105)
+        self.assertEqual(fb["phenometrics"]["pos_doy"], 210)
+
+        # 2. Realistic time series observations
+        doys = [30, 75, 120, 165, 210, 255, 300, 345]
+        vis = [0.20, 0.28, 0.52, 0.68, 0.65, 0.42, 0.25, 0.21]
+        fit = fit_harmonic_phenology(doys, vis)
+        p = fit["phenometrics"]
+        self.assertGreater(p["peak_level"], p["base_level"])
+        self.assertGreater(p["amplitude"], 0.1)
+        self.assertLess(p["sos_doy"], p["pos_doy"])
+        self.assertGreater(p["eos_doy"], p["pos_doy"])
+        self.assertEqual(p["los_days"], p["eos_doy"] - p["sos_doy"])
+        self.assertGreater(len(fit["curve_points"]), 10)
+
+        # 3. Pydantic request & response
+        req = PhenologyAnalysisRequest(
+            aoi_name="San Luis Reservoir Watershed",
+            metric="ndvi",
+            fit_model=PhenologyFitModel.HARMONIC_HATS,
+            harmonic_terms=2
+        )
+        self.assertEqual(req.fit_model, PhenologyFitModel.HARMONIC_HATS)
+
+        resp = PhenologyAnalysisResponse(
+            aoi_name=req.aoi_name,
+            metric=req.metric,
+            fit_model=req.fit_model,
+            phenometrics=Phenometrics(**p),
+            r_squared=0.92,
+            climatological_anomaly_z=-0.35,
+            curve_points=fit["curve_points"]
+        )
+        self.assertEqual(resp.r_squared, 0.92)
+        self.assertAlmostEqual(resp.climatological_anomaly_z, -0.35)
+
+    def test_best_available_pixel_bap_compositing_contracts(self):
+        """Verify Best Available Pixel (BAP) multi-criteria scoring weights and composite request schemas."""
+        weights = BAPScoringWeights(
+            cloud_dist_weight=0.40,
+            target_doy_weight=0.30,
+            sensor_zenith_weight=0.15,
+            opacity_weight=0.15
+        )
+        self.assertEqual(weights.cloud_dist_weight, 0.40)
+
+        req = BAPCompositeRequest(
+            collection=SatelliteCollection.SENTINEL_2,
+            item_ids=["S2A_10SEJ_20260715", "S2B_10SEJ_20260720", "S2A_10SEJ_20260725"],
+            target_doy=205,
+            scoring_weights=weights
+        )
+        self.assertEqual(len(req.item_ids), 3)
+        self.assertEqual(req.target_doy, 205)
+
+        resp = BAPCompositeResponse(
+            composite_id="BAP-S2-2026-DOY205",
+            collection=req.collection,
+            scenes_evaluated=3,
+            target_doy=205,
+            mean_pixel_score=0.912,
+            valid_pixel_pct=99.8,
+            tile_url_template="/api/v1/tiles/composite/BAP-S2-2026-DOY205/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.scenes_evaluated, 3)
+        self.assertAlmostEqual(resp.valid_pixel_pct, 99.8)
+
 if __name__ == "__main__":
     unittest.main()
+
