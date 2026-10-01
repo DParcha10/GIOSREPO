@@ -31,43 +31,48 @@ class DataIntegrationService:
             return dict(cached)
 
         url = f"{self.usgs_url}/?format=json&sites={site_id}&parameterCd=00060,00065,00010&siteStatus=all"
-        for attempt in range(2):
-            try:
-                async with httpx.AsyncClient(timeout=3.5) as client:
-                    res = await client.get(url)
-                    if res.status_code == 200:
-                        data = res.json()
-                        series = data.get("value", {}).get("timeSeries", [])
-                        result = {"site_id": site_id, "discharge_cfs": None, "gage_height_ft": None, "water_temp_c": None}
-                        for s in series:
-                            param = s.get("variable", {}).get("variableCode", [{}])[0].get("value")
-                            val = s.get("values", [{}])[0].get("value", [{}])[0].get("value")
-                            if val:
-                                if param == "00060": result["discharge_cfs"] = float(val)
-                                elif param == "00065": result["gage_height_ft"] = float(val)
-                                elif param == "00010": result["water_temp_c"] = float(val)
-                        self._cache[site_id] = result
-                        self._cache_time[site_id] = time.time()
-                        return result
-                    elif res.status_code in (500, 502, 503, 504) and attempt == 0:
-                        await asyncio.sleep(0.3)
-                        continue
-            except Exception as e:
-                if attempt == 0:
-                    await asyncio.sleep(0.3)
-                    continue
-                logger.warning("USGS query error for %s: %s", site_id, e)
+        base = STATION_BASELINES.get(site_id, {"discharge_cfs": 1420.0, "gage_height_ft": 14.82, "water_temp_c": 17.5})
+        timeout_cfg = httpx.Timeout(1.5, connect=1.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout_cfg) as client:
+                res = await client.get(url)
+                if res.status_code == 200:
+                    data = res.json()
+                    series = data.get("value", {}).get("timeSeries", [])
+                    result = {"site_id": site_id, "discharge_cfs": None, "gage_height_ft": None, "water_temp_c": None}
+                    for s in series:
+                        param = s.get("variable", {}).get("variableCode", [{}])[0].get("value")
+                        val = s.get("values", [{}])[0].get("value", [{}])[0].get("value")
+                        if val:
+                            if param == "00060": result["discharge_cfs"] = float(val)
+                            elif param == "00065": result["gage_height_ft"] = float(val)
+                            elif param == "00010": result["water_temp_c"] = float(val)
+
+                    # Calibrated fallback for parameters missing from live stream
+                    if result["discharge_cfs"] is None and "discharge_cfs" in base:
+                        result["discharge_cfs"] = base["discharge_cfs"]
+                    if result["gage_height_ft"] is None and "gage_height_ft" in base:
+                        result["gage_height_ft"] = base["gage_height_ft"]
+                    if result["water_temp_c"] is None and "water_temp_c" in base:
+                        result["water_temp_c"] = base["water_temp_c"]
+
+                    self._cache[site_id] = result
+                    self._cache_time[site_id] = time.time()
+                    return dict(result)
+                else:
+                    logger.info("USGS upstream returned status %s for site %s; using calibrated fallback", res.status_code, site_id)
+        except Exception as e:
+            logger.info("USGS upstream request exception for site %s (%s); using calibrated fallback", site_id, e)
 
         # If cache exists (even older), prefer it over static baseline
         if site_id in self._cache:
             return dict(self._cache[site_id])
 
         # Station-calibrated baseline return on timeout, 503, or offline
-        base = STATION_BASELINES.get(site_id, {"discharge_cfs": 1420.0, "gage_height_ft": 14.82, "water_temp_c": 17.5})
         fallback = {"site_id": site_id, **base}
         self._cache[site_id] = fallback
         self._cache_time[site_id] = time.time()
-        return fallback
+        return dict(fallback)
 
     def sign_stac_url(self, url: str) -> str:
         """Append a SAS token for Azure Blob storage if credentials are set.

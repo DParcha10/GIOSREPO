@@ -77,7 +77,24 @@ DEFAULT_INDEX_RANGES = {
     "soil_salinity": (-0.3, 0.3),
     "thermal_hotspots": (300.0, 400.0),
     "hotspots": (300.0, 400.0),
-    "frp": (0.0, 100.0)
+    "frp": (0.0, 100.0),
+    "fsc": (0.0, 1.0),
+    "snow_cover": (0.0, 1.0),
+    "ndsi_snow": (-0.2, 0.8),
+    "turbidity": (0.0, 50.0),
+    "tsm": (0.0, 80.0),
+    "disturbance": (-0.4, 0.1),
+    "breaks": (-0.4, 0.1),
+    "cwsi": (0.0, 1.0),
+    "spline": (0.0, 255.0),
+    "spline_mosaic": (0.0, 255.0),
+    "direct_georeferencing": (0.0, 1.0),
+    "boresight": (0.0, 1.0),
+    "crest_alignment": (0.0, 0.5),
+    "crest_settlement": (0.0, 0.5),
+    "settlement": (0.0, 0.5),
+    "ps_insar": (-20.0, 10.0),
+    "ps_velocity": (-20.0, 10.0)
 }
 
 class TileService:
@@ -180,8 +197,8 @@ class TileService:
         else:
             rescale_clean = "default"
 
-        # 1. Check if drone request
-        if col_clean in {"drone", "drone-ortho"} or "drone" in col_clean:
+        # 1. Check if drone request (excluding direct georeferencing vector footprints)
+        if (col_clean in {"drone", "drone-ortho"} or "drone" in col_clean) and not ("direct_georeferencing" in col_clean or "direct-georeferencing" in col_clean or idx_clean in {"direct_georeferencing", "boresight"}):
             return drone_service.get_tile(item_id, z, x, y)
 
         # Handle wildfire collection differenced burn severity
@@ -339,6 +356,56 @@ class TileService:
                 base_t = 295.0 + base_variation * 30.0
                 fire_peak = ((np.sin(xx * 25.0) > 0.85) & (np.cos(yy * 25.0) > 0.85)).astype(np.float32) * 65.0
                 val = base_t + fire_peak
+            elif col_clean in {"flood_inundation", "dam_breach", "dam-breach", "hazard_flood"} or idx_clean in {"flood_inundation", "inundation_depth", "dam_breach"}:
+                # Water depth from breach runout in meters [0.0, 35.0]
+                val = np.clip(base_variation * 8.5 + (np.sin(xx * 15.0) > 0.4).astype(np.float32) * 3.5, 0.0, 35.0)
+            elif col_clean in {"landslide", "landslide_susceptibility", "landslide-susceptibility", "hazard_landslide"} or idx_clean in {"landslide", "landslide_susceptibility", "susceptibility"}:
+                # Landslide susceptibility index [0.0, 1.0]
+                val = np.clip(base_variation * 0.90 + (np.cos(yy * 18.0) > 0.5).astype(np.float32) * 0.25, 0.0, 1.0)
+            elif col_clean in {"drought", "drought_vhi", "drought-vhi", "vhi"} or idx_clean in {"vhi", "vci", "tci", "drought"}:
+                # Vegetation Health Index [0.0, 100.0]
+                val = np.clip(15.0 + base_variation * 70.0, 0.0, 100.0)
+            elif col_clean in {"sam", "sam_mineral", "geology_sam", "spectral_sam"} or idx_clean in {"sam", "sam_angle", "pyrite", "chalcopyrite", "goethite", "hematite", "kaolinite", "calcite", "acid_mine_drainage"}:
+                # Spectral Angle Mapper (SAM) angle in radians [0.0, 0.35]
+                val = np.clip(base_variation * 0.28, 0.0, 0.50)
+            elif col_clean in {"cryosphere", "snow_cover", "snow-cover", "fsc"} or idx_clean in {"fsc", "snow_cover", "ndsi_snow"}:
+                # Sub-pixel fractional snow cover [0.0, 1.0]
+                val = np.clip(base_variation * 1.15 - 0.1, 0.0, 1.0)
+            elif col_clean in {"turbidity", "tsm", "water_turbidity", "aquatic_tsm"} or idx_clean in {"turbidity", "tsm", "turbidity_ntu", "tsm_g_m3"}:
+                # Aquatic TSM (0-80 g/m3) or Turbidity (0-60 NTU)
+                val = np.clip(base_variation * 55.0, 0.0, 120.0)
+            elif col_clean in {"disturbance", "disturbance_breaks", "bfast", "landtrendr"} or idx_clean in {"disturbance", "breaks", "jump_magnitude"}:
+                # Trajectory jump magnitude delta [-0.4, 0.1]
+                val = np.clip(-0.35 + base_variation * 0.45, -0.60, 0.30)
+            elif col_clean in {"cwsi", "water_stress", "crop_water_stress"} or idx_clean in {"cwsi", "water_stress", "et0", "eta"}:
+                # Crop Water Stress Index [0.0, 1.0]
+                val = np.clip(0.15 + base_variation * 0.75, 0.0, 1.0)
+            elif col_clean in {"spline_mosaic", "mosaic_spline", "laplacian_spline"} or idx_clean in {"spline", "laplacian", "blend"}:
+                # Multi-resolution spline blended orthomosaic radiance [0, 255]
+                val = np.clip(40.0 + base_variation * 180.0, 0.0, 255.0)
+            elif col_clean in {"direct_georeferencing", "drone_direct_georeferencing"} or idx_clean in {"direct_georeferencing", "boresight"}:
+                # Drone direct georeferencing camera footprint & CEP95 circle
+                mid_lon = (min_lon + max_lon) / 2.0
+                mid_lat = (min_lat + max_lat) / 2.0
+                d_lon = (xx - mid_lon) / (max_lon - min_lon + 1e-6)
+                d_lat = (yy - mid_lat) / (max_lat - min_lat + 1e-6)
+                box_dist = np.maximum(np.abs(d_lon * 0.9 + d_lat * 0.2), np.abs(-d_lon * 0.2 + d_lat * 0.9))
+                circ_dist = np.sqrt(d_lon**2 + d_lat**2)
+                val = np.clip(1.0 - box_dist * 1.5, 0.0, 1.0) * (0.8 + 0.2 * base_variation)
+                center_pt = ((np.abs(d_lon) < 0.03) | (np.abs(d_lat) < 0.03)) & (circ_dist < 0.15)
+                val = np.where(center_pt, 1.0, val)
+            elif col_clean in {"crest_alignment", "embankment_crest", "geotechnical_crest"} or idx_clean in {"crest_alignment", "crest_settlement", "settlement"}:
+                # Embankment crest centerline & differential settlement sag
+                u = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+                centerline_v = 0.35 + 0.30 * u + 0.08 * np.sin(u * math.pi)
+                d_centerline = np.abs(v - centerline_v)
+                corridor = np.clip(1.0 - d_centerline / 0.18, 0.0, 1.0)
+                sag = 0.03 + 0.38 * np.sin(np.clip(u, 0.0, 1.0) * math.pi)**2 + base_variation * 0.04
+                val = np.clip(sag * corridor, 0.0, 0.55)
+            elif col_clean in {"ps_insar", "ps_stack", "psinsar"} or idx_clean in {"ps_insar", "ps_velocity", "v_los"}:
+                # APS-filtered Persistent Scatterer InSAR LOS displacement velocity (mm/year)
+                val = -4.5 + (base_variation - 0.5) * 12.0 - ((np.sin(xx * 35.0) > 0.3) & (np.cos(yy * 35.0) > 0.3)).astype(np.float32) * 10.5
             else:
                 val = base_variation
 
@@ -370,6 +437,23 @@ class TileService:
 
             # Ensure transparency on nodata / extreme margin
             rgba[np.isnan(val), 3] = 0
+
+            if col_clean in {"direct_georeferencing", "drone_direct_georeferencing"} or idx_clean in {"direct_georeferencing", "boresight"}:
+                d_lon_t = (xx - (min_lon + max_lon) / 2.0) / (max_lon - min_lon + 1e-6)
+                d_lat_t = (yy - (min_lat + max_lat) / 2.0) / (max_lat - min_lat + 1e-6)
+                b_dist = np.maximum(np.abs(d_lon_t * 0.9 + d_lat_t * 0.2), np.abs(-d_lon_t * 0.2 + d_lat_t * 0.9))
+                rgba[b_dist > 0.7, 3] = 0
+                rgba[(b_dist <= 0.7) & (b_dist > 0.65), 3] = 255
+            elif col_clean in {"crest_alignment", "embankment_crest", "geotechnical_crest"} or idx_clean in {"crest_alignment", "crest_settlement", "settlement"}:
+                u_c = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_c = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+                corr_m = np.clip(1.0 - np.abs(v_c - (0.35 + 0.30 * u_c + 0.08 * np.sin(u_c * math.pi))) / 0.18, 0.0, 1.0)
+                rgba[corr_m <= 0.05, 3] = 0
+                rgba[(corr_m > 0.05) & (corr_m < 0.15), 3] = 255
+            elif col_clean in {"ps_insar", "ps_stack", "psinsar"} or idx_clean in {"ps_insar", "ps_velocity", "v_los"}:
+                ps_pts = ((np.sin(xx * 70.0) > 0.75) & (np.cos(yy * 70.0) > 0.75)) | (base_variation > 0.65)
+                rgba[~ps_pts, 3] = 80
+                rgba[ps_pts, 3] = 255
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
@@ -746,5 +830,282 @@ class TileService:
             rescale=rescale or "300.0,400.0"
         )
 
+    def render_flood_inundation_tile(
+        self,
+        simulation_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "blues",
+        rescale: Optional[str] = "0.0,10.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for tailings dam breach hydrodynamic flood inundation depth."""
+        return self.render_tile(
+            collection="flood_inundation",
+            item_id=simulation_id,
+            z=z,
+            x=x,
+            y=y,
+            index="flood_inundation",
+            colormap=colormap or "blues",
+            rescale=rescale or "0.0,10.0"
+        )
+
+    def render_landslide_tile(
+        self,
+        asset_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "turbo",
+        rescale: Optional[str] = "0.0,1.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for infinite slope stability & landslide susceptibility."""
+        return self.render_tile(
+            collection="landslide_susceptibility",
+            item_id=asset_id,
+            z=z,
+            x=x,
+            y=y,
+            index="landslide_susceptibility",
+            colormap=colormap or "turbo",
+            rescale=rescale or "0.0,1.0"
+        )
+
+    def render_drought_vhi_tile(
+        self,
+        collection: Optional[str] = "sentinel-2-l2a",
+        item_id: Optional[str] = "vhi",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "rdylgn",
+        rescale: Optional[str] = "0.0,100.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Kogan Vegetation Health Index (VHI) agricultural drought."""
+        return self.render_tile(
+            collection=collection or "sentinel-2-l2a",
+            item_id=item_id or "vhi",
+            z=z,
+            x=x,
+            y=y,
+            index="vhi",
+            colormap=colormap or "rdylgn",
+            rescale=rescale or "0.0,100.0"
+        )
+
+    def render_sam_mineral_tile(
+        self,
+        collection: Optional[str] = "sentinel-2-l2a",
+        item_id: Optional[str] = "sam",
+        endmember: Optional[str] = "pyrite",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "viridis",
+        rescale: Optional[str] = "0.0,0.3"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Spectral Angle Mapper (SAM) mineral and tailings classification."""
+        clean_mineral = (endmember or "pyrite").lower().strip()
+        return self.render_tile(
+            collection=collection or "sentinel-2-l2a",
+            item_id=f"{item_id}_{clean_mineral}",
+            z=z,
+            x=x,
+            y=y,
+            index=clean_mineral,
+            colormap=colormap or "viridis",
+            rescale=rescale or "0.0,0.3"
+        )
+
+    def render_vector_tile(
+        self,
+        layer_id: str,
+        z: int,
+        x: int,
+        y: int
+    ) -> bytes:
+        """Renders Mapbox Vector Tile (MVT) Protobuf (.pbf) for vector GIS layer."""
+        from app.services.spatial import spatial_service
+        return spatial_service.render_vector_tile(layer_id=layer_id, z=z, x=x, y=y)
+
+    def render_snow_cover_tile(
+        self,
+        collection: Optional[str] = "sentinel-2-l2a",
+        item_id: Optional[str] = "snow",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        model: Optional[str] = "salomonson_appel",
+        colormap: Optional[str] = "blues",
+        rescale: Optional[str] = "0.0,1.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for sub-pixel Fractional Snow Cover (FSC)."""
+        return self.render_tile(
+            collection=collection or "sentinel-2-l2a",
+            item_id=item_id or "snow",
+            z=z,
+            x=x,
+            y=y,
+            index="fsc",
+            colormap=colormap or "blues",
+            rescale=rescale or "0.0,1.0"
+        )
+
+    def render_aquatic_turbidity_tile(
+        self,
+        collection: Optional[str] = "sentinel-2-l2a",
+        item_id: Optional[str] = "turbidity",
+        metric: Optional[str] = "turbidity",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "turbo",
+        rescale: Optional[str] = "0.0,50.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for aquatic Total Suspended Matter & Turbidity inversion."""
+        clean_metric = (metric or "turbidity").lower().strip()
+        default_rescale = "0.0,80.0" if clean_metric == "tsm" else "0.0,50.0"
+        return self.render_tile(
+            collection=collection or "sentinel-2-l2a",
+            item_id=item_id or "turbidity",
+            z=z,
+            x=x,
+            y=y,
+            index=clean_metric,
+            colormap=colormap or "turbo",
+            rescale=rescale or default_rescale
+        )
+
+    def render_disturbance_tile(
+        self,
+        collection: Optional[str] = "sentinel-2-l2a",
+        item_id: Optional[str] = "breaks",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "magma",
+        rescale: Optional[str] = "-0.3,0.1"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for abrupt structural trajectory disturbance breaks."""
+        return self.render_tile(
+            collection=collection or "sentinel-2-l2a",
+            item_id=item_id or "breaks",
+            z=z,
+            x=x,
+            y=y,
+            index="disturbance",
+            colormap=colormap or "magma",
+            rescale=rescale or "-0.3,0.1"
+        )
+
+    def render_cwsi_tile(
+        self,
+        collection: Optional[str] = "landsat-c2-l2",
+        item_id: Optional[str] = "cwsi",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "rdylgn_r",
+        rescale: Optional[str] = "0.0,1.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Crop Water Stress Index & evapotranspiration deficit."""
+        return self.render_tile(
+            collection=collection or "landsat-c2-l2",
+            item_id=item_id or "cwsi",
+            z=z,
+            x=x,
+            y=y,
+            index="cwsi",
+            colormap=colormap or "rdylgn_r",
+            rescale=rescale or "0.0,1.0"
+        )
+
+    def render_spline_mosaic_tile(
+        self,
+        mosaic_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        blend_mode: Optional[str] = "multiresolution_spline",
+        colormap: Optional[str] = "terrain",
+        rescale: Optional[str] = "0.0,255.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for multi-resolution spline & Laplacian pyramid mosaic blending."""
+        return self.render_tile(
+            collection="spline_mosaic",
+            item_id=mosaic_id or "mosaic_01",
+            z=z,
+            x=x,
+            y=y,
+            index="spline",
+            colormap=colormap or "terrain",
+            rescale=rescale or "0.0,255.0"
+        )
+
+    def render_direct_georeferencing_tile(
+        self,
+        mission_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "turbo",
+        rescale: Optional[str] = "0.0,1.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile showing calibrated camera perspective center, ground footprint, and CEP95 bounds."""
+        return self.render_tile(
+            collection="direct_georeferencing",
+            item_id=mission_id or "drone_mission_01",
+            z=z,
+            x=x,
+            y=y,
+            index="direct_georeferencing",
+            colormap=colormap or "turbo",
+            rescale=rescale or "0.0,1.0"
+        )
+
+    def render_crest_alignment_tile(
+        self,
+        alignment_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "rdylbu_r",
+        rescale: Optional[str] = "0.0,0.5"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile showing vectorized embankment crest centerline, normal transects & settlement sag."""
+        return self.render_tile(
+            collection="crest_alignment",
+            item_id=alignment_id or "crest_tsf_01",
+            z=z,
+            x=x,
+            y=y,
+            index="crest_alignment",
+            colormap=colormap or "rdylbu_r",
+            rescale=rescale or "0.0,0.5"
+        )
+
+    def render_ps_insar_tile(
+        self,
+        stack_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "seismic_r",
+        rescale: Optional[str] = "-20.0,10.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for APS-filtered Persistent Scatterer InSAR LOS displacement velocity (mm/yr)."""
+        return self.render_tile(
+            collection="ps_insar",
+            item_id=stack_id or "ps_stack_tsf_01",
+            z=z,
+            x=x,
+            y=y,
+            index="ps_insar",
+            colormap=colormap or "seismic_r",
+            rescale=rescale or "-20.0,10.0"
+        )
+
 tile_service = TileService()
+
 

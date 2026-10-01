@@ -27,7 +27,16 @@ from app.models.schemas import (
     gcps_to_feature_collection,
     CAMERA_CALIBRATION_PRESETS,
     get_camera_calibration_preset,
-    list_camera_calibration_presets
+    list_camera_calibration_presets,
+    DirectGeoreferencingTier,
+    LeverArmOffset,
+    BoresightAngles,
+    CameraSensorSpec,
+    DirectGeoreferencingRequest,
+    DirectGeoreferencingResponse,
+    classify_direct_georeferencing_tier,
+    calculate_direct_georeferencing,
+    build_direct_georeferencing_tile_url
 )
 
 router = APIRouter(prefix="/drone", tags=["Drone Fleet"])

@@ -382,7 +382,68 @@ from app.models.schemas import (
     VectorExportResponse,
     VectorTileRequest,
     build_vector_tile_url,
-    format_vector_export_filename
+    format_vector_export_filename,
+    FSCModelType,
+    SnowpackRunoffTier,
+    FractionalSnowCoverRequest,
+    FractionalSnowCoverResponse,
+    calculate_fractional_snow_cover,
+    classify_snowpack_runoff_tier,
+    build_snow_cover_tile_url,
+    TSMAlgorithm,
+    AquaticTurbidityTier,
+    AquaticTurbidityRequest,
+    AquaticTurbidityResponse,
+    calculate_aquatic_tsm_turbidity,
+    classify_aquatic_turbidity_tier,
+    build_turbidity_tsm_tile_url,
+    DisturbanceModel,
+    DisturbanceType,
+    BreakSignificanceTier,
+    DisturbanceBreakpoint,
+    DisturbanceBreakRequest,
+    DisturbanceBreakResponse,
+    detect_structural_disturbance_breaks,
+    classify_disturbance_type,
+    build_disturbance_tile_url,
+    CWSIModelType,
+    WaterStressTier,
+    CWSIAnalysisRequest,
+    CWSIAnalysisResponse,
+    calculate_crop_water_stress_index,
+    classify_water_stress_tier,
+    build_cwsi_tile_url,
+    PyramidBlendMode,
+    SeamRadiometricQuality,
+    PyramidSplineRequest,
+    PyramidSplineResponse,
+    calculate_laplacian_pyramid_blend,
+    classify_seam_radiometric_quality,
+    build_spline_mosaic_tile_url,
+    DirectGeoreferencingTier,
+    LeverArmOffset,
+    BoresightAngles,
+    CameraSensorSpec,
+    DirectGeoreferencingRequest,
+    DirectGeoreferencingResponse,
+    classify_direct_georeferencing_tier,
+    calculate_direct_georeferencing,
+    build_direct_georeferencing_tile_url,
+    CrestSettlementTier,
+    CrestStationPoint,
+    EmbankmentCrestRequest,
+    EmbankmentCrestResponse,
+    classify_crest_settlement_tier,
+    calculate_crest_alignment_vectorization,
+    build_crest_alignment_tile_url,
+    APSFilterMode,
+    PSInSARStabilityTier,
+    PSPointDisplacement,
+    PSInSARStackRequest,
+    PSInSARStackResponse,
+    classify_ps_insar_stability_tier,
+    calculate_ps_insar_stack_displacement,
+    build_ps_insar_tile_url
 )
 from app.config import settings
 
@@ -4178,6 +4239,659 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         tile_req = VectorTileRequest(layer_id="sensors", z=12, x=600, y=1200)
         self.assertEqual(tile_req.layer_id, "sensors")
         self.assertEqual(tile_req.z, 12)
+
+    def test_t96_canonical_route_contracts(self):
+        """Verify all 15 T-96 canonical and alias route contracts in API_ROUTE_CONTRACTS and format_api_route."""
+        t96_routes = [
+            "analysis_snow_cover",
+            "analysis_snow_cover_short",
+            "tiles_snow_cover",
+            "analysis_aquatic_turbidity",
+            "analysis_aquatic_turbidity_short",
+            "tiles_aquatic_turbidity",
+            "analysis_disturbance_breaks",
+            "analysis_disturbance_breaks_short",
+            "tiles_disturbance_breaks",
+            "analysis_crop_water_stress",
+            "analysis_crop_water_stress_short",
+            "tiles_crop_water_stress",
+            "analysis_pyramid_spline",
+            "analysis_pyramid_spline_short",
+            "tiles_spline_mosaic"
+        ]
+        for route in t96_routes:
+            self.assertIn(route, API_ROUTE_CONTRACTS, f"Missing T-96 route contract: {route}")
+
+        # Test parameter substitution in format_api_route
+        snow_tile = format_api_route("tiles_snow_cover", collection="sentinel-2-l2a", item_id="S2A_SNOW_01", z=12, x=650, y=1300)
+        self.assertEqual(snow_tile, "/api/v1/tiles/cryosphere/snow-cover/sentinel-2-l2a/S2A_SNOW_01/12/650/1300.png")
+
+        turbidity_tile = format_api_route("tiles_aquatic_turbidity", collection="sentinel-2-l2a", item_id="S2A_WATER_01", metric="tsm", z=13, x=1200, y=2400)
+        self.assertEqual(turbidity_tile, "/api/v1/tiles/water/turbidity-tsm/sentinel-2-l2a/S2A_WATER_01/tsm/13/1200/2400.png")
+
+        disturbance_tile = format_api_route("tiles_disturbance_breaks", collection="sentinel-2-l2a", item_id="S2A_FOREST_01", z=14, x=2500, y=5000)
+        self.assertEqual(disturbance_tile, "/api/v1/tiles/disturbance/breaks/sentinel-2-l2a/S2A_FOREST_01/14/2500/5000.png")
+
+        cwsi_tile = format_api_route("tiles_crop_water_stress", collection="landsat-c2-l2", item_id="LC09_CROP_01", z=11, x=450, y=900)
+        self.assertEqual(cwsi_tile, "/api/v1/tiles/agriculture/cwsi/landsat-c2-l2/LC09_CROP_01/11/450/900.png")
+
+        spline_tile = format_api_route("tiles_spline_mosaic", mosaic_id="MOSAIC_01", z=16, x=5100, y=10200)
+        self.assertEqual(spline_tile, "/api/v1/tiles/mosaic/spline/MOSAIC_01/16/5100/10200.png")
+
+    def test_fractional_snow_cover_contracts_and_math(self):
+        """Verify Cryosphere NDSI, Salomonson & Appel FSC, SWE melt volume, and FractionalSnowCoverRequest/Response."""
+        # 1. Enums
+        self.assertEqual(FSCModelType.SALOMONSON_APPEL.value, "salomonson_appel")
+        self.assertEqual(FSCModelType.HALL_MODIS.value, "hall_modis")
+        self.assertEqual(SnowpackRunoffTier.DEEP_SNOWPACK.value, "deep_snowpack")
+        self.assertEqual(SnowpackRunoffTier.EXTREME_ACCUMULATION.value, "extreme_accumulation")
+
+        # 2. Mathematical calculation - High snow cover
+        res_high = calculate_fractional_snow_cover(
+            green=0.45,
+            swir1=0.08,
+            model=FSCModelType.SALOMONSON_APPEL,
+            elevation_m=2800.0,
+            snow_depth_m=1.2,
+            snow_density_kg_m3=350.0,
+            runoff_coefficient=0.85,
+            area_ha=500.0
+        )
+        self.assertAlmostEqual(res_high["ndsi"], 0.6981, places=3)
+        self.assertEqual(res_high["fractional_snow_cover"], 1.0)
+        self.assertEqual(res_high["fractional_snow_cover_pct"], 100.0)
+        self.assertEqual(res_high["runoff_hazard_tier"], SnowpackRunoffTier.EXTREME_ACCUMULATION)
+        self.assertGreater(res_high["estimated_swe_mm"], 400.0)
+        self.assertGreater(res_high["estimated_melt_volume_m3"], 1000000.0)
+        self.assertEqual(res_high["transient_snowline_elevation_m"], 2800.0)
+
+        # 3. Low / trace snow cover
+        res_trace = calculate_fractional_snow_cover(
+            green=0.15,
+            swir1=0.14,
+            model=FSCModelType.SALOMONSON_APPEL,
+            elevation_m=1500.0,
+            area_ha=100.0
+        )
+        self.assertLess(res_trace["ndsi"], 0.10)
+        self.assertLess(res_trace["fractional_snow_cover"], 0.10)
+        self.assertEqual(res_trace["runoff_hazard_tier"], SnowpackRunoffTier.TRACE_SNOW)
+
+        # 4. Classification tier helper
+        self.assertEqual(classify_snowpack_runoff_tier(0.05), SnowpackRunoffTier.TRACE_SNOW)
+        self.assertEqual(classify_snowpack_runoff_tier(0.25), SnowpackRunoffTier.LOW_SNOW)
+        self.assertEqual(classify_snowpack_runoff_tier(0.50), SnowpackRunoffTier.MODERATE_SNOW)
+        self.assertEqual(classify_snowpack_runoff_tier(0.75), SnowpackRunoffTier.DEEP_SNOWPACK)
+        self.assertEqual(classify_snowpack_runoff_tier(0.95), SnowpackRunoffTier.EXTREME_ACCUMULATION)
+
+        # 5. Tile URL builder
+        tile_url = build_snow_cover_tile_url("sentinel-2-l2a", "S2A_SNOW", 13, 1200, 2400)
+        self.assertIn("/api/v1/tiles/cryosphere/snow-cover/sentinel-2-l2a/S2A_SNOW/13/1200/2400.png?model=salomonson_appel", tile_url)
+
+        # 6. Request / Response models
+        req = FractionalSnowCoverRequest(
+            collection=SatelliteCollection.SENTINEL_2,
+            item_id="S2A_SNOW_2026",
+            green=0.40,
+            swir1=0.10,
+            elevation_m=2400.0
+        )
+        self.assertEqual(req.green_band_reflectance, 0.40)
+        self.assertEqual(req.swir1_band_reflectance, 0.10)
+        self.assertEqual(req.elevation_m, 2400.0)
+
+        resp = FractionalSnowCoverResponse(
+            collection=req.collection,
+            item_id=req.item_id,
+            model_type=req.model_type,
+            tile_url_template="/api/v1/tiles/cryosphere/snow-cover/{collection}/{item_id}/{z}/{x}/{y}.png",
+            **res_high
+        )
+        self.assertEqual(resp.item_id, "S2A_SNOW_2026")
+        self.assertEqual(resp.fractional_snow_cover, 1.0)
+        self.assertEqual(resp.runoff_hazard_tier, SnowpackRunoffTier.EXTREME_ACCUMULATION)
+
+    def test_aquatic_tsm_turbidity_contracts_and_math(self):
+        """Verify Nechad & Dogliotti aquatic TSM / Turbidity inversion and sediment plume classification."""
+        # 1. Enums
+        self.assertEqual(TSMAlgorithm.DOGLIOTTI_SWITCHING.value, "dogliotti_switching")
+        self.assertEqual(TSMAlgorithm.NECHAD_RED.value, "nechad_red")
+        self.assertEqual(AquaticTurbidityTier.CLEAR_OLIGOTROPHIC.value, "clear_oligotrophic")
+        self.assertEqual(AquaticTurbidityTier.EXTREME_SEDIMENT_PLUME.value, "extreme_sediment_plume")
+
+        # 2. Clear water scenario (low Red, low NIR)
+        clear = calculate_aquatic_tsm_turbidity(red=0.005, nir=0.001, water_area_ha=300.0)
+        self.assertLess(clear["total_suspended_matter_g_m3"], 5.0)
+        self.assertLess(clear["turbidity_ntu"], 3.0)
+        self.assertIn(clear["hazard_tier"], [AquaticTurbidityTier.CLEAR_OLIGOTROPHIC, AquaticTurbidityTier.LOW_TURBIDITY])
+        self.assertFalse(clear["sediment_plume_detected"])
+        self.assertEqual(clear["plume_area_pct"], 0.0)
+
+        # 3. Severe sediment / tailings plume scenario (high Red, high NIR)
+        plume = calculate_aquatic_tsm_turbidity(red=0.09, nir=0.06, water_area_ha=300.0)
+        self.assertGreater(plume["total_suspended_matter_g_m3"], 50.0)
+        self.assertGreater(plume["turbidity_ntu"], 30.0)
+        self.assertTrue(plume["sediment_plume_detected"])
+        self.assertGreater(plume["plume_area_ha"], 100.0)
+        self.assertIn(plume["hazard_tier"], [AquaticTurbidityTier.HIGH_TURBIDITY, AquaticTurbidityTier.EXTREME_SEDIMENT_PLUME])
+
+        # 4. Classification tier helper
+        self.assertEqual(classify_aquatic_turbidity_tier(1.5), AquaticTurbidityTier.CLEAR_OLIGOTROPHIC)
+        self.assertEqual(classify_aquatic_turbidity_tier(8.0), AquaticTurbidityTier.LOW_TURBIDITY)
+        self.assertEqual(classify_aquatic_turbidity_tier(22.0), AquaticTurbidityTier.MODERATE_SEDIMENT)
+        self.assertEqual(classify_aquatic_turbidity_tier(65.0), AquaticTurbidityTier.HIGH_TURBIDITY)
+        self.assertEqual(classify_aquatic_turbidity_tier(120.0), AquaticTurbidityTier.EXTREME_SEDIMENT_PLUME)
+
+        # 5. Tile URL builder
+        tile_url = build_turbidity_tsm_tile_url("sentinel-2-l2a", "S2A_WATER", "turbidity", 13, 1200, 2400)
+        self.assertEqual(tile_url, "/api/v1/tiles/water/turbidity-tsm/sentinel-2-l2a/S2A_WATER/turbidity/13/1200/2400.png")
+
+        # 6. Request / Response models
+        req = AquaticTurbidityRequest(
+            collection=SatelliteCollection.SENTINEL_2,
+            item_id="S2A_WATER_2026",
+            algo=TSMAlgorithm.DOGLIOTTI_SWITCHING,
+            red_reflectance=0.08,
+            nir_reflectance=0.05
+        )
+        self.assertEqual(req.algorithm, TSMAlgorithm.DOGLIOTTI_SWITCHING)
+        self.assertEqual(req.red_reflectance, 0.08)
+
+        resp = AquaticTurbidityResponse(
+            collection=req.collection,
+            item_id=req.item_id,
+            algorithm_used=req.algorithm,
+            tile_url_template="/api/v1/tiles/water/turbidity-tsm/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png",
+            **plume
+        )
+        self.assertEqual(resp.item_id, "S2A_WATER_2026")
+        self.assertTrue(resp.sediment_plume_detected)
+
+    def test_structural_disturbance_breaks_contracts_and_math(self):
+        """Verify piecewise linear breakpoint detection, F-test significance, and disturbance types."""
+        # 1. Enums
+        self.assertEqual(DisturbanceModel.BFAST_LITE.value, "bfast_lite")
+        self.assertEqual(DisturbanceType.ABRUPT_COLLAPSE.value, "abrupt_collapse")
+        self.assertEqual(DisturbanceType.STRUCTURAL_DISTURBANCE.value, "structural_disturbance")
+        self.assertEqual(BreakSignificanceTier.CRITICAL_BREAK.value, "critical_break")
+
+        dates = ["2026-01-01", "2026-02-01", "2026-03-01", "2026-04-01", "2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01"]
+        # Abrupt collapse at index 4 (from 0.70 down to 0.20)
+        values_collapse = [0.68, 0.70, 0.72, 0.69, 0.22, 0.20, 0.19, 0.18]
+
+        res = detect_structural_disturbance_breaks(dates=dates, values=values_collapse, model=DisturbanceModel.BFAST_LITE)
+        self.assertEqual(res["total_observations"], 8)
+        self.assertGreaterEqual(res["breakpoints_detected"], 1)
+        self.assertIsNotNone(res["primary_break"])
+        self.assertEqual(res["primary_break"].break_index, 4)
+        self.assertEqual(res["primary_break"].break_date, "2026-05-01")
+        self.assertLess(res["primary_break"].jump_magnitude, -0.30)
+        self.assertEqual(res["overall_disturbance_type"], DisturbanceType.ABRUPT_COLLAPSE)
+        self.assertTrue(res["structural_instability_detected"])
+
+        # 2. Stable trajectory scenario
+        values_stable = [0.55, 0.56, 0.54, 0.55, 0.57, 0.56, 0.55, 0.54]
+        res_stable = detect_structural_disturbance_breaks(dates=dates, values=values_stable)
+        self.assertEqual(res_stable["breakpoints_detected"], 0)
+        self.assertFalse(res_stable["structural_instability_detected"])
+
+        # 3. Disturbance type classifier helper
+        self.assertEqual(classify_disturbance_type(-0.25, 0.0, 0.0), DisturbanceType.ABRUPT_COLLAPSE)
+        self.assertEqual(classify_disturbance_type(-0.08, 0.0, 0.0), DisturbanceType.STRUCTURAL_DISTURBANCE)
+        self.assertEqual(classify_disturbance_type(0.02, 0.0, 0.08), DisturbanceType.RAPID_RECOVERY)
+        self.assertEqual(classify_disturbance_type(-0.01, -0.04, -0.04), DisturbanceType.GRADUAL_DECLINE)
+        self.assertEqual(classify_disturbance_type(0.01, 0.0, 0.0), DisturbanceType.STABLE_TRAJECTORY)
+
+        # 4. Tile URL builder
+        tile_url = build_disturbance_tile_url("sentinel-2-l2a", "S2A_FOREST", 12, 600, 1200)
+        self.assertEqual(tile_url, "/api/v1/tiles/disturbance/breaks/sentinel-2-l2a/S2A_FOREST/12/600/1200.png")
+
+        # 5. Request / Response models
+        req = DisturbanceBreakRequest(
+            dates=dates,
+            values=values_collapse,
+            metric="ndvi",
+            model=DisturbanceModel.BFAST_LITE
+        )
+        self.assertEqual(req.metric_name, "ndvi")
+        self.assertEqual(len(req.time_series_values), 8)
+
+        resp = DisturbanceBreakResponse(
+            metric_name=req.metric_name,
+            model_used=req.model,
+            tile_url_template="/api/v1/tiles/disturbance/breaks/{collection}/{item_id}/{z}/{x}/{y}.png",
+            **res
+        )
+        self.assertEqual(resp.breakpoints_detected, 1)
+        self.assertTrue(resp.structural_instability_detected)
+
+    def test_crop_water_stress_index_contracts_and_math(self):
+        """Verify CWSI Idso baseline, evaporative fraction, ETa, and irrigation priority classification."""
+        # 1. Enums
+        self.assertEqual(CWSIModelType.EMPIRICAL_IDSO.value, "empirical_idso")
+        self.assertEqual(CWSIModelType.TRAPEZOID_OPTICAL_THERMAL.value, "trapezoid_optical_thermal")
+        self.assertEqual(WaterStressTier.NO_STRESS.value, "no_stress")
+        self.assertEqual(WaterStressTier.SEVERE_DEFICIT.value, "severe_deficit")
+        self.assertEqual(WaterStressTier.EXTREME_DESICCATION.value, "extreme_desiccation")
+
+        # 2. Well-watered canopy scenario (cold canopy relative to air)
+        well_watered = calculate_crop_water_stress_index(
+            canopy_temp_c=22.0,
+            air_temp_c=26.0,
+            rh_pct=45.0,
+            et0_mm_day=6.0
+        )
+        self.assertLess(well_watered["cwsi"], 0.20)
+        self.assertGreater(well_watered["evaporative_fraction"], 0.80)
+        self.assertGreater(well_watered["actual_et_mm_day"], 4.5)
+        self.assertEqual(well_watered["water_stress_tier"], WaterStressTier.NO_STRESS)
+        self.assertEqual(well_watered["irrigation_priority"], "low")
+
+        # 3. Extreme water-stressed canopy (hot canopy, stomatal closure)
+        severely_stressed = calculate_crop_water_stress_index(
+            canopy_temp_c=36.0,
+            air_temp_c=26.0,
+            rh_pct=40.0,
+            et0_mm_day=6.0
+        )
+        self.assertGreater(severely_stressed["cwsi"], 0.85)
+        self.assertLess(severely_stressed["evaporative_fraction"], 0.15)
+        self.assertLess(severely_stressed["actual_et_mm_day"], 1.0)
+        self.assertEqual(severely_stressed["water_stress_tier"], WaterStressTier.EXTREME_DESICCATION)
+        self.assertEqual(severely_stressed["irrigation_priority"], "critical")
+
+        # 4. Classification tier helper
+        self.assertEqual(classify_water_stress_tier(0.10), WaterStressTier.NO_STRESS)
+        self.assertEqual(classify_water_stress_tier(0.30), WaterStressTier.MILD_STRESS)
+        self.assertEqual(classify_water_stress_tier(0.55), WaterStressTier.MODERATE_STRESS)
+        self.assertEqual(classify_water_stress_tier(0.75), WaterStressTier.SEVERE_DEFICIT)
+        self.assertEqual(classify_water_stress_tier(0.92), WaterStressTier.EXTREME_DESICCATION)
+
+        # 5. Tile URL builder
+        tile_url = build_cwsi_tile_url("landsat-c2-l2", "LC09_CROP", 12, 600, 1200)
+        self.assertEqual(tile_url, "/api/v1/tiles/agriculture/cwsi/landsat-c2-l2/LC09_CROP/12/600/1200.png")
+
+        # 6. Request / Response models
+        req = CWSIAnalysisRequest(
+            collection=SatelliteCollection.LANDSAT_C2_L2,
+            item_id="LC09_CROP_2026",
+            canopy_temperature_c=36.0,
+            air_temperature_c=26.0
+        )
+        self.assertEqual(req.canopy_temperature_c, 36.0)
+
+        resp = CWSIAnalysisResponse(
+            collection=req.collection,
+            item_id=req.item_id,
+            model_used=req.model_type,
+            tile_url_template="/api/v1/tiles/agriculture/cwsi/{collection}/{item_id}/{z}/{x}/{y}.png",
+            **severely_stressed
+        )
+        self.assertEqual(resp.irrigation_priority, "critical")
+        self.assertEqual(resp.water_stress_tier, WaterStressTier.EXTREME_DESICCATION)
+
+    def test_pyramid_spline_mosaic_blending_contracts_and_math(self):
+        """Verify Burt & Adelson Laplacian pyramid octave attenuation and seamline radiometric continuity."""
+        # 1. Enums
+        self.assertEqual(PyramidBlendMode.MULTIRESOLUTION_SPLINE.value, "multiresolution_spline")
+        self.assertEqual(PyramidBlendMode.POISSON_GRADIENT.value, "poisson_gradient")
+        self.assertEqual(SeamRadiometricQuality.SEAMLESS.value, "seamless")
+        self.assertEqual(SeamRadiometricQuality.SEVERE_SEAM_ARTIFACT.value, "severe_seam_artifact")
+
+        # 2. Multiresolution spline attenuation
+        spline_res = calculate_laplacian_pyramid_blend(
+            left_val=120.0,
+            right_val=150.0,
+            seam_width_px=64,
+            levels=5,
+            blend_mode=PyramidBlendMode.MULTIRESOLUTION_SPLINE
+        )
+        self.assertLess(spline_res["mean_gradient_discontinuity_dn"], 1.5)
+        self.assertEqual(spline_res["radiometric_quality"], SeamRadiometricQuality.SEAMLESS)
+        self.assertTrue(spline_res["is_seamless"])
+        self.assertEqual(spline_res["high_frequency_feather_px"], 4.0)
+        self.assertEqual(spline_res["low_frequency_feather_px"], 128.0)
+
+        # 3. Linear feathering comparison (leaves perceptible seam)
+        linear_res = calculate_laplacian_pyramid_blend(
+            left_val=120.0,
+            right_val=150.0,
+            seam_width_px=64,
+            levels=5,
+            blend_mode=PyramidBlendMode.LINEAR_FEATHER
+        )
+        self.assertGreater(linear_res["mean_gradient_discontinuity_dn"], 8.0)
+        self.assertFalse(linear_res["is_seamless"])
+
+        # 4. Classification quality tier helper
+        self.assertEqual(classify_seam_radiometric_quality(1.2), SeamRadiometricQuality.SEAMLESS)
+        self.assertEqual(classify_seam_radiometric_quality(3.5), SeamRadiometricQuality.GOOD_CONTINUITY)
+        self.assertEqual(classify_seam_radiometric_quality(8.0), SeamRadiometricQuality.PERCEPTIBLE_DISCONTINUITY)
+        self.assertEqual(classify_seam_radiometric_quality(15.0), SeamRadiometricQuality.SEVERE_SEAM_ARTIFACT)
+
+        # 5. Tile URL builder
+        tile_url = build_spline_mosaic_tile_url("MOSAIC_DRONE", 16, 5000, 10000, blend_mode="multiresolution_spline")
+        self.assertEqual(tile_url, "/api/v1/tiles/mosaic/spline/MOSAIC_DRONE/16/5000/10000.png?blend_mode=multiresolution_spline")
+
+        # 6. Request / Response models
+        req = PyramidSplineRequest(
+            mosaic_id="MOSAIC_DRONE_01",
+            left_scene_id="SCENE_L",
+            right_scene_id="SCENE_R",
+            mode=PyramidBlendMode.MULTIRESOLUTION_SPLINE,
+            levels=5,
+            seam_width=64
+        )
+        self.assertEqual(req.mosaic_id, "MOSAIC_DRONE_01")
+        self.assertEqual(req.blend_mode, PyramidBlendMode.MULTIRESOLUTION_SPLINE)
+        self.assertEqual(req.pyramid_levels, 5)
+        self.assertEqual(req.seam_transition_width_px, 64)
+
+        resp = PyramidSplineResponse(
+            mosaic_id=req.mosaic_id,
+            blend_mode=req.blend_mode,
+            tile_url_template="/api/v1/tiles/mosaic/spline/{mosaic_id}/{z}/{x}/{y}.png",
+            **spline_res
+        )
+        self.assertEqual(resp.mosaic_id, "MOSAIC_DRONE_01")
+        self.assertTrue(resp.is_seamless)
+        self.assertEqual(resp.radiometric_quality, SeamRadiometricQuality.SEAMLESS)
+
+    def test_t102_canonical_route_contracts(self):
+        """Verify Cycle v2.5.7 canonical route contracts in API_ROUTE_CONTRACTS and format_api_route."""
+        routes = [
+            ("drone_direct_georeferencing", "/api/v1/drone/direct-georeferencing"),
+            ("drone_direct_georeferencing_short", "/drone/direct-georeferencing"),
+            ("tiles_direct_georeferencing", "/api/v1/tiles/drone/direct-georeferencing/{mission_id}/{z}/{x}/{y}.png"),
+            ("analysis_crest_alignment", "/api/v1/analysis/geotechnical/crest-alignment"),
+            ("analysis_crest_alignment_short", "/geotechnical/crest-alignment"),
+            ("tiles_crest_alignment", "/api/v1/tiles/geotechnical/crest-alignment/{alignment_id}/{z}/{x}/{y}.png"),
+            ("analysis_ps_insar_stack", "/api/v1/analysis/sar/ps-insar-stack"),
+            ("analysis_ps_insar_stack_short", "/sar/ps-insar-stack"),
+            ("tiles_ps_insar_stack", "/api/v1/tiles/sar/ps-insar/{stack_id}/{z}/{x}/{y}.png")
+        ]
+        for key, expected_path in routes:
+            self.assertIn(key, API_ROUTE_CONTRACTS)
+            self.assertEqual(API_ROUTE_CONTRACTS[key], expected_path)
+
+        # Test format_api_route interpolation
+        dg_tile = format_api_route("tiles_direct_georeferencing", mission_id="MISSION-01", z=18, x=1200, y=2400)
+        self.assertEqual(dg_tile, "/api/v1/tiles/drone/direct-georeferencing/MISSION-01/18/1200/2400.png")
+
+        crest_tile = format_api_route("tiles_crest_alignment", alignment_id="CREST-TSF-01", z=17, x=600, y=1200)
+        self.assertEqual(crest_tile, "/api/v1/tiles/geotechnical/crest-alignment/CREST-TSF-01/17/600/1200.png")
+
+        ps_tile = format_api_route("tiles_ps_insar_stack", stack_id="STACK-2026", z=15, x=300, y=600)
+        self.assertEqual(ps_tile, "/api/v1/tiles/sar/ps-insar/STACK-2026/15/300/600.png")
+
+    def test_drone_direct_georeferencing_contracts_and_math(self):
+        """Verify drone direct georeferencing, antenna lever-arm correction, boresight calibration, and CEP95."""
+        # 1. Enums
+        self.assertEqual(DirectGeoreferencingTier.SURVEY_GRADE.value, "survey_grade")
+        self.assertEqual(DirectGeoreferencingTier.MAPPING_GRADE.value, "mapping_grade")
+        self.assertEqual(DirectGeoreferencingTier.RECONNAISSANCE_GRADE.value, "reconnaissance_grade")
+        self.assertEqual(DirectGeoreferencingTier.UNCORRECTED_NAVIGATION.value, "uncorrected_navigation")
+
+        # 2. Lever arm, boresight, sensor models
+        la = LeverArmOffset(lx_m=0.15, ly_m=-0.05, lz_m=0.25)
+        self.assertEqual(la.lx_m, 0.15)
+        self.assertEqual(la.lz_m, 0.25)
+
+        bs = BoresightAngles(d_roll_deg=0.12, d_pitch_deg=-0.08, d_yaw_deg=0.35)
+        self.assertEqual(bs.d_roll_deg, 0.12)
+
+        sensor = CameraSensorSpec(
+            focal_length_mm=24.0,
+            sensor_width_mm=35.9,
+            sensor_height_mm=24.0,
+            image_width_px=6000,
+            image_height_px=4000
+        )
+        self.assertEqual(sensor.focal_length_mm, 24.0)
+
+        # 3. Direct georeferencing computation: Survey-grade (RTK GNSS + calibrated IMU)
+        res_survey = calculate_direct_georeferencing(
+            gnss_lat=36.9532,
+            gnss_lon=-121.0824,
+            gnss_alt_m=450.0,
+            ground_elev_m=350.0,
+            roll_deg=1.0,
+            pitch_deg=-2.0,
+            yaw_deg=90.0,
+            lever_arm=la,
+            boresight=bs,
+            sensor_spec=sensor,
+            gnss_uncertainty_m=0.010,
+            attitude_uncertainty_deg=0.005
+        )
+        self.assertEqual(res_survey["quality_tier"], DirectGeoreferencingTier.SURVEY_GRADE)
+        self.assertLess(res_survey["horizontal_cep95_m"], 0.05)
+        self.assertAlmostEqual(res_survey["flight_height_agl_m"], 100.0, delta=2.0)
+        self.assertAlmostEqual(res_survey["gsd_cm_px"], 2.5, delta=0.5)
+        self.assertAlmostEqual(res_survey["footprint_width_m"], 150.0, delta=5.0)
+        self.assertAlmostEqual(res_survey["footprint_height_m"], 100.0, delta=5.0)
+        self.assertEqual(len(res_survey["footprint_polygon"]), 5)
+        # Verify polygon closed
+        self.assertEqual(res_survey["footprint_polygon"][0], res_survey["footprint_polygon"][-1])
+
+        # 4. Mapping-grade computation (GNSS uncertainty = 0.06m)
+        res_mapping = calculate_direct_georeferencing(
+            gnss_lat=36.9532,
+            gnss_lon=-121.0824,
+            gnss_alt_m=450.0,
+            ground_elev_m=350.0,
+            gnss_uncertainty_m=0.06,
+            attitude_uncertainty_deg=0.02
+        )
+        self.assertEqual(res_mapping["quality_tier"], DirectGeoreferencingTier.MAPPING_GRADE)
+
+        # 5. Uncorrected navigation (GNSS uncertainty = 1.8m)
+        res_uncorr = calculate_direct_georeferencing(
+            gnss_lat=36.9532,
+            gnss_lon=-121.0824,
+            gnss_alt_m=450.0,
+            ground_elev_m=350.0,
+            gnss_uncertainty_m=1.8,
+            attitude_uncertainty_deg=0.5
+        )
+        self.assertEqual(res_uncorr["quality_tier"], DirectGeoreferencingTier.UNCORRECTED_NAVIGATION)
+        self.assertGreater(res_uncorr["horizontal_cep95_m"], 1.0)
+
+        # 6. Classification helper
+        self.assertEqual(classify_direct_georeferencing_tier(0.03), DirectGeoreferencingTier.SURVEY_GRADE)
+        self.assertEqual(classify_direct_georeferencing_tier(0.12), DirectGeoreferencingTier.MAPPING_GRADE)
+        self.assertEqual(classify_direct_georeferencing_tier(0.55), DirectGeoreferencingTier.RECONNAISSANCE_GRADE)
+        self.assertEqual(classify_direct_georeferencing_tier(1.85), DirectGeoreferencingTier.UNCORRECTED_NAVIGATION)
+
+        # 7. Tile URL builder
+        tile_url = build_direct_georeferencing_tile_url("MISSION_TEST", 18, 100, 200)
+        self.assertEqual(tile_url, "/api/v1/tiles/drone/direct-georeferencing/MISSION_TEST/18/100/200.png")
+
+        # 8. Request & Response model validation
+        req = DirectGeoreferencingRequest(
+            missionId="MISSION_UAV_01",
+            gnssLatitude=36.9532,
+            gnssLongitude=-121.0824,
+            gnssAltitude=450.0,
+            groundElevation=350.0,
+            roll_deg=0.5,
+            pitch_deg=-1.0,
+            yaw_deg=88.5
+        )
+        self.assertEqual(req.mission_id, "MISSION_UAV_01")
+        self.assertEqual(req.gnss_latitude, 36.9532)
+
+        resp = DirectGeoreferencingResponse(
+            mission_id=req.mission_id,
+            tile_url_template="/api/v1/tiles/drone/direct-georeferencing/{mission_id}/{z}/{x}/{y}.png",
+            **res_survey
+        )
+        self.assertEqual(resp.mission_id, "MISSION_UAV_01")
+        self.assertEqual(resp.quality_tier, DirectGeoreferencingTier.SURVEY_GRADE)
+
+    def test_embankment_crest_alignment_vectorization_contracts_and_math(self):
+        """Verify embankment crest alignment vectorization, normal cross-sections, and differential settlement."""
+        # 1. Enums
+        self.assertEqual(CrestSettlementTier.NORMAL.value, "normal")
+        self.assertEqual(CrestSettlementTier.MINOR_SETTLEMENT.value, "minor_settlement")
+        self.assertEqual(CrestSettlementTier.MODERATE_SETTLEMENT.value, "moderate_settlement")
+        self.assertEqual(CrestSettlementTier.CRITICAL_OVERTOPPING_RISK.value, "critical_overtopping_risk")
+
+        # 2. Centerline with normal crest elevations (close to design 350.0m)
+        pts_normal = [
+            (36.9540, -121.0830, 350.02),
+            (36.9546, -121.0818, 350.00),
+            (36.9552, -121.0806, 349.98)
+        ]
+        res_normal = calculate_crest_alignment_vectorization(
+            centerline_points=pts_normal,
+            design_elevation_m=350.0,
+            station_interval_m=20.0,
+            crest_width_m=12.0
+        )
+        self.assertEqual(res_normal["overall_severity_tier"], CrestSettlementTier.NORMAL)
+        self.assertFalse(res_normal["overtopping_risk_detected"])
+        self.assertLess(res_normal["max_settlement_m"], 0.05)
+        self.assertGreater(res_normal["station_count"], 2)
+
+        # 3. Centerline with critical sag / settlement deficit (elevation drops to 349.55m -> loss 0.45m)
+        pts_sag = [
+            (36.9540, -121.0830, 350.00),
+            (36.9546, -121.0818, 349.55),
+            (36.9552, -121.0806, 349.95)
+        ]
+        res_sag = calculate_crest_alignment_vectorization(
+            centerline_points=pts_sag,
+            design_elevation_m=350.0,
+            station_interval_m=20.0,
+            crest_width_m=12.0
+        )
+        self.assertEqual(res_sag["overall_severity_tier"], CrestSettlementTier.CRITICAL_OVERTOPPING_RISK)
+        self.assertTrue(res_sag["overtopping_risk_detected"])
+        self.assertGreaterEqual(res_sag["max_settlement_m"], 0.30)
+        self.assertIn("STA", res_sag["worst_settlement_station"])
+
+        # Check stations structure
+        first_st = res_sag["stations"][0]
+        self.assertIn("station_m", first_st)
+        self.assertIn("station_code", first_st)
+        self.assertIn("normal_azimuth_deg", first_st)
+        self.assertEqual(len(first_st["left_shoulder"]), 2)
+        self.assertEqual(len(first_st["right_shoulder"]), 2)
+
+        # 4. Classification helper
+        self.assertEqual(classify_crest_settlement_tier(0.02), CrestSettlementTier.NORMAL)
+        self.assertEqual(classify_crest_settlement_tier(0.09), CrestSettlementTier.MINOR_SETTLEMENT)
+        self.assertEqual(classify_crest_settlement_tier(0.22), CrestSettlementTier.MODERATE_SETTLEMENT)
+        self.assertEqual(classify_crest_settlement_tier(0.38), CrestSettlementTier.CRITICAL_OVERTOPPING_RISK)
+
+        # 5. Tile URL builder
+        tile_url = build_crest_alignment_tile_url("ALIGN_TSF_01", 17, 300, 600)
+        self.assertEqual(tile_url, "/api/v1/tiles/geotechnical/crest-alignment/ALIGN_TSF_01/17/300/600.png")
+
+        # 6. Request & Response models
+        req = EmbankmentCrestRequest(
+            alignmentId="ALIGN_CREST_01",
+            centerline_points=pts_sag,
+            designElevation=350.0,
+            stationInterval=15.0,
+            crestWidth=14.0
+        )
+        self.assertEqual(req.alignment_id, "ALIGN_CREST_01")
+        self.assertEqual(req.design_elevation_m, 350.0)
+
+        station_objs = [CrestStationPoint(**st) for st in res_sag["stations"]]
+        resp = EmbankmentCrestResponse(
+            alignment_id=req.alignment_id,
+            total_length_m=res_sag["total_length_m"],
+            station_count=res_sag["station_count"],
+            design_elevation_m=res_sag["design_elevation_m"],
+            min_measured_elevation_m=res_sag["min_measured_elevation_m"],
+            max_measured_elevation_m=res_sag["max_measured_elevation_m"],
+            max_settlement_m=res_sag["max_settlement_m"],
+            mean_settlement_m=res_sag["mean_settlement_m"],
+            worst_settlement_station=res_sag["worst_settlement_station"],
+            overall_severity_tier=res_sag["overall_severity_tier"],
+            overtopping_risk_detected=res_sag["overtopping_risk_detected"],
+            stations=station_objs,
+            tile_url_template="/api/v1/tiles/geotechnical/crest-alignment/{alignment_id}/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.alignment_id, "ALIGN_CREST_01")
+        self.assertTrue(resp.overtopping_risk_detected)
+
+    def test_ps_insar_stack_and_aps_filtering_contracts_and_math(self):
+        """Verify PS-InSAR stack spatiotemporal APS filtering, PS point selection, and LOS displacement velocity."""
+        # 1. Enums
+        self.assertEqual(APSFilterMode.SPATIOTEMPORAL_GAUSSIAN.value, "spatiotemporal_gaussian")
+        self.assertEqual(APSFilterMode.EXTERNAL_WEATHER_ERA5.value, "external_weather_era5")
+        self.assertEqual(PSInSARStabilityTier.UPLIFT.value, "uplift")
+        self.assertEqual(PSInSARStabilityTier.STABLE.value, "stable")
+        self.assertEqual(PSInSARStabilityTier.SEVERE_SUBSIDENCE.value, "severe_subsidence")
+
+        # 2. PS-InSAR computation
+        res = calculate_ps_insar_stack_displacement(
+            coherence_thresh=0.70,
+            dispersion_thresh=0.25,
+            wavelength_m=0.055465,
+            aps_filter_mode=APSFilterMode.SPATIOTEMPORAL_GAUSSIAN
+        )
+        self.assertGreater(res["total_candidates"], 0)
+        self.assertGreater(res["accepted_ps_count"], 0)
+        self.assertGreaterEqual(res["mean_temporal_coherence"], 0.70)
+        self.assertTrue(res["critical_subsidence_detected"])
+        self.assertEqual(res["overall_stability_tier"], PSInSARStabilityTier.SEVERE_SUBSIDENCE)
+
+        # Verify PS points and time series
+        ps0 = res["ps_points"][0]
+        self.assertIn("point_id", ps0)
+        self.assertIn("mean_velocity_mm_yr", ps0)
+        self.assertIn("total_displacement_mm", ps0)
+        self.assertGreaterEqual(len(ps0["time_series_displacements"]), 2)
+        # Check first point date matches master
+        self.assertEqual(ps0["time_series_displacements"][0]["date"], res["master_date"])
+        self.assertEqual(ps0["time_series_displacements"][0]["displacement_mm"], 0.0)
+
+        # 3. Stability tier classification helper
+        self.assertEqual(classify_ps_insar_stability_tier(3.5), PSInSARStabilityTier.UPLIFT)
+        self.assertEqual(classify_ps_insar_stability_tier(0.2), PSInSARStabilityTier.STABLE)
+        self.assertEqual(classify_ps_insar_stability_tier(-3.8), PSInSARStabilityTier.SLIGHT_SUBSIDENCE)
+        self.assertEqual(classify_ps_insar_stability_tier(-11.5), PSInSARStabilityTier.MODERATE_SUBSIDENCE)
+        self.assertEqual(classify_ps_insar_stability_tier(-18.2), PSInSARStabilityTier.SEVERE_SUBSIDENCE)
+
+        # 4. Tile URL builder
+        tile_url = build_ps_insar_tile_url("STACK_TSF_01", 16, 1200, 2400)
+        self.assertEqual(tile_url, "/api/v1/tiles/sar/ps-insar/STACK_TSF_01/16/1200/2400.png")
+
+        # 5. Request & Response models
+        req = PSInSARStackRequest(
+            stackId="STACK_TSF_2026",
+            masterDate="2026-01-10",
+            filterMode=APSFilterMode.SPATIOTEMPORAL_GAUSSIAN,
+            coherenceThreshold=0.75
+        )
+        self.assertEqual(req.stack_id, "STACK_TSF_2026")
+        self.assertEqual(req.coherence_threshold, 0.75)
+
+        ps_point_objs = [PSPointDisplacement(**pt) for pt in res["ps_points"]]
+        resp = PSInSARStackResponse(
+            stack_id=req.stack_id,
+            aps_filter_mode=req.aps_filter_mode,
+            master_date=res["master_date"],
+            slave_count=res["slave_count"],
+            temporal_baseline_days=res["temporal_baseline_days"],
+            total_candidates=res["total_candidates"],
+            accepted_ps_count=res["accepted_ps_count"],
+            mean_temporal_coherence=res["mean_temporal_coherence"],
+            mean_los_velocity_mm_yr=res["mean_los_velocity_mm_yr"],
+            max_subsidence_mm_yr=res["max_subsidence_mm_yr"],
+            max_uplift_mm_yr=res["max_uplift_mm_yr"],
+            overall_stability_tier=res["overall_stability_tier"],
+            critical_subsidence_detected=res["critical_subsidence_detected"],
+            ps_points=ps_point_objs,
+            tile_url_template="/api/v1/tiles/sar/ps-insar/{stack_id}/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.stack_id, "STACK_TSF_2026")
+        self.assertTrue(resp.critical_subsidence_detected)
 
 if __name__ == "__main__":
     unittest.main()

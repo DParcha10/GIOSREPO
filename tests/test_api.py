@@ -335,6 +335,53 @@ class TestGIOSApi(unittest.TestCase):
             self.assertEqual(result["status"], "success")
             self.assertEqual(result["telemetry"]["gage_height_ft"], 5.4)
 
+    def test_usgs_integration_resilience_and_parameter_fallback(self):
+        """Test DataIntegrationService.get_usgs_station fills in calibrated baseline for missing parameters and 503 outages."""
+        import asyncio
+        from unittest.mock import patch, MagicMock
+        from app.services.integration import DataIntegrationService
+
+        service = DataIntegrationService()
+
+        # 1. Test partial response fallback (e.g. site 09486000 where discharge is None in live feed)
+        mock_resp_partial = MagicMock()
+        mock_resp_partial.status_code = 200
+        mock_resp_partial.json.return_value = {
+            "value": {
+                "timeSeries": [
+                    {
+                        "variable": {"variableCode": [{"value": "00065"}]},
+                        "values": [{"value": [{"value": "3.85"}]}]
+                    }
+                ]
+            }
+        }
+
+        with patch("httpx.AsyncClient.get", return_value=mock_resp_partial):
+            res_partial = asyncio.run(service.get_usgs_station("09486000"))
+            self.assertEqual(res_partial["site_id"], "09486000")
+            self.assertEqual(res_partial["gage_height_ft"], 3.85)
+            # discharge_cfs should be populated from baseline (12.0)
+            self.assertEqual(res_partial["discharge_cfs"], 12.0)
+            # water_temp_c should be populated from baseline (28.0)
+            self.assertEqual(res_partial["water_temp_c"], 28.0)
+
+        # 2. Test complete upstream outage / HTTP 503 fallback
+        service_outage = DataIntegrationService()
+        mock_resp_503 = MagicMock()
+        mock_resp_503.status_code = 503
+
+        with patch("httpx.AsyncClient.get", return_value=mock_resp_503):
+            res_503 = asyncio.run(service_outage.get_usgs_station("11262900"))
+            self.assertEqual(res_503["site_id"], "11262900")
+            self.assertEqual(res_503["discharge_cfs"], 18.5)
+            self.assertEqual(res_503["gage_height_ft"], 4.76)
+
+        # 3. Test HTTP API endpoint integration
+        res_endpoint = self.client.get("/api/v1/integration/usgs/11262900")
+        self.assertEqual(res_endpoint.status_code, 200)
+        self.assertIn("discharge_cfs", res_endpoint.json())
+
     def test_bitemporal_change_detection_api(self):
         """Test POST /api/v1/analysis/change-detection returns valid difference matrix and categories."""
         res = self.client.post("/api/v1/analysis/change-detection", json={
@@ -1032,6 +1079,321 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(res_tile.headers.get("content-type"), "image/png")
         self.assertGreater(len(res_tile.content), 100)
 
+    def test_dam_breach_inundation_and_tiles_api(self):
+        """Test POST /api/v1/analysis/hazard/dam-breach and dynamic flood inundation tiles."""
+        payload = {
+            "asset_id": "SAN-LUIS-DAM-01",
+            "reservoir_volume_m3": 2500000.0,
+            "dam_height_m": 38.5,
+            "failure_mode": "overtopping",
+            "manning_n": 0.045,
+            "downstream_slope": 0.012,
+            "reach_length_km": 15.0
+        }
+        res = self.client.post("/api/v1/analysis/hazard/dam-breach", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["aoi_id"], "SAN-LUIS-DAM-01")
+        self.assertIn("peak_breach_discharge_m3s", data)
+        self.assertIn("max_flood_depth_m", data)
+        self.assertIn("points", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias = self.client.post("/api/v1/analysis/dam-breach", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Dynamic Flood Inundation tile
+        res_tile = self.client.get("/api/v1/tiles/hazard/flood-inundation/SIM-SAN-LUIS-001/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_landslide_susceptibility_and_tiles_api(self):
+        """Test POST /api/v1/analysis/hazard/landslide-susceptibility and dynamic landslide tiles."""
+        payload = {
+            "asset_id": "SAN-LUIS-DAM-01",
+            "cohesion_kpa": 18.0,
+            "friction_angle_deg": 32.0,
+            "unit_weight_kn_m3": 19.5,
+            "soil_depth_m": 2.5,
+            "slope_deg": 28.5,
+            "water_table_ratio": 0.4,
+            "trigger_type": "rainfall"
+        }
+        res = self.client.post("/api/v1/analysis/hazard/landslide-susceptibility", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["aoi_id"], "SAN-LUIS-DAM-01")
+        self.assertIn("static_fs", data)
+        self.assertIn("susceptibility_tier", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias = self.client.post("/api/v1/analysis/landslide", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Dynamic Landslide tile
+        res_tile = self.client.get("/api/v1/tiles/hazard/landslide/SAN-LUIS-DAM-01/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_drought_vhi_analysis_and_tiles_api(self):
+        """Test POST /api/v1/analysis/drought/vhi and dynamic drought VHI tiles."""
+        payload = {
+            "collection": "sentinel-2-l2a",
+            "item_id": "S2A_20260815",
+            "sample_ndvi": 0.42,
+            "sample_lst_c": 32.5,
+            "alpha": 0.5
+        }
+        res = self.client.post("/api/v1/analysis/drought/vhi", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "S2A_20260815")
+        self.assertIn("mean_vhi", data)
+        self.assertIn("drought_tier", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route alias
+        res_alias1 = self.client.post("/api/v1/analysis/drought-vhi", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/vhi", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Drought VHI tile
+        res_tile = self.client.get("/api/v1/tiles/drought/vhi/sentinel-2-l2a/S2A_20260815/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_sam_mineral_classification_and_tiles_api(self):
+        """Test POST /api/v1/analysis/geology/sam and dynamic SAM mineral tiles."""
+        payload = {
+            "endmember": "pyrite",
+            "max_angle_rad": 0.15,
+            "sample_pixel_reflectance": {
+                "blue": 0.12, "green": 0.18, "red": 0.22, "nir": 0.28, "swir1": 0.35, "swir2": 0.31
+            }
+        }
+        res = self.client.post("/api/v1/analysis/geology/sam", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["target_endmember"], "pyrite")
+        self.assertIn("spectral_angle_rad", data)
+        self.assertIn("similarity_score", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route alias
+        res_alias1 = self.client.post("/api/v1/analysis/sam", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/sam-mineral", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic SAM tile
+        res_tile = self.client.get("/api/v1/tiles/geology/sam/sentinel-2-l2a/S2A_20260815/pyrite/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_vector_export_and_mvt_tiles_api(self):
+        """Test POST /api/v1/analysis/vector/export and dynamic Mapbox Vector Tile (.pbf) streaming."""
+        payload = {
+            "layer_id": "infrastructure",
+            "format": "geojson",
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        }
+        res = self.client.post("/api/v1/analysis/vector/export", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("export_id", data)
+        self.assertIn("download_url", data)
+
+        export_id = data["export_id"]
+        res_dl = self.client.get(f"/api/v1/analysis/vector/export/{export_id}/download")
+        self.assertEqual(res_dl.status_code, 200)
+
+        # Dynamic MVT Protobuf vector tile
+        res_tile = self.client.get("/api/v1/tiles/vector/infrastructure/12/1042/1628.pbf")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertIn("protobuf", res_tile.headers.get("content-type", ""))
+        self.assertGreater(len(res_tile.content), 10)
+
+    def test_fractional_snow_cover_and_tiles_api(self):
+        """Test POST /api/v1/analysis/cryosphere/snow-cover and dynamic snow cover tiles."""
+        payload = {
+            "collection": "sentinel-2-l2a",
+            "item_id": "S2A_20260215",
+            "model_type": "salomonson_appel",
+            "green_band_reflectance": 0.48,
+            "swir1_band_reflectance": 0.12,
+            "elevation_m": 2450.0,
+            "snow_depth_m": 0.85,
+            "snow_density_kg_m3": 320.0,
+            "runoff_coefficient": 0.85
+        }
+        res = self.client.post("/api/v1/analysis/cryosphere/snow-cover", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "S2A_20260215")
+        self.assertIn("ndsi", data)
+        self.assertIn("fractional_snow_cover", data)
+        self.assertIn("fractional_snow_cover_pct", data)
+        self.assertIn("runoff_hazard_tier", data)
+        self.assertIn("estimated_swe_mm", data)
+        self.assertIn("estimated_melt_volume_m3", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/snow-cover", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/cryosphere/snow_cover", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Snow Cover tile
+        res_tile = self.client.get("/api/v1/tiles/cryosphere/snow-cover/sentinel-2-l2a/S2A_20260215/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_aquatic_turbidity_tsm_and_tiles_api(self):
+        """Test POST /api/v1/analysis/water/turbidity-tsm and dynamic aquatic turbidity tiles."""
+        payload = {
+            "collection": "sentinel-2-l2a",
+            "item_id": "S2B_20260714",
+            "algorithm": "dogliotti_switching",
+            "red_reflectance": 0.065,
+            "nir_reflectance": 0.038,
+            "water_body_area_ha": 350.0
+        }
+        res = self.client.post("/api/v1/analysis/water/turbidity-tsm", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "S2B_20260714")
+        self.assertIn("total_suspended_matter_g_m3", data)
+        self.assertIn("turbidity_ntu", data)
+        self.assertIn("hazard_tier", data)
+        self.assertIn("sediment_plume_detected", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/turbidity-tsm", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/water/turbidity", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Turbidity tile
+        res_tile = self.client.get("/api/v1/tiles/water/turbidity-tsm/sentinel-2-l2a/S2B_20260714/turbidity/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_structural_disturbance_breaks_and_tiles_api(self):
+        """Test POST /api/v1/analysis/disturbance/breaks and dynamic disturbance breaks tiles."""
+        payload = {
+            "metric_name": "ndvi",
+            "model": "bfast_lite",
+            "significance_alpha": 0.05,
+            "time_series_values": [0.72, 0.70, 0.71, 0.69, 0.68, 0.42, 0.38, 0.36, 0.35, 0.33, 0.31, 0.30],
+            "time_series_dates": [
+                "2025-01-15", "2025-03-01", "2025-04-15", "2025-06-01",
+                "2025-07-15", "2025-09-01", "2025-10-15", "2025-12-01",
+                "2026-01-15", "2026-03-01", "2026-04-15", "2026-06-01"
+            ]
+        }
+        res = self.client.post("/api/v1/analysis/disturbance/breaks", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("breakpoints_detected", data)
+        self.assertIn("total_observations", data)
+        self.assertIn("overall_disturbance_type", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/disturbance-breaks", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/disturbance", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Disturbance Breaks tile
+        res_tile = self.client.get("/api/v1/tiles/disturbance/breaks/sentinel-2-l2a/breaks/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_crop_water_stress_index_and_tiles_api(self):
+        """Test POST /api/v1/analysis/agriculture/cwsi and dynamic CWSI tiles."""
+        payload = {
+            "collection": "landsat-c2-l2",
+            "item_id": "LC09_20260718",
+            "model_type": "empirical_idso",
+            "canopy_temperature_c": 33.5,
+            "air_temperature_c": 28.0,
+            "relative_humidity_pct": 32.0,
+            "vapor_pressure_deficit_kpa": 2.6,
+            "ndvi": 0.68,
+            "reference_et0_mm_day": 6.2
+        }
+        res = self.client.post("/api/v1/analysis/agriculture/cwsi", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "LC09_20260718")
+        self.assertIn("cwsi", data)
+        self.assertIn("evaporative_fraction", data)
+        self.assertIn("actual_et_mm_day", data)
+        self.assertIn("water_stress_tier", data)
+        self.assertIn("irrigation_priority", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/cwsi", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/crop-water-stress", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic CWSI tile
+        res_tile = self.client.get("/api/v1/tiles/agriculture/cwsi/landsat-c2-l2/LC09_20260718/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_pyramid_spline_mosaic_blending_and_tiles_api(self):
+        """Test POST /api/v1/analysis/mosaic/spline-blend and dynamic spline mosaic tiles."""
+        payload = {
+            "mosaic_id": "MOSAIC-SPLINE-TEST-01",
+            "left_scene_id": "SCENE-A-20260810",
+            "right_scene_id": "SCENE-B-20260812",
+            "blend_mode": "multiresolution_spline",
+            "pyramid_levels": 5,
+            "seam_transition_width_px": 64,
+            "left_mean_radiance": 132.5,
+            "right_mean_radiance": 128.2
+        }
+        res = self.client.post("/api/v1/analysis/mosaic/spline-blend", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["mosaic_id"], "MOSAIC-SPLINE-TEST-01")
+        self.assertEqual(data["blend_mode"], "multiresolution_spline")
+        self.assertIn("pyramid_levels", data)
+        self.assertIn("mean_gradient_discontinuity_dn", data)
+        self.assertIn("radiometric_quality", data)
+        self.assertIn("is_seamless", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/mosaic/spline", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/spline-blend", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Spline Mosaic tile
+        res_tile = self.client.get("/api/v1/tiles/mosaic/spline/MOSAIC-SPLINE-TEST-01/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
 if __name__ == "__main__":
     unittest.main()
+
 

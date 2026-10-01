@@ -825,7 +825,31 @@ export const API_ENDPOINTS = {
   ANALYSIS_SAM_MINERAL_SHORT: '/analysis/sam',
   TILES_SAM_MINERAL: (collection, itemId, endmember, z, x, y) => `/api/v1/tiles/geology/sam/${collection}/${itemId}/${endmember}/${z}/${x}/${y}.png`,
   TILES_VECTOR_PBF: (layerId, z, x, y) => `/api/v1/tiles/vector/${layerId}/${z}/${x}/${y}.pbf`,
-  ANALYSIS_VECTOR_EXPORT: '/api/v1/analysis/vector/export'
+  ANALYSIS_VECTOR_EXPORT: '/api/v1/analysis/vector/export',
+  ANALYSIS_SNOW_COVER: '/api/v1/analysis/cryosphere/snow-cover',
+  ANALYSIS_SNOW_COVER_SHORT: '/analysis/snow-cover',
+  TILES_SNOW_COVER: (collection, itemId, z, x, y) => `/api/v1/tiles/cryosphere/snow-cover/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_AQUATIC_TURBIDITY: '/api/v1/analysis/water/turbidity-tsm',
+  ANALYSIS_AQUATIC_TURBIDITY_SHORT: '/analysis/turbidity-tsm',
+  TILES_AQUATIC_TURBIDITY: (collection, itemId, metric, z, x, y) => `/api/v1/tiles/water/turbidity-tsm/${collection}/${itemId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_DISTURBANCE_BREAKS: '/api/v1/analysis/disturbance/breaks',
+  ANALYSIS_DISTURBANCE_BREAKS_SHORT: '/analysis/disturbance-breaks',
+  TILES_DISTURBANCE_BREAKS: (collection, itemId, z, x, y) => `/api/v1/tiles/disturbance/breaks/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_CROP_WATER_STRESS: '/api/v1/analysis/agriculture/cwsi',
+  ANALYSIS_CROP_WATER_STRESS_SHORT: '/analysis/cwsi',
+  TILES_CROP_WATER_STRESS: (collection, itemId, z, x, y) => `/api/v1/tiles/agriculture/cwsi/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_PYRAMID_SPLINE: '/api/v1/analysis/mosaic/spline-blend',
+  ANALYSIS_PYRAMID_SPLINE_SHORT: '/analysis/spline-blend',
+  TILES_SPLINE_MOSAIC: (mosaicId, z, x, y) => `/api/v1/tiles/mosaic/spline/${mosaicId}/${z}/${x}/${y}.png`,
+  DRONE_DIRECT_GEOREFERENCING: '/api/v1/drone/direct-georeferencing',
+  DRONE_DIRECT_GEOREFERENCING_SHORT: '/drone/direct-georeferencing',
+  TILES_DIRECT_GEOREFERENCING: (missionId, z, x, y) => `/api/v1/tiles/drone/direct-georeferencing/${missionId}/${z}/${x}/${y}.png`,
+  ANALYSIS_CREST_ALIGNMENT: '/api/v1/analysis/geotechnical/crest-alignment',
+  ANALYSIS_CREST_ALIGNMENT_SHORT: '/geotechnical/crest-alignment',
+  TILES_CREST_ALIGNMENT: (alignmentId, z, x, y) => `/api/v1/tiles/geotechnical/crest-alignment/${alignmentId}/${z}/${x}/${y}.png`,
+  ANALYSIS_PS_INSAR_STACK: '/api/v1/analysis/sar/ps-insar-stack',
+  ANALYSIS_PS_INSAR_STACK_SHORT: '/sar/ps-insar-stack',
+  TILES_PS_INSAR_STACK: (stackId, z, x, y) => `/api/v1/tiles/sar/ps-insar/${stackId}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -921,6 +945,22 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'item-01', params.endmember || params.mineral || 'pyrite', params.z, params.x, params.y);
       case 'TILES_VECTOR_PBF':
         return endpoint(params.layerId || params.layer_id || 'critical_infrastructure', params.z, params.x, params.y);
+      case 'TILES_SNOW_COVER':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'item-01', params.z, params.x, params.y);
+      case 'TILES_AQUATIC_TURBIDITY':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'item-01', params.metric || 'turbidity', params.z, params.x, params.y);
+      case 'TILES_DISTURBANCE_BREAKS':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'item-01', params.z, params.x, params.y);
+      case 'TILES_CROP_WATER_STRESS':
+        return endpoint(params.collection || 'landsat-c2-l2', params.itemId || params.item_id || 'item-01', params.z, params.x, params.y);
+      case 'TILES_SPLINE_MOSAIC':
+        return endpoint(params.mosaicId || params.mosaic_id || 'drone_mosaic_01', params.z, params.x, params.y);
+      case 'TILES_DIRECT_GEOREFERENCING':
+        return endpoint(params.missionId || params.mission_id || 'drone_mission_01', params.z, params.x, params.y);
+      case 'TILES_CREST_ALIGNMENT':
+        return endpoint(params.alignmentId || params.alignment_id || 'crest_tsf_01', params.z, params.x, params.y);
+      case 'TILES_PS_INSAR_STACK':
+        return endpoint(params.stackId || params.stack_id || 'ps_stack_tsf_01', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -4456,3 +4496,1176 @@ export const formatVectorExportFilename = (layerId, format, timestamp = null) =>
   const cleanLayer = String(layerId || 'layer').toLowerCase().replace(/-/g, '_');
   return `gios_${cleanLayer}_${ts}.${ext}`;
 };
+
+
+// ============================================================================
+// T-96: NEXT-GEN REMOTE SENSING & CRYOSPHERE / AQUATIC / DISTURBANCE SCAFFOLDING
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// 1. CRYOSPHERE FRACTIONAL SNOW COVER (FSC) & GLACIAL MELT RUNOFF HAZARDS
+// ----------------------------------------------------------------------------
+
+export const FSC_MODEL_TYPES = {
+  SALOMONSON_APPEL: 'salomonson_appel',
+  HALL_MODIS: 'hall_modis',
+  LINEAR_NDSI: 'linear_ndsi'
+};
+
+export const SNOWPACK_RUNOFF_TIERS = {
+  TRACE_SNOW: {
+    id: 'trace_snow',
+    label: 'Trace Snow (< 10%)',
+    badge: 'bg-slate-500/20 text-slate-300 border-slate-500/30',
+    color: '#94a3b8',
+    runoff_risk: 'Negligible'
+  },
+  LOW_SNOW: {
+    id: 'low_snow',
+    label: 'Low Snowpack (10% - 35%)',
+    badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+    color: '#06b6d4',
+    runoff_risk: 'Minor'
+  },
+  MODERATE_SNOW: {
+    id: 'moderate_snow',
+    label: 'Moderate Snowpack (35% - 65%)',
+    badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+    color: '#3b82f6',
+    runoff_risk: 'Moderate'
+  },
+  DEEP_SNOWPACK: {
+    id: 'deep_snowpack',
+    label: 'Deep Snowpack (65% - 85%)',
+    badge: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+    color: '#6366f1',
+    runoff_risk: 'Substantial'
+  },
+  EXTREME_ACCUMULATION: {
+    id: 'extreme_accumulation',
+    label: 'Extreme Accumulation (>= 85%)',
+    badge: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+    color: '#a855f7',
+    runoff_risk: 'High Melt Runoff / Glacial Hazard'
+  }
+};
+
+export const classifySnowpackRunoffTier = (fsc) => {
+  const val = Math.max(0.0, Math.min(1.0, Number(fsc) || 0.0));
+  if (val < 0.10) return SNOWPACK_RUNOFF_TIERS.TRACE_SNOW;
+  if (val < 0.35) return SNOWPACK_RUNOFF_TIERS.LOW_SNOW;
+  if (val < 0.65) return SNOWPACK_RUNOFF_TIERS.MODERATE_SNOW;
+  if (val < 0.85) return SNOWPACK_RUNOFF_TIERS.DEEP_SNOWPACK;
+  return SNOWPACK_RUNOFF_TIERS.EXTREME_ACCUMULATION;
+};
+
+export const calculateFractionalSnowCover = (green, swir1, model = 'salomonson_appel', elevationM = null, options = {}) => {
+  const g = Number(green) || 0.0;
+  const s = Number(swir1) || 0.0;
+  const depthM = options.snowDepthM !== undefined ? Number(options.snowDepthM) : 0.5;
+  const densityKgM3 = options.snowDensityKgM3 !== undefined ? Number(options.snowDensityKgM3) : 300.0;
+  const runoffCoeff = options.runoffCoeff !== undefined ? Number(options.runoffCoeff) : 0.85;
+  const areaHa = options.areaHa !== undefined ? Number(options.areaHa) : 100.0;
+
+  const denom = g + s;
+  let ndsi = Math.abs(denom) < 1e-6 ? 0.0 : (g - s) / denom;
+  ndsi = Math.max(-1.0, Math.min(1.0, ndsi));
+
+  let fsc = 0.0;
+  const m = String(model).toLowerCase();
+  if (m === 'salomonson_appel') {
+    fsc = ndsi <= 0.0 ? 0.0 : -0.01 + 1.45 * ndsi;
+  } else if (m === 'hall_modis') {
+    if (ndsi < 0.10) fsc = 0.0;
+    else if (ndsi >= 0.40) fsc = 1.0;
+    else fsc = (ndsi - 0.10) / 0.30;
+  } else {
+    fsc = Math.max(0.0, ndsi);
+  }
+
+  fsc = Math.max(0.0, Math.min(1.0, fsc));
+  const fscPct = fsc * 100.0;
+  const tier = classifySnowpackRunoffTier(fsc);
+
+  const sweMm = depthM * (densityKgM3 / 1000.0) * 1000.0 * fsc;
+  const areaM2 = areaHa * 10000.0;
+  const meltVolM3 = areaM2 * (sweMm / 1000.0) * runoffCoeff;
+  const snowAreaHa = areaHa * fsc;
+
+  let snowlineM = null;
+  if (elevationM !== null && fsc > 0.05) {
+    snowlineM = Number(elevationM) - (1.0 - fsc) * 200.0;
+  }
+
+  return {
+    ndsi: Number(ndsi.toFixed(4)),
+    fractional_snow_cover: Number(fsc.toFixed(4)),
+    fractional_snow_cover_pct: Number(fscPct.toFixed(2)),
+    runoff_hazard_tier: tier.id,
+    tier_metadata: tier,
+    estimated_swe_mm: Number(sweMm.toFixed(2)),
+    estimated_melt_volume_m3: Number(meltVolM3.toFixed(2)),
+    transient_snowline_elevation_m: snowlineM !== null ? Number(snowlineM.toFixed(1)) : null,
+    snow_covered_area_ha: Number(snowAreaHa.toFixed(2)),
+    total_area_ha: Number(areaHa.toFixed(2))
+  };
+};
+
+export const buildSnowCoverTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const model = options.model || 'salomonson_appel';
+  return `${basePrefix}/tiles/cryosphere/snow-cover/${collection}/${itemId}/${z}/${x}/${y}.png?model=${model}`;
+};
+
+// ----------------------------------------------------------------------------
+// 2. AQUATIC TOTAL SUSPENDED MATTER (TSM) & TURBIDITY INVERSION
+// ----------------------------------------------------------------------------
+
+export const TSM_ALGORITHMS = {
+  NECHAD_RED: 'nechad_red',
+  NECHAD_NIR: 'nechad_nir',
+  DOGLIOTTI_SWITCHING: 'dogliotti_switching',
+  EMPIRICAL_RATIO: 'empirical_ratio'
+};
+
+export const AQUATIC_TURBIDITY_TIERS = {
+  CLEAR_OLIGOTROPHIC: {
+    id: 'clear_oligotrophic',
+    label: 'Clear Oligotrophic (< 2 NTU)',
+    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    color: '#10b981',
+    plume: false
+  },
+  LOW_TURBIDITY: {
+    id: 'low_turbidity',
+    label: 'Low Turbidity (2 - 10 NTU)',
+    badge: 'bg-teal-500/20 text-teal-300 border-teal-500/30',
+    color: '#14b8a6',
+    plume: false
+  },
+  MODERATE_SEDIMENT: {
+    id: 'moderate_sediment',
+    label: 'Moderate Sediment (10 - 30 NTU)',
+    badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    color: '#f59e0b',
+    plume: false
+  },
+  HIGH_TURBIDITY: {
+    id: 'high_turbidity',
+    label: 'High Turbidity (30 - 80 NTU)',
+    badge: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
+    color: '#f97316',
+    plume: true
+  },
+  EXTREME_SEDIMENT_PLUME: {
+    id: 'extreme_sediment_plume',
+    label: 'Extreme Sediment Plume (>= 80 NTU)',
+    badge: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+    color: '#f43f5e',
+    plume: true
+  }
+};
+
+export const classifyAquaticTurbidityTier = (turbidityNtu) => {
+  const val = Math.max(0.0, Number(turbidityNtu) || 0.0);
+  if (val < 2.0) return AQUATIC_TURBIDITY_TIERS.CLEAR_OLIGOTROPHIC;
+  if (val < 10.0) return AQUATIC_TURBIDITY_TIERS.LOW_TURBIDITY;
+  if (val < 30.0) return AQUATIC_TURBIDITY_TIERS.MODERATE_SEDIMENT;
+  if (val < 80.0) return AQUATIC_TURBIDITY_TIERS.HIGH_TURBIDITY;
+  return AQUATIC_TURBIDITY_TIERS.EXTREME_SEDIMENT_PLUME;
+};
+
+export const calculateAquaticTsmTurbidity = (red, nir, algorithm = 'dogliotti_switching', waterAreaHa = 250.0) => {
+  const r = Math.max(0.0, Math.min(0.35, Number(red) || 0.0));
+  const n = Math.max(0.0, Math.min(0.35, Number(nir) || 0.0));
+
+  const aTsmRed = 327.84, cRed = 0.1708, aTurbRed = 228.7;
+  const aTsmNir = 1941.25, cNir = 0.2115, aTurbNir = 1350.0;
+
+  const safeR = Math.max(0.01, 1.0 - (r / cRed));
+  const tsmRed = (aTsmRed * r) / safeR;
+  const turbRed = (aTurbRed * r) / safeR;
+
+  const safeN = Math.max(0.01, 1.0 - (n / cNir));
+  const tsmNir = (aTsmNir * n) / safeN;
+  const turbNir = (aTurbNir * n) / safeN;
+
+  let tsm = 0.0;
+  let turb = 0.0;
+  const algo = String(algorithm).toLowerCase();
+
+  if (algo === 'nechad_red') {
+    tsm = tsmRed;
+    turb = turbRed;
+  } else if (algo === 'nechad_nir') {
+    tsm = tsmNir;
+    turb = turbNir;
+  } else if (algo === 'empirical_ratio') {
+    const ratio = n / Math.max(0.001, r);
+    tsm = Math.max(0.0, ratio * 150.0);
+    turb = tsm * 0.75;
+  } else {
+    if (r < 0.05) {
+      tsm = tsmRed;
+      turb = turbRed;
+    } else if (r > 0.07) {
+      tsm = tsmNir;
+      turb = turbNir;
+    } else {
+      const w = (r - 0.05) / 0.02;
+      tsm = (1.0 - w) * tsmRed + w * tsmNir;
+      turb = (1.0 - w) * turbRed + w * turbNir;
+    }
+  }
+
+  tsm = Math.max(0.0, tsm);
+  turb = Math.max(0.0, turb);
+  const tier = classifyAquaticTurbidityTier(turb);
+
+  let plumePct = 0.0;
+  if (turb < 10.0) plumePct = 0.0;
+  else if (turb < 30.0) plumePct = 15.0;
+  else if (turb < 80.0) plumePct = 45.0;
+  else plumePct = 75.0;
+
+  const plumeHa = Number(waterAreaHa) * (plumePct / 100.0);
+
+  return {
+    total_suspended_matter_g_m3: Number(tsm.toFixed(2)),
+    turbidity_ntu: Number(turb.toFixed(2)),
+    hazard_tier: tier.id,
+    tier_metadata: tier,
+    sediment_plume_detected: tier.plume,
+    plume_area_ha: Number(plumeHa.toFixed(2)),
+    plume_area_pct: Number(plumePct.toFixed(2)),
+    mean_water_reflectance_red: Number(r.toFixed(4)),
+    mean_water_reflectance_nir: Number(n.toFixed(4))
+  };
+};
+
+export const buildTurbidityTsmTileUrl = (collection, itemId, metric, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/water/turbidity-tsm/${collection}/${itemId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// 3. ABRUPT STRUCTURAL DISTURBANCE BREAK DETECTION (BFAST / LANDTRENDR)
+// ----------------------------------------------------------------------------
+
+export const DISTURBANCE_MODELS = {
+  BFAST_LITE: 'bfast_lite',
+  LANDTRENDR_SEGMENTATION: 'landtrendr_segmentation',
+  PIECEWISE_LINEAR: 'piecewise_linear'
+};
+
+export const DISTURBANCE_TYPES = {
+  GRADUAL_DECLINE: {
+    id: 'gradual_decline',
+    label: 'Gradual Negative Decline',
+    badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    color: '#f59e0b'
+  },
+  ABRUPT_COLLAPSE: {
+    id: 'abrupt_collapse',
+    label: 'Abrupt Structural Collapse',
+    badge: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+    color: '#f43f5e'
+  },
+  STRUCTURAL_DISTURBANCE: {
+    id: 'structural_disturbance',
+    label: 'Structural Disturbance Jump',
+    badge: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
+    color: '#f97316'
+  },
+  STABLE_TRAJECTORY: {
+    id: 'stable_trajectory',
+    label: 'Stable Trajectory',
+    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    color: '#10b981'
+  },
+  RAPID_RECOVERY: {
+    id: 'rapid_recovery',
+    label: 'Rapid Recovery Trajectory',
+    badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+    color: '#06b6d4'
+  }
+};
+
+export const BREAK_SIGNIFICANCE_TIERS = {
+  NOT_SIGNIFICANT: { id: 'not_significant', label: 'Not Significant (p >= 0.10)', color: '#94a3b8' },
+  ADVISORY: { id: 'advisory', label: 'Advisory (p < 0.10)', color: '#eab308' },
+  SIGNIFICANT: { id: 'significant', label: 'Significant Break (p < 0.05)', color: '#f97316' },
+  CRITICAL_BREAK: { id: 'critical_break', label: 'Critical Break (p < 0.01)', color: '#ef4444' }
+};
+
+export const classifyDisturbanceType = (jump, preSlope, postSlope) => {
+  const j = Number(jump) || 0.0;
+  const pre = Number(preSlope) || 0.0;
+  const post = Number(postSlope) || 0.0;
+  if (j <= -0.15) return DISTURBANCE_TYPES.ABRUPT_COLLAPSE;
+  if (j <= -0.05) return DISTURBANCE_TYPES.STRUCTURAL_DISTURBANCE;
+  if (post > 0.05 && j > -0.05) return DISTURBANCE_TYPES.RAPID_RECOVERY;
+  if (pre < -0.02 && Math.abs(j) < 0.05) return DISTURBANCE_TYPES.GRADUAL_DECLINE;
+  return DISTURBANCE_TYPES.STABLE_TRAJECTORY;
+};
+
+export const detectStructuralDisturbanceBreaks = (dates, values, model = 'bfast_lite', alpha = 0.05, minSegment = 2) => {
+  const selectedModel = String(model || 'bfast_lite').toLowerCase();
+  const n = Array.isArray(values) ? values.length : 0;
+  if (n < 4) {
+    return {
+      model_used: selectedModel,
+      total_observations: n,
+      breakpoints_detected: 0,
+      primary_break: null,
+      all_breakpoints: [],
+      overall_disturbance_type: DISTURBANCE_TYPES.STABLE_TRAJECTORY.id,
+      structural_instability_detected: false
+    };
+  }
+
+  const y = values.map(Number);
+  let bestIdx = -1;
+  let bestRss = Infinity;
+  let bestPreSlope = 0.0;
+  let bestPostSlope = 0.0;
+  let bestJump = 0.0;
+
+  const meanT = (n - 1) / 2.0;
+  const meanY = y.reduce((acc, v) => acc + v, 0) / n;
+  let fullCov = 0.0, fullVar = 0.0;
+  for (let i = 0; i < n; i++) {
+    fullCov += (i - meanT) * (y[i] - meanY);
+    fullVar += (i - meanT) ** 2;
+  }
+  const fullSlope = fullVar > 1e-9 ? fullCov / fullVar : 0.0;
+
+  for (let i = minSegment; i <= n - minSegment; i++) {
+    const seg1 = y.slice(0, i);
+    const n1 = seg1.length;
+    const meanT1 = (n1 - 1) / 2.0;
+    const meanY1 = seg1.reduce((a, b) => a + b, 0) / n1;
+    let cov1 = 0.0, var1 = 0.0;
+    for (let k = 0; k < n1; k++) {
+      cov1 += (k - meanT1) * (seg1[k] - meanY1);
+      var1 += (k - meanT1) ** 2;
+    }
+    const slope1 = var1 > 1e-9 ? cov1 / var1 : 0.0;
+    const c1 = meanY1 - slope1 * meanT1;
+    let rss1 = 0.0;
+    for (let k = 0; k < n1; k++) {
+      rss1 += (seg1[k] - (c1 + slope1 * k)) ** 2;
+    }
+
+    const seg2 = y.slice(i);
+    const n2 = seg2.length;
+    const meanT2 = (n2 - 1) / 2.0;
+    const meanY2 = seg2.reduce((a, b) => a + b, 0) / n2;
+    let cov2 = 0.0, var2 = 0.0;
+    for (let k = 0; k < n2; k++) {
+      cov2 += (k - meanT2) * (seg2[k] - meanY2);
+      var2 += (k - meanT2) ** 2;
+    }
+    const slope2 = var2 > 1e-9 ? cov2 / var2 : 0.0;
+    const c2 = meanY2 - slope2 * meanT2;
+    let rss2 = 0.0;
+    for (let k = 0; k < n2; k++) {
+      rss2 += (seg2[k] - (c2 + slope2 * k)) ** 2;
+    }
+
+    const totalRss = rss1 + rss2;
+    const jump = c2 - (c1 + slope1 * (n1 - 1));
+    if (totalRss < bestRss) {
+      bestRss = totalRss;
+      bestIdx = i;
+      bestPreSlope = slope1;
+      bestPostSlope = slope2;
+      bestJump = jump;
+    }
+  }
+
+  let fullRss = 0.0;
+  for (let k = 0; k < n; k++) {
+    fullRss += (y[k] - (meanY + fullSlope * (k - meanT))) ** 2;
+  }
+  const diffRss = Math.max(0.0, fullRss - bestRss);
+  const fStat = bestRss > 1e-6 ? (diffRss / 2.0) / (bestRss / Math.max(1, n - 4)) : 10.0;
+
+  let pVal = 0.25;
+  if (fStat > 15.0) pVal = 0.001;
+  else if (fStat > 8.0) pVal = 0.02;
+  else if (fStat > 4.0) pVal = 0.06;
+
+  let sigTier = BREAK_SIGNIFICANCE_TIERS.NOT_SIGNIFICANT;
+  if (pVal < 0.01) sigTier = BREAK_SIGNIFICANCE_TIERS.CRITICAL_BREAK;
+  else if (pVal < 0.05) sigTier = BREAK_SIGNIFICANCE_TIERS.SIGNIFICANT;
+  else if (pVal < 0.10) sigTier = BREAK_SIGNIFICANCE_TIERS.ADVISORY;
+
+  const distType = classifyDisturbanceType(bestJump, bestPreSlope, bestPostSlope);
+  const isDetected = (pVal <= alpha) && (Math.abs(bestJump) >= 0.04 || distType.id !== 'stable_trajectory');
+
+  const breakpoints = [];
+  let primary = null;
+  if (isDetected && bestIdx > 0 && dates[bestIdx]) {
+    primary = {
+      break_index: bestIdx,
+      break_date: dates[bestIdx],
+      pre_break_slope: Number(bestPreSlope.toFixed(4)),
+      post_break_slope: Number(bestPostSlope.toFixed(4)),
+      jump_magnitude: Number(bestJump.toFixed(4)),
+      p_value: Number(pVal.toFixed(4)),
+      significance_tier: sigTier.id,
+      disturbance_type: distType.id
+    };
+    breakpoints.push(primary);
+  }
+
+  return {
+    model_used: selectedModel,
+    total_observations: n,
+    breakpoints_detected: breakpoints.length,
+    primary_break: primary,
+    all_breakpoints: breakpoints,
+    overall_disturbance_type: distType.id,
+    disturbance_metadata: distType,
+    structural_instability_detected: isDetected && (distType.id === 'abrupt_collapse' || distType.id === 'structural_disturbance')
+  };
+};
+
+export const buildDisturbanceTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/disturbance/breaks/${collection}/${itemId}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// 4. CROP WATER STRESS INDEX (CWSI) & EVAPOTRANSPIRATION ENERGY BALANCE
+// ----------------------------------------------------------------------------
+
+export const CWSI_MODEL_TYPES = {
+  EMPIRICAL_IDSO: 'empirical_idso',
+  TRAPEZOID_OPTICAL_THERMAL: 'trapezoid_optical_thermal',
+  ENERGY_BALANCE_SEBAL: 'energy_balance_sebal'
+};
+
+export const WATER_STRESS_TIERS = {
+  NO_STRESS: {
+    id: 'no_stress',
+    label: 'No Stress (CWSI < 0.20)',
+    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    color: '#10b981',
+    priority: 'low'
+  },
+  MILD_STRESS: {
+    id: 'mild_stress',
+    label: 'Mild Stress (0.20 - 0.40)',
+    badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+    color: '#06b6d4',
+    priority: 'low'
+  },
+  MODERATE_STRESS: {
+    id: 'moderate_stress',
+    label: 'Moderate Stress (0.40 - 0.65)',
+    badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    color: '#f59e0b',
+    priority: 'moderate'
+  },
+  SEVERE_DEFICIT: {
+    id: 'severe_deficit',
+    label: 'Severe Deficit (0.65 - 0.85)',
+    badge: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
+    color: '#f97316',
+    priority: 'high'
+  },
+  EXTREME_DESICCATION: {
+    id: 'extreme_desiccation',
+    label: 'Extreme Desiccation (>= 0.85)',
+    badge: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+    color: '#f43f5e',
+    priority: 'critical'
+  }
+};
+
+export const classifyWaterStressTier = (cwsi) => {
+  const val = Math.max(0.0, Math.min(1.0, Number(cwsi) || 0.0));
+  if (val < 0.20) return WATER_STRESS_TIERS.NO_STRESS;
+  if (val < 0.40) return WATER_STRESS_TIERS.MILD_STRESS;
+  if (val < 0.65) return WATER_STRESS_TIERS.MODERATE_STRESS;
+  if (val < 0.85) return WATER_STRESS_TIERS.SEVERE_DEFICIT;
+  return WATER_STRESS_TIERS.EXTREME_DESICCATION;
+};
+
+export const calculateCropWaterStressIndex = (canopyTempC, airTempC = 25.0, rhPct = 40.0, vpdKpa = null, ndvi = 0.65, model = 'empirical_idso', et0MmDay = 5.0) => {
+  const tc = Number(canopyTempC) || 0.0;
+  const ta = Number(airTempC) || 25.0;
+  const diff = tc - ta;
+
+  let vpd = 1.0;
+  if (vpdKpa !== null && vpdKpa !== undefined) {
+    vpd = Math.max(0.1, Number(vpdKpa));
+  } else {
+    const es = 0.6108 * Math.exp((17.27 * ta) / (ta + 237.3));
+    const ea = es * (Math.max(0.0, Math.min(100.0, Number(rhPct))) / 100.0);
+    vpd = Math.max(0.1, es - ea);
+  }
+
+  let lowerDiff = 1.0 - 1.7 * vpd;
+  let upperDiff = 5.0;
+
+  const m = String(model).toLowerCase();
+  if (m === 'trapezoid_optical_thermal') {
+    lowerDiff = -3.0;
+    upperDiff = Math.max(1.0, 8.0 * (1.0 - Math.max(0.0, Math.min(1.0, Number(ndvi)))));
+  }
+
+  const rangeSpan = Math.max(1.0, upperDiff - lowerDiff);
+  const rawCwsi = (diff - lowerDiff) / rangeSpan;
+  const cwsi = Math.max(0.0, Math.min(1.0, rawCwsi));
+
+  const ef = 1.0 - cwsi;
+  const eta = ef * Number(et0MmDay);
+  const tier = classifyWaterStressTier(cwsi);
+
+  return {
+    cwsi: Number(cwsi.toFixed(4)),
+    evaporative_fraction: Number(ef.toFixed(4)),
+    actual_et_mm_day: Number(eta.toFixed(2)),
+    water_stress_tier: tier.id,
+    tier_metadata: tier,
+    canopy_air_temp_diff_c: Number(diff.toFixed(2)),
+    lower_baseline_temp_diff_c: Number(lowerDiff.toFixed(2)),
+    upper_baseline_temp_diff_c: Number(upperDiff.toFixed(2)),
+    irrigation_priority: tier.priority
+  };
+};
+
+export const buildCwsiTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/agriculture/cwsi/${collection}/${itemId}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// 5. MULTI-RESOLUTION SPLINE & LAPLACIAN PYRAMID MOSAIC BLENDING CONTRACTS
+// ----------------------------------------------------------------------------
+
+export const PYRAMID_BLEND_MODES = {
+  MULTIRESOLUTION_SPLINE: 'multiresolution_spline',
+  POISSON_GRADIENT: 'poisson_gradient',
+  DISTANCE_TRANSFORM_FEATHER: 'distance_transform_feather',
+  LINEAR_FEATHER: 'linear_feather'
+};
+
+export const SEAM_RADIOMETRIC_QUALITIES = {
+  SEAMLESS: {
+    id: 'seamless',
+    label: 'Seamless Continuity (< 2 DN)',
+    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    color: '#10b981',
+    seamless: true
+  },
+  GOOD_CONTINUITY: {
+    id: 'good_continuity',
+    label: 'Good Continuity (2 - 5 DN)',
+    badge: 'bg-teal-500/20 text-teal-300 border-teal-500/30',
+    color: '#14b8a6',
+    seamless: true
+  },
+  PERCEPTIBLE_DISCONTINUITY: {
+    id: 'perceptible_discontinuity',
+    label: 'Perceptible Seam (5 - 12 DN)',
+    badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    color: '#f59e0b',
+    seamless: false
+  },
+  SEVERE_SEAM_ARTIFACT: {
+    id: 'severe_seam_artifact',
+    label: 'Severe Radiometric Artifact (>= 12 DN)',
+    badge: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+    color: '#f43f5e',
+    seamless: false
+  }
+};
+
+export const classifySeamRadiometricQuality = (gradientJump) => {
+  const val = Math.max(0.0, Number(gradientJump) || 0.0);
+  if (val < 2.0) return SEAM_RADIOMETRIC_QUALITIES.SEAMLESS;
+  if (val < 5.0) return SEAM_RADIOMETRIC_QUALITIES.GOOD_CONTINUITY;
+  if (val < 12.0) return SEAM_RADIOMETRIC_QUALITIES.PERCEPTIBLE_DISCONTINUITY;
+  return SEAM_RADIOMETRIC_QUALITIES.SEVERE_SEAM_ARTIFACT;
+};
+
+export const calculateLaplacianPyramidBlend = (leftVal, rightVal, seamWidthPx = 64, levels = 5, blendMode = 'multiresolution_spline') => {
+  const w = Math.max(4, Number(seamWidthPx) || 64);
+  const lev = Math.max(2, Math.min(8, Number(levels) || 5));
+  const diff = Math.abs((Number(leftVal) || 0.0) - (Number(rightVal) || 0.0));
+
+  const highFreqPx = Math.max(2.0, w / (2 ** (lev - 1)));
+  const lowFreqPx = w * 2.0;
+
+  let discontinuity = 0.0;
+  const mode = String(blendMode).toLowerCase();
+  if (mode === 'multiresolution_spline') {
+    discontinuity = diff * (0.5 ** lev);
+  } else if (mode === 'poisson_gradient') {
+    discontinuity = Math.min(0.5, diff * 0.05);
+  } else if (mode === 'distance_transform_feather') {
+    discontinuity = diff * 0.15;
+  } else {
+    discontinuity = diff * 0.35;
+  }
+
+  discontinuity = Math.max(0.0, discontinuity);
+  const quality = classifySeamRadiometricQuality(discontinuity);
+
+  return {
+    mean_gradient_discontinuity_dn: Number(discontinuity.toFixed(3)),
+    radiometric_quality: quality.id,
+    quality_metadata: quality,
+    is_seamless: quality.seamless,
+    high_frequency_feather_px: Number(highFreqPx.toFixed(1)),
+    low_frequency_feather_px: Number(lowFreqPx.toFixed(1)),
+    pyramid_levels: lev,
+    seam_transition_width_px: w
+  };
+};
+
+export const buildSplineMosaicTileUrl = (mosaicId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const blendMode = options.blendMode || 'multiresolution_spline';
+  return `${basePrefix}/tiles/mosaic/spline/${mosaicId}/${z}/${x}/${y}.png?blend_mode=${blendMode}`;
+};
+
+// ============================================================================
+// CYCLE v2.5.7: DRONE DIRECT GEOREFERENCING, EMBANKMENT CREST VECTORIZATION & PS-InSAR CONTRACTS
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// 1. DRONE DIRECT GEOREFERENCING & IMU/BORESIGHT MISALIGNMENT CALIBRATION
+// ----------------------------------------------------------------------------
+
+export const DIRECT_GEOREFERENCING_TIERS = {
+  SURVEY_GRADE: {
+    id: 'survey_grade',
+    label: 'Survey-Grade Accuracy (CEP95 < 0.05m)',
+    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    color: '#10b981',
+    maxCep95: 0.05,
+    recommendedFor: 'Sub-centimeter structural deformation and cadastral boundary verification'
+  },
+  MAPPING_GRADE: {
+    id: 'mapping_grade',
+    label: 'Mapping-Grade Accuracy (0.05m <= CEP95 < 0.20m)',
+    badge: 'bg-teal-500/20 text-teal-300 border-teal-500/30',
+    color: '#14b8a6',
+    maxCep95: 0.20,
+    recommendedFor: 'Engineering earthworks, cut-fill integration, and topographic contouring'
+  },
+  RECONNAISSANCE_GRADE: {
+    id: 'reconnaissance_grade',
+    label: 'Reconnaissance-Grade Accuracy (0.20m <= CEP95 < 1.00m)',
+    badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    color: '#f59e0b',
+    maxCep95: 1.00,
+    recommendedFor: 'Regional situational awareness and preliminary environmental scouting'
+  },
+  UNCORRECTED_NAVIGATION: {
+    id: 'uncorrected_navigation',
+    label: 'Uncorrected Navigation GPS (CEP95 >= 1.00m)',
+    badge: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+    color: '#f43f5e',
+    maxCep95: Infinity,
+    recommendedFor: 'Uncalibrated consumer drone trajectories; requires GCP post-processing'
+  }
+};
+
+export const classifyDirectGeoreferencingTier = (cep95M) => {
+  const val = Math.max(0.0, Number(cep95M) || 0.0);
+  if (val < 0.05) return DIRECT_GEOREFERENCING_TIERS.SURVEY_GRADE;
+  if (val < 0.20) return DIRECT_GEOREFERENCING_TIERS.MAPPING_GRADE;
+  if (val < 1.00) return DIRECT_GEOREFERENCING_TIERS.RECONNAISSANCE_GRADE;
+  return DIRECT_GEOREFERENCING_TIERS.UNCORRECTED_NAVIGATION;
+};
+
+export const calculateDirectGeoreferencing = ({
+  gnssLat,
+  gnssLon,
+  gnssAltM,
+  groundElevM = 0.0,
+  rollDeg = 0.0,
+  pitchDeg = 0.0,
+  yawDeg = 0.0,
+  leverArm = {},
+  boresight = {},
+  sensorSpec = {},
+  gnssUncertaintyM = 0.02,
+  attitudeUncertaintyDeg = 0.01
+}) => {
+  const lx = Number(leverArm.lx_m || leverArm.lx || 0.0);
+  const ly = Number(leverArm.ly_m || leverArm.ly || 0.0);
+  const lz = Number(leverArm.lz_m || leverArm.lz || 0.0);
+
+  const dRoll = Number(boresight.d_roll_deg || boresight.dRoll || 0.0);
+  const dPitch = Number(boresight.d_pitch_deg || boresight.dPitch || 0.0);
+  const dYaw = Number(boresight.d_yaw_deg || boresight.dYaw || 0.0);
+
+  const focalMm = Number(sensorSpec.focal_length_mm || sensorSpec.focalLengthMm || 24.0);
+  const sensorWMm = Number(sensorSpec.sensor_width_mm || sensorSpec.sensorWidthMm || 35.9);
+  const sensorHMm = Number(sensorSpec.sensor_height_mm || sensorSpec.sensorHeightMm || 24.0);
+  const pxW = Number(sensorSpec.image_width_px || sensorSpec.imageWidthPx || 6000);
+  const pxH = Number(sensorSpec.image_height_px || sensorSpec.imageHeightPx || 4000);
+
+  const yawRad = (Number(yawDeg) * Math.PI) / 180.0;
+  const pitchRad = (Number(pitchDeg) * Math.PI) / 180.0;
+  const rollRad = (Number(rollDeg) * Math.PI) / 180.0;
+
+  const cosY = Math.cos(yawRad);
+  const sinY = Math.sin(yawRad);
+  const cosP = Math.cos(pitchRad);
+  const sinP = Math.sin(pitchRad);
+  const cosR = Math.cos(rollRad);
+  const sinR = Math.sin(rollRad);
+
+  const dxBody = lx * (cosY * cosR + sinY * sinP * sinR) + ly * (-sinY * cosP) + lz * (cosY * sinR - sinY * sinP * cosR);
+  const dyBody = lx * (sinY * cosR - cosY * sinP * sinR) + ly * (cosY * cosP) + lz * (sinY * sinR + cosY * sinP * cosR);
+  const dzBody = lx * (-cosP * sinR) + ly * sinP + lz * (cosP * cosR);
+
+  const metersLat = 111320.0;
+  let metersLon = 111320.0 * Math.cos((Number(gnssLat) * Math.PI) / 180.0);
+  if (Math.abs(metersLon) < 1.0) metersLon = 111320.0;
+
+  const camLat = Number(gnssLat) + dyBody / metersLat;
+  const camLon = Number(gnssLon) + dxBody / metersLon;
+  const camAlt = Number(gnssAltM) - dzBody;
+
+  const corrRoll = Number(rollDeg) + dRoll;
+  const corrPitch = Number(pitchDeg) + dPitch;
+  const corrYaw = (Number(yawDeg) + dYaw + 360.0) % 360.0;
+
+  const hAgl = Math.max(5.0, camAlt - Number(groundElevM));
+  const footprintW = (sensorWMm * hAgl) / focalMm;
+  const footprintH = (sensorHMm * hAgl) / focalMm;
+
+  const gsdX = (footprintW / Math.max(1, pxW)) * 100.0;
+  const gsdY = (footprintH / Math.max(1, pxH)) * 100.0;
+  const gsdMean = (gsdX + gsdY) / 2.0;
+
+  const halfW = footprintW / 2.0;
+  const halfH = footprintH / 2.0;
+  const corrYawRad = (corrYaw * Math.PI) / 180.0;
+  const cosCy = Math.cos(corrYawRad);
+  const sinCy = Math.sin(corrYawRad);
+
+  const cornersLocal = [
+    [-halfW, halfH],
+    [halfW, halfH],
+    [halfW, -halfH],
+    [-halfW, -halfH],
+    [-halfW, halfH]
+  ];
+
+  const footprintPoly = cornersLocal.map(([cx, cy]) => {
+    const rx = cx * cosCy - cy * sinCy;
+    const ry = cx * sinCy + cy * cosCy;
+    const pLat = camLat + ry / metersLat;
+    const pLon = camLon + rx / metersLon;
+    return [Number(pLat.toFixed(7)), Number(pLon.toFixed(7))];
+  });
+
+  const attRad = (Math.max(0.0001, Number(attitudeUncertaintyDeg)) * Math.PI) / 180.0;
+  const sigmaHoriz = Math.sqrt(Math.pow(Number(gnssUncertaintyM), 2) + Math.pow(hAgl * Math.tan(attRad), 2));
+  const cep95 = 2.4477 * sigmaHoriz;
+  const tier = classifyDirectGeoreferencingTier(cep95);
+
+  return {
+    camera_latitude: Number(camLat.toFixed(7)),
+    camera_longitude: Number(camLon.toFixed(7)),
+    camera_altitude_m: Number(camAlt.toFixed(2)),
+    corrected_roll_deg: Number(corrRoll.toFixed(3)),
+    corrected_pitch_deg: Number(corrPitch.toFixed(3)),
+    corrected_yaw_deg: Number(corrYaw.toFixed(3)),
+    flight_height_agl_m: Number(hAgl.toFixed(2)),
+    gsd_cm_px: Number(gsdMean.toFixed(2)),
+    footprint_width_m: Number(footprintW.toFixed(2)),
+    footprint_height_m: Number(footprintH.toFixed(2)),
+    footprint_polygon: footprintPoly,
+    horizontal_cep95_m: Number(cep95.toFixed(3)),
+    quality_tier: tier.id,
+    tier_metadata: tier
+  };
+};
+
+export const buildDirectGeoreferencingTileUrl = (missionId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/drone/direct-georeferencing/${missionId}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// 2. OPENDRIVE / GEOJSON EMBANKMENT CREST ALIGNMENT CONTRACTS
+// ----------------------------------------------------------------------------
+
+export const CREST_SETTLEMENT_TIERS = {
+  NORMAL: {
+    id: 'normal',
+    label: 'Normal Crest Elevation (|delta| < 0.05m)',
+    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    color: '#10b981',
+    maxLossM: 0.05,
+    action: 'Routine survey surveillance; freeboard compliant'
+  },
+  MINOR_SETTLEMENT: {
+    id: 'minor_settlement',
+    label: 'Minor Settlement (0.05m <= |delta| < 0.15m)',
+    badge: 'bg-teal-500/20 text-teal-300 border-teal-500/30',
+    color: '#14b8a6',
+    maxLossM: 0.15,
+    action: 'Maintenance inspection; check for localized compaction or shoulder ruts'
+  },
+  MODERATE_SETTLEMENT: {
+    id: 'moderate_settlement',
+    label: 'Moderate Settlement (0.15m <= |delta| < 0.30m)',
+    badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    color: '#f59e0b',
+    maxLossM: 0.30,
+    action: 'Engineering evaluation required; inspect piezometers and inclinometers'
+  },
+  CRITICAL_OVERTOPPING_RISK: {
+    id: 'critical_overtopping_risk',
+    label: 'Critical Overtopping Risk (|delta| >= 0.30m)',
+    badge: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+    color: '#f43f5e',
+    maxLossM: Infinity,
+    action: 'Emergency safety advisory; severe loss of design freeboard, overtopping risk'
+  }
+};
+
+export const classifyCrestSettlementTier = (maxSettlementLossM) => {
+  const loss = Math.max(0.0, Number(maxSettlementLossM) || 0.0);
+  if (loss < 0.05) return CREST_SETTLEMENT_TIERS.NORMAL;
+  if (loss < 0.15) return CREST_SETTLEMENT_TIERS.MINOR_SETTLEMENT;
+  if (loss < 0.30) return CREST_SETTLEMENT_TIERS.MODERATE_SETTLEMENT;
+  return CREST_SETTLEMENT_TIERS.CRITICAL_OVERTOPPING_RISK;
+};
+
+export const calculateCrestAlignmentVectorization = (
+  centerlinePoints,
+  designElevationM = 350.0,
+  stationIntervalM = 20.0,
+  crestWidthM = 12.0
+) => {
+  const rawPts = (centerlinePoints || []).map((p) => {
+    if (Array.isArray(p)) {
+      return [Number(p[0]), Number(p[1]), p.length >= 3 ? Number(p[2]) : Number(designElevationM)];
+    }
+    return [
+      Number(p.lat || p.latitude || 0.0),
+      Number(p.lon || p.lng || p.longitude || 0.0),
+      Number(p.elevation || p.elevation_m || designElevationM)
+    ];
+  });
+
+  if (rawPts.length < 2) {
+    const defaultPt = rawPts[0] || [36.95, -121.0, Number(designElevationM)];
+    rawPts.push([defaultPt[0] + 0.001, defaultPt[1] + 0.001, defaultPt[2]]);
+  }
+
+  const [lat0, lon0] = rawPts[0];
+  const metersLat = 111320.0;
+  let metersLon = 111320.0 * Math.cos((lat0 * Math.PI) / 180.0);
+  if (Math.abs(metersLon) < 1.0) metersLon = 111320.0;
+
+  const metricPts = rawPts.map(([lat, lon, z]) => [
+    (lon - lon0) * metersLon,
+    (lat - lat0) * metersLat,
+    z
+  ]);
+
+  const cumDists = [0.0];
+  for (let i = 0; i < metricPts.length - 1; i++) {
+    const [x1, y1] = metricPts[i];
+    const [x2, y2] = metricPts[i + 1];
+    cumDists.push(cumDists[cumDists.length - 1] + Math.max(0.001, Math.hypot(x2 - x1, y2 - y1)));
+  }
+
+  const totalLength = cumDists[cumDists.length - 1];
+  const step = Math.max(1.0, Number(stationIntervalM) || 20.0);
+  const numStations = Math.max(2, Math.ceil(totalLength / step) + 1);
+
+  const stations = [];
+  let segIdx = 0;
+  let maxSettlementLoss = 0.0;
+  let worstStationCode = 'STA 0+00.00';
+  const allSettlements = [];
+  const measuredElevs = [];
+  const halfW = Math.max(1.0, Number(crestWidthM) / 2.0);
+
+  for (let k = 0; k < numStations; k++) {
+    const targetS = Math.min(totalLength, k * step);
+    while (segIdx < cumDists.length - 2 && cumDists[segIdx + 1] < targetS) {
+      segIdx++;
+    }
+
+    const sStart = cumDists[segIdx];
+    const sEnd = cumDists[segIdx + 1];
+    const segLen = Math.max(0.0001, sEnd - sStart);
+    const frac = Math.max(0.0, Math.min(1.0, (targetS - sStart) / segLen));
+
+    const p1 = metricPts[segIdx];
+    const p2 = metricPts[segIdx + 1];
+    const mx = p1[0] + frac * (p2[0] - p1[0]);
+    const my = p1[1] + frac * (p2[1] - p1[1]);
+    const mz = p1[2] + frac * (p2[2] - p1[2]);
+
+    const dx = p2[0] - p1[0];
+    const dy = p2[1] - p1[1];
+    const tLen = Math.hypot(dx, dy);
+    const nx = tLen > 0.0 ? -dy / tLen : 0.0;
+    const ny = tLen > 0.0 ? dx / tLen : 1.0;
+
+    const azimuth = ((Math.atan2(nx, ny) * 180.0) / Math.PI + 360.0) % 360.0;
+
+    const cLat = lat0 + my / metersLat;
+    const cLon = lon0 + mx / metersLon;
+
+    const leftLat = cLat + (ny * halfW) / metersLat;
+    const leftLon = cLon + (nx * halfW) / metersLon;
+    const rightLat = cLat - (ny * halfW) / metersLat;
+    const rightLon = cLon - (nx * halfW) / metersLon;
+
+    const settlement = mz - Number(designElevationM);
+    const loss = Math.max(0.0, Number(designElevationM) - mz);
+    allSettlements.push(settlement);
+    measuredElevs.push(mz);
+
+    const staMajor = Math.floor(targetS / 100);
+    const staMinor = targetS % 100.0;
+    const staCode = `STA ${staMajor}+${staMinor < 10 ? '0' : ''}${staMinor.toFixed(2)}`;
+
+    if (loss > maxSettlementLoss) {
+      maxSettlementLoss = loss;
+      worstStationCode = staCode;
+    }
+
+    const stTier = classifyCrestSettlementTier(loss);
+
+    stations.push({
+      station_m: Number(targetS.toFixed(2)),
+      station_code: staCode,
+      lat: Number(cLat.toFixed(7)),
+      lon: Number(cLon.toFixed(7)),
+      measured_elevation_m: Number(mz.toFixed(2)),
+      design_elevation_m: Number(Number(designElevationM).toFixed(2)),
+      settlement_m: Number(settlement.toFixed(3)),
+      normal_azimuth_deg: Number(azimuth.toFixed(1)),
+      left_shoulder: [Number(leftLat.toFixed(7)), Number(leftLon.toFixed(7))],
+      right_shoulder: [Number(rightLat.toFixed(7)), Number(rightLon.toFixed(7))],
+      settlement_tier: stTier.id,
+      tier_metadata: stTier
+    });
+  }
+
+  const overallTier = classifyCrestSettlementTier(maxSettlementLoss);
+  const meanSettle = allSettlements.reduce((a, b) => a + b, 0) / (allSettlements.length || 1);
+
+  return {
+    total_length_m: Number(totalLength.toFixed(2)),
+    station_count: stations.length,
+    design_elevation_m: Number(Number(designElevationM).toFixed(2)),
+    min_measured_elevation_m: Number(Math.min(...measuredElevs).toFixed(2)),
+    max_measured_elevation_m: Number(Math.max(...measuredElevs).toFixed(2)),
+    max_settlement_m: Number(maxSettlementLoss.toFixed(3)),
+    mean_settlement_m: Number(Math.abs(meanSettle).toFixed(3)),
+    worst_settlement_station: worstStationCode,
+    overall_severity_tier: overallTier.id,
+    overall_metadata: overallTier,
+    overtopping_risk_detected: maxSettlementLoss >= 0.30,
+    stations
+  };
+};
+
+export const buildCrestAlignmentTileUrl = (alignmentId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/geotechnical/crest-alignment/${alignmentId}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// 3. InSAR ATMOSPHERIC PHASE SCREEN (APS) STACKING & PS-InSAR CONTRACTS
+// ----------------------------------------------------------------------------
+
+export const APS_FILTER_MODES = {
+  SPATIOTEMPORAL_GAUSSIAN: 'spatiotemporal_gaussian',
+  SPATIAL_LOWPASS_TEMPORAL_HIGHPASS: 'spatial_lowpass_temporal_highpass',
+  EMPIRICAL_ELEVATION_CORRECTION: 'empirical_elevation_correction',
+  EXTERNAL_WEATHER_ERA5: 'external_weather_era5'
+};
+
+export const PS_INSAR_STABILITY_TIERS = {
+  UPLIFT: {
+    id: 'uplift',
+    label: 'Ground Uplift (v >= +2.0 mm/yr)',
+    badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+    color: '#06b6d4',
+    hazard: false
+  },
+  STABLE: {
+    id: 'stable',
+    label: 'Stable Infrastructure (-2.0 <= v < +2.0 mm/yr)',
+    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    color: '#10b981',
+    hazard: false
+  },
+  SLIGHT_SUBSIDENCE: {
+    id: 'slight_subsidence',
+    label: 'Slight Subsidence (-5.0 <= v < -2.0 mm/yr)',
+    badge: 'bg-teal-500/20 text-teal-300 border-teal-500/30',
+    color: '#14b8a6',
+    hazard: false
+  },
+  MODERATE_SUBSIDENCE: {
+    id: 'moderate_subsidence',
+    label: 'Moderate Subsidence (-15.0 <= v < -5.0 mm/yr)',
+    badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    color: '#f59e0b',
+    hazard: true
+  },
+  SEVERE_SUBSIDENCE: {
+    id: 'severe_subsidence',
+    label: 'Severe Geotechnical Subsidence (v < -15.0 mm/yr)',
+    badge: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+    color: '#f43f5e',
+    hazard: true
+  }
+};
+
+export const classifyPsInsarStabilityTier = (meanVelocityMmYr) => {
+  const v = Number(meanVelocityMmYr);
+  if (v >= 2.0) return PS_INSAR_STABILITY_TIERS.UPLIFT;
+  if (v >= -2.0) return PS_INSAR_STABILITY_TIERS.STABLE;
+  if (v >= -5.0) return PS_INSAR_STABILITY_TIERS.SLIGHT_SUBSIDENCE;
+  if (v >= -15.0) return PS_INSAR_STABILITY_TIERS.MODERATE_SUBSIDENCE;
+  return PS_INSAR_STABILITY_TIERS.SEVERE_SUBSIDENCE;
+};
+
+export const calculatePsInsarStackDisplacement = ({
+  coherenceThresh = 0.70,
+  dispersionThresh = 0.25,
+  wavelengthM = 0.055465,
+  apsFilterMode = 'spatiotemporal_gaussian',
+  psCandidates = null,
+  masterDate = '2026-01-10',
+  slaveDates = null
+}) => {
+  const slaves = slaveDates || [
+    '2026-02-03', '2026-03-11', '2026-04-16', '2026-05-22',
+    '2026-06-27', '2026-07-31', '2026-08-24', '2026-09-17'
+  ];
+
+  let baselineDays = 250;
+  try {
+    const d0 = new Date(masterDate);
+    const dEnd = new Date(slaves[slaves.length - 1]);
+    baselineDays = Math.max(1, Math.round((dEnd - d0) / (1000 * 60 * 60 * 24)));
+  } catch {
+    baselineDays = 250;
+  }
+
+  const wM = Math.max(0.01, Number(wavelengthM) || 0.055465);
+
+  const candidates = psCandidates || [
+    { point_id: 'PS-CREST-01', lat: 36.9542, lon: -121.0821, elevation_m: 352.4, dispersion: 0.18, coherence: 0.88, base_slope_mm_yr: -8.4 },
+    { point_id: 'PS-CREST-02', lat: 36.9555, lon: -121.0805, elevation_m: 351.9, dispersion: 0.21, coherence: 0.84, base_slope_mm_yr: -16.2 },
+    { point_id: 'PS-SLOPE-01', lat: 36.9538, lon: -121.0815, elevation_m: 335.0, dispersion: 0.22, coherence: 0.79, base_slope_mm_yr: -4.8 },
+    { point_id: 'PS-TOE-01', lat: 36.9525, lon: -121.0830, elevation_m: 312.0, dispersion: 0.15, coherence: 0.92, base_slope_mm_yr: -1.2 },
+    { point_id: 'PS-ABUT-01', lat: 36.9568, lon: -121.0790, elevation_m: 365.5, dispersion: 0.12, coherence: 0.95, base_slope_mm_yr: 0.4 },
+    { point_id: 'PS-BEDROCK-REF', lat: 36.9580, lon: -121.0775, elevation_m: 380.0, dispersion: 0.08, coherence: 0.98, base_slope_mm_yr: 0.1 },
+    { point_id: 'PS-DECORR-NOISE', lat: 36.9510, lon: -121.0850, elevation_m: 305.0, dispersion: 0.42, coherence: 0.52, base_slope_mm_yr: -2.0 }
+  ];
+
+  let apsNoiseReduction = 0.82;
+  const mode = String(apsFilterMode).toLowerCase();
+  if (mode === 'spatiotemporal_gaussian') apsNoiseReduction = 0.82;
+  else if (mode === 'spatial_lowpass_temporal_highpass') apsNoiseReduction = 0.75;
+  else if (mode === 'external_weather_era5') apsNoiseReduction = 0.88;
+  else apsNoiseReduction = 0.65;
+
+  const acceptedPoints = [];
+  const velocities = [];
+
+  candidates.forEach((c, idx) => {
+    const pId = String(c.point_id || `PS-${idx + 1}`);
+    const lat = Number(c.lat || 36.95);
+    const lon = Number(c.lon || -121.08);
+    const elev = Number(c.elevation_m || c.elevation || 350.0);
+    const disp = Number(c.dispersion || c.amplitude_dispersion || 0.20);
+    const coh = Number(c.coherence || c.temporal_coherence || 0.80);
+    const baseV = Number(c.base_slope_mm_yr || c.velocity || -3.0);
+
+    if (disp > Number(dispersionThresh) || coh < Number(coherenceThresh)) {
+      return;
+    }
+
+    const vLos = baseV * (0.95 + 0.05 * apsNoiseReduction);
+    velocities.push(vLos);
+    const tier = classifyPsInsarStabilityTier(vLos);
+
+    const tsDisplacements = [
+      { date: masterDate, days_from_master: 0, displacement_mm: 0.0, aps_phase_rad: 0.0 }
+    ];
+    let currD = 0.0;
+    slaves.forEach((sDate, sIdx) => {
+      const frac = (sIdx + 1) / slaves.length;
+      const tDays = Math.round(frac * baselineDays);
+      const defMm = vLos * (tDays / 365.25);
+      currD = defMm;
+      const phaseRad = -(4.0 * Math.PI * (defMm / 1000.0)) / wM;
+      tsDisplacements.push({
+        date: sDate,
+        days_from_master: tDays,
+        displacement_mm: Number(currD.toFixed(2)),
+        aps_phase_rad: Number(phaseRad.toFixed(4))
+      });
+    });
+
+    acceptedPoints.push({
+      point_id: pId,
+      lat: Number(lat.toFixed(7)),
+      lon: Number(lon.toFixed(7)),
+      elevation_m: Number(elev.toFixed(1)),
+      amplitude_dispersion: Number(disp.toFixed(3)),
+      temporal_coherence: Number(coh.toFixed(3)),
+      mean_velocity_mm_yr: Number(vLos.toFixed(2)),
+      total_displacement_mm: Number(currD.toFixed(2)),
+      stability_tier: tier.id,
+      tier_metadata: tier,
+      time_series_displacements: tsDisplacements
+    });
+  });
+
+  if (!velocities.length) velocities.push(0.0);
+
+  const meanV = velocities.reduce((a, b) => a + b, 0) / velocities.length;
+  const minV = Math.min(...velocities);
+  const maxV = Math.max(...velocities);
+  const overallTier = classifyPsInsarStabilityTier(Math.abs(minV) >= 15.0 ? minV : meanV);
+  const meanCoh = acceptedPoints.length ? acceptedPoints.reduce((a, b) => a + b.temporal_coherence, 0) / acceptedPoints.length : 0.85;
+
+  return {
+    master_date: masterDate,
+    slave_count: slaves.length,
+    temporal_baseline_days: baselineDays,
+    total_candidates: candidates.length,
+    accepted_ps_count: acceptedPoints.length,
+    mean_temporal_coherence: Number(meanCoh.toFixed(3)),
+    mean_los_velocity_mm_yr: Number(meanV.toFixed(2)),
+    max_subsidence_mm_yr: Number(minV.toFixed(2)),
+    max_uplift_mm_yr: Number(Math.max(0.0, maxV).toFixed(2)),
+    overall_stability_tier: overallTier.id,
+    overall_metadata: overallTier,
+    critical_subsidence_detected: minV < -15.0,
+    ps_points: acceptedPoints
+  };
+};
+
+export const buildPsInsarTileUrl = (stackId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/sar/ps-insar/${stackId}/${z}/${x}/${y}.png`;
+};
+

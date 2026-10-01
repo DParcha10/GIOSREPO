@@ -441,4 +441,36 @@ class DroneService:
         if changed:
             self._save_missions()
 
+    def calculate_direct_georeferencing(
+        self,
+        gnss_lat: float,
+        gnss_lon: float,
+        gnss_alt_m: float,
+        ground_elev_m: float = 0.0,
+        roll_deg: float = 0.0,
+        pitch_deg: float = 0.0,
+        yaw_deg: float = 0.0,
+        lever_arm: Optional[Any] = None,
+        boresight: Optional[Any] = None,
+        sensor_spec: Optional[Any] = None,
+        gnss_uncertainty_m: float = 0.02,
+        attitude_uncertainty_deg: float = 0.01
+    ) -> Dict[str, Any]:
+        """Calculates exterior orientation, lever-arm translation, boresight rotation, and ground footprint projection."""
+        from app.models.schemas import calculate_direct_georeferencing
+        return calculate_direct_georeferencing(
+            gnss_lat=gnss_lat,
+            gnss_lon=gnss_lon,
+            gnss_alt_m=gnss_alt_m,
+            ground_elev_m=ground_elev_m,
+            roll_deg=roll_deg,
+            pitch_deg=pitch_deg,
+            yaw_deg=yaw_deg,
+            lever_arm=lever_arm,
+            boresight=boresight,
+            sensor_spec=sensor_spec,
+            gnss_uncertainty_m=gnss_uncertainty_m,
+            attitude_uncertainty_deg=attitude_uncertainty_deg
+        )
+
 drone_service = DroneService()

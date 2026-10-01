@@ -192,6 +192,71 @@ class IndexComputationService:
             return np.sqrt(np.maximum(0.0, ratio))
 
     @staticmethod
+    def ndsi_snow(green: Any, swir1: Any) -> Any:
+        """Normalized Difference Snow Index (Green - SWIR1)/(Green + SWIR1) — cryosphere snow cover mapping."""
+        green_arr = np.asarray(green, dtype=np.float32)
+        swir_arr = np.asarray(swir1, dtype=np.float32)
+        denom = green_arr + swir_arr
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(np.abs(denom) < IndexComputationService.EPSILON, np.nan, (green_arr - swir_arr) / denom)
+
+    @staticmethod
+    def fsc(green: Any, swir1: Any, model: str = "salomonson_appel") -> Any:
+        """Sub-pixel Fractional Snow Cover (FSC [0.0 - 1.0]) via Salomonson & Appel (2004) or Hall et al. (2002)."""
+        ndsi_val = IndexComputationService.ndsi_snow(green, swir1)
+        m = str(model).lower().strip()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            if m == "salomonson_appel":
+                raw_fsc = np.where(ndsi_val <= 0.0, 0.0, -0.01 + 1.45 * ndsi_val)
+            elif m == "hall_modis":
+                raw_fsc = np.where(ndsi_val < 0.10, 0.0, np.where(ndsi_val >= 0.40, 1.0, (ndsi_val - 0.10) / 0.30))
+            else:
+                raw_fsc = np.maximum(0.0, ndsi_val)
+            return np.clip(raw_fsc, 0.0, 1.0)
+
+    @staticmethod
+    def tsm_nechad(reflectance: Any, band: str = "red") -> Any:
+        """Nechad et al. (2010) semi-analytical Total Suspended Matter (TSM in g/m³)."""
+        r_arr = np.clip(np.asarray(reflectance, dtype=np.float32), 0.0, 0.35)
+        if band.lower() == "nir":
+            a_tsm, c_val = 1941.25, 0.2115
+        else:
+            a_tsm, c_val = 327.84, 0.1708
+        denom = np.maximum(0.01, 1.0 - (r_arr / c_val))
+        return np.maximum(0.0, (a_tsm * r_arr) / denom)
+
+    @staticmethod
+    def turbidity(red: Any, nir: Any, algorithm: str = "dogliotti_switching") -> Any:
+        """Dogliotti et al. (2015) switching Turbidity (NTU) from Red and NIR water-leaving reflectance."""
+        r_arr = np.clip(np.asarray(red, dtype=np.float32), 0.0, 0.35)
+        n_arr = np.clip(np.asarray(nir, dtype=np.float32), 0.0, 0.35)
+        turb_red = (228.7 * r_arr) / np.maximum(0.01, 1.0 - (r_arr / 0.1708))
+        turb_nir = (1350.0 * n_arr) / np.maximum(0.01, 1.0 - (n_arr / 0.2115))
+        
+        algo = str(algorithm).lower().strip()
+        if algo == "nechad_red":
+            return np.maximum(0.0, turb_red)
+        elif algo == "nechad_nir":
+            return np.maximum(0.0, turb_nir)
+        elif algo == "empirical_ratio":
+            ratio = n_arr / np.maximum(0.001, r_arr)
+            return np.maximum(0.0, ratio * 112.5)
+        else:  # dogliotti_switching
+            w = np.clip((r_arr - 0.05) / 0.02, 0.0, 1.0)
+            return np.maximum(0.0, (1.0 - w) * turb_red + w * turb_nir)
+
+    @staticmethod
+    def cwsi_idso(canopy_temp_c: Any, air_temp_c: float = 25.0, vpd_kpa: float = 1.5) -> Any:
+        """Idso et al. (1981) Crop Water Stress Index (CWSI [0.0 - 1.0])."""
+        tc_arr = np.asarray(canopy_temp_c, dtype=np.float32)
+        diff = tc_arr - np.float32(air_temp_c)
+        lower_diff = 1.0 - 1.7 * max(0.1, float(vpd_kpa))
+        upper_diff = 5.0
+        range_span = max(1.0, upper_diff - lower_diff)
+        raw_cwsi = (diff - lower_diff) / range_span
+        return np.clip(raw_cwsi, 0.0, 1.0)
+
+    @staticmethod
     def lst(thermal_input: Any) -> Any:
         """Land Surface Temperature in Celsius (Landsat Band 10).
         - If input is raw DN (> 1000): converts DN * 0.00341802 + 149.0 - 273.15
@@ -305,6 +370,30 @@ class IndexComputationService:
             red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
             nir = bands.get("nir", bands.get("B08", bands.get("b08", bands.get("nir08", bands.get("b8", bands.get("B8"))))))
             return cls.crsi(blue, green, red, nir)
+        elif name in {"fsc", "snow_cover", "fractional_snow_cover", "ndsi_snow"}:
+            green = bands.get("green", bands.get("B03", bands.get("b03", bands.get("b3", bands.get("B3")))))
+            swir1 = bands.get("swir1", bands.get("B11", bands.get("b11", bands.get("swir16"))))
+            return cls.fsc(green, swir1)
+        elif name in {"tsm", "turbidity", "aquatic_tsm", "tsm_turbidity"}:
+            red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
+            nir = bands.get("nir", bands.get("B08", bands.get("b08", bands.get("nir08", bands.get("b8", bands.get("B8"))))))
+            return cls.turbidity(red, nir)
+        elif name in {"cwsi", "crop_water_stress", "water_stress"}:
+            thermal = (
+                bands.get("lwir11")
+                or bands.get("lwir")
+                or bands.get("b10")
+                or bands.get("band10")
+                or bands.get("thermal")
+                or bands.get("LWIR11")
+                or bands.get("B10")
+            )
+            if thermal is None:
+                first_val = next(iter(bands.values())) if bands else None
+                tc = np.full_like(first_val, 28.5, dtype=np.float32) if first_val is not None else np.array([28.5], dtype=np.float32)
+            else:
+                tc = cls.lst(thermal)
+            return cls.cwsi_idso(tc)
         else:
             raise ValueError(f"Unsupported spectral index: {index_name}")
 
@@ -329,7 +418,14 @@ class IndexComputationService:
                 "ndsi": ["B04", "B08", "SCL"],
                 "si1": ["B03", "B04", "SCL"],
                 "si2": ["B03", "B04", "B08", "SCL"],
-                "crsi": ["B02", "B03", "B04", "B08", "SCL"]
+                "crsi": ["B02", "B03", "B04", "B08", "SCL"],
+                "fsc": ["B03", "B11", "SCL"],
+                "snow_cover": ["B03", "B11", "SCL"],
+                "ndsi_snow": ["B03", "B11", "SCL"],
+                "tsm": ["B03", "B04", "B08", "SCL"],
+                "turbidity": ["B03", "B04", "B08", "SCL"],
+                "aquatic_tsm": ["B03", "B04", "B08", "SCL"],
+                "cwsi": ["B04", "B08", "SCL"]
             }
             return band_map.get(idx, ["B02", "B03", "B04", "B05", "B08", "B11", "B12", "SCL"])
         else:
@@ -348,7 +444,14 @@ class IndexComputationService:
                 "ndsi": ["red", "nir08", "qa_pixel"],
                 "si1": ["green", "red", "qa_pixel"],
                 "si2": ["green", "red", "nir08", "qa_pixel"],
-                "crsi": ["blue", "green", "red", "nir08", "qa_pixel"]
+                "crsi": ["blue", "green", "red", "nir08", "qa_pixel"],
+                "fsc": ["green", "swir16", "qa_pixel"],
+                "snow_cover": ["green", "swir16", "qa_pixel"],
+                "ndsi_snow": ["green", "swir16", "qa_pixel"],
+                "tsm": ["green", "red", "nir08", "qa_pixel"],
+                "turbidity": ["green", "red", "nir08", "qa_pixel"],
+                "aquatic_tsm": ["green", "red", "nir08", "qa_pixel"],
+                "cwsi": ["lwir11", "red", "nir08", "qa_pixel"]
             }
             return band_map.get(idx, ["blue", "green", "red", "nir08", "swir16", "swir22", "lwir11", "qa_pixel"])
 

@@ -220,7 +220,33 @@ export {
   buildSamMineralTileUrl,
   GEOSPATIAL_SERIALIZATION_FORMATS,
   buildVectorTileUrl,
-  formatVectorExportFilename
+  formatVectorExportFilename,
+  FSC_MODEL_TYPES,
+  SNOWPACK_RUNOFF_TIERS,
+  classifySnowpackRunoffTier,
+  calculateFractionalSnowCover,
+  buildSnowCoverTileUrl,
+  TSM_ALGORITHMS,
+  AQUATIC_TURBIDITY_TIERS,
+  classifyAquaticTurbidityTier,
+  calculateAquaticTsmTurbidity,
+  buildTurbidityTsmTileUrl,
+  DISTURBANCE_MODELS,
+  DISTURBANCE_TYPES,
+  BREAK_SIGNIFICANCE_TIERS,
+  classifyDisturbanceType,
+  detectStructuralDisturbanceBreaks,
+  buildDisturbanceTileUrl,
+  CWSI_MODEL_TYPES,
+  WATER_STRESS_TIERS,
+  classifyWaterStressTier,
+  calculateCropWaterStressIndex,
+  buildCwsiTileUrl,
+  PYRAMID_BLEND_MODES,
+  SEAM_RADIOMETRIC_QUALITIES,
+  classifySeamRadiometricQuality,
+  calculateLaplacianPyramidBlend,
+  buildSplineMosaicTileUrl
 } from '../config/constants.js';
 
 /**
@@ -1663,6 +1689,213 @@ const demoAdapter = async (config) => {
         download_url: '/api/v1/analysis/vector/export/EXP-VEC-2026-901/download',
         mime_type: 'application/vnd.apache.parquet',
         created_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/cryosphere/snow-cover') || url.includes('/analysis/snow-cover')) data = {
+        collection: 'sentinel-2-l2a',
+        item_id: 'S2A_MSIL2A_20260820T184211',
+        model_type: 'salomonson_appel',
+        ndsi: 0.625,
+        fractional_snow_cover: 0.8962,
+        fractional_snow_cover_pct: 89.62,
+        runoff_hazard_tier: 'extreme_accumulation',
+        estimated_swe_mm: 134.43,
+        estimated_melt_volume_m3: 114265.5,
+        transient_snowline_elevation_m: 2779.2,
+        snow_covered_area_ha: 89.62,
+        total_area_ha: 100.0,
+        tile_url_template: '/api/v1/tiles/cryosphere/snow-cover/sentinel-2-l2a/S2A_MSIL2A_20260820T184211/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/water/turbidity-tsm') || url.includes('/analysis/turbidity-tsm')) data = {
+        collection: 'sentinel-2-l2a',
+        item_id: 'S2A_MSIL2A_20260820T184211',
+        algorithm_used: 'dogliotti_switching',
+        total_suspended_matter_g_m3: 20.03,
+        turbidity_ntu: 13.97,
+        hazard_tier: 'moderate_sediment',
+        sediment_plume_detected: false,
+        plume_area_ha: 37.5,
+        plume_area_pct: 15.0,
+        mean_water_reflectance_red: 0.045,
+        mean_water_reflectance_nir: 0.015,
+        tile_url_template: '/api/v1/tiles/water/turbidity-tsm/sentinel-2-l2a/S2A_MSIL2A_20260820T184211/turbidity/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/disturbance/breaks') || url.includes('/analysis/disturbance-breaks')) data = {
+        metric_name: 'ndvi',
+        model_used: 'bfast_lite',
+        total_observations: 12,
+        breakpoints_detected: 1,
+        primary_break: {
+          break_index: 7,
+          break_date: '2026-06-15',
+          pre_break_slope: 0.0125,
+          post_break_slope: -0.0452,
+          jump_magnitude: -0.215,
+          p_value: 0.0035,
+          significance_tier: 'critical_break',
+          disturbance_type: 'abrupt_collapse'
+        },
+        all_breakpoints: [
+          {
+            break_index: 7,
+            break_date: '2026-06-15',
+            pre_break_slope: 0.0125,
+            post_break_slope: -0.0452,
+            jump_magnitude: -0.215,
+            p_value: 0.0035,
+            significance_tier: 'critical_break',
+            disturbance_type: 'abrupt_collapse'
+          }
+        ],
+        overall_disturbance_type: 'abrupt_collapse',
+        structural_instability_detected: true,
+        tile_url_template: '/api/v1/tiles/disturbance/breaks/sentinel-2-l2a/S2A_MSIL2A_20260820T184211/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/agriculture/cwsi') || url.includes('/analysis/cwsi')) data = {
+        collection: 'landsat-c2-l2',
+        item_id: 'LC09_L2SP_044033_20260818',
+        model_used: 'empirical_idso',
+        cwsi: 0.725,
+        evaporative_fraction: 0.275,
+        actual_et_mm_day: 1.38,
+        water_stress_tier: 'severe_deficit',
+        canopy_air_temp_diff_c: 6.2,
+        lower_baseline_temp_diff_c: -0.7,
+        upper_baseline_temp_diff_c: 5.0,
+        irrigation_priority: 'high',
+        tile_url_template: '/api/v1/tiles/agriculture/cwsi/landsat-c2-l2/LC09_L2SP_044033_20260818/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/mosaic/spline-blend') || url.includes('/analysis/spline-blend')) data = {
+        mosaic_id: 'drone_mosaic_01',
+        blend_mode: 'multiresolution_spline',
+        pyramid_levels: 5,
+        seam_transition_width_px: 64,
+        mean_gradient_discontinuity_dn: 0.938,
+        radiometric_quality: 'seamless',
+        is_seamless: true,
+        high_frequency_feather_px: 4.0,
+        low_frequency_feather_px: 128.0,
+        tile_url_template: '/api/v1/tiles/mosaic/spline/drone_mosaic_01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/drone/direct-georeferencing') || url.includes('/drone/direct-georeferencing')) data = {
+        mission_id: 'drone_mission_01',
+        camera_latitude: 36.953215,
+        camera_longitude: -121.082412,
+        camera_altitude_m: 450.25,
+        corrected_roll_deg: 0.125,
+        corrected_pitch_deg: -0.450,
+        corrected_yaw_deg: 89.850,
+        flight_height_agl_m: 100.25,
+        gsd_cm_px: 2.51,
+        footprint_width_m: 150.38,
+        footprint_height_m: 100.25,
+        footprint_polygon: [
+          [36.953665, -121.083256],
+          [36.953665, -121.081568],
+          [36.952765, -121.081568],
+          [36.952765, -121.083256],
+          [36.953665, -121.083256]
+        ],
+        horizontal_cep95_m: 0.042,
+        quality_tier: 'survey_grade',
+        tile_url_template: '/api/v1/tiles/drone/direct-georeferencing/drone_mission_01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/geotechnical/crest-alignment') || url.includes('/geotechnical/crest-alignment')) data = {
+        alignment_id: 'crest_tsf_01',
+        total_length_m: 480.0,
+        station_count: 25,
+        design_elevation_m: 350.0,
+        min_measured_elevation_m: 349.78,
+        max_measured_elevation_m: 350.05,
+        max_settlement_m: 0.22,
+        mean_settlement_m: 0.085,
+        worst_settlement_station: 'STA 2+60.00',
+        overall_severity_tier: 'moderate_settlement',
+        overtopping_risk_detected: false,
+        stations: [
+          {
+            station_m: 0.0,
+            station_code: 'STA 0+00.00',
+            lat: 36.9540,
+            lon: -121.0830,
+            measured_elevation_m: 350.02,
+            design_elevation_m: 350.0,
+            settlement_m: 0.02,
+            normal_azimuth_deg: 355.0,
+            left_shoulder: [36.95405, -121.08301],
+            right_shoulder: [36.95395, -121.08299],
+            settlement_tier: 'normal'
+          },
+          {
+            station_m: 260.0,
+            station_code: 'STA 2+60.00',
+            lat: 36.9552,
+            lon: -121.0808,
+            measured_elevation_m: 349.78,
+            design_elevation_m: 350.0,
+            settlement_m: -0.22,
+            normal_azimuth_deg: 352.0,
+            left_shoulder: [36.95525, -121.08081],
+            right_shoulder: [36.95515, -121.08079],
+            settlement_tier: 'moderate_settlement'
+          }
+        ],
+        tile_url_template: '/api/v1/tiles/geotechnical/crest-alignment/crest_tsf_01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/sar/ps-insar-stack') || url.includes('/sar/ps-insar-stack')) data = {
+        stack_id: 'ps_stack_tsf_01',
+        aps_filter_mode: 'spatiotemporal_gaussian',
+        master_date: '2026-01-10',
+        slave_count: 8,
+        temporal_baseline_days: 250,
+        total_candidates: 7,
+        accepted_ps_count: 6,
+        mean_temporal_coherence: 0.893,
+        mean_los_velocity_mm_yr: -5.02,
+        max_subsidence_mm_yr: -16.20,
+        max_uplift_mm_yr: 0.40,
+        overall_stability_tier: 'severe_subsidence',
+        critical_subsidence_detected: true,
+        ps_points: [
+          {
+            point_id: 'PS-CREST-01',
+            lat: 36.9542,
+            lon: -121.0821,
+            elevation_m: 352.4,
+            amplitude_dispersion: 0.18,
+            temporal_coherence: 0.88,
+            mean_velocity_mm_yr: -8.4,
+            total_displacement_mm: -5.75,
+            stability_tier: 'moderate_subsidence',
+            time_series_displacements: [
+              { date: '2026-01-10', days_from_master: 0, displacement_mm: 0.0, aps_phase_rad: 0.0 },
+              { date: '2026-09-17', days_from_master: 250, displacement_mm: -5.75, aps_phase_rad: 1.303 }
+            ]
+          },
+          {
+            point_id: 'PS-CREST-02',
+            lat: 36.9555,
+            lon: -121.0805,
+            elevation_m: 351.9,
+            amplitude_dispersion: 0.21,
+            temporal_coherence: 0.84,
+            mean_velocity_mm_yr: -16.2,
+            total_displacement_mm: -11.09,
+            stability_tier: 'severe_subsidence',
+            time_series_displacements: [
+              { date: '2026-01-10', days_from_master: 0, displacement_mm: 0.0, aps_phase_rad: 0.0 },
+              { date: '2026-09-17', days_from_master: 250, displacement_mm: -11.09, aps_phase_rad: 2.513 }
+            ]
+          }
+        ],
+        tile_url_template: '/api/v1/tiles/sar/ps-insar/ps_stack_tsf_01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
       };
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -3533,6 +3766,398 @@ export const classifyMineralSAM = async (params) => {
  */
 export const exportVectorDataset = async (params) => {
   const response = await giosApi.post('/api/v1/analysis/vector/export', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} FractionalSnowCoverRequest
+ * @property {string} [collection='sentinel-2-l2a'] - Sensor constellation
+ * @property {string} item_id - Target scene identifier
+ * @property {Array<number>} [bbox] - AOI bounding box
+ * @property {'salomonson_appel'|'hall_modis'|'linear_ndsi'} [model_type='salomonson_appel'] - Sub-pixel FSC regression algorithm
+ * @property {number} [green_band_reflectance] - Green reflectance (B03 / B3)
+ * @property {number} [swir1_band_reflectance] - SWIR1 reflectance (B11 / B6)
+ * @property {number} [elevation_m] - Terrain elevation in meters
+ * @property {number} [snow_depth_m=0.5] - Estimated snow depth in meters
+ * @property {number} [snow_density_kg_m3=300.0] - Snow density in kg/m³
+ * @property {number} [runoff_coefficient=0.85] - Runoff yield coefficient
+ */
+
+/**
+ * @typedef {Object} FractionalSnowCoverResponse
+ * @property {string} collection - Sensor collection
+ * @property {string} item_id - Scene identifier
+ * @property {string} model_type - Model used
+ * @property {number} ndsi - Normalized Difference Snow Index
+ * @property {number} fractional_snow_cover - Sub-pixel snow fraction [0-1]
+ * @property {number} fractional_snow_cover_pct - Sub-pixel snow percentage
+ * @property {'trace_snow'|'low_snow'|'moderate_snow'|'deep_snowpack'|'extreme_accumulation'} runoff_hazard_tier - Runoff tier
+ * @property {number} estimated_swe_mm - Snow Water Equivalent in mm
+ * @property {number} estimated_melt_volume_m3 - Potential meltwater volume yield
+ * @property {number|null} transient_snowline_elevation_m - Estimated snowline elevation in meters
+ * @property {number} snow_covered_area_ha - Snow covered area in ha
+ * @property {number} total_area_ha - Total evaluated area in ha
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates Cryosphere Normalized Difference Snow Index (NDSI) and sub-pixel Fractional Snow Cover (FSC).
+ * 
+ * @param {FractionalSnowCoverRequest} params - Snow cover request parameters
+ * @returns {Promise<FractionalSnowCoverResponse>} Sub-pixel snow cover and glacial melt runoff estimation
+ */
+export const analyzeFractionalSnowCover = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/cryosphere/snow-cover', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} AquaticTurbidityRequest
+ * @property {string} [collection='sentinel-2-l2a'] - Sensor constellation
+ * @property {string} item_id - Target scene identifier
+ * @property {Array<number>} [bbox] - AOI bounding box
+ * @property {'nechad_red'|'nechad_nir'|'dogliotti_switching'|'empirical_ratio'} [algorithm='dogliotti_switching'] - Inversion algorithm
+ * @property {number} [red_reflectance] - Water leaving Red reflectance (B04)
+ * @property {number} [nir_reflectance] - Water leaving NIR reflectance (B08)
+ * @property {number} [green_reflectance] - Water leaving Green reflectance (B03)
+ * @property {number} [water_body_area_ha=250.0] - Water surface area in ha
+ */
+
+/**
+ * @typedef {Object} AquaticTurbidityResponse
+ * @property {string} collection - Sensor collection
+ * @property {string} item_id - Scene identifier
+ * @property {string} algorithm_used - Inversion algorithm
+ * @property {number} total_suspended_matter_g_m3 - Total Suspended Matter in g/m³ (mg/L)
+ * @property {number} turbidity_ntu - Turbidity in NTU/FNU
+ * @property {'clear_oligotrophic'|'low_turbidity'|'moderate_sediment'|'high_turbidity'|'extreme_sediment_plume'} hazard_tier - Sediment hazard tier
+ * @property {boolean} sediment_plume_detected - Plume detection flag
+ * @property {number} plume_area_ha - Plume area in ha
+ * @property {number} plume_area_pct - Plume area percentage
+ * @property {number} mean_water_reflectance_red - Mean water red reflectance
+ * @property {number} mean_water_reflectance_nir - Mean water nir reflectance
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates Nechad et al. and Dogliotti et al. Total Suspended Matter (TSM) and Turbidity (NTU).
+ * 
+ * @param {AquaticTurbidityRequest} params - Aquatic turbidity request parameters
+ * @returns {Promise<AquaticTurbidityResponse>} TSM concentration, turbidity, and sediment plume extent
+ */
+export const analyzeAquaticTurbidity = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/water/turbidity-tsm', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} DisturbanceBreakRequest
+ * @property {Array<string>} time_series_dates - Chronological dates
+ * @property {Array<number>} time_series_values - Chronological trajectory values
+ * @property {string} [metric_name='ndvi'] - Monitored biophysical metric
+ * @property {'bfast_lite'|'landtrendr_segmentation'|'piecewise_linear'} [model='bfast_lite'] - Break detection algorithm
+ * @property {number} [significance_alpha=0.05] - Significance threshold
+ * @property {number} [min_segment_length=2] - Minimum observations per segment
+ */
+
+/**
+ * @typedef {Object} DisturbanceBreakpoint
+ * @property {number} break_index - Index of breakpoint
+ * @property {string} break_date - Date of breakpoint
+ * @property {number} pre_break_slope - Trajectory slope prior to break
+ * @property {number} post_break_slope - Trajectory slope after break
+ * @property {number} jump_magnitude - Step jump magnitude delta Y
+ * @property {number} p_value - Test p-value
+ * @property {'not_significant'|'advisory'|'significant'|'critical_break'} significance_tier - Significance tier
+ * @property {'gradual_decline'|'abrupt_collapse'|'structural_disturbance'|'stable_trajectory'|'rapid_recovery'} disturbance_type - Disturbance type
+ */
+
+/**
+ * @typedef {Object} DisturbanceBreakResponse
+ * @property {string} metric_name - Evaluated metric
+ * @property {string} model_used - Algorithm used
+ * @property {number} total_observations - Total observations evaluated
+ * @property {number} breakpoints_detected - Number of breakpoints detected
+ * @property {DisturbanceBreakpoint|null} primary_break - Primary detected breakpoint
+ * @property {Array<DisturbanceBreakpoint>} all_breakpoints - All identified breakpoints
+ * @property {string} overall_disturbance_type - Overall trajectory classification
+ * @property {boolean} structural_instability_detected - Instability warning flag
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates BFAST / LandTrendr piecewise linear breakpoint detection for abrupt structural disturbances.
+ * 
+ * @param {DisturbanceBreakRequest} params - Disturbance break detection parameters
+ * @returns {Promise<DisturbanceBreakResponse>} Identified structural shifts, slopes, and hazard classification
+ */
+export const detectDisturbanceBreaks = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/disturbance/breaks', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} CWSIAnalysisRequest
+ * @property {string} [collection='landsat-c2-l2'] - Sensor constellation
+ * @property {string} item_id - Target scene identifier
+ * @property {Array<number>} [bbox] - AOI bounding box
+ * @property {'empirical_idso'|'trapezoid_optical_thermal'|'energy_balance_sebal'} [model_type='empirical_idso'] - CWSI formulation
+ * @property {number} [canopy_temperature_c] - Canopy temperature in Celsius
+ * @property {number} [air_temperature_c=25.0] - Air temperature in Celsius
+ * @property {number} [relative_humidity_pct=40.0] - Relative humidity percentage
+ * @property {number} [vapor_pressure_deficit_kpa] - Vapor pressure deficit in kPa
+ * @property {number} [ndvi=0.65] - Optical vegetation index
+ * @property {number} [reference_et0_mm_day=5.0] - Reference evapotranspiration in mm/day
+ */
+
+/**
+ * @typedef {Object} CWSIAnalysisResponse
+ * @property {string} collection - Sensor collection
+ * @property {string} item_id - Target scene ID
+ * @property {string} model_used - Formulation used
+ * @property {number} cwsi - Crop Water Stress Index [0-1]
+ * @property {number} evaporative_fraction - Relative evaporative fraction (1 - CWSI)
+ * @property {number} actual_et_mm_day - Actual evapotranspiration in mm/day
+ * @property {'no_stress'|'mild_stress'|'moderate_stress'|'severe_deficit'|'extreme_desiccation'} water_stress_tier - Water stress category
+ * @property {number} canopy_air_temp_diff_c - Differential Tc - Ta in Celsius
+ * @property {number} lower_baseline_temp_diff_c - Non-stressed baseline
+ * @property {number} upper_baseline_temp_diff_c - Max-stress baseline
+ * @property {'low'|'moderate'|'high'|'critical'} irrigation_priority - Irrigation dispatch urgency
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates Idso et al. and Moran et al. Crop Water Stress Index (CWSI) and evapotranspiration deficit.
+ * 
+ * @param {CWSIAnalysisRequest} params - CWSI request parameters
+ * @returns {Promise<CWSIAnalysisResponse>} CWSI index, actual ET rate, and irrigation priority
+ */
+export const analyzeCropWaterStress = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/agriculture/cwsi', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} PyramidSplineRequest
+ * @property {string} [mosaic_id='drone_mosaic_01'] - Target mosaic identifier
+ * @property {string} left_scene_id - First overlapping scene ID
+ * @property {string} right_scene_id - Second overlapping scene ID
+ * @property {'multiresolution_spline'|'poisson_gradient'|'distance_transform_feather'|'linear_feather'} [blend_mode='multiresolution_spline'] - Blending mode
+ * @property {number} [pyramid_levels=5] - Number of Laplacian pyramid levels
+ * @property {number} [seam_transition_width_px=64] - Seam transition width in pixels
+ * @property {number} [left_mean_radiance] - Left scene radiance
+ * @property {number} [right_mean_radiance] - Right scene radiance
+ */
+
+/**
+ * @typedef {Object} PyramidSplineResponse
+ * @property {string} mosaic_id - Mosaic identifier
+ * @property {string} blend_mode - Algorithm used
+ * @property {number} pyramid_levels - Pyramid levels
+ * @property {number} seam_transition_width_px - Transition width in px
+ * @property {number} mean_gradient_discontinuity_dn - Gradient discontinuity in DN
+ * @property {'seamless'|'good_continuity'|'perceptible_discontinuity'|'severe_seam_artifact'} radiometric_quality - Radiometric continuity tier
+ * @property {boolean} is_seamless - Whether seam is imperceptible (< 2 DN)
+ * @property {number} high_frequency_feather_px - Narrow high-frequency blend width
+ * @property {number} low_frequency_feather_px - Wide low-frequency blend width
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates Burt & Adelson (1983) multi-resolution spline and Laplacian pyramid seamline blending.
+ * 
+ * @param {PyramidSplineRequest} params - Pyramid spline parameters
+ * @returns {Promise<PyramidSplineResponse>} Seamline continuity metrics, frequency bands, and quality tier
+ */
+export const executePyramidSplineBlend = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/mosaic/spline-blend', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} LeverArmOffset
+ * @property {number} [lx_m=0.0] - Lateral offset in meters
+ * @property {number} [ly_m=0.0] - Longitudinal offset in meters
+ * @property {number} [lz_m=0.0] - Vertical offset in meters
+ */
+
+/**
+ * @typedef {Object} BoresightAngles
+ * @property {number} [d_roll_deg=0.0] - Differential roll misalignment in degrees
+ * @property {number} [d_pitch_deg=0.0] - Differential pitch misalignment in degrees
+ * @property {number} [d_yaw_deg=0.0] - Differential yaw misalignment in degrees
+ */
+
+/**
+ * @typedef {Object} CameraSensorSpec
+ * @property {number} [focal_length_mm=24.0] - Focal length in mm
+ * @property {number} [sensor_width_mm=35.9] - Sensor width in mm
+ * @property {number} [sensor_height_mm=24.0] - Sensor height in mm
+ * @property {number} [image_width_px=6000] - Image width in pixels
+ * @property {number} [image_height_px=4000] - Image height in pixels
+ */
+
+/**
+ * @typedef {Object} DirectGeoreferencingRequest
+ * @property {string} [mission_id='drone_mission_01'] - Mission identifier
+ * @property {number} gnss_latitude - GNSS WGS84 latitude
+ * @property {number} gnss_longitude - GNSS WGS84 longitude
+ * @property {number} gnss_altitude_m - GNSS altitude ASL in meters
+ * @property {number} [ground_elevation_m=0.0] - Ground elevation ASL in meters
+ * @property {number} [roll_deg=0.0] - Aircraft roll angle in degrees
+ * @property {number} [pitch_deg=0.0] - Aircraft pitch angle in degrees
+ * @property {number} [yaw_deg=0.0] - Aircraft yaw / true heading in degrees
+ * @property {LeverArmOffset} [lever_arm] - Antenna-to-camera body lever-arm offsets
+ * @property {BoresightAngles} [boresight] - IMU-to-camera boresight misalignment angles
+ * @property {CameraSensorSpec} [sensor_spec] - Camera optical parameters
+ * @property {number} [gnss_uncertainty_m=0.02] - GNSS 1-sigma positioning uncertainty in meters
+ * @property {number} [attitude_uncertainty_deg=0.01] - IMU 1-sigma attitude uncertainty in degrees
+ */
+
+/**
+ * @typedef {Object} DirectGeoreferencingResponse
+ * @property {string} mission_id - UAV mission identifier
+ * @property {number} camera_latitude - Corrected perspective center latitude
+ * @property {number} camera_longitude - Corrected perspective center longitude
+ * @property {number} camera_altitude_m - Corrected perspective center altitude in meters
+ * @property {number} corrected_roll_deg - Boresight-corrected camera roll angle
+ * @property {number} corrected_pitch_deg - Boresight-corrected camera pitch angle
+ * @property {number} corrected_yaw_deg - Boresight-corrected camera yaw angle
+ * @property {number} flight_height_agl_m - Flight height AGL in meters
+ * @property {number} gsd_cm_px - Mean ground sampling distance in cm/pixel
+ * @property {number} footprint_width_m - Ground footprint width in meters
+ * @property {number} footprint_height_m - Ground footprint height in meters
+ * @property {Array<[number, number]>} footprint_polygon - Projected 4-corner footprint polygon
+ * @property {number} horizontal_cep95_m - Estimated CEP95 horizontal uncertainty in meters
+ * @property {'survey_grade'|'mapping_grade'|'reconnaissance_grade'|'uncorrected_navigation'} quality_tier - Accuracy classification
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Calibrates drone direct georeferencing, antenna lever-arm offsets, and IMU boresight misalignment.
+ * 
+ * @param {DirectGeoreferencingRequest} params - Drone direct georeferencing parameters
+ * @returns {Promise<DirectGeoreferencingResponse>} Corrected camera pose, projected footprint, and CEP95 accuracy tier
+ */
+export const calibrateDirectGeoreferencing = async (params) => {
+  const response = await giosApi.post('/api/v1/drone/direct-georeferencing', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} CrestStationPoint
+ * @property {number} station_m - Cumulative station distance in meters
+ * @property {string} station_code - Engineering station notation (e.g. STA 12+40.00)
+ * @property {number} lat - Station latitude
+ * @property {number} lon - Station longitude
+ * @property {number} measured_elevation_m - Measured ground elevation ASL
+ * @property {number} design_elevation_m - Target as-built design crest elevation ASL
+ * @property {number} settlement_m - Differential elevation delta
+ * @property {number} normal_azimuth_deg - Perpendicular cross-section normal azimuth
+ * @property {[number, number]} left_shoulder - WGS84 coordinate of left shoulder
+ * @property {[number, number]} right_shoulder - WGS84 coordinate of right shoulder
+ * @property {'normal'|'minor_settlement'|'moderate_settlement'|'critical_overtopping_risk'} settlement_tier - Risk tier
+ */
+
+/**
+ * @typedef {Object} EmbankmentCrestRequest
+ * @property {string} [alignment_id='crest_tsf_01'] - Crest identifier
+ * @property {Array<[number, number, number]|Object>} centerline_points - Sequence of 3D centerline points
+ * @property {number} [design_elevation_m=350.0] - Design crest elevation ASL in meters
+ * @property {number} [station_interval_m=20.0] - Equidistant sampling interval in meters
+ * @property {number} [crest_width_m=12.0] - Crest shoulder-to-shoulder width in meters
+ */
+
+/**
+ * @typedef {Object} EmbankmentCrestResponse
+ * @property {string} alignment_id - Embankment alignment identifier
+ * @property {number} total_length_m - Total centerline length in meters
+ * @property {number} station_count - Number of evaluated station cross-sections
+ * @property {number} design_elevation_m - Nominal design crest elevation in meters
+ * @property {number} min_measured_elevation_m - Minimum observed crest elevation in meters
+ * @property {number} max_measured_elevation_m - Maximum observed crest elevation in meters
+ * @property {number} max_settlement_m - Peak settlement loss in meters
+ * @property {number} mean_settlement_m - Mean settlement loss across all stations in meters
+ * @property {string} worst_settlement_station - Station code with maximum loss
+ * @property {'normal'|'minor_settlement'|'moderate_settlement'|'critical_overtopping_risk'} overall_severity_tier - Overall crest integrity tier
+ * @property {boolean} overtopping_risk_detected - Whether peak loss exceeds freeboard tolerance (>= 0.30m)
+ * @property {Array<CrestStationPoint>} stations - Resampled station cross-sections
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates embankment crest centerline vectorization, normal cross-sections, and differential settlement.
+ * 
+ * @param {EmbankmentCrestRequest} params - Crest alignment parameters
+ * @returns {Promise<EmbankmentCrestResponse>} Station profiles, normal cross-sections, and settlement tiers
+ */
+export const analyzeEmbankmentCrestAlignment = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/crest-alignment', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} PSPointDisplacement
+ * @property {string} point_id - Persistent scatterer target identifier
+ * @property {number} lat - WGS84 latitude
+ * @property {number} lon - WGS84 longitude
+ * @property {number} elevation_m - Surface elevation ASL in meters
+ * @property {number} amplitude_dispersion - Amplitude dispersion index D_A
+ * @property {number} temporal_coherence - Multi-temporal phase coherence gamma
+ * @property {number} mean_velocity_mm_yr - Linear Line-Of-Sight velocity in mm/year
+ * @property {number} total_displacement_mm - Cumulative LOS displacement in mm
+ * @property {'uplift'|'stable'|'slight_subsidence'|'moderate_subsidence'|'severe_subsidence'} stability_tier - Geotechnical stability tier
+ * @property {Array<Object>} time_series_displacements - Chronological displacement measurements
+ */
+
+/**
+ * @typedef {Object} PSInSARStackRequest
+ * @property {string} [stack_id='ps_stack_tsf_01'] - SAR interferometric stack identifier
+ * @property {string} [master_date='2026-01-10'] - Master acquisition date (YYYY-MM-DD)
+ * @property {Array<string>} [slave_dates] - Slave acquisition dates
+ * @property {'spatiotemporal_gaussian'|'spatial_lowpass_temporal_highpass'|'empirical_elevation_correction'|'external_weather_era5'} [aps_filter_mode='spatiotemporal_gaussian'] - APS filtering strategy
+ * @property {number} [coherence_threshold=0.70] - Coherence acceptance threshold
+ * @property {number} [dispersion_threshold=0.25] - Amplitude dispersion threshold
+ * @property {number} [wavelength_m=0.055465] - Radar wavelength in meters
+ * @property {number} [spatial_filter_radius_m=1500.0] - Spatial low-pass filter radius in meters
+ * @property {Array<Object>} [ps_candidates] - Custom candidate PS targets
+ */
+
+/**
+ * @typedef {Object} PSInSARStackResponse
+ * @property {string} stack_id - SAR stack identifier
+ * @property {string} aps_filter_mode - Applied APS filter algorithm
+ * @property {string} master_date - Master acquisition date
+ * @property {number} slave_count - Number of slave acquisitions processed
+ * @property {number} temporal_baseline_days - Baseline duration in days
+ * @property {number} total_candidates - Initial PS candidate count
+ * @property {number} accepted_ps_count - Validated persistent scatterer count
+ * @property {number} mean_temporal_coherence - Average phase coherence
+ * @property {number} mean_los_velocity_mm_yr - Mean ground velocity in mm/year
+ * @property {number} max_subsidence_mm_yr - Peak negative ground subsidence rate in mm/year
+ * @property {number} max_uplift_mm_yr - Peak positive uplift rate in mm/year
+ * @property {'uplift'|'stable'|'slight_subsidence'|'moderate_subsidence'|'severe_subsidence'} overall_stability_tier - Overall stability tier
+ * @property {boolean} critical_subsidence_detected - Warning flag for subsidence (< -15 mm/yr)
+ * @property {Array<PSPointDisplacement>} ps_points - Validated persistent scatterer monitoring points
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Processes multi-temporal PS-InSAR interferometric stack with spatiotemporal APS filtering.
+ * 
+ * @param {PSInSARStackRequest} params - PS-InSAR stack processing parameters
+ * @returns {Promise<PSInSARStackResponse>} Validated PS points, millimetric LOS velocities, and stability classifications
+ */
+export const processPsInsarStack = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/sar/ps-insar-stack', params);
   return response.data;
 };
 

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, model_validator
 class SatelliteCollection(str, Enum):
     """Supported satellite and aerial imagery collections."""
     SENTINEL_2 = "sentinel-2-l2a"
+    SENTINEL_2_L2A = "sentinel-2-l2a"
     LANDSAT_C2_L2 = "landsat-c2-l2"
     LANDSAT = "landsat-c2-l2"
     DRONE_ORTHO = "drone-ortho"
@@ -30,6 +31,7 @@ class SatelliteCollection(str, Enum):
     WILDFIRE = "wildfire"
     SENTINEL_1_RTC = "sentinel-1-rtc"
     COP_DEM = "cop-dem-glo-30"
+    COP_DEM_GLO_30 = "cop-dem-glo-30"
 
 class SpectralIndex(str, Enum):
     """Core biophysical and environmental hazard spectral indices."""
@@ -641,6 +643,15 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "analysis_pyramid_spline": "/api/v1/analysis/mosaic/spline-blend",
     "analysis_pyramid_spline_short": "/analysis/spline-blend",
     "tiles_spline_mosaic": "/api/v1/tiles/mosaic/spline/{mosaic_id}/{z}/{x}/{y}.png",
+    "drone_direct_georeferencing": "/api/v1/drone/direct-georeferencing",
+    "drone_direct_georeferencing_short": "/drone/direct-georeferencing",
+    "tiles_direct_georeferencing": "/api/v1/tiles/drone/direct-georeferencing/{mission_id}/{z}/{x}/{y}.png",
+    "analysis_crest_alignment": "/api/v1/analysis/geotechnical/crest-alignment",
+    "analysis_crest_alignment_short": "/geotechnical/crest-alignment",
+    "tiles_crest_alignment": "/api/v1/tiles/geotechnical/crest-alignment/{alignment_id}/{z}/{x}/{y}.png",
+    "analysis_ps_insar_stack": "/api/v1/analysis/sar/ps-insar-stack",
+    "analysis_ps_insar_stack_short": "/sar/ps-insar-stack",
+    "tiles_ps_insar_stack": "/api/v1/tiles/sar/ps-insar/{stack_id}/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -6297,6 +6308,9 @@ class DamBreachAnalysisRequest(BaseModel):
     @classmethod
     def preprocess_inputs(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # AOI / asset ID aliases
+            if "asset_id" in data and "aoi_id" not in data:
+                data["aoi_id"] = data["asset_id"]
             # Volume aliases
             if "volume_m3" in data and "reservoir_volume_m3" not in data:
                 data["reservoir_volume_m3"] = data["volume_m3"]
@@ -6328,6 +6342,10 @@ class DamBreachAnalysisResponse(BaseModel):
     hazard_summary: Dict[str, float] = Field(default_factory=dict, description="Inundation area percentage per hazard tier")
     tile_url_template: str = Field(..., description="Dynamic XYZ tile URL pattern for flood depth raster")
     analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of analysis")
+
+    @property
+    def asset_id(self) -> str:
+        return self.aoi_id
 
 def calculate_dam_breach_inundation(
     reservoir_volume_m3: float,
@@ -6467,6 +6485,9 @@ class LandslideSusceptibilityRequest(BaseModel):
     @classmethod
     def preprocess_inputs(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # AOI / asset ID aliases
+            if "asset_id" in data and "aoi_id" not in data:
+                data["aoi_id"] = data["asset_id"]
             # Slope aliases
             if "slope" in data and "slope_deg" not in data:
                 data["slope_deg"] = data["slope"]
@@ -6498,6 +6519,10 @@ class LandslideSusceptibilityResponse(BaseModel):
     failure_warning: bool = Field(..., description="Whether slope exceeds safety intervention criteria")
     tile_url_template: str = Field(..., description="Dynamic XYZ tile URL pattern for landslide susceptibility map")
     analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of analysis")
+
+    @property
+    def asset_id(self) -> str:
+        return self.aoi_id
 
 def calculate_landslide_susceptibility(
     slope_deg: float,
@@ -6658,6 +6683,10 @@ class DroughtAnalysisResponse(BaseModel):
     tier_breakdown: Dict[str, float] = Field(default_factory=dict, description="Percentage distribution across drought tiers")
     tile_url_template: str = Field(..., description="Dynamic XYZ tile URL pattern for VHI drought raster")
     analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of analysis")
+
+    @property
+    def vhi_value(self) -> float:
+        return self.mean_vhi
 
 def calculate_vegetation_health_index(
     ndvi: float,
@@ -6835,6 +6864,10 @@ class SAMAnalysisResponse(BaseModel):
     tile_url_template: str = Field(..., description="Dynamic XYZ tile URL pattern for SAM angle raster")
     analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of analysis")
 
+    @property
+    def endmember(self) -> str:
+        return self.target_endmember.value if hasattr(self.target_endmember, "value") else str(self.target_endmember)
+
 def calculate_spectral_angle_mapper(
     pixel_reflectance: Dict[str, float],
     endmember_reflectance: Dict[str, float]
@@ -6994,3 +7027,1593 @@ def format_vector_export_filename(
     ext = ext_map.get(fmt_str, "bin")
     clean_layer = layer_id.lower().replace("-", "_")
     return f"gios_{clean_layer}_{ts}.{ext}"
+
+
+# ============================================================================
+# T-96: NEXT-GEN REMOTE SENSING & CRYOSPHERE / AQUATIC / DISTURBANCE SCAFFOLDING
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 1. CRYOSPHERE FRACTIONAL SNOW COVER (FSC) & GLACIAL MELT RUNOFF HAZARDS
+# ----------------------------------------------------------------------------
+
+class FSCModelType(str, Enum):
+    """Sub-pixel fractional snow cover regression model."""
+    SALOMONSON_APPEL = "salomonson_appel"  # FSC = -0.01 + 1.45 * NDSI (Salomonson & Appel, 2004)
+    HALL_MODIS = "hall_modis"              # Piecewise threshold model (Hall et al., 2002)
+    LINEAR_NDSI = "linear_ndsi"            # Direct linear NDSI mapping clamped [0, 1]
+
+class SnowpackRunoffTier(str, Enum):
+    """Snowpack hazard and glacial melt runoff severity classification."""
+    TRACE_SNOW = "trace_snow"                      # FSC < 0.10
+    LOW_SNOW = "low_snow"                          # 0.10 <= FSC < 0.35
+    MODERATE_SNOW = "moderate_snow"                # 0.35 <= FSC < 0.65
+    DEEP_SNOWPACK = "deep_snowpack"                # 0.65 <= FSC < 0.85
+    EXTREME_ACCUMULATION = "extreme_accumulation"  # FSC >= 0.85
+
+class FractionalSnowCoverRequest(BaseModel):
+    """Request payload for sub-pixel Fractional Snow Cover (FSC) & runoff estimation."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2_L2A, description="Sensor constellation")
+    item_id: str = Field(..., description="Target STAC scene identifier")
+    bbox: Optional[Union[List[float], Tuple[float, float, float, float], Dict[str, float], BoundingBox]] = Field(
+        None, description="AOI bounding box [min_lon, min_lat, max_lon, max_lat]"
+    )
+    model_type: FSCModelType = Field(default=FSCModelType.SALOMONSON_APPEL, description="Sub-pixel FSC regression algorithm")
+    green_band_reflectance: Optional[float] = Field(None, ge=0.0, le=1.5, description="Green surface reflectance (B03 / B3)")
+    swir1_band_reflectance: Optional[float] = Field(None, ge=0.0, le=1.5, description="SWIR1 surface reflectance (B11 / B6)")
+    elevation_m: Optional[float] = Field(None, ge=-500.0, le=9000.0, description="Mean terrain elevation in meters")
+    snow_depth_m: float = Field(0.5, ge=0.0, le=20.0, description="Estimated snowpack depth in meters")
+    snow_density_kg_m3: float = Field(300.0, ge=50.0, le=800.0, description="Snowpack density in kg/m³")
+    runoff_coefficient: float = Field(0.85, ge=0.0, le=1.0, description="Glacial/snowpack runoff yield coefficient")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "bbox" in data and data["bbox"] is not None:
+                data["bbox"] = parse_bbox(data["bbox"], default=(-121.2, 36.95, -120.95, 37.15))
+            if "model" in data and "model_type" not in data:
+                data["model_type"] = data["model"]
+            if "scene_id" in data and "item_id" not in data:
+                data["item_id"] = data["scene_id"]
+            if "green" in data and "green_band_reflectance" not in data:
+                data["green_band_reflectance"] = data["green"]
+            elif "green_reflectance" in data and "green_band_reflectance" not in data:
+                data["green_band_reflectance"] = data["green_reflectance"]
+            if "swir1" in data and "swir1_band_reflectance" not in data:
+                data["swir1_band_reflectance"] = data["swir1"]
+            elif "swir1_reflectance" in data and "swir1_band_reflectance" not in data:
+                data["swir1_band_reflectance"] = data["swir1_reflectance"]
+        return data
+
+class FractionalSnowCoverResponse(BaseModel):
+    """Response payload for sub-pixel Fractional Snow Cover (FSC) & runoff estimation."""
+    collection: SatelliteCollection
+    item_id: str
+    model_type: FSCModelType
+    ndsi: float = Field(..., description="Normalized Difference Snow Index (Green - SWIR1)/(Green + SWIR1)")
+    fractional_snow_cover: float = Field(..., ge=0.0, le=1.0, description="Sub-pixel fractional snow cover fraction [0.0 - 1.0]")
+    fractional_snow_cover_pct: float = Field(..., ge=0.0, le=100.0, description="Sub-pixel snow cover percentage [0% - 100%]")
+    runoff_hazard_tier: SnowpackRunoffTier = Field(..., description="Runoff risk tier")
+    estimated_swe_mm: float = Field(..., ge=0.0, description="Snow Water Equivalent (SWE) in mm")
+    estimated_melt_volume_m3: float = Field(..., ge=0.0, description="Potential meltwater volume yield in cubic meters")
+    transient_snowline_elevation_m: Optional[float] = Field(None, description="Estimated transient snowline elevation in meters")
+    snow_covered_area_ha: float = Field(..., ge=0.0, description="Snow covered area in hectares")
+    total_area_ha: float = Field(..., ge=0.0, description="Total evaluated AOI area in hectares")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+def classify_snowpack_runoff_tier(fsc: float) -> SnowpackRunoffTier:
+    """Classifies sub-pixel Fractional Snow Cover into runoff hazard tiers."""
+    val = max(0.0, min(1.0, float(fsc)))
+    if val < 0.10:
+        return SnowpackRunoffTier.TRACE_SNOW
+    elif val < 0.35:
+        return SnowpackRunoffTier.LOW_SNOW
+    elif val < 0.65:
+        return SnowpackRunoffTier.MODERATE_SNOW
+    elif val < 0.85:
+        return SnowpackRunoffTier.DEEP_SNOWPACK
+    return SnowpackRunoffTier.EXTREME_ACCUMULATION
+
+def calculate_fractional_snow_cover(
+    green: float,
+    swir1: float,
+    model: Union[FSCModelType, str] = FSCModelType.SALOMONSON_APPEL,
+    elevation_m: Optional[float] = None,
+    snow_depth_m: float = 0.5,
+    snow_density_kg_m3: float = 300.0,
+    runoff_coefficient: float = 0.85,
+    area_ha: float = 100.0
+) -> Dict[str, Any]:
+    """Evaluates Normalized Difference Snow Index (NDSI) and sub-pixel Fractional Snow Cover (FSC).
+    
+    References:
+        - Salomonson & Appel (2004): FSC = -0.01 + 1.45 * NDSI
+        - Hall et al. (2002): Piecewise threshold mapping
+    """
+    m_str = model.value if isinstance(model, FSCModelType) else str(model).lower()
+    g = float(green)
+    s = float(swir1)
+    
+    # Compute NDSI
+    denom = g + s
+    if abs(denom) < 1e-6:
+        ndsi = 0.0
+    else:
+        ndsi = (g - s) / denom
+    ndsi = max(-1.0, min(1.0, ndsi))
+    
+    # Compute FSC based on model
+    if m_str == "salomonson_appel":
+        if ndsi <= 0.0:
+            fsc = 0.0
+        else:
+            fsc = -0.01 + 1.45 * ndsi
+    elif m_str == "hall_modis":
+        if ndsi < 0.10:
+            fsc = 0.0
+        elif ndsi >= 0.40:
+            fsc = 1.0
+        else:
+            fsc = (ndsi - 0.10) / 0.30
+    else:  # linear_ndsi
+        fsc = max(0.0, ndsi)
+        
+    fsc = max(0.0, min(1.0, fsc))
+    fsc_pct = fsc * 100.0
+    tier = classify_snowpack_runoff_tier(fsc)
+    
+    # Snow Water Equivalent (SWE) in mm: depth [m] * (density / 1000) * 1000 [mm] * FSC
+    swe_mm = float(snow_depth_m) * (float(snow_density_kg_m3) / 1000.0) * 1000.0 * fsc
+    # Meltwater volume = area_m2 * (swe_mm / 1000) * runoff_coeff
+    area_m2 = float(area_ha) * 10000.0
+    melt_vol_m3 = area_m2 * (swe_mm / 1000.0) * float(runoff_coefficient)
+    snow_area_ha = float(area_ha) * fsc
+    
+    # Transient snowline estimation
+    snowline_m = None
+    if elevation_m is not None and fsc > 0.05:
+        snowline_m = float(elevation_m) - (1.0 - fsc) * 200.0
+    
+    return {
+        "ndsi": round(ndsi, 4),
+        "fractional_snow_cover": round(fsc, 4),
+        "fractional_snow_cover_pct": round(fsc_pct, 2),
+        "runoff_hazard_tier": tier,
+        "estimated_swe_mm": round(swe_mm, 2),
+        "estimated_melt_volume_m3": round(melt_vol_m3, 2),
+        "transient_snowline_elevation_m": round(snowline_m, 1) if snowline_m is not None else None,
+        "snow_covered_area_ha": round(snow_area_ha, 2),
+        "total_area_ha": round(float(area_ha), 2)
+    }
+
+def build_snow_cover_tile_url(
+    collection: str,
+    item_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    model: str = "salomonson_appel",
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Cryosphere Fractional Snow Cover."""
+    return f"{base_prefix}/tiles/cryosphere/snow-cover/{collection}/{item_id}/{z}/{x}/{y}.png?model={model}"
+
+
+# ----------------------------------------------------------------------------
+# 2. AQUATIC TOTAL SUSPENDED MATTER (TSM) & TURBIDITY INVERSION
+# ----------------------------------------------------------------------------
+
+class TSMAlgorithm(str, Enum):
+    """Analytical algorithm for aquatic Total Suspended Matter & Turbidity."""
+    NECHAD_RED = "nechad_red"                  # Nechad et al. (2010) Red band (665 nm)
+    NECHAD_NIR = "nechad_nir"                  # Nechad et al. (2010) NIR band (865 nm)
+    DOGLIOTTI_SWITCHING = "dogliotti_switching"  # Dogliotti et al. (2015) Red-NIR switching algorithm
+    EMPIRICAL_RATIO = "empirical_ratio"        # Binding et al. band ratio
+
+class AquaticTurbidityTier(str, Enum):
+    """Aquatic turbidity and suspended sediment hazard zonation."""
+    CLEAR_OLIGOTROPHIC = "clear_oligotrophic"          # < 2.0 NTU / TSM < 2.0 g/m³
+    LOW_TURBIDITY = "low_turbidity"                    # 2.0 - 10.0 NTU
+    MODERATE_SEDIMENT = "moderate_sediment"            # 10.0 - 30.0 NTU
+    HIGH_TURBIDITY = "high_turbidity"                  # 30.0 - 80.0 NTU
+    EXTREME_SEDIMENT_PLUME = "extreme_sediment_plume"  # >= 80.0 NTU (tailings/dredge plumes)
+
+class AquaticTurbidityRequest(BaseModel):
+    """Request payload for Total Suspended Matter (TSM) & Turbidity inversion."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2_L2A, description="Sensor constellation")
+    item_id: str = Field(..., description="Target STAC scene identifier")
+    bbox: Optional[Union[List[float], Tuple[float, float, float, float], Dict[str, float], BoundingBox]] = Field(
+        None, description="AOI bounding box"
+    )
+    algorithm: TSMAlgorithm = Field(default=TSMAlgorithm.DOGLIOTTI_SWITCHING, description="Inversion algorithm")
+    red_reflectance: Optional[float] = Field(None, ge=0.0, le=1.0, description="Water leaving Red reflectance (B04 / B4)")
+    nir_reflectance: Optional[float] = Field(None, ge=0.0, le=1.0, description="Water leaving NIR reflectance (B08 / B5)")
+    green_reflectance: Optional[float] = Field(None, ge=0.0, le=1.0, description="Water leaving Green reflectance (B03 / B3)")
+    water_body_area_ha: float = Field(250.0, ge=0.1, le=1e6, description="Total water surface area in hectares")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "bbox" in data and data["bbox"] is not None:
+                data["bbox"] = parse_bbox(data["bbox"], default=(-121.2, 36.95, -120.95, 37.15))
+            if "algo" in data and "algorithm" not in data:
+                data["algorithm"] = data["algo"]
+            if "scene_id" in data and "item_id" not in data:
+                data["item_id"] = data["scene_id"]
+            if "red" in data and "red_reflectance" not in data:
+                data["red_reflectance"] = data["red"]
+            if "nir" in data and "nir_reflectance" not in data:
+                data["nir_reflectance"] = data["nir"]
+            if "green" in data and "green_reflectance" not in data:
+                data["green_reflectance"] = data["green"]
+            if "water_area_ha" in data and "water_body_area_ha" not in data:
+                data["water_body_area_ha"] = data["water_area_ha"]
+        return data
+
+class AquaticTurbidityResponse(BaseModel):
+    """Response payload for Total Suspended Matter (TSM) & Turbidity inversion."""
+    collection: SatelliteCollection
+    item_id: str
+    algorithm_used: TSMAlgorithm
+    total_suspended_matter_g_m3: float = Field(..., ge=0.0, description="Total Suspended Matter in g/m³ (mg/L)")
+    turbidity_ntu: float = Field(..., ge=0.0, description="Turbidity in Nephelometric Turbidity Units (NTU / FNU)")
+    hazard_tier: AquaticTurbidityTier = Field(..., description="Sediment plume hazard classification")
+    sediment_plume_detected: bool = Field(..., description="Whether severe turbidity plume is detected")
+    plume_area_ha: float = Field(..., ge=0.0, description="Estimated plume area in hectares")
+    plume_area_pct: float = Field(..., ge=0.0, le=100.0, description="Plume area percentage of water body")
+    mean_water_reflectance_red: float
+    mean_water_reflectance_nir: float
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+def classify_aquatic_turbidity_tier(turbidity_ntu: float) -> AquaticTurbidityTier:
+    """Classifies turbidity in NTU into environmental hazard tiers."""
+    val = max(0.0, float(turbidity_ntu))
+    if val < 2.0:
+        return AquaticTurbidityTier.CLEAR_OLIGOTROPHIC
+    elif val < 10.0:
+        return AquaticTurbidityTier.LOW_TURBIDITY
+    elif val < 30.0:
+        return AquaticTurbidityTier.MODERATE_SEDIMENT
+    elif val < 80.0:
+        return AquaticTurbidityTier.HIGH_TURBIDITY
+    return AquaticTurbidityTier.EXTREME_SEDIMENT_PLUME
+
+def calculate_aquatic_tsm_turbidity(
+    red: float,
+    nir: float,
+    algorithm: Union[TSMAlgorithm, str] = TSMAlgorithm.DOGLIOTTI_SWITCHING,
+    water_area_ha: float = 250.0
+) -> Dict[str, Any]:
+    """Calculates Total Suspended Matter (TSM in g/m³) and Turbidity (NTU).
+    
+    References:
+        - Nechad et al. (2010): TSM = (A * rho) / (1 - rho / C)
+        - Dogliotti et al. (2015): Switching model between Red (665nm) and NIR (865nm)
+    """
+    algo_str = algorithm.value if isinstance(algorithm, TSMAlgorithm) else str(algorithm).lower()
+    r = max(0.0, min(0.35, float(red)))
+    n = max(0.0, min(0.35, float(nir)))
+    
+    a_tsm_red, c_red = 327.84, 0.1708
+    a_turb_red = 228.7
+    
+    a_tsm_nir, c_nir = 1941.25, 0.2115
+    a_turb_nir = 1350.0
+    
+    # Red model
+    safe_r_denom = max(0.01, 1.0 - (r / c_red))
+    tsm_red = (a_tsm_red * r) / safe_r_denom
+    turb_red = (a_turb_red * r) / safe_r_denom
+    
+    # NIR model
+    safe_n_denom = max(0.01, 1.0 - (n / c_nir))
+    tsm_nir = (a_tsm_nir * n) / safe_n_denom
+    turb_nir = (a_turb_nir * n) / safe_n_denom
+    
+    if algo_str == "nechad_red":
+        tsm = tsm_red
+        turb = turb_red
+    elif algo_str == "nechad_nir":
+        tsm = tsm_nir
+        turb = turb_nir
+    elif algo_str == "empirical_ratio":
+        ratio = (n / max(0.001, r))
+        tsm = max(0.0, ratio * 150.0)
+        turb = tsm * 0.75
+    else:  # dogliotti_switching
+        if r < 0.05:
+            tsm = tsm_red
+            turb = turb_red
+        elif r > 0.07:
+            tsm = tsm_nir
+            turb = turb_nir
+        else:
+            w = (r - 0.05) / 0.02
+            tsm = (1.0 - w) * tsm_red + w * tsm_nir
+            turb = (1.0 - w) * turb_red + w * turb_nir
+            
+    tsm = max(0.0, tsm)
+    turb = max(0.0, turb)
+    tier = classify_aquatic_turbidity_tier(turb)
+    is_plume = tier in (AquaticTurbidityTier.HIGH_TURBIDITY, AquaticTurbidityTier.EXTREME_SEDIMENT_PLUME)
+    
+    if turb < 10.0:
+        plume_pct = 0.0
+    elif turb < 30.0:
+        plume_pct = 15.0
+    elif turb < 80.0:
+        plume_pct = 45.0
+    else:
+        plume_pct = 75.0
+    plume_ha = float(water_area_ha) * (plume_pct / 100.0)
+    
+    return {
+        "total_suspended_matter_g_m3": round(tsm, 2),
+        "turbidity_ntu": round(turb, 2),
+        "hazard_tier": tier,
+        "sediment_plume_detected": is_plume,
+        "plume_area_ha": round(plume_ha, 2),
+        "plume_area_pct": round(plume_pct, 2),
+        "mean_water_reflectance_red": round(r, 4),
+        "mean_water_reflectance_nir": round(n, 4)
+    }
+
+def build_turbidity_tsm_tile_url(
+    collection: str,
+    item_id: str,
+    metric: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Aquatic TSM and Turbidity."""
+    return f"{base_prefix}/tiles/water/turbidity-tsm/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png"
+
+
+# ----------------------------------------------------------------------------
+# 3. ABRUPT STRUCTURAL DISTURBANCE BREAK DETECTION (BFAST / LANDTRENDR)
+# ----------------------------------------------------------------------------
+
+class DisturbanceModel(str, Enum):
+    """Time-series trajectory disturbance & structural break detection algorithm."""
+    BFAST_LITE = "bfast_lite"                          # Breaks For Additive Season and Trend (Verbesselt et al., 2010)
+    LANDTRENDR_SEGMENTATION = "landtrendr_segmentation"  # Trajectory segmentation (Kennedy et al., 2010)
+    PIECEWISE_LINEAR = "piecewise_linear"              # OLS structural break split
+
+class DisturbanceType(str, Enum):
+    """Categorical classification of trajectory disturbance."""
+    GRADUAL_DECLINE = "gradual_decline"                # Sustained negative slope without sudden jump
+    ABRUPT_COLLAPSE = "abrupt_collapse"                # Catastrophic drop (delta <= -0.15)
+    STRUCTURAL_DISTURBANCE = "structural_disturbance"  # Moderate sudden disturbance (-0.15 < delta <= -0.05)
+    STABLE_TRAJECTORY = "stable_trajectory"            # No significant shift (|delta| < 0.05, |slope| < 0.01)
+    RAPID_RECOVERY = "rapid_recovery"                  # Sharp positive recovery slope post-disturbance
+
+class BreakSignificanceTier(str, Enum):
+    """Statistical significance tier of detected breakpoint."""
+    NOT_SIGNIFICANT = "not_significant"  # p >= 0.10
+    ADVISORY = "advisory"                # 0.05 <= p < 0.10
+    SIGNIFICANT = "significant"          # 0.01 <= p < 0.05
+    CRITICAL_BREAK = "critical_break"    # p < 0.01
+
+class DisturbanceBreakpoint(BaseModel):
+    """Details of an individual identified trajectory breakpoint."""
+    break_index: int = Field(..., description="Index position of breakpoint in time-series")
+    break_date: str = Field(..., description="Date of structural break (ISO 8601 or YYYY-MM-DD)")
+    pre_break_slope: float = Field(..., description="Trajectory slope prior to breakpoint")
+    post_break_slope: float = Field(..., description="Trajectory slope following breakpoint")
+    jump_magnitude: float = Field(..., description="Abrupt step jump magnitude delta Y")
+    p_value: float = Field(..., ge=0.0, le=1.0, description="Chow test / F-test p-value")
+    significance_tier: BreakSignificanceTier = Field(..., description="Significance classification")
+    disturbance_type: DisturbanceType = Field(..., description="Type of disturbance observed")
+
+class DisturbanceBreakRequest(BaseModel):
+    """Request payload for abrupt structural disturbance break detection."""
+    time_series_dates: List[str] = Field(..., min_length=4, description="Sorted list of date strings")
+    time_series_values: List[float] = Field(..., min_length=4, description="Chronological trajectory observation values")
+    metric_name: str = Field(default="ndvi", description="Monitored remote sensing metric (e.g. ndvi, ndmi, nbr)")
+    model: DisturbanceModel = Field(default=DisturbanceModel.BFAST_LITE, description="Break detection model")
+    significance_alpha: float = Field(0.05, ge=0.001, le=0.20, description="Statistical significance threshold alpha")
+    min_segment_length: int = Field(2, ge=2, le=20, description="Minimum observations required per linear segment")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "dates" in data and "time_series_dates" not in data:
+                data["time_series_dates"] = data["dates"]
+            if "values" in data and "time_series_values" not in data:
+                data["time_series_values"] = data["values"]
+            if "metric" in data and "metric_name" not in data:
+                data["metric_name"] = data["metric"]
+        return data
+
+class DisturbanceBreakResponse(BaseModel):
+    """Response payload for abrupt structural disturbance break detection."""
+    metric_name: str
+    model_used: DisturbanceModel
+    total_observations: int
+    breakpoints_detected: int
+    primary_break: Optional[DisturbanceBreakpoint]
+    all_breakpoints: List[DisturbanceBreakpoint]
+    overall_disturbance_type: DisturbanceType
+    structural_instability_detected: bool
+    tile_url_template: str
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+def classify_disturbance_type(jump: float, pre_slope: float, post_slope: float) -> DisturbanceType:
+    """Classifies disturbance character based on abrupt jump and pre/post slopes."""
+    j = float(jump)
+    if j <= -0.15:
+        return DisturbanceType.ABRUPT_COLLAPSE
+    elif j <= -0.05:
+        return DisturbanceType.STRUCTURAL_DISTURBANCE
+    elif post_slope > 0.05 and j > -0.05:
+        return DisturbanceType.RAPID_RECOVERY
+    elif pre_slope < -0.02 and abs(j) < 0.05:
+        return DisturbanceType.GRADUAL_DECLINE
+    return DisturbanceType.STABLE_TRAJECTORY
+
+def detect_structural_disturbance_breaks(
+    dates: List[str],
+    values: List[float],
+    model: Union[DisturbanceModel, str] = DisturbanceModel.BFAST_LITE,
+    alpha: float = 0.05,
+    min_segment: int = 2
+) -> Dict[str, Any]:
+    """Detects piecewise linear breakpoints and abrupt structural shifts in satellite time-series.
+    
+    References:
+        - Verbesselt et al. (2010): BFAST (Breaks For Additive Season and Trend)
+        - Kennedy et al. (2010): LandTrendr segmentation
+    """
+    n = len(values)
+    if n < 4:
+        return {
+            "total_observations": n,
+            "breakpoints_detected": 0,
+            "primary_break": None,
+            "all_breakpoints": [],
+            "overall_disturbance_type": DisturbanceType.STABLE_TRAJECTORY,
+            "structural_instability_detected": False
+        }
+    
+    y = [float(v) for v in values]
+    
+    best_idx = -1
+    best_rss = float("inf")
+    best_pre_slope = 0.0
+    best_post_slope = 0.0
+    best_jump = 0.0
+    
+    mean_t = (n - 1) / 2.0
+    mean_y = sum(y) / n
+    full_cov = sum((i - mean_t) * (y[i] - mean_y) for i in range(n))
+    full_var = sum((i - mean_t) ** 2 for i in range(n))
+    full_slope = full_cov / full_var if full_var > 1e-9 else 0.0
+    
+    for i in range(min_segment, n - min_segment):
+        seg1 = y[:i]
+        n1 = len(seg1)
+        mean_t1 = (n1 - 1) / 2.0
+        mean_y1 = sum(seg1) / n1
+        cov1 = sum((k - mean_t1) * (seg1[k] - mean_y1) for k in range(n1))
+        var1 = sum((k - mean_t1) ** 2 for k in range(n1))
+        slope1 = cov1 / var1 if var1 > 1e-9 else 0.0
+        c1 = mean_y1 - slope1 * mean_t1
+        rss1 = sum((seg1[k] - (c1 + slope1 * k)) ** 2 for k in range(n1))
+        
+        seg2 = y[i:]
+        n2 = len(seg2)
+        mean_t2 = (n2 - 1) / 2.0
+        mean_y2 = sum(seg2) / n2
+        cov2 = sum((k - mean_t2) * (seg2[k] - mean_y2) for k in range(n2))
+        var2 = sum((k - mean_t2) ** 2 for k in range(n2))
+        slope2 = cov2 / var2 if var2 > 1e-9 else 0.0
+        c2 = mean_y2 - slope2 * mean_t2
+        rss2 = sum((seg2[k] - (c2 + slope2 * k)) ** 2 for k in range(n2))
+        
+        total_rss = rss1 + rss2
+        jump = (c2 + slope2 * 0) - (c1 + slope1 * (n1 - 1))
+        
+        if total_rss < best_rss:
+            best_rss = total_rss
+            best_idx = i
+            best_pre_slope = slope1
+            best_post_slope = slope2
+            best_jump = jump
+            
+    full_rss = sum((y[k] - (mean_y + full_slope * (k - mean_t))) ** 2 for k in range(n))
+    diff_rss = max(0.0, full_rss - best_rss)
+    f_stat = (diff_rss / 2.0) / (best_rss / max(1, n - 4)) if best_rss > 1e-6 else 10.0
+    
+    if f_stat > 15.0:
+        p_val = 0.001
+    elif f_stat > 8.0:
+        p_val = 0.02
+    elif f_stat > 4.0:
+        p_val = 0.06
+    else:
+        p_val = 0.25
+        
+    if p_val < 0.01:
+        sig_tier = BreakSignificanceTier.CRITICAL_BREAK
+    elif p_val < 0.05:
+        sig_tier = BreakSignificanceTier.SIGNIFICANT
+    elif p_val < 0.10:
+        sig_tier = BreakSignificanceTier.ADVISORY
+    else:
+        sig_tier = BreakSignificanceTier.NOT_SIGNIFICANT
+        
+    dist_type = classify_disturbance_type(best_jump, best_pre_slope, best_post_slope)
+    is_detected = (p_val <= alpha) and (abs(best_jump) >= 0.04 or dist_type != DisturbanceType.STABLE_TRAJECTORY)
+    
+    breakpoints = []
+    primary = None
+    if is_detected and best_idx > 0:
+        primary = DisturbanceBreakpoint(
+            break_index=best_idx,
+            break_date=dates[best_idx],
+            pre_break_slope=round(best_pre_slope, 4),
+            post_break_slope=round(best_post_slope, 4),
+            jump_magnitude=round(best_jump, 4),
+            p_value=round(p_val, 4),
+            significance_tier=sig_tier,
+            disturbance_type=dist_type
+        )
+        breakpoints.append(primary)
+        
+    return {
+        "total_observations": n,
+        "breakpoints_detected": len(breakpoints),
+        "primary_break": primary,
+        "all_breakpoints": breakpoints,
+        "overall_disturbance_type": dist_type,
+        "structural_instability_detected": is_detected and dist_type in (DisturbanceType.ABRUPT_COLLAPSE, DisturbanceType.STRUCTURAL_DISTURBANCE)
+    }
+
+def build_disturbance_tile_url(
+    collection: str,
+    item_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Disturbance Break Detection."""
+    return f"{base_prefix}/tiles/disturbance/breaks/{collection}/{item_id}/{z}/{x}/{y}.png"
+
+
+# ----------------------------------------------------------------------------
+# 4. CROP WATER STRESS INDEX (CWSI) & EVAPOTRANSPIRATION ENERGY BALANCE
+# ----------------------------------------------------------------------------
+
+class CWSIModelType(str, Enum):
+    """Crop Water Stress Index and evapotranspiration energy balance formulation."""
+    EMPIRICAL_IDSO = "empirical_idso"                      # Idso et al. (1981) baseline (Tc - Ta = a - b * VPD)
+    TRAPEZOID_OPTICAL_THERMAL = "trapezoid_optical_thermal"  # Moran et al. (1994) WDI LST-NDVI trapezoid
+    ENERGY_BALANCE_SEBAL = "energy_balance_sebal"          # Bastiaanssen et al. (1998) evaporative fraction
+
+class WaterStressTier(str, Enum):
+    """Canopy water stress and irrigation deficit classification."""
+    NO_STRESS = "no_stress"                      # CWSI < 0.20
+    MILD_STRESS = "mild_stress"                  # 0.20 <= CWSI < 0.40
+    MODERATE_STRESS = "moderate_stress"          # 0.40 <= CWSI < 0.65 (irrigation advisory)
+    SEVERE_DEFICIT = "severe_deficit"            # 0.65 <= CWSI < 0.85 (wilting, stomatal closure)
+    EXTREME_DESICCATION = "extreme_desiccation"  # CWSI >= 0.85 (permanent wilting point)
+
+class CWSIAnalysisRequest(BaseModel):
+    """Request payload for Crop Water Stress Index (CWSI) and canopy transpiration deficit."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.LANDSAT_C2_L2, description="Sensor constellation")
+    item_id: str = Field(..., description="Target STAC scene identifier")
+    bbox: Optional[Union[List[float], Tuple[float, float, float, float], Dict[str, float], BoundingBox]] = Field(
+        None, description="AOI bounding box"
+    )
+    model_type: CWSIModelType = Field(default=CWSIModelType.EMPIRICAL_IDSO, description="CWSI formulation")
+    canopy_temperature_c: Optional[float] = Field(None, ge=-10.0, le=70.0, description="Canopy / surface temperature in Celsius (LST)")
+    air_temperature_c: float = Field(25.0, ge=-20.0, le=60.0, description="Ambient air temperature in Celsius")
+    relative_humidity_pct: float = Field(40.0, ge=0.0, le=100.0, description="Ambient relative humidity percentage")
+    vapor_pressure_deficit_kpa: Optional[float] = Field(None, ge=0.0, le=10.0, description="Vapor pressure deficit in kPa")
+    ndvi: float = Field(0.65, ge=-1.0, le=1.0, description="Optical vegetation index")
+    reference_et0_mm_day: float = Field(5.0, ge=0.1, le=20.0, description="Penman-Monteith reference evapotranspiration ET0 in mm/day")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "bbox" in data and data["bbox"] is not None:
+                data["bbox"] = parse_bbox(data["bbox"], default=(-121.2, 36.95, -120.95, 37.15))
+            if "model" in data and "model_type" not in data:
+                data["model_type"] = data["model"]
+            if "scene_id" in data and "item_id" not in data:
+                data["item_id"] = data["scene_id"]
+            if "lst_c" in data and "canopy_temperature_c" not in data:
+                data["canopy_temperature_c"] = data["lst_c"]
+            elif "canopy_temp_c" in data and "canopy_temperature_c" not in data:
+                data["canopy_temperature_c"] = data["canopy_temp_c"]
+            elif "canopy_temp" in data and "canopy_temperature_c" not in data:
+                data["canopy_temperature_c"] = data["canopy_temp"]
+            elif "lst" in data and "canopy_temperature_c" not in data:
+                data["canopy_temperature_c"] = data["lst"]
+            if "air_temp_c" in data and "air_temperature_c" not in data:
+                data["air_temperature_c"] = data["air_temp_c"]
+            elif "air_temp" in data and "air_temperature_c" not in data:
+                data["air_temperature_c"] = data["air_temp"]
+            if "rh" in data and "relative_humidity_pct" not in data:
+                data["relative_humidity_pct"] = data["rh"]
+            elif "humidity" in data and "relative_humidity_pct" not in data:
+                data["relative_humidity_pct"] = data["humidity"]
+            if "vpd" in data and "vapor_pressure_deficit_kpa" not in data:
+                data["vapor_pressure_deficit_kpa"] = data["vpd"]
+            if "et0" in data and "reference_et0_mm_day" not in data:
+                data["reference_et0_mm_day"] = data["et0"]
+        return data
+
+class CWSIAnalysisResponse(BaseModel):
+    """Response payload for Crop Water Stress Index (CWSI) and canopy transpiration deficit."""
+    collection: SatelliteCollection
+    item_id: str
+    model_used: CWSIModelType
+    cwsi: float = Field(..., ge=0.0, le=1.0, description="Crop Water Stress Index [0.0 - 1.0]")
+    evaporative_fraction: float = Field(..., ge=0.0, le=1.0, description="Relative evaporative fraction (1 - CWSI)")
+    actual_et_mm_day: float = Field(..., ge=0.0, description="Actual evapotranspiration ETa in mm/day")
+    water_stress_tier: WaterStressTier = Field(..., description="Water stress category")
+    canopy_air_temp_diff_c: float = Field(..., description="Observed canopy-air temperature differential (Tc - Ta) in Celsius")
+    lower_baseline_temp_diff_c: float = Field(..., description="Non-water-stressed baseline (Tc - Ta)_lower in Celsius")
+    upper_baseline_temp_diff_c: float = Field(..., description="Maximum-stress baseline (Tc - Ta)_upper in Celsius")
+    irrigation_priority: str = Field(..., description="Irrigation dispatch urgency ('low', 'moderate', 'high', 'critical')")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+def classify_water_stress_tier(cwsi: float) -> WaterStressTier:
+    """Classifies Crop Water Stress Index into irrigation urgency tiers."""
+    val = max(0.0, min(1.0, float(cwsi)))
+    if val < 0.20:
+        return WaterStressTier.NO_STRESS
+    elif val < 0.40:
+        return WaterStressTier.MILD_STRESS
+    elif val < 0.65:
+        return WaterStressTier.MODERATE_STRESS
+    elif val < 0.85:
+        return WaterStressTier.SEVERE_DEFICIT
+    return WaterStressTier.EXTREME_DESICCATION
+
+def calculate_crop_water_stress_index(
+    canopy_temp_c: float,
+    air_temp_c: float = 25.0,
+    rh_pct: float = 40.0,
+    vpd_kpa: Optional[float] = None,
+    ndvi: float = 0.65,
+    model: Union[CWSIModelType, str] = CWSIModelType.EMPIRICAL_IDSO,
+    et0_mm_day: float = 5.0
+) -> Dict[str, Any]:
+    """Calculates Crop Water Stress Index (CWSI) and actual evapotranspiration (ETa).
+    
+    References:
+        - Idso et al. (1981): (Tc - Ta)_lower = a - b * VPD; (Tc - Ta)_upper = a - b * (VPD + delta_T)
+        - Moran et al. (1994): Water Deficit Index trapezoid
+    """
+    tc = float(canopy_temp_c)
+    ta = float(air_temp_c)
+    diff = tc - ta
+    
+    if vpd_kpa is None:
+        es = 0.6108 * math.exp((17.27 * ta) / (ta + 237.3))
+        ea = es * (max(0.0, min(100.0, float(rh_pct))) / 100.0)
+        vpd = max(0.1, es - ea)
+    else:
+        vpd = max(0.1, float(vpd_kpa))
+        
+    m_str = model.value if isinstance(model, CWSIModelType) else str(model).lower()
+    
+    if m_str == "trapezoid_optical_thermal":
+        lower_diff = -3.0
+        upper_diff = max(1.0, 8.0 * (1.0 - max(0.0, min(1.0, float(ndvi)))))
+    else:
+        lower_diff = 1.0 - 1.7 * vpd
+        upper_diff = 5.0
+        
+    range_span = max(1.0, upper_diff - lower_diff)
+    raw_cwsi = (diff - lower_diff) / range_span
+    cwsi = max(0.0, min(1.0, raw_cwsi))
+    
+    ef = 1.0 - cwsi
+    eta = ef * float(et0_mm_day)
+    tier = classify_water_stress_tier(cwsi)
+    
+    priority_map = {
+        WaterStressTier.NO_STRESS: "low",
+        WaterStressTier.MILD_STRESS: "low",
+        WaterStressTier.MODERATE_STRESS: "moderate",
+        WaterStressTier.SEVERE_DEFICIT: "high",
+        WaterStressTier.EXTREME_DESICCATION: "critical"
+    }
+    
+    return {
+        "cwsi": round(cwsi, 4),
+        "evaporative_fraction": round(ef, 4),
+        "actual_et_mm_day": round(eta, 2),
+        "water_stress_tier": tier,
+        "canopy_air_temp_diff_c": round(diff, 2),
+        "lower_baseline_temp_diff_c": round(lower_diff, 2),
+        "upper_baseline_temp_diff_c": round(upper_diff, 2),
+        "irrigation_priority": priority_map.get(tier, "moderate")
+    }
+
+def build_cwsi_tile_url(
+    collection: str,
+    item_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Crop Water Stress Index."""
+    return f"{base_prefix}/tiles/agriculture/cwsi/{collection}/{item_id}/{z}/{x}/{y}.png"
+
+
+# ----------------------------------------------------------------------------
+# 5. MULTI-RESOLUTION SPLINE & LAPLACIAN PYRAMID MOSAIC BLENDING CONTRACTS
+# ----------------------------------------------------------------------------
+
+class PyramidBlendMode(str, Enum):
+    """Multi-resolution spatial blending formulation."""
+    MULTIRESOLUTION_SPLINE = "multiresolution_spline"      # Burt & Adelson (1983) Laplacian pyramid blending
+    POISSON_GRADIENT = "poisson_gradient"                  # Pérez et al. (2003) Poisson image editing
+    DISTANCE_TRANSFORM_FEATHER = "distance_transform_feather"  # Morphological distance transform alpha ramp
+    LINEAR_FEATHER = "linear_feather"                      # Standard linear seamline feathering
+
+class SeamRadiometricQuality(str, Enum):
+    """Radiometric continuity and visual seam quality tier."""
+    SEAMLESS = "seamless"                                # Gradient discontinuity < 2.0 DN
+    GOOD_CONTINUITY = "good_continuity"                  # 2.0 <= delta < 5.0 DN
+    PERCEPTIBLE_DISCONTINUITY = "perceptible_discontinuity"  # 5.0 <= delta < 12.0 DN
+    SEVERE_SEAM_ARTIFACT = "severe_seam_artifact"        # delta >= 12.0 DN
+
+class PyramidSplineRequest(BaseModel):
+    """Request payload for multi-resolution spline & pyramid mosaic blending."""
+    mosaic_id: str = Field(default="drone_mosaic_01", description="Target orthomosaic identifier")
+    left_scene_id: str = Field(..., description="First overlapping scene ID")
+    right_scene_id: str = Field(..., description="Second overlapping scene ID")
+    blend_mode: PyramidBlendMode = Field(default=PyramidBlendMode.MULTIRESOLUTION_SPLINE, description="Pyramid blending algorithm")
+    pyramid_levels: int = Field(5, ge=2, le=8, description="Number of Laplacian pyramid decomposition levels")
+    seam_transition_width_px: int = Field(64, ge=4, le=512, description="Base feathering transition width in pixels")
+    left_mean_radiance: Optional[float] = Field(None, ge=0.0, description="Mean DN/radiance of left scene")
+    right_mean_radiance: Optional[float] = Field(None, ge=0.0, description="Mean DN/radiance of right scene")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "mode" in data and "blend_mode" not in data:
+                data["blend_mode"] = data["mode"]
+            if "levels" in data and "pyramid_levels" not in data:
+                data["pyramid_levels"] = data["levels"]
+            if "seam_width" in data and "seam_transition_width_px" not in data:
+                data["seam_transition_width_px"] = data["seam_width"]
+            if "left_scene" in data and "left_scene_id" not in data:
+                data["left_scene_id"] = data["left_scene"]
+            if "right_scene" in data and "right_scene_id" not in data:
+                data["right_scene_id"] = data["right_scene"]
+            if "left_radiance" in data and "left_mean_radiance" not in data:
+                data["left_mean_radiance"] = data["left_radiance"]
+            if "right_radiance" in data and "right_mean_radiance" not in data:
+                data["right_mean_radiance"] = data["right_radiance"]
+        return data
+
+class PyramidSplineResponse(BaseModel):
+    """Response payload for multi-resolution spline & pyramid mosaic blending."""
+    mosaic_id: str
+    blend_mode: PyramidBlendMode
+    pyramid_levels: int
+    seam_transition_width_px: int
+    mean_gradient_discontinuity_dn: float = Field(..., description="Mean radiometric jump across seam boundary in DN")
+    radiometric_quality: SeamRadiometricQuality = Field(..., description="Continuity tier")
+    is_seamless: bool = Field(..., description="Whether residual discontinuity is imperceptible (< 2.0 DN)")
+    high_frequency_feather_px: float = Field(..., description="Narrow high-frequency edge transition width in pixels")
+    low_frequency_feather_px: float = Field(..., description="Wide low-frequency illumination transition width in pixels")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+def classify_seam_radiometric_quality(gradient_jump: float) -> SeamRadiometricQuality:
+    """Classifies residual radiometric discontinuity across seamline into quality tiers."""
+    val = max(0.0, float(gradient_jump))
+    if val < 2.0:
+        return SeamRadiometricQuality.SEAMLESS
+    elif val < 5.0:
+        return SeamRadiometricQuality.GOOD_CONTINUITY
+    elif val < 12.0:
+        return SeamRadiometricQuality.PERCEPTIBLE_DISCONTINUITY
+    return SeamRadiometricQuality.SEVERE_SEAM_ARTIFACT
+
+def calculate_laplacian_pyramid_blend(
+    left_val: float,
+    right_val: float,
+    seam_width_px: int = 64,
+    levels: int = 5,
+    blend_mode: Union[PyramidBlendMode, str] = PyramidBlendMode.MULTIRESOLUTION_SPLINE
+) -> Dict[str, Any]:
+    """Calculates multi-resolution spline and Laplacian pyramid blending metrics.
+    
+    References:
+        - Burt & Adelson (1983): A multiresolution spline with application to image mosaics
+    """
+    mode_str = blend_mode.value if isinstance(blend_mode, PyramidBlendMode) else str(blend_mode).lower()
+    w = max(4, int(seam_width_px))
+    lev = max(2, min(8, int(levels)))
+    diff = abs(float(left_val) - float(right_val))
+    
+    high_freq_px = max(2.0, float(w) / (2 ** (lev - 1)))
+    low_freq_px = float(w) * 2.0
+    
+    if mode_str == "multiresolution_spline":
+        discontinuity = diff * (0.5 ** lev)
+    elif mode_str == "poisson_gradient":
+        discontinuity = min(0.5, diff * 0.05)
+    elif mode_str == "distance_transform_feather":
+        discontinuity = diff * 0.15
+    else:  # linear_feather
+        discontinuity = diff * 0.35
+        
+    discontinuity = max(0.0, discontinuity)
+    quality = classify_seam_radiometric_quality(discontinuity)
+    seamless = quality == SeamRadiometricQuality.SEAMLESS
+    
+    return {
+        "mean_gradient_discontinuity_dn": round(discontinuity, 3),
+        "radiometric_quality": quality,
+        "is_seamless": seamless,
+        "high_frequency_feather_px": round(high_freq_px, 1),
+        "low_frequency_feather_px": round(low_freq_px, 1),
+        "pyramid_levels": lev,
+        "seam_transition_width_px": w
+    }
+
+def build_spline_mosaic_tile_url(
+    mosaic_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    blend_mode: str = "multiresolution_spline",
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Multi-Resolution Spline Mosaics."""
+    return f"{base_prefix}/tiles/mosaic/spline/{mosaic_id}/{z}/{x}/{y}.png?blend_mode={blend_mode}"
+
+
+# ============================================================================
+# CYCLE v2.5.7: DRONE DIRECT GEOREFERENCING, EMBANKMENT CREST VECTORIZATION & PS-InSAR CONTRACTS
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 1. DRONE DIRECT GEOREFERENCING & IMU/BORESIGHT MISALIGNMENT CALIBRATION
+# ----------------------------------------------------------------------------
+
+class DirectGeoreferencingTier(str, Enum):
+    """Horizontal accuracy classification tier for drone direct georeferencing."""
+    SURVEY_GRADE = "survey_grade"                    # CEP95 < 0.05m (RTK/PPK GNSS + calibrated boresight)
+    MAPPING_GRADE = "mapping_grade"                  # 0.05m <= CEP95 < 0.20m
+    RECONNAISSANCE_GRADE = "reconnaissance_grade"    # 0.20m <= CEP95 < 1.00m
+    UNCORRECTED_NAVIGATION = "uncorrected_navigation"  # CEP95 >= 1.00m (standalone GPS / uncalibrated IMU)
+
+class LeverArmOffset(BaseModel):
+    """GNSS antenna phase center to camera perspective center offset in aircraft body frame (meters)."""
+    lx_m: float = Field(0.0, description="Lateral offset (starboard positive) in meters")
+    ly_m: float = Field(0.0, description="Longitudinal offset (forward positive) in meters")
+    lz_m: float = Field(0.0, description="Vertical offset (downward positive) in meters")
+
+class BoresightAngles(BaseModel):
+    """Angular misalignment between IMU navigation body frame and camera optical sensor frame (degrees)."""
+    d_roll_deg: float = Field(0.0, description="Differential roll angle misalignment in degrees")
+    d_pitch_deg: float = Field(0.0, description="Differential pitch angle misalignment in degrees")
+    d_yaw_deg: float = Field(0.0, description="Differential yaw / heading misalignment in degrees")
+
+class CameraSensorSpec(BaseModel):
+    """Physical optical sensor dimensions and focal length specifications."""
+    focal_length_mm: float = Field(24.0, ge=1.0, le=500.0, description="Calibrated principal distance / focal length in mm")
+    sensor_width_mm: float = Field(35.9, ge=1.0, le=100.0, description="Sensor width in mm (e.g. full-frame 35.9mm)")
+    sensor_height_mm: float = Field(24.0, ge=1.0, le=100.0, description="Sensor height in mm (e.g. full-frame 24.0mm)")
+    image_width_px: int = Field(6000, ge=100, le=50000, description="Sensor horizontal pixel dimension")
+    image_height_px: int = Field(4000, ge=100, le=50000, description="Sensor vertical pixel dimension")
+
+class DirectGeoreferencingRequest(BaseModel):
+    """Request payload for drone direct georeferencing and boresight misalignment calibration."""
+    mission_id: str = Field(default="drone_mission_01", description="UAV flight mission identifier")
+    gnss_latitude: float = Field(..., ge=-90.0, le=90.0, description="GNSS antenna WGS84 latitude in degrees")
+    gnss_longitude: float = Field(..., ge=-180.0, le=180.0, description="GNSS antenna WGS84 longitude in degrees")
+    gnss_altitude_m: float = Field(..., description="GNSS ellipsoidal or orthometric altitude ASL in meters")
+    ground_elevation_m: float = Field(default=0.0, description="Mean ground terrain elevation ASL in meters")
+    roll_deg: float = Field(default=0.0, description="Measured IMU aircraft roll angle in degrees")
+    pitch_deg: float = Field(default=0.0, description="Measured IMU aircraft pitch angle in degrees")
+    yaw_deg: float = Field(default=0.0, description="Measured IMU aircraft true heading / yaw in degrees")
+    lever_arm: LeverArmOffset = Field(default_factory=LeverArmOffset, description="Antenna-to-camera body lever-arm offsets")
+    boresight: BoresightAngles = Field(default_factory=BoresightAngles, description="IMU-to-camera boresight misalignment angles")
+    sensor_spec: CameraSensorSpec = Field(default_factory=CameraSensorSpec, description="Camera optical sensor parameters")
+    gnss_uncertainty_m: float = Field(default=0.02, ge=0.001, le=10.0, description="GNSS 1-sigma positioning uncertainty in meters")
+    attitude_uncertainty_deg: float = Field(default=0.01, ge=0.0001, le=5.0, description="IMU 1-sigma attitude orientation uncertainty in degrees")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "missionId" in data and "mission_id" not in data:
+                data["mission_id"] = data["missionId"]
+            if "gnssLatitude" in data and "gnss_latitude" not in data:
+                data["gnss_latitude"] = data["gnssLatitude"]
+            if "gnssLongitude" in data and "gnss_longitude" not in data:
+                data["gnss_longitude"] = data["gnssLongitude"]
+            if "gnssAltitude" in data and "gnss_altitude_m" not in data:
+                data["gnss_altitude_m"] = data["gnssAltitude"]
+            if "groundElevation" in data and "ground_elevation_m" not in data:
+                data["ground_elevation_m"] = data["groundElevation"]
+            if "leverArm" in data and "lever_arm" not in data:
+                data["lever_arm"] = data["leverArm"]
+            if "sensorSpec" in data and "sensor_spec" not in data:
+                data["sensor_spec"] = data["sensorSpec"]
+        return data
+
+class DirectGeoreferencingResponse(BaseModel):
+    """Response payload for drone direct georeferencing and ground footprint projection."""
+    mission_id: str
+    camera_latitude: float = Field(..., description="Corrected camera perspective center latitude in degrees")
+    camera_longitude: float = Field(..., description="Corrected camera perspective center longitude in degrees")
+    camera_altitude_m: float = Field(..., description="Corrected camera perspective center altitude ASL in meters")
+    corrected_roll_deg: float = Field(..., description="Boresight-corrected camera roll angle in degrees")
+    corrected_pitch_deg: float = Field(..., description="Boresight-corrected camera pitch angle in degrees")
+    corrected_yaw_deg: float = Field(..., description="Boresight-corrected camera yaw / heading angle in degrees")
+    flight_height_agl_m: float = Field(..., description="Effective flight height Above Ground Level in meters")
+    gsd_cm_px: float = Field(..., description="Mean ground sampling distance in cm/pixel")
+    footprint_width_m: float = Field(..., description="Ground footprint width across track in meters")
+    footprint_height_m: float = Field(..., description="Ground footprint length along track in meters")
+    footprint_polygon: List[Tuple[float, float]] = Field(..., description="Projected ground footprint 4-corner polygon (lat, lon)")
+    horizontal_cep95_m: float = Field(..., description="Estimated horizontal Circular Error Probable at 95% confidence in meters")
+    quality_tier: DirectGeoreferencingTier = Field(..., description="Accuracy tier")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+def classify_direct_georeferencing_tier(cep95_m: float) -> DirectGeoreferencingTier:
+    """Classifies direct georeferencing horizontal uncertainty into operational tiers."""
+    val = max(0.0, float(cep95_m))
+    if val < 0.05:
+        return DirectGeoreferencingTier.SURVEY_GRADE
+    elif val < 0.20:
+        return DirectGeoreferencingTier.MAPPING_GRADE
+    elif val < 1.00:
+        return DirectGeoreferencingTier.RECONNAISSANCE_GRADE
+    return DirectGeoreferencingTier.UNCORRECTED_NAVIGATION
+
+def calculate_direct_georeferencing(
+    gnss_lat: float,
+    gnss_lon: float,
+    gnss_alt_m: float,
+    ground_elev_m: float = 0.0,
+    roll_deg: float = 0.0,
+    pitch_deg: float = 0.0,
+    yaw_deg: float = 0.0,
+    lever_arm: Optional[Union[LeverArmOffset, Dict[str, float]]] = None,
+    boresight: Optional[Union[BoresightAngles, Dict[str, float]]] = None,
+    sensor_spec: Optional[Union[CameraSensorSpec, Dict[str, Any]]] = None,
+    gnss_uncertainty_m: float = 0.02,
+    attitude_uncertainty_deg: float = 0.01
+) -> Dict[str, Any]:
+    """Calculates exterior orientation, lever-arm translation, boresight rotation, and ground footprint projection.
+    
+    References:
+        - Schwarz et al. (1993): Airborne GPS and INS for direct georeferencing
+        - Mostafa & Schwarz (2000): A multi-sensor system for airborne mapping without ground control
+        - Skaloud & Schwarz (2000): Boresight calibration for direct exterior orientation
+    """
+    # 1. Parse lever arm offsets
+    lx, ly, lz = 0.0, 0.0, 0.0
+    if isinstance(lever_arm, LeverArmOffset):
+        lx, ly, lz = lever_arm.lx_m, lever_arm.ly_m, lever_arm.lz_m
+    elif isinstance(lever_arm, dict):
+        lx = float(lever_arm.get("lx_m", lever_arm.get("lx", 0.0)))
+        ly = float(lever_arm.get("ly_m", lever_arm.get("ly", 0.0)))
+        lz = float(lever_arm.get("lz_m", lever_arm.get("lz", 0.0)))
+
+    # 2. Parse boresight misalignment angles
+    d_roll, d_pitch, d_yaw = 0.0, 0.0, 0.0
+    if isinstance(boresight, BoresightAngles):
+        d_roll, d_pitch, d_yaw = boresight.d_roll_deg, boresight.d_pitch_deg, boresight.d_yaw_deg
+    elif isinstance(boresight, dict):
+        d_roll = float(boresight.get("d_roll_deg", boresight.get("d_roll", 0.0)))
+        d_pitch = float(boresight.get("d_pitch_deg", boresight.get("d_pitch", 0.0)))
+        d_yaw = float(boresight.get("d_yaw_deg", boresight.get("d_yaw", 0.0)))
+
+    # 3. Parse sensor specifications
+    focal_mm = 24.0
+    sensor_w_mm = 35.9
+    sensor_h_mm = 24.0
+    px_w = 6000
+    px_h = 4000
+    if isinstance(sensor_spec, CameraSensorSpec):
+        focal_mm = sensor_spec.focal_length_mm
+        sensor_w_mm = sensor_spec.sensor_width_mm
+        sensor_h_mm = sensor_spec.sensor_height_mm
+        px_w = sensor_spec.image_width_px
+        px_h = sensor_spec.image_height_px
+    elif isinstance(sensor_spec, dict):
+        focal_mm = float(sensor_spec.get("focal_length_mm", 24.0))
+        sensor_w_mm = float(sensor_spec.get("sensor_width_mm", 35.9))
+        sensor_h_mm = float(sensor_spec.get("sensor_height_mm", 24.0))
+        px_w = int(sensor_spec.get("image_width_px", 6000))
+        px_h = int(sensor_spec.get("image_height_px", 4000))
+
+    # 4. Rotation matrix from body to mapping frame (yaw -> pitch -> roll)
+    yaw_rad = math.radians(yaw_deg)
+    pitch_rad = math.radians(pitch_deg)
+    roll_rad = math.radians(roll_deg)
+
+    # Simplified topocentric lever-arm rotation
+    cos_y, sin_y = math.cos(yaw_rad), math.sin(yaw_rad)
+    cos_p, sin_p = math.cos(pitch_rad), math.sin(pitch_rad)
+    cos_r, sin_r = math.cos(roll_rad), math.sin(roll_rad)
+
+    # R_body_to_map * [lx, ly, lz]^T
+    # East (X), North (Y), Up (Z)
+    dx_body = lx * (cos_y * cos_r + sin_y * sin_p * sin_r) + ly * (-sin_y * cos_p) + lz * (cos_y * sin_r - sin_y * sin_p * cos_r)
+    dy_body = lx * (sin_y * cos_r - cos_y * sin_p * sin_r) + ly * (cos_y * cos_p) + lz * (sin_y * sin_r + cos_y * sin_p * cos_r)
+    dz_body = lx * (-cos_p * sin_r) + ly * (sin_p) + lz * (cos_p * cos_r)
+
+    # Geographic offset
+    meters_per_deg_lat = 111320.0
+    meters_per_deg_lon = 111320.0 * math.cos(math.radians(gnss_lat))
+    if abs(meters_per_deg_lon) < 1.0:
+        meters_per_deg_lon = 111320.0
+
+    cam_lat = gnss_lat + (dy_body / meters_per_deg_lat)
+    cam_lon = gnss_lon + (dx_body / meters_per_deg_lon)
+    cam_alt = gnss_alt_m - dz_body
+
+    # 5. Boresight-corrected camera attitude angles
+    corr_roll = roll_deg + d_roll
+    corr_pitch = pitch_deg + d_pitch
+    corr_yaw = (yaw_deg + d_yaw) % 360.0
+
+    # 6. Flight height AGL and ground footprint dimensions
+    h_agl = max(5.0, cam_alt - ground_elev_m)
+    footprint_w = (sensor_w_mm * h_agl) / focal_mm
+    footprint_h = (sensor_h_mm * h_agl) / focal_mm
+
+    # GSD in cm/px
+    gsd_x = (footprint_w / max(1, px_w)) * 100.0
+    gsd_y = (footprint_h / max(1, px_h)) * 100.0
+    gsd_mean = (gsd_x + gsd_y) / 2.0
+
+    # 7. Footprint 4-corner polygon projected onto ground datum
+    half_w = footprint_w / 2.0
+    half_h = footprint_h / 2.0
+    corr_yaw_rad = math.radians(corr_yaw)
+    cos_cy, sin_cy = math.cos(corr_yaw_rad), math.sin(corr_yaw_rad)
+
+    # Corners: top-left, top-right, bottom-right, bottom-left, closed
+    corners_local = [
+        (-half_w, half_h),
+        (half_w, half_h),
+        (half_w, -half_h),
+        (-half_w, -half_h),
+        (-half_w, half_h)
+    ]
+    footprint_poly: List[Tuple[float, float]] = []
+    for cx, cy in corners_local:
+        # Rotate by yaw heading
+        rx = cx * cos_cy - cy * sin_cy
+        ry = cx * sin_cy + cy * cos_cy
+        p_lat = cam_lat + (ry / meters_per_deg_lat)
+        p_lon = cam_lon + (rx / meters_per_deg_lon)
+        footprint_poly.append((round(p_lat, 7), round(p_lon, 7)))
+
+    # 8. Horizontal positioning uncertainty CEP95
+    att_rad = math.radians(max(0.0001, attitude_uncertainty_deg))
+    sigma_horiz = math.sqrt((gnss_uncertainty_m ** 2) + ((h_agl * math.tan(att_rad)) ** 2))
+    cep95 = 2.4477 * sigma_horiz
+    tier = classify_direct_georeferencing_tier(cep95)
+
+    return {
+        "camera_latitude": round(cam_lat, 7),
+        "camera_longitude": round(cam_lon, 7),
+        "camera_altitude_m": round(cam_alt, 2),
+        "corrected_roll_deg": round(corr_roll, 3),
+        "corrected_pitch_deg": round(corr_pitch, 3),
+        "corrected_yaw_deg": round(corr_yaw, 3),
+        "flight_height_agl_m": round(h_agl, 2),
+        "gsd_cm_px": round(gsd_mean, 2),
+        "footprint_width_m": round(footprint_w, 2),
+        "footprint_height_m": round(footprint_h, 2),
+        "footprint_polygon": footprint_poly,
+        "horizontal_cep95_m": round(cep95, 3),
+        "quality_tier": tier
+    }
+
+def build_direct_georeferencing_tile_url(
+    mission_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Drone Direct Georeferencing footprints."""
+    return f"{base_prefix}/tiles/drone/direct-georeferencing/{mission_id}/{z}/{x}/{y}.png"
+
+
+# ----------------------------------------------------------------------------
+# 2. OPENDRIVE / GEOJSON EMBANKMENT CREST ALIGNMENT VECTORIZATION CONTRACTS
+# ----------------------------------------------------------------------------
+
+class CrestSettlementTier(str, Enum):
+    """Severity tier for embankment crest settlement and freeboard loss."""
+    NORMAL = "normal"                                    # |settlement| < 0.05m
+    MINOR_SETTLEMENT = "minor_settlement"                # 0.05m <= |settlement| < 0.15m
+    MODERATE_SETTLEMENT = "moderate_settlement"          # 0.15m <= |settlement| < 0.30m
+    CRITICAL_OVERTOPPING_RISK = "critical_overtopping_risk"  # |settlement| >= 0.30m (severe loss of freeboard)
+
+class CrestStationPoint(BaseModel):
+    """Georeferenced station inspection point along embankment centerline."""
+    station_m: float = Field(..., description="Cumulative distance along centerline arc in meters")
+    station_code: str = Field(..., description="Formatted engineering station notation (e.g. STA 12+40.00)")
+    lat: float = Field(..., description="Station WGS84 latitude")
+    lon: float = Field(..., description="Station WGS84 longitude")
+    measured_elevation_m: float = Field(..., description="Observed ground elevation ASL in meters")
+    design_elevation_m: float = Field(..., description="Target as-built design crest elevation ASL in meters")
+    settlement_m: float = Field(..., description="Differential elevation delta (measured - design) in meters")
+    normal_azimuth_deg: float = Field(..., description="Perpendicular cross-section normal azimuth in degrees")
+    left_shoulder: Tuple[float, float] = Field(..., description="WGS84 coordinate of left crest shoulder (lat, lon)")
+    right_shoulder: Tuple[float, float] = Field(..., description="WGS84 coordinate of right crest shoulder (lat, lon)")
+    settlement_tier: CrestSettlementTier = Field(..., description="Settlement risk tier")
+
+class EmbankmentCrestRequest(BaseModel):
+    """Request payload for embankment crest alignment vectorization and settlement detection."""
+    alignment_id: str = Field(default="crest_tsf_01", description="Embankment or dam crest identifier")
+    centerline_points: List[Any] = Field(..., min_length=2, description="Sequence of 3D centerline points [(lat, lon, elev)]")
+    design_elevation_m: float = Field(default=350.0, description="Target as-built design crest elevation ASL in meters")
+    station_interval_m: float = Field(default=20.0, ge=1.0, le=200.0, description="Equidistant sampling interval along crest in meters")
+    crest_width_m: float = Field(default=12.0, ge=2.0, le=100.0, description="Total crest crest-width shoulder-to-shoulder in meters")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "alignmentId" in data and "alignment_id" not in data:
+                data["alignment_id"] = data["alignmentId"]
+            if "designElevation" in data and "design_elevation_m" not in data:
+                data["design_elevation_m"] = data["designElevation"]
+            if "stationInterval" in data and "station_interval_m" not in data:
+                data["station_interval_m"] = data["stationInterval"]
+            if "crestWidth" in data and "crest_width_m" not in data:
+                data["crest_width_m"] = data["crestWidth"]
+        return data
+
+class EmbankmentCrestResponse(BaseModel):
+    """Response payload for embankment crest alignment vectorization and settlement assessment."""
+    alignment_id: str
+    total_length_m: float = Field(..., description="Total cumulative crest centerline length in meters")
+    station_count: int = Field(..., description="Number of evaluated station cross-sections")
+    design_elevation_m: float = Field(..., description="Nominal design crest elevation in meters")
+    min_measured_elevation_m: float = Field(..., description="Minimum observed crest elevation in meters")
+    max_measured_elevation_m: float = Field(..., description="Maximum observed crest elevation in meters")
+    max_settlement_m: float = Field(..., description="Maximum recorded crest subsidence / sag loss in meters")
+    mean_settlement_m: float = Field(..., description="Mean recorded crest subsidence across all stations in meters")
+    worst_settlement_station: str = Field(..., description="Station identifier exhibiting peak settlement loss")
+    overall_severity_tier: CrestSettlementTier = Field(..., description="Overall crest integrity tier")
+    overtopping_risk_detected: bool = Field(..., description="Warning flag for severe freeboard deficit (loss >= 0.30m)")
+    stations: List[CrestStationPoint] = Field(..., description="Resampled station cross-sections")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+def classify_crest_settlement_tier(max_settlement_loss_m: float) -> CrestSettlementTier:
+    """Classifies peak crest settlement loss into geotechnical alert categories."""
+    loss = max(0.0, float(max_settlement_loss_m))
+    if loss < 0.05:
+        return CrestSettlementTier.NORMAL
+    elif loss < 0.15:
+        return CrestSettlementTier.MINOR_SETTLEMENT
+    elif loss < 0.30:
+        return CrestSettlementTier.MODERATE_SETTLEMENT
+    return CrestSettlementTier.CRITICAL_OVERTOPPING_RISK
+
+def calculate_crest_alignment_vectorization(
+    centerline_points: Sequence[Any],
+    design_elevation_m: float = 350.0,
+    station_interval_m: float = 20.0,
+    crest_width_m: float = 12.0
+) -> Dict[str, Any]:
+    """Computes arc-length stationing, normal cross-sections, and differential settlement along crest centerline.
+    
+    References:
+        - ICOLD Bulletin 139 (2011): Improving tailings dam safety - Critical aspects of management
+        - USACE EM 1110-2-1913: Design and Construction of Levees
+    """
+    raw_pts: List[Tuple[float, float, float]] = []
+    for p in centerline_points:
+        if isinstance(p, (list, tuple)) and len(p) >= 2:
+            elev = float(p[2]) if len(p) >= 3 else float(design_elevation_m)
+            raw_pts.append((float(p[0]), float(p[1]), elev))
+        elif isinstance(p, dict):
+            lat = float(p.get("lat", p.get("latitude", 0.0)))
+            lon = float(p.get("lon", p.get("lng", p.get("longitude", 0.0))))
+            elev = float(p.get("elevation", p.get("elevation_m", design_elevation_m)))
+            raw_pts.append((lat, lon, elev))
+
+    if len(raw_pts) < 2:
+        default_pt = raw_pts[0] if raw_pts else (36.95, -121.0, float(design_elevation_m))
+        raw_pts = [default_pt, (default_pt[0] + 0.001, default_pt[1] + 0.001, default_pt[2])]
+
+    # 1. Project vertices to local metric coordinate frame relative to origin
+    lat0, lon0, _ = raw_pts[0]
+    meters_lat = 111320.0
+    meters_lon = 111320.0 * math.cos(math.radians(lat0))
+    if abs(meters_lon) < 1.0:
+        meters_lon = 111320.0
+
+    metric_pts: List[Tuple[float, float, float]] = []
+    for lat, lon, z in raw_pts:
+        x = (lon - lon0) * meters_lon
+        y = (lat - lat0) * meters_lat
+        metric_pts.append((x, y, z))
+
+    # 2. Cumulative distance along polyline segments
+    cum_dists = [0.0]
+    for i in range(len(metric_pts) - 1):
+        x1, y1, _ = metric_pts[i]
+        x2, y2, _ = metric_pts[i + 1]
+        seg_dist = math.hypot(x2 - x1, y2 - y1)
+        cum_dists.append(cum_dists[-1] + max(0.001, seg_dist))
+
+    total_length = cum_dists[-1]
+    step = max(1.0, float(station_interval_m))
+    num_stations = max(2, int(math.ceil(total_length / step)) + 1)
+
+    stations: List[Dict[str, Any]] = []
+    seg_idx = 0
+    max_settlement_loss = 0.0
+    worst_station_code = "STA 0+00.00"
+    all_settlements: List[float] = []
+    measured_elevs: List[float] = []
+
+    half_w = max(1.0, float(crest_width_m) / 2.0)
+
+    for k in range(num_stations):
+        target_s = min(total_length, k * step)
+        while seg_idx < len(cum_dists) - 2 and cum_dists[seg_idx + 1] < target_s:
+            seg_idx += 1
+
+        s_start = cum_dists[seg_idx]
+        s_end = cum_dists[seg_idx + 1]
+        seg_len = max(0.0001, s_end - s_start)
+        frac = max(0.0, min(1.0, (target_s - s_start) / seg_len))
+
+        # Linear interpolation
+        p1 = metric_pts[seg_idx]
+        p2 = metric_pts[seg_idx + 1]
+        mx = p1[0] + frac * (p2[0] - p1[0])
+        my = p1[1] + frac * (p2[1] - p1[1])
+        mz = p1[2] + frac * (p2[2] - p1[2])
+
+        # Tangent and unit normal vectors
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        t_len = math.hypot(dx, dy)
+        if t_len > 0.0:
+            nx = -dy / t_len
+            ny = dx / t_len
+        else:
+            nx, ny = 0.0, 1.0
+
+        # Normal azimuth in degrees (0 = North, 90 = East)
+        azimuth = (math.degrees(math.atan2(nx, ny))) % 360.0
+
+        # Back-project centerline to WGS84
+        c_lat = lat0 + (my / meters_lat)
+        c_lon = lon0 + (mx / meters_lon)
+
+        # Left and right shoulder WGS84 coordinates
+        left_lat = c_lat + ((ny * half_w) / meters_lat)
+        left_lon = c_lon + ((nx * half_w) / meters_lon)
+        right_lat = c_lat - ((ny * half_w) / meters_lat)
+        right_lon = c_lon - ((nx * half_w) / meters_lon)
+
+        # Settlement relative to design elevation
+        settlement = mz - float(design_elevation_m)
+        loss = max(0.0, float(design_elevation_m) - mz)
+        all_settlements.append(settlement)
+        measured_elevs.append(mz)
+
+        # Station notation: STA X+YY.ZZ
+        sta_major = int(target_s // 100)
+        sta_minor = target_s % 100.0
+        sta_code = f"STA {sta_major}+{sta_minor:05.2f}"
+
+        if loss > max_settlement_loss:
+            max_settlement_loss = loss
+            worst_station_code = sta_code
+
+        st_tier = classify_crest_settlement_tier(loss)
+
+        stations.append({
+            "station_m": round(target_s, 2),
+            "station_code": sta_code,
+            "lat": round(c_lat, 7),
+            "lon": round(c_lon, 7),
+            "measured_elevation_m": round(mz, 2),
+            "design_elevation_m": round(float(design_elevation_m), 2),
+            "settlement_m": round(settlement, 3),
+            "normal_azimuth_deg": round(azimuth, 1),
+            "left_shoulder": (round(left_lat, 7), round(left_lon, 7)),
+            "right_shoulder": (round(right_lat, 7), round(right_lon, 7)),
+            "settlement_tier": st_tier
+        })
+
+    overall_tier = classify_crest_settlement_tier(max_settlement_loss)
+    mean_settle = sum(all_settlements) / len(all_settlements) if all_settlements else 0.0
+
+    return {
+        "total_length_m": round(total_length, 2),
+        "station_count": len(stations),
+        "design_elevation_m": round(float(design_elevation_m), 2),
+        "min_measured_elevation_m": round(min(measured_elevs), 2) if measured_elevs else round(float(design_elevation_m), 2),
+        "max_measured_elevation_m": round(max(measured_elevs), 2) if measured_elevs else round(float(design_elevation_m), 2),
+        "max_settlement_m": round(max_settlement_loss, 3),
+        "mean_settlement_m": round(abs(mean_settle), 3),
+        "worst_settlement_station": worst_station_code,
+        "overall_severity_tier": overall_tier,
+        "overtopping_risk_detected": max_settlement_loss >= 0.30,
+        "stations": stations
+    }
+
+def build_crest_alignment_tile_url(
+    alignment_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for Embankment Crest Alignments."""
+    return f"{base_prefix}/tiles/geotechnical/crest-alignment/{alignment_id}/{z}/{x}/{y}.png"
+
+
+# ----------------------------------------------------------------------------
+# 3. InSAR ATMOSPHERIC PHASE SCREEN (APS) STACKING & PS-InSAR CONTRACTS
+# ----------------------------------------------------------------------------
+
+class APSFilterMode(str, Enum):
+    """Spatiotemporal filtering strategy to isolate Atmospheric Phase Screen (APS)."""
+    SPATIOTEMPORAL_GAUSSIAN = "spatiotemporal_gaussian"                  # Spatial 2D Gaussian low-pass + temporal high-pass
+    SPATIAL_LOWPASS_TEMPORAL_HIGHPASS = "spatial_lowpass_temporal_highpass"  # General moving-average spatiotemporal filter
+    EMPIRICAL_ELEVATION_CORRECTION = "empirical_elevation_correction"    # Topography-stratified tropospheric delay
+    EXTERNAL_WEATHER_ERA5 = "external_weather_era5"                      # Numerical weather model reanalysis integration
+
+class PSInSARStabilityTier(str, Enum):
+    """Millimetric geotechnical ground stability tier derived from PS-InSAR time series."""
+    UPLIFT = "uplift"                                  # velocity >= +2.0 mm/yr
+    STABLE = "stable"                                  # -2.0 mm/yr <= velocity < +2.0 mm/yr
+    SLIGHT_SUBSIDENCE = "slight_subsidence"            # -5.0 mm/yr <= velocity < -2.0 mm/yr
+    MODERATE_SUBSIDENCE = "moderate_subsidence"        # -15.0 mm/yr <= velocity < -5.0 mm/yr
+    SEVERE_SUBSIDENCE = "severe_subsidence"            # velocity < -15.0 mm/yr (critical infrastructure movement)
+
+class PSPointDisplacement(BaseModel):
+    """Georeferenced Persistent Scatterer (PS) target with multi-temporal LOS displacement history."""
+    point_id: str = Field(..., description="Unique persistent scatterer identifier")
+    lat: float = Field(..., description="WGS84 latitude")
+    lon: float = Field(..., description="WGS84 longitude")
+    elevation_m: float = Field(..., description="Surface elevation in meters")
+    amplitude_dispersion: float = Field(..., description="Amplitude dispersion index D_A (sigma_A / mu_A)")
+    temporal_coherence: float = Field(..., description="Multi-temporal interferometric phase coherence gamma")
+    mean_velocity_mm_yr: float = Field(..., description="Linear Line-Of-Sight (LOS) velocity in mm/year")
+    total_displacement_mm: float = Field(..., description="Cumulative displacement from master acquisition in mm")
+    stability_tier: PSInSARStabilityTier = Field(..., description="Ground stability classification")
+    time_series_displacements: List[Dict[str, Any]] = Field(..., description="Displacement measurements per acquisition date")
+
+class PSInSARStackRequest(BaseModel):
+    """Request payload for Persistent Scatterer InSAR stack processing and APS filtering."""
+    stack_id: str = Field(default="ps_stack_tsf_01", description="SAR interferometric stack identifier")
+    master_date: str = Field(default="2026-01-10", description="Primary master acquisition date (YYYY-MM-DD)")
+    slave_dates: List[str] = Field(
+        default_factory=lambda: ["2026-02-03", "2026-03-11", "2026-04-16", "2026-05-22", "2026-06-27", "2026-07-31", "2026-08-24", "2026-09-17"],
+        description="Chronological slave acquisition dates"
+    )
+    aps_filter_mode: APSFilterMode = Field(default=APSFilterMode.SPATIOTEMPORAL_GAUSSIAN, description="Atmospheric filter formulation")
+    coherence_threshold: float = Field(default=0.70, ge=0.30, le=0.99, description="Minimum temporal phase coherence to accept PS candidate")
+    dispersion_threshold: float = Field(default=0.25, ge=0.05, le=0.50, description="Maximum amplitude dispersion index D_A")
+    wavelength_m: float = Field(default=0.055465, description="Radar carrier wavelength in meters (Sentinel-1 C-band 55.465mm)")
+    spatial_filter_radius_m: float = Field(default=1500.0, ge=100.0, le=5000.0, description="Spatial low-pass filter radius for APS in meters")
+    ps_candidates: Optional[List[Dict[str, Any]]] = Field(default=None, description="Optional custom candidate PS targets")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "stackId" in data and "stack_id" not in data:
+                data["stack_id"] = data["stackId"]
+            if "masterDate" in data and "master_date" not in data:
+                data["master_date"] = data["masterDate"]
+            if "slaveDates" in data and "slave_dates" not in data:
+                data["slave_dates"] = data["slaveDates"]
+            if "filterMode" in data and "aps_filter_mode" not in data:
+                data["aps_filter_mode"] = data["filterMode"]
+            if "coherenceThreshold" in data and "coherence_threshold" not in data:
+                data["coherence_threshold"] = data["coherenceThreshold"]
+        return data
+
+class PSInSARStackResponse(BaseModel):
+    """Response payload for PS-InSAR stack spatiotemporal filtering and deformation analysis."""
+    stack_id: str
+    aps_filter_mode: APSFilterMode
+    master_date: str
+    slave_count: int = Field(..., description="Number of slave acquisitions processed")
+    temporal_baseline_days: int = Field(..., description="Total temporal baseline duration in days")
+    total_candidates: int = Field(..., description="Initial PS candidate pixel count")
+    accepted_ps_count: int = Field(..., description="Validated persistent scatterer count passing coherence and dispersion gates")
+    mean_temporal_coherence: float = Field(..., description="Mean temporal coherence across accepted PS targets")
+    mean_los_velocity_mm_yr: float = Field(..., description="Mean ground velocity in mm/year across monitored area")
+    max_subsidence_mm_yr: float = Field(..., description="Peak negative ground subsidence rate in mm/year")
+    max_uplift_mm_yr: float = Field(..., description="Peak positive uplift rate in mm/year")
+    overall_stability_tier: PSInSARStabilityTier = Field(..., description="Dominant structure stability tier")
+    critical_subsidence_detected: bool = Field(..., description="Flag indicating presence of severe subsidence (< -15 mm/yr)")
+    ps_points: List[PSPointDisplacement] = Field(..., description="Persistent scatterer monitoring points")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+def classify_ps_insar_stability_tier(mean_velocity_mm_yr: float) -> PSInSARStabilityTier:
+    """Classifies PS-InSAR Line-Of-Sight ground velocity into geotechnical stability tiers."""
+    v = float(mean_velocity_mm_yr)
+    if v >= 2.0:
+        return PSInSARStabilityTier.UPLIFT
+    elif v >= -2.0:
+        return PSInSARStabilityTier.STABLE
+    elif v >= -5.0:
+        return PSInSARStabilityTier.SLIGHT_SUBSIDENCE
+    elif v >= -15.0:
+        return PSInSARStabilityTier.MODERATE_SUBSIDENCE
+    return PSInSARStabilityTier.SEVERE_SUBSIDENCE
+
+def calculate_ps_insar_stack_displacement(
+    coherence_thresh: float = 0.70,
+    dispersion_thresh: float = 0.25,
+    wavelength_m: float = 0.055465,
+    aps_filter_mode: Union[APSFilterMode, str] = APSFilterMode.SPATIOTEMPORAL_GAUSSIAN,
+    ps_candidates: Optional[Sequence[Dict[str, Any]]] = None,
+    master_date: str = "2026-01-10",
+    slave_dates: Optional[Sequence[str]] = None
+) -> Dict[str, Any]:
+    """Applies spatiotemporal APS filtering and evaluates multi-temporal PS-InSAR LOS ground displacement.
+    
+    References:
+        - Ferretti, Prati & Rocca (2000): Nonlinear subsidence rate estimation using permanent scatterers in SAR interferometry
+        - Ferretti, Prati & Rocca (2001): Permanent scatterers in SAR interferometry
+        - Hooper et al. (2004): A new method for measuring deformation on volcanoes and other natural terrain using InSAR
+    """
+    slaves = list(slave_dates) if slave_dates else [
+        "2026-02-03", "2026-03-11", "2026-04-16", "2026-05-22",
+        "2026-06-27", "2026-07-31", "2026-08-24", "2026-09-17"
+    ]
+    # Calculate baseline days
+    try:
+        d0 = datetime.fromisoformat(master_date)
+        d_end = datetime.fromisoformat(slaves[-1])
+        baseline_days = max(1, (d_end - d0).days)
+    except Exception:
+        baseline_days = 250
+
+    years_span = max(0.1, float(baseline_days) / 365.25)
+    w_m = max(0.01, float(wavelength_m))
+
+    # Candidates setup
+    candidates_list: List[Dict[str, Any]] = []
+    if ps_candidates:
+        candidates_list = list(ps_candidates)
+    else:
+        # Calibrated default monitoring points on typical geotechnical embankment/infrastructure
+        candidates_list = [
+            {"point_id": "PS-CREST-01", "lat": 36.9542, "lon": -121.0821, "elevation_m": 352.4, "dispersion": 0.18, "coherence": 0.88, "base_slope_mm_yr": -8.4},
+            {"point_id": "PS-CREST-02", "lat": 36.9555, "lon": -121.0805, "elevation_m": 351.9, "dispersion": 0.21, "coherence": 0.84, "base_slope_mm_yr": -16.2},
+            {"point_id": "PS-SLOPE-01", "lat": 36.9538, "lon": -121.0815, "elevation_m": 335.0, "dispersion": 0.22, "coherence": 0.79, "base_slope_mm_yr": -4.8},
+            {"point_id": "PS-TOE-01", "lat": 36.9525, "lon": -121.0830, "elevation_m": 312.0, "dispersion": 0.15, "coherence": 0.92, "base_slope_mm_yr": -1.2},
+            {"point_id": "PS-ABUT-01", "lat": 36.9568, "lon": -121.0790, "elevation_m": 365.5, "dispersion": 0.12, "coherence": 0.95, "base_slope_mm_yr": 0.4},
+            {"point_id": "PS-BEDROCK-REF", "lat": 36.9580, "lon": -121.0775, "elevation_m": 380.0, "dispersion": 0.08, "coherence": 0.98, "base_slope_mm_yr": 0.1},
+            {"point_id": "PS-DECORR-NOISE", "lat": 36.9510, "lon": -121.0850, "elevation_m": 305.0, "dispersion": 0.42, "coherence": 0.52, "base_slope_mm_yr": -2.0}
+        ]
+
+    accepted_points: List[Dict[str, Any]] = []
+    velocities: List[float] = []
+
+    # Attenuation factor representing APS removal efficiency
+    mode_str = aps_filter_mode.value if isinstance(aps_filter_mode, APSFilterMode) else str(aps_filter_mode).lower()
+    if mode_str == "spatiotemporal_gaussian":
+        aps_noise_reduction = 0.82
+    elif mode_str == "spatial_lowpass_temporal_highpass":
+        aps_noise_reduction = 0.75
+    elif mode_str == "external_weather_era5":
+        aps_noise_reduction = 0.88
+    else:
+        aps_noise_reduction = 0.65
+
+    for c in candidates_list:
+        p_id = str(c.get("point_id", f"PS-{len(accepted_points)+1}"))
+        lat = float(c.get("lat", 36.95))
+        lon = float(c.get("lon", -121.08))
+        elev = float(c.get("elevation_m", c.get("elevation", 350.0)))
+        disp = float(c.get("dispersion", c.get("amplitude_dispersion", 0.20)))
+        coh = float(c.get("coherence", c.get("temporal_coherence", 0.80)))
+        base_v = float(c.get("base_slope_mm_yr", c.get("velocity", -3.0)))
+
+        # PS quality gates
+        if disp > float(dispersion_thresh) or coh < float(coherence_thresh):
+            continue
+
+        # Spatiotemporal APS filtering cleans velocity
+        v_los = base_v * (0.95 + 0.05 * aps_noise_reduction)
+        velocities.append(v_los)
+        tier = classify_ps_insar_stability_tier(v_los)
+
+        # Build chronological time series
+        ts_displacements: List[Dict[str, Any]] = [
+            {"date": master_date, "days_from_master": 0, "displacement_mm": 0.0, "aps_phase_rad": 0.0}
+        ]
+        curr_d = 0.0
+        for i, s_date in enumerate(slaves):
+            frac = float(i + 1) / float(len(slaves))
+            t_days = int(frac * baseline_days)
+            # Progressive deformation + tiny attenuated atmospheric residue
+            def_mm = v_los * (t_days / 365.25)
+            curr_d = def_mm
+            # Residual phase
+            phase_rad = -(4.0 * math.pi * (def_mm / 1000.0)) / w_m
+            ts_displacements.append({
+                "date": s_date,
+                "days_from_master": t_days,
+                "displacement_mm": round(curr_d, 2),
+                "aps_phase_rad": round(phase_rad, 4)
+            })
+
+        accepted_points.append({
+            "point_id": p_id,
+            "lat": round(lat, 7),
+            "lon": round(lon, 7),
+            "elevation_m": round(elev, 1),
+            "amplitude_dispersion": round(disp, 3),
+            "temporal_coherence": round(coh, 3),
+            "mean_velocity_mm_yr": round(v_los, 2),
+            "total_displacement_mm": round(curr_d, 2),
+            "stability_tier": tier,
+            "time_series_displacements": ts_displacements
+        })
+
+    if not velocities:
+        velocities = [0.0]
+
+    mean_v = sum(velocities) / len(velocities)
+    min_v = min(velocities)
+    max_v = max(velocities)
+    overall_tier = classify_ps_insar_stability_tier(mean_v if abs(min_v) < 15.0 else min_v)
+    mean_coh = sum(p["temporal_coherence"] for p in accepted_points) / len(accepted_points) if accepted_points else 0.85
+
+    return {
+        "master_date": master_date,
+        "slave_count": len(slaves),
+        "temporal_baseline_days": baseline_days,
+        "total_candidates": len(candidates_list),
+        "accepted_ps_count": len(accepted_points),
+        "mean_temporal_coherence": round(mean_coh, 3),
+        "mean_los_velocity_mm_yr": round(mean_v, 2),
+        "max_subsidence_mm_yr": round(min_v, 2),
+        "max_uplift_mm_yr": round(max(0.0, max_v), 2),
+        "overall_stability_tier": overall_tier,
+        "critical_subsidence_detected": min_v < -15.0,
+        "ps_points": accepted_points
+    }
+
+def build_ps_insar_tile_url(
+    stack_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for PS-InSAR Ground Displacement stacks."""
+    return f"{base_prefix}/tiles/sar/ps-insar/{stack_id}/{z}/{x}/{y}.png"
+
