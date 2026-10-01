@@ -633,6 +633,405 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(res_tile.headers.get("content-type"), "image/png")
         self.assertGreater(len(res_tile.content), 100)
 
+    def test_lst_radiative_transfer_api(self):
+        """Test POST /api/v1/analysis/lst/radiative-transfer and dynamic thermal LST tile streaming."""
+        res = self.client.post("/api/v1/analysis/lst/radiative-transfer", json={
+            "collection": "landsat-c2-l2",
+            "item_id": "LC09_L2SP_044034_20260810",
+            "bbox": [-121.12, 37.02, -121.04, 37.09],
+            "ndvi_soil": 0.05,
+            "ndvi_veg": 0.70
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "LC09_L2SP_044034_20260810")
+        self.assertIn("mean_lst_c", data)
+        self.assertIn("mean_lst_k", data)
+        self.assertIn("heat_hazard_level", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route alias /analysis/lst
+        res_alias = self.client.post("/api/v1/analysis/lst", json={
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Thermal LST XYZ Tile
+        res_tile = self.client.get("/api/v1/tiles/thermal/lst/landsat-c2-l2/LC09_L2SP_044034_20260810/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_topographic_correction_api(self):
+        """Test POST /api/v1/analysis/topographic-correction solar illumination normalization."""
+        res = self.client.post("/api/v1/analysis/topographic-correction", json={
+            "item_id": "S2A_MSIL2A_20260820_T10SEJ",
+            "model": "c_correction",
+            "solar_zenith_deg": 35.0,
+            "solar_azimuth_deg": 135.0,
+            "c_parameter": 0.12,
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "S2A_MSIL2A_20260820_T10SEJ")
+        self.assertIn("mean_illumination_cos", data)
+        self.assertIn("mean_reflectance_before", data)
+        self.assertIn("mean_reflectance_after", data)
+        self.assertEqual(data["status"], "corrected")
+
+        # Route alias /analysis/topographic_correction
+        res_alias = self.client.post("/api/v1/analysis/topographic_correction", json={
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(res_alias.status_code, 200)
+
+    def test_insar_displacement_and_coherence_api(self):
+        """Test POST /api/v1/analysis/insar/displacement, coherence, and SAR InSAR tiles."""
+        disp_res = self.client.post("/api/v1/analysis/insar/displacement", json={
+            "primary_scene_id": "S1A_IW_GRDH_1SDV_20260801",
+            "secondary_scene_id": "S1A_IW_GRDH_1SDV_20260813",
+            "temporal_baseline_days": 12.0,
+            "perpendicular_baseline_m": 45.0,
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(disp_res.status_code, 200)
+        disp_data = disp_res.json()
+        self.assertIn("mean_displacement_mm", disp_data)
+        self.assertIn("mean_velocity_mm_yr", disp_data)
+        self.assertIn("deformation_tier", disp_data)
+        self.assertIn("tile_url_template", disp_data)
+
+        # Coherence endpoint
+        coh_res = self.client.post("/api/v1/analysis/insar/coherence", json={
+            "pair_id": "PAIR-S1-20260801-20260813",
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(coh_res.status_code, 200)
+        coh_data = coh_res.json()
+        self.assertIn("mean_coherence", coh_data)
+        self.assertIn("structural_stability_score", coh_data)
+
+        # InSAR XYZ Tile
+        res_tile = self.client.get("/api/v1/tiles/sar/insar/PAIR-S1-20260801-20260813/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_phenology_harmonic_analysis_api(self):
+        """Test POST /api/v1/analysis/phenology/extract Fourier curve fitting and phenometrics."""
+        res = self.client.post("/api/v1/analysis/phenology/extract", json={
+            "asset_id": "SAN-LUIS-WATERSHED",
+            "timeseries": [
+                {"date": "2026-02-15", "value": 0.22},
+                {"date": "2026-04-15", "value": 0.58},
+                {"date": "2026-06-15", "value": 0.76},
+                {"date": "2026-08-15", "value": 0.45},
+                {"date": "2026-10-15", "value": 0.28}
+            ]
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["aoi_name"], "SAN-LUIS-WATERSHED")
+        self.assertIn("phenometrics", data)
+        self.assertIn("sos_doy", data["phenometrics"])
+        self.assertIn("pos_doy", data["phenometrics"])
+        self.assertIn("eos_doy", data["phenometrics"])
+        self.assertIn("los_days", data["phenometrics"])
+        self.assertIn("curve_points", data)
+
+    def test_bap_composite_api(self):
+        """Test POST /api/v1/analysis/composites/bap and dynamic composite XYZ tile streaming."""
+        res = self.client.post("/api/v1/analysis/composites/bap", json={
+            "collection": "sentinel-2-l2a",
+            "item_ids": ["S2A_MSIL2A_20260715_T10SEJ", "S2A_MSIL2A_20260815_T10SEJ"],
+            "target_doy": 215,
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("composite_id", data)
+        self.assertEqual(data["collection"], "sentinel-2-l2a")
+        self.assertIn("mean_pixel_score", data)
+        self.assertIn("tile_url_template", data)
+
+        # Dynamic BAP composite tile
+        res_tile = self.client.get(f"/api/v1/tiles/composites/bap/{data['composite_id']}/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_geometric_coregistration_api(self):
+        """Test POST /api/v1/analysis/geometric/coregistration calculates sub-pixel Fourier shift vectors."""
+        res = self.client.post("/api/v1/analysis/geometric/coregistration", json={
+            "reference_scene_id": "S2A_MSIL2A_20260815_T10SEJ",
+            "target_scene_id": "LC09_L2SP_044034_20260810",
+            "window_size_px": 256,
+            "resampling_kernel": "cubic"
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["reference_scene_id"], "S2A_MSIL2A_20260815_T10SEJ")
+        self.assertEqual(data["target_scene_id"], "LC09_L2SP_044034_20260810")
+        self.assertEqual(data["status"], "converged")
+        self.assertIn("shift_x_px", data)
+        self.assertIn("shift_y_px", data)
+        self.assertIn("total_shift_m", data)
+        self.assertIn("rmse_px", data)
+
+        # Route alias /analysis/coregistration
+        res_alias = self.client.post("/api/v1/analysis/coregistration", json={
+            "reference_scene_id": "S2A_REF",
+            "target_scene_id": "S2A_TGT"
+        })
+        self.assertEqual(res_alias.status_code, 200)
+
+    def test_point_cloud_filter_and_chm_api(self):
+        """Test POST /api/v1/analysis/point-cloud/filter, /chm, and dynamic CHM tile streaming."""
+        # 1. PMF Ground Filtering
+        filter_res = self.client.post("/api/v1/analysis/point-cloud/filter", json={
+            "point_cloud_id": "pc-san-luis-embankment-2026",
+            "format": "copc"
+        })
+        self.assertEqual(filter_res.status_code, 200)
+        filter_data = filter_res.json()
+        self.assertEqual(filter_data["point_cloud_id"], "pc-san-luis-embankment-2026")
+        self.assertGreater(filter_data["ground_points"], 0)
+        self.assertIn("classified_copc_url", filter_data)
+
+        # 2. Canopy Height Model (CHM = DSM - DTM)
+        chm_res = self.client.post("/api/v1/analysis/point-cloud/chm", json={
+            "asset_id": "SAN-LUIS-EMBANKMENT-01",
+            "dsm_item_id": "dsm_san_luis_2026",
+            "dtm_item_id": "dtm_san_luis_2026",
+            "grid_resolution_m": 1.0
+        })
+        self.assertEqual(chm_res.status_code, 200)
+        chm_data = chm_res.json()
+        self.assertEqual(chm_data["asset_id"], "SAN-LUIS-EMBANKMENT-01")
+        self.assertIn("mean_height_m", chm_data)
+        self.assertIn("max_height_m", chm_data)
+        self.assertIn("infrastructure_encroachment_ha", chm_data)
+        self.assertIn("tile_url_template", chm_data)
+
+        # Route alias /analysis/chm
+        res_alias = self.client.post("/api/v1/analysis/chm", json={
+            "asset_id": "SAN-LUIS-EMBANKMENT-01"
+        })
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Dynamic CHM tile streaming
+        res_tile = self.client.get("/api/v1/tiles/terrain/chm/SAN-LUIS-EMBANKMENT-01/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_ortho_occlusion_and_seamlines_api(self):
+        """Test POST /api/v1/analysis/ortho/occlusion, seamlines, and true ortho tiles."""
+        # 1. Occlusion evaluation
+        occ_res = self.client.post("/api/v1/analysis/ortho/occlusion", json={
+            "ortho_id": "ORTHO-SL-DAM-2026",
+            "dsm_id": "DSM-SL-DAM-2026",
+            "sun_zenith_deg": 35.0,
+            "sun_azimuth_deg": 135.0,
+            "sensor_off_nadir_deg": 6.5
+        })
+        self.assertEqual(occ_res.status_code, 200)
+        occ_data = occ_res.json()
+        self.assertEqual(occ_data["ortho_id"], "ORTHO-SL-DAM-2026")
+        self.assertIn("occluded_pixel_count", occ_data)
+        self.assertIn("occluded_area_pct", occ_data)
+        self.assertTrue(occ_data["true_ortho_ready"])
+
+        # 2. Graph-cut seamline optimization
+        seam_res = self.client.post("/api/v1/analysis/ortho/seamlines", json={
+            "granule_ids": ["GRANULE-01", "GRANULE-02", "GRANULE-03"],
+            "algorithm": "graph_cut_energy"
+        })
+        self.assertEqual(seam_res.status_code, 200)
+        seam_data = seam_res.json()
+        self.assertIn("mosaic_id", seam_data)
+        self.assertIn("seamline_count", seam_data)
+        self.assertIn("total_seamline_length_m", seam_data)
+        self.assertIn("tile_url_template", seam_data)
+
+        # Dynamic True Ortho XYZ tile streaming
+        res_tile = self.client.get(f"/api/v1/tiles/ortho/true/{seam_data['mosaic_id']}/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_byoc_storage_and_tiles_api(self):
+        """Test /api/v1/byoc endpoints: list, register, detail, sync, and XYZ tile streaming."""
+        # 1. List buckets
+        list_res = self.client.get("/api/v1/byoc/buckets")
+        self.assertEqual(list_res.status_code, 200)
+        buckets = list_res.json()
+        self.assertIsInstance(buckets, list)
+        self.assertGreater(len(buckets), 0)
+
+        # 2. Register new bucket
+        reg_res = self.client.post("/api/v1/byoc/buckets", json={
+            "bucket_name": "test-survey-cog-vault",
+            "provider": "aws_s3"
+        })
+        self.assertEqual(reg_res.status_code, 200)
+        new_bucket = reg_res.json()
+        self.assertEqual(new_bucket["bucket_name"], "test-survey-cog-vault")
+        b_id = new_bucket["bucket_id"]
+
+        # 3. Bucket detail
+        detail_res = self.client.get(f"/api/v1/byoc/buckets/{b_id}")
+        self.assertEqual(detail_res.status_code, 200)
+        self.assertEqual(detail_res.json()["bucket_id"], b_id)
+
+        # 4. Sync bucket catalog
+        sync_res = self.client.post(f"/api/v1/byoc/buckets/{b_id}/sync")
+        self.assertEqual(sync_res.status_code, 200)
+        sync_data = sync_res.json()
+        self.assertEqual(sync_data["bucket_id"], b_id)
+        self.assertGreater(sync_data["total_cogs_discovered"], 0)
+
+        # 5. Dynamic BYOC tile streaming
+        res_tile = self.client.get(f"/api/v1/tiles/byoc/{b_id}/cog-test/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_mann_kendall_trend_analysis_api(self):
+        """Test POST /api/v1/analysis/timeseries/mann-kendall and route aliases."""
+        payload = {
+            "metric_name": "ndvi_trend",
+            "values": [0.22, 0.28, 0.35, 0.42, 0.49, 0.58],
+            "dates": ["2026-01-01", "2026-02-01", "2026-03-01", "2026-04-01", "2026-05-01", "2026-06-01"],
+            "alpha": 0.05
+        }
+        res = self.client.post("/api/v1/analysis/timeseries/mann-kendall", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["metric_name"], "ndvi_trend")
+        self.assertEqual(data["sample_size"], 6)
+        self.assertGreater(data["s_statistic"], 0)
+        self.assertEqual(data["direction"], "increasing")
+        self.assertTrue(data["is_significant"])
+
+        # Test route alias /analysis/mann-kendall
+        res_alias = self.client.post("/api/v1/analysis/mann-kendall", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Test timeseries router alias /timeseries/mann-kendall
+        res_ts = self.client.post("/api/v1/timeseries/mann-kendall", json=payload)
+        self.assertEqual(res_ts.status_code, 200)
+
+    def test_dos1_atmospheric_correction_api(self):
+        """Test POST /api/v1/analysis/atmospheric/dos1 Chavez (1988) radiative transfer."""
+        payload = {
+            "item_id": "LC09_L2SP_044034_20260810",
+            "sun_zenith_deg": 35.0,
+            "earth_sun_distance_au": 1.012,
+            "dark_object_dn_threshold": 100
+        }
+        res = self.client.post("/api/v1/analysis/atmospheric/dos1", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "LC09_L2SP_044034_20260810")
+        self.assertEqual(data["model_applied"], "dos1")
+        self.assertIn("band_haze_values", data)
+        self.assertIn("mean_surface_reflectance", data)
+        self.assertIn("blue", data["mean_surface_reflectance"])
+        self.assertIn("nir", data["mean_surface_reflectance"])
+
+        # Test route alias /analysis/dos1
+        res_alias = self.client.post("/api/v1/analysis/dos1", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+    def test_cva_change_vector_analysis_and_tiles_api(self):
+        """Test POST /api/v1/analysis/change/cva and dynamic CVA tile streaming."""
+        payload = {
+            "pre_scene_id": "LC09_20260601",
+            "post_scene_id": "LC09_20260815",
+            "magnitude_threshold": 0.15,
+            "bands": ["red", "nir"]
+        }
+        res = self.client.post("/api/v1/analysis/change/cva", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["pre_scene_id"], "LC09_20260601")
+        self.assertEqual(data["post_scene_id"], "LC09_20260815")
+        self.assertIn("mean_magnitude", data)
+        self.assertIn("changed_area_hectares", data)
+        self.assertIn("sector_breakdown", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route alias /analysis/cva
+        res_alias = self.client.post("/api/v1/analysis/cva", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Dynamic CVA tile
+        res_tile = self.client.get("/api/v1/tiles/change/cva/LC09_20260601/LC09_20260815/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_soil_salinity_analysis_and_tiles_api(self):
+        """Test POST /api/v1/analysis/soil/salinity and dynamic soil salinity tiles."""
+        payload = {
+            "collection": "landsat-c2-l2",
+            "item_id": "LC09_L2SP_044034_20260810",
+            "index_type": "ndsi",
+            "bbox": [-121.12, 37.02, -121.04, 37.09]
+        }
+        res = self.client.post("/api/v1/analysis/soil/salinity", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "LC09_L2SP_044034_20260810")
+        self.assertEqual(data["index_type"], "ndsi")
+        self.assertIn("mean_salinity_index", data)
+        self.assertIn("saline_area_hectares", data)
+        self.assertIn("hazard_tiers", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases /analysis/soil-salinity and /analysis/salinity
+        res_alias1 = self.client.post("/api/v1/analysis/soil-salinity", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/salinity", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Soil Salinity tile
+        res_tile = self.client.get("/api/v1/tiles/soil/salinity/landsat-c2-l2/LC09_L2SP_044034_20260810/ndsi/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_wildfire_thermal_hotspots_and_frp_tiles_api(self):
+        """Test POST /api/v1/analysis/thermal/hotspots and dynamic active fire FRP tiles."""
+        payload = {
+            "collection": "landsat-c2-l2",
+            "item_id": "LC09_L2SP_044034_20260810",
+            "bbox": [-121.12, 37.02, -121.04, 37.09],
+            "delta_t_threshold_k": 10.0
+        }
+        res = self.client.post("/api/v1/analysis/thermal/hotspots", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "LC09_L2SP_044034_20260810")
+        self.assertIn("total_hotspots_detected", data)
+        self.assertIn("total_frp_mw", data)
+        self.assertIn("hotspots", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases /analysis/thermal-hotspots and /analysis/hotspots
+        res_alias1 = self.client.post("/api/v1/analysis/thermal-hotspots", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/hotspots", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Active Fire Thermal Hotspot tile
+        res_tile = self.client.get("/api/v1/tiles/thermal/hotspots/landsat-c2-l2/LC09_L2SP_044034_20260810/12/1042/1628.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
 if __name__ == "__main__":
     unittest.main()
 

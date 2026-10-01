@@ -200,7 +200,27 @@ export {
   THERMAL_HOTSPOT_CONFIDENCES,
   calculateFireRadiativePower,
   detectThermalHotspots,
-  buildThermalHotspotTileUrl
+  buildThermalHotspotTileUrl,
+  INUNDATION_HAZARD_TIERS,
+  DAM_BREACH_FAILURE_MODES,
+  calculateDamBreachInundation,
+  buildFloodInundationTileUrl,
+  LANDSLIDE_SUSCEPTIBILITY_TIERS,
+  LANDSLIDE_TRIGGER_TYPES,
+  calculateLandslideSusceptibility,
+  buildLandslideTileUrl,
+  DROUGHT_SEVERITY_TIERS,
+  calculateVegetationHealthIndex,
+  classifyDroughtTier,
+  buildDroughtVhiTileUrl,
+  MINERAL_ENDMEMBER_TYPES,
+  MINERAL_ENDMEMBER_LIBRARY,
+  calculateSpectralAngleMapper,
+  getMineralEndmemberSpec,
+  buildSamMineralTileUrl,
+  GEOSPATIAL_SERIALIZATION_FORMATS,
+  buildVectorTileUrl,
+  formatVectorExportFilename
 } from '../config/constants.js';
 
 /**
@@ -1576,6 +1596,73 @@ const demoAdapter = async (config) => {
         ],
         tile_url_template: '/api/v1/tiles/thermal/hotspots/landsat-c2-l2/LC09_L2SP_043034_20260820/{z}/{x}/{y}.png',
         detected_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/hazard/dam-breach') || url.includes('/api/v1/analysis/dam-breach')) data = {
+        simulation_id: 'SIM-BREACH-2026-001',
+        aoi_id: 'TAILINGS-DAM-04',
+        failure_mode: 'piping_seepage',
+        peak_breach_discharge_m3s: 14820.5,
+        total_inundation_area_ha: 324.8,
+        max_flood_depth_m: 35.0,
+        wave_front_velocity_ms: 8.42,
+        points: [
+          { distance_km: 0.0, elevation_m: 220.0, max_depth_m: 35.0, peak_discharge_m3s: 14820.5, arrival_time_min: 0.0, velocity_ms: 8.42, hazard_tier: 'extreme_hazard' },
+          { distance_km: 2.5, elevation_m: 182.5, max_depth_m: 18.2, peak_discharge_m3s: 13580.0, arrival_time_min: 4.9, velocity_ms: 6.85, hazard_tier: 'extreme_hazard' },
+          { distance_km: 5.0, elevation_m: 145.0, max_depth_m: 9.8, peak_discharge_m3s: 12450.0, arrival_time_min: 10.2, velocity_ms: 5.40, hazard_tier: 'extreme_hazard' },
+          { distance_km: 10.0, elevation_m: 70.0, max_depth_m: 4.2, peak_discharge_m3s: 10450.0, arrival_time_min: 22.5, velocity_ms: 4.10, hazard_tier: 'extreme_hazard' },
+          { distance_km: 15.0, elevation_m: 35.0, max_depth_m: 2.1, peak_discharge_m3s: 8760.0, arrival_time_min: 36.8, velocity_ms: 3.20, hazard_tier: 'high_hazard' },
+          { distance_km: 20.0, elevation_m: 15.0, max_depth_m: 1.1, peak_discharge_m3s: 7340.0, arrival_time_min: 52.4, velocity_ms: 2.45, hazard_tier: 'moderate_hazard' },
+          { distance_km: 25.0, elevation_m: 5.0, max_depth_m: 0.45, peak_discharge_m3s: 6150.0, arrival_time_min: 69.2, velocity_ms: 1.80, hazard_tier: 'low_hazard' }
+        ],
+        hazard_summary: { extreme_hazard: 57.1, high_hazard: 14.3, moderate_hazard: 14.3, low_hazard: 14.3 },
+        tile_url_template: '/api/v1/tiles/hazard/flood-inundation/SIM-BREACH-2026-001/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/hazard/landslide-susceptibility') || url.includes('/api/v1/analysis/landslide')) data = {
+        aoi_id: 'SLOPE-SECTOR-01',
+        static_fs: 1.145,
+        critical_accel_g: 0.0681,
+        newmark_displacement_cm: 6.84,
+        runout_distance_m: 76.5,
+        susceptibility_tier: 'high',
+        hazard_probability: 0.65,
+        failure_warning: true,
+        tile_url_template: '/api/v1/tiles/hazard/landslide/SLOPE-SECTOR-01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/drought/vhi') || url.includes('/api/v1/analysis/vhi')) data = {
+        item_id: 'S2A_MSIL2A_20260820T184211',
+        mean_vci: 32.4,
+        mean_tci: 24.8,
+        mean_vhi: 28.6,
+        drought_tier: 'moderate_drought',
+        affected_area_ha: 142.5,
+        affected_area_pct: 34.8,
+        tier_breakdown: { extreme_drought: 5.2, severe_drought: 14.6, moderate_drought: 34.8, mild_drought: 26.4, no_drought: 19.0 },
+        tile_url_template: '/api/v1/tiles/drought/vhi/sentinel-2-l2a/S2A_MSIL2A_20260820T184211/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/geology/sam') || url.includes('/api/v1/analysis/sam')) data = {
+        target_endmember: 'pyrite',
+        spectral_angle_rad: 0.0745,
+        spectral_angle_deg: 4.27,
+        is_match: true,
+        match_confidence: 'high',
+        similarity_score: 0.9526,
+        classified_area_ha: 48.2,
+        classified_area_pct: 14.6,
+        tile_url_template: '/api/v1/tiles/geology/sam/sentinel-2-l2a/S2A_MSIL2A_20260820T184211/pyrite/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/vector/export')) data = {
+        export_id: 'EXP-VEC-2026-901',
+        layer_id: 'critical_infrastructure',
+        format: 'geoparquet',
+        feature_count: 142,
+        file_size_bytes: 48520,
+        download_url: '/api/v1/analysis/vector/export/EXP-VEC-2026-901/download',
+        mime_type: 'application/vnd.apache.parquet',
+        created_at: new Date().toISOString()
       };
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -3264,6 +3351,188 @@ export const analyzeSoilSalinity = async (params) => {
  */
 export const detectThermalHotspotsAnalysis = async (params) => {
   const response = await giosApi.post('/api/v1/analysis/thermal/hotspots', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} DamBreachAnalysisRequest
+ * @property {string} aoi_id - Target dam or tailings facility asset ID
+ * @property {number} reservoir_volume_m3 - Total impounded reservoir volume in m^3
+ * @property {number} breach_height_m - Height of impoundment in meters
+ * @property {number} [downstream_slope=0.015] - Average valley slope gradient (m/m)
+ * @property {number} [mannings_n=0.045] - Downstream channel roughness coefficient
+ * @property {'overtopping'|'piping_seepage'|'foundation_slide'|'seismic_liquefaction'} [failure_mode='piping_seepage'] - Failure mode
+ * @property {number} [simulation_distance_km=25.0] - Downstream reach length in km
+ */
+
+/**
+ * @typedef {Object} DamBreachAnalysisResponse
+ * @property {string} simulation_id - Unique simulation identifier
+ * @property {string} aoi_id - Target asset ID
+ * @property {string} failure_mode - Evaluated failure mode
+ * @property {number} peak_breach_discharge_m3s - Maximum breach discharge at dam face via Froehlich (2008)
+ * @property {number} total_inundation_area_ha - Estimated total flooded area in ha
+ * @property {number} max_flood_depth_m - Maximum flood depth in meters
+ * @property {number} wave_front_velocity_ms - Wave propagation speed in m/s
+ * @property {Array<Object>} points - Downstream station hydrograph predictions
+ * @property {Record<string, number>} hazard_summary - Inundation percentage per hazard tier
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Executes tailings dam breach flood wave runout simulation via Froehlich (2008) and Manning's hydraulics.
+ * 
+ * @param {DamBreachAnalysisRequest} params - Simulation parameters
+ * @returns {Promise<DamBreachAnalysisResponse>} Peak discharge, flood wave propagation, and hazard zonation
+ */
+export const simulateDamBreachRunout = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/hazard/dam-breach', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} LandslideSusceptibilityRequest
+ * @property {number} slope_deg - Terrain surface slope angle in degrees
+ * @property {number} [cohesion_kpa=12.5] - Effective soil cohesion c' in kPa
+ * @property {number} [friction_angle_deg=32.0] - Internal friction angle phi' in degrees
+ * @property {number} [soil_depth_m=3.5] - Potential slip surface depth in meters
+ * @property {number} [pga_g=0.25] - Peak Ground Acceleration in g
+ * @property {number} [water_table_ratio=0.40] - Phreatic surface saturation ratio m
+ * @property {'seismic'|'rainfall'|'rapid_drawdown'|'excavation'} [trigger_type='seismic'] - Trigger type
+ * @property {string} [aoi_id='SLOPE-SECTOR-01'] - Target slope asset ID
+ */
+
+/**
+ * @typedef {Object} LandslideSusceptibilityResponse
+ * @property {string} aoi_id - Target slope asset identifier
+ * @property {number} static_fs - Static Factor of Safety
+ * @property {number} critical_accel_g - Newmark critical yield acceleration a_c in g
+ * @property {number} newmark_displacement_cm - Permanent co-seismic displacement in cm
+ * @property {number} runout_distance_m - Estimated debris flow runout distance in meters
+ * @property {'low'|'moderate'|'high'|'very_high'} susceptibility_tier - Landslide susceptibility tier
+ * @property {number} hazard_probability - Failure probability (0.0 to 1.0)
+ * @property {boolean} failure_warning - Whether slope exceeds safety intervention criteria
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates infinite slope limit equilibrium Factor of Safety, Newmark critical acceleration, and co-seismic displacement.
+ * 
+ * @param {LandslideSusceptibilityRequest} params - Slope stability request parameters
+ * @returns {Promise<LandslideSusceptibilityResponse>} Factor of safety, Newmark displacement, and susceptibility tier
+ */
+export const assessLandslideSusceptibility = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/hazard/landslide-susceptibility', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} DroughtAnalysisRequest
+ * @property {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {string} item_id - Target scene STAC identifier
+ * @property {Array<number>|Object} [bbox] - Target bounding box or GeoJSON geometry
+ * @property {number} [vci_weight=0.50] - Weight factor alpha for VCI
+ * @property {number} [sample_ndvi=0.42] - Observed surface NDVI
+ * @property {number} [sample_lst_c=32.5] - Observed Land Surface Temperature in Celsius
+ * @property {number} [ndvi_min=0.15] - Climatological minimum multi-year NDVI
+ * @property {number} [ndvi_max=0.75] - Climatological maximum multi-year NDVI
+ * @property {number} [lst_min_c=18.0] - Climatological minimum multi-year LST
+ * @property {number} [lst_max_c=42.0] - Climatological maximum multi-year LST
+ */
+
+/**
+ * @typedef {Object} DroughtAnalysisResponse
+ * @property {string} item_id - Target scene STAC identifier
+ * @property {number} mean_vci - Vegetation Condition Index (VCI)
+ * @property {number} mean_tci - Temperature Condition Index (TCI)
+ * @property {number} mean_vhi - Vegetation Health Index (VHI)
+ * @property {'no_drought'|'mild_drought'|'moderate_drought'|'severe_drought'|'extreme_drought'} drought_tier - Dominant drought tier
+ * @property {number} affected_area_ha - Stressed area in hectares
+ * @property {number} affected_area_pct - Percentage under drought stress
+ * @property {Record<string, number>} tier_breakdown - Percentage distribution across drought tiers
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates Kogan (1995) Vegetation Condition Index (VCI), Temperature Condition Index (TCI), and Vegetation Health Index (VHI).
+ * 
+ * @param {DroughtAnalysisRequest} params - Drought assessment request parameters
+ * @returns {Promise<DroughtAnalysisResponse>} VCI, TCI, VHI indices, and drought severity classification
+ */
+export const analyzeDroughtVHI = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/drought/vhi', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} SAMAnalysisRequest
+ * @property {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {string} item_id - Target scene STAC identifier
+ * @property {'pyrite'|'chalcopyrite'|'goethite'|'hematite'|'kaolinite'|'calcite'|'acid_mine_drainage'} [target_endmember='pyrite'] - Target mineral
+ * @property {number} [max_angle_rad=0.12] - Maximum angle cutoff in radians
+ * @property {Array<number>|Object} [bbox] - Target bounding box or GeoJSON geometry
+ * @property {Record<string, number>} [sample_pixel_reflectance] - Pixel reflectance vector
+ * @property {Record<string, number>} [custom_endmember_reflectance] - Laboratory endmember vector
+ */
+
+/**
+ * @typedef {Object} SAMAnalysisResponse
+ * @property {string} target_endmember - Evaluated mineral endmember
+ * @property {number} spectral_angle_rad - Spectral angle in radians
+ * @property {number} spectral_angle_deg - Spectral angle in degrees
+ * @property {boolean} is_match - Whether spectral angle is within cutoff
+ * @property {'high'|'moderate'|'low'|'none'} match_confidence - Confidence tier
+ * @property {number} similarity_score - Normalized similarity [0-1]
+ * @property {number} classified_area_ha - Matching area in hectares
+ * @property {number} classified_area_pct - Matching area percentage
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates Kruse et al. (1993) Spectral Angle Mapper (SAM) for mineral and tailings identification.
+ * 
+ * @param {SAMAnalysisRequest} params - SAM request parameters
+ * @returns {Promise<SAMAnalysisResponse>} Spectral angle, mineral match status, and classified area
+ */
+export const classifyMineralSAM = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geology/sam', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} VectorExportRequest
+ * @property {string} [layer_id='critical_infrastructure'] - Spatial vector layer ID
+ * @property {'geojson'|'geoparquet'|'flatgeobuf'|'mvt_pbf'|'shapefile_zip'} [format='geoparquet'] - Output format
+ * @property {Array<number>} [bbox] - Bounding box filter
+ * @property {string} [filter_property] - Property key to filter
+ * @property {string} [filter_value] - Property value to filter
+ * @property {number} [simplify_tolerance_deg=0.0001] - Simplification tolerance
+ */
+
+/**
+ * @typedef {Object} VectorExportResponse
+ * @property {string} export_id - Unique export identifier
+ * @property {string} layer_id - Target layer ID
+ * @property {string} format - Delivered format
+ * @property {number} feature_count - Total exported features
+ * @property {number} file_size_bytes - File size in bytes
+ * @property {string} download_url - Retrieval URL
+ * @property {string} mime_type - Standard MIME content type
+ * @property {string} created_at - ISO 8601 timestamp
+ */
+
+/**
+ * Requests cloud-native GIS vector dataset export in GeoParquet, FlatGeobuf, GeoJSON, MVT, or Shapefile.
+ * 
+ * @param {VectorExportRequest} params - Vector export parameters
+ * @returns {Promise<VectorExportResponse>} Export record with download URL and feature statistics
+ */
+export const exportVectorDataset = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/vector/export', params);
   return response.data;
 };
 

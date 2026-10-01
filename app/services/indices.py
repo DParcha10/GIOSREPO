@@ -151,6 +151,47 @@ class IndexComputationService:
             return ((nir_arr - red_arr) / denom) * (np.float32(1.0) + l_f)
 
     @staticmethod
+    def ndsi(red: Any, nir: Any) -> Any:
+        """Normalized Difference Salinity Index — soil salinity hazard mapping."""
+        red_arr = np.asarray(red, dtype=np.float32)
+        nir_arr = np.asarray(nir, dtype=np.float32)
+        denom = red_arr + nir_arr
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(np.abs(denom) < IndexComputationService.EPSILON, np.nan, (red_arr - nir_arr) / denom)
+
+    @staticmethod
+    def si1(green: Any, red: Any) -> Any:
+        """Salinity Index 1: sqrt(Green * Red)."""
+        green_arr = np.asarray(green, dtype=np.float32)
+        red_arr = np.asarray(red, dtype=np.float32)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            prod = np.maximum(0.0, green_arr * red_arr)
+            return np.sqrt(prod)
+
+    @staticmethod
+    def si2(green: Any, red: Any, nir: Any) -> Any:
+        """Salinity Index 2: sqrt(Green^2 + Red^2 + NIR^2)."""
+        green_arr = np.asarray(green, dtype=np.float32)
+        red_arr = np.asarray(red, dtype=np.float32)
+        nir_arr = np.asarray(nir, dtype=np.float32)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            sum_sq = np.maximum(0.0, green_arr**2 + red_arr**2 + nir_arr**2)
+            return np.sqrt(sum_sq)
+
+    @staticmethod
+    def crsi(blue: Any, green: Any, red: Any, nir: Any) -> Any:
+        """Combined Remote Sensing Index for soil salinity: sqrt((NIR*Red - Green*Blue)/(NIR*Red + Green*Blue))."""
+        blue_arr = np.asarray(blue, dtype=np.float32)
+        green_arr = np.asarray(green, dtype=np.float32)
+        red_arr = np.asarray(red, dtype=np.float32)
+        nir_arr = np.asarray(nir, dtype=np.float32)
+        num = nir_arr * red_arr - green_arr * blue_arr
+        denom = nir_arr * red_arr + green_arr * blue_arr
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.where(np.abs(denom) < IndexComputationService.EPSILON, np.nan, num / denom)
+            return np.sqrt(np.maximum(0.0, ratio))
+
+    @staticmethod
     def lst(thermal_input: Any) -> Any:
         """Land Surface Temperature in Celsius (Landsat Band 10).
         - If input is raw DN (> 1000): converts DN * 0.00341802 + 149.0 - 273.15
@@ -245,6 +286,25 @@ class IndexComputationService:
             green = bands.get("green", bands.get("B03", bands.get("b03", bands.get("b3", bands.get("B3")))))
             blue = bands.get("blue", bands.get("B02", bands.get("b02", bands.get("b2", bands.get("B2")))))
             return np.stack([red, green, blue], axis=-1)
+        elif name == "ndsi":
+            red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
+            nir = bands.get("nir", bands.get("B08", bands.get("b08", bands.get("nir08", bands.get("b8", bands.get("B8"))))))
+            return cls.ndsi(red, nir)
+        elif name == "si1":
+            green = bands.get("green", bands.get("B03", bands.get("b03", bands.get("b3", bands.get("B3")))))
+            red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
+            return cls.si1(green, red)
+        elif name == "si2":
+            green = bands.get("green", bands.get("B03", bands.get("b03", bands.get("b3", bands.get("B3")))))
+            red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
+            nir = bands.get("nir", bands.get("B08", bands.get("b08", bands.get("nir08", bands.get("b8", bands.get("B8"))))))
+            return cls.si2(green, red, nir)
+        elif name == "crsi":
+            blue = bands.get("blue", bands.get("B02", bands.get("b02", bands.get("b2", bands.get("B2")))))
+            green = bands.get("green", bands.get("B03", bands.get("b03", bands.get("b3", bands.get("B3")))))
+            red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
+            nir = bands.get("nir", bands.get("B08", bands.get("b08", bands.get("nir08", bands.get("b8", bands.get("B8"))))))
+            return cls.crsi(blue, green, red, nir)
         else:
             raise ValueError(f"Unsupported spectral index: {index_name}")
 
@@ -265,7 +325,11 @@ class IndexComputationService:
                 "evi": ["B02", "B04", "B08", "SCL"],
                 "savi": ["B04", "B08", "SCL"],
                 "lst": ["B04", "B08", "SCL"],
-                "rgb": ["B02", "B03", "B04", "SCL"]
+                "rgb": ["B02", "B03", "B04", "SCL"],
+                "ndsi": ["B04", "B08", "SCL"],
+                "si1": ["B03", "B04", "SCL"],
+                "si2": ["B03", "B04", "B08", "SCL"],
+                "crsi": ["B02", "B03", "B04", "B08", "SCL"]
             }
             return band_map.get(idx, ["B02", "B03", "B04", "B05", "B08", "B11", "B12", "SCL"])
         else:
@@ -280,7 +344,11 @@ class IndexComputationService:
                 "evi": ["blue", "red", "nir08", "qa_pixel"],
                 "savi": ["red", "nir08", "qa_pixel"],
                 "lst": ["lwir11", "qa_pixel"],
-                "rgb": ["blue", "green", "red", "qa_pixel"]
+                "rgb": ["blue", "green", "red", "qa_pixel"],
+                "ndsi": ["red", "nir08", "qa_pixel"],
+                "si1": ["green", "red", "qa_pixel"],
+                "si2": ["green", "red", "nir08", "qa_pixel"],
+                "crsi": ["blue", "green", "red", "nir08", "qa_pixel"]
             }
             return band_map.get(idx, ["blue", "green", "red", "nir08", "swir16", "swir22", "lwir11", "qa_pixel"])
 

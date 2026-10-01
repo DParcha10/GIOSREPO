@@ -3251,7 +3251,11 @@ def analyze_dos1_atmospheric_correction(req: DOS1CorrectionRequest):
         b_key = b.lower().strip()
         esun_val = esun_map.get(b_key, 1500.0)
         haze_val = round(haze_ref.get(b_key, 5.0 * scale), 4)
+        if req.band_haze_values and b_key in req.band_haze_values:
+            haze_val = float(req.band_haze_values[b_key])
         sat_rad = sat_rad_ref.get(b_key, 50.0)
+        if req.sample_radiance and b_key in req.sample_radiance:
+            sat_rad = float(req.sample_radiance[b_key])
 
         boa_rho = calculate_dos1_surface_reflectance(
             radiance=sat_rad,
@@ -3304,12 +3308,12 @@ def analyze_change_vector_analysis(req: CVAAnalysisRequest):
     area_ha = _calculate_polygon_area_ha(poly_geom)
 
     # Multi-spectral sample reflectances for bitemporal pair
-    pre_bands = {"red": 0.085, "nir": 0.420, "swir1": 0.160, "swir2": 0.085}
-    post_bands = {"red": 0.155, "nir": 0.275, "swir1": 0.240, "swir2": 0.160}
+    pre_bands = req.pre_bands or {"red": 0.085, "nir": 0.420, "swir1": 0.160, "swir2": 0.085}
+    post_bands = req.post_bands or {"red": 0.155, "nir": 0.275, "swir1": 0.240, "swir2": 0.160}
 
     if req.bands:
-        pre_sub = {b.lower(): pre_bands.get(b.lower(), 0.1) for b in req.bands}
-        post_sub = {b.lower(): post_bands.get(b.lower(), 0.15) for b in req.bands}
+        pre_sub = {b.lower(): pre_bands.get(b.lower(), pre_bands.get("red", 0.1)) for b in req.bands}
+        post_sub = {b.lower(): post_bands.get(b.lower(), post_bands.get("nir", 0.15)) for b in req.bands}
     else:
         pre_sub = pre_bands
         post_sub = post_bands
@@ -3423,7 +3427,15 @@ def analyze_soil_salinity(req: SoilSalinityAnalysisRequest):
     area_ha = _calculate_polygon_area_ha(poly_geom)
 
     # Physical agricultural soil reflectance values
-    indices = calculate_salinity_indices(blue=0.072, green=0.118, red=0.170, nir=0.182)
+    if req.sample_bands:
+        indices = calculate_salinity_indices(
+            blue=req.sample_bands.get("blue", 0.072),
+            green=req.sample_bands.get("green", 0.118),
+            red=req.sample_bands.get("red", 0.170),
+            nir=req.sample_bands.get("nir", 0.182)
+        )
+    else:
+        indices = calculate_salinity_indices(blue=0.072, green=0.118, red=0.170, nir=0.182)
     metric_key = req.index_type.value.lower()
     mean_val = indices.get(metric_key, indices["ndsi"])
 

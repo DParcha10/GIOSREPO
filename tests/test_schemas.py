@@ -350,7 +350,39 @@ from app.models.schemas import (
     ThermalHotspotResponse,
     calculate_fire_radiative_power,
     detect_thermal_hotspots,
-    build_thermal_hotspot_tile_url
+    build_thermal_hotspot_tile_url,
+    InundationHazardTier,
+    DamBreachFailureMode,
+    DamBreachPoint,
+    DamBreachAnalysisRequest,
+    DamBreachAnalysisResponse,
+    calculate_dam_breach_inundation,
+    build_flood_inundation_tile_url,
+    LandslideSusceptibilityTier,
+    LandslideTriggerType,
+    LandslideSusceptibilityRequest,
+    LandslideSusceptibilityResponse,
+    calculate_landslide_susceptibility,
+    build_landslide_tile_url,
+    DroughtSeverityTier,
+    DroughtAnalysisRequest,
+    DroughtAnalysisResponse,
+    calculate_vegetation_health_index,
+    classify_drought_tier,
+    build_drought_vhi_tile_url,
+    MineralEndmemberType,
+    MINERAL_ENDMEMBER_LIBRARY,
+    SAMAnalysisRequest,
+    SAMAnalysisResponse,
+    calculate_spectral_angle_mapper,
+    get_mineral_endmember_spec,
+    build_sam_mineral_tile_url,
+    GeospatialSerializationFormat,
+    VectorExportRequest,
+    VectorExportResponse,
+    VectorTileRequest,
+    build_vector_tile_url,
+    format_vector_export_filename
 )
 from app.config import settings
 
@@ -3796,7 +3828,359 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(resp.high_confidence_count, 8)
         self.assertEqual(len(resp.hotspots), 1)
 
+    def test_t90_canonical_route_contracts(self):
+        """Verify all T-90 canonical route contracts in API_ROUTE_CONTRACTS and format_api_route."""
+        t90_routes = [
+            "analysis_dam_breach",
+            "analysis_dam_breach_short",
+            "tiles_flood_inundation",
+            "analysis_landslide",
+            "analysis_landslide_short",
+            "tiles_landslide",
+            "analysis_drought_vhi",
+            "analysis_drought_vhi_short",
+            "tiles_drought_vhi",
+            "analysis_sam_mineral",
+            "analysis_sam_mineral_short",
+            "tiles_sam_mineral",
+            "tiles_vector_pbf",
+            "analysis_vector_export"
+        ]
+        for route in t90_routes:
+            self.assertIn(route, API_ROUTE_CONTRACTS, f"Missing route contract: {route}")
+
+        # Test parameter substitution
+        flood_tile = format_api_route("tiles_flood_inundation", simulation_id="SIM-101", z=14, x=2450, y=5600)
+        self.assertEqual(flood_tile, "/api/v1/tiles/hazard/flood-inundation/SIM-101/14/2450/5600.png")
+
+        landslide_tile = format_api_route("tiles_landslide", asset_id="SLOPE-02", z=16, x=5100, y=10200)
+        self.assertEqual(landslide_tile, "/api/v1/tiles/hazard/landslide/SLOPE-02/16/5100/10200.png")
+
+        drought_tile = format_api_route("tiles_drought_vhi", collection="sentinel-2-l2a", item_id="S2A_123", z=10, x=300, y=600)
+        self.assertEqual(drought_tile, "/api/v1/tiles/drought/vhi/sentinel-2-l2a/S2A_123/10/300/600.png")
+
+        sam_tile = format_api_route("tiles_sam_mineral", collection="sentinel-2-l2a", item_id="S2A_123", endmember="pyrite", z=12, x=600, y=1200)
+        self.assertEqual(sam_tile, "/api/v1/tiles/geology/sam/sentinel-2-l2a/S2A_123/pyrite/12/600/1200.png")
+
+        vec_tile = format_api_route("tiles_vector_pbf", layer_id="critical_infrastructure", z=15, x=4500, y=9000)
+        self.assertEqual(vec_tile, "/api/v1/tiles/vector/critical_infrastructure/15/4500/9000.pbf")
+
+    def test_dam_breach_inundation_contracts_and_math(self):
+        """Verify dam breach peak discharge (Froehlich), wave propagation, and hazard zonation."""
+        # 1. Enums
+        self.assertEqual(InundationHazardTier.EXTREME_HAZARD.value, "extreme_hazard")
+        self.assertEqual(DamBreachFailureMode.PIPING_SEEPAGE.value, "piping_seepage")
+
+        # 2. Mathematical calculation
+        sim = calculate_dam_breach_inundation(
+            reservoir_volume_m3=25000000.0,
+            breach_height_m=35.0,
+            downstream_slope=0.015,
+            mannings_n=0.045,
+            simulation_distance_km=25.0
+        )
+        self.assertGreater(sim["peak_breach_discharge_m3s"], 5000.0)
+        self.assertGreater(sim["total_inundation_area_ha"], 100.0)
+        self.assertEqual(sim["max_flood_depth_m"], 35.0)
+        self.assertGreater(sim["wave_front_velocity_ms"], 2.0)
+        self.assertGreater(len(sim["points"]), 5)
+
+        # Check wave attenuation: downstream depth and discharge decrease
+        p_first = sim["points"][0]
+        p_last = sim["points"][-1]
+        self.assertGreater(p_first["max_depth_m"], p_last["max_depth_m"])
+        self.assertGreater(p_first["peak_discharge_m3s"], p_last["peak_discharge_m3s"])
+        self.assertEqual(p_first["distance_km"], 0.0)
+        self.assertEqual(p_last["distance_km"], 25.0)
+        self.assertGreater(p_last["arrival_time_min"], p_first["arrival_time_min"])
+
+        # 3. Tile URL builder
+        tile_url = build_flood_inundation_tile_url("SIM-BREACH-01", 12, 1000, 2000)
+        self.assertIn("/api/v1/tiles/hazard/flood-inundation/SIM-BREACH-01/12/1000/2000.png", tile_url)
+        self.assertIn("colormap=blues", tile_url)
+
+        # 4. Request / Response models
+        req = DamBreachAnalysisRequest(
+            aoi_id="TAILINGS-04",
+            volume=30000000.0,
+            dam_height=40.0,
+            slope=0.02,
+            distance_km=30.0
+        )
+        self.assertEqual(req.reservoir_volume_m3, 30000000.0)
+        self.assertEqual(req.breach_height_m, 40.0)
+        self.assertEqual(req.downstream_slope, 0.02)
+        self.assertEqual(req.simulation_distance_km, 30.0)
+
+        point_models = [DamBreachPoint(**p) for p in sim["points"][:3]]
+        resp = DamBreachAnalysisResponse(
+            simulation_id="SIM-TEST-01",
+            aoi_id=req.aoi_id,
+            failure_mode=req.failure_mode,
+            peak_breach_discharge_m3s=sim["peak_breach_discharge_m3s"],
+            total_inundation_area_ha=sim["total_inundation_area_ha"],
+            max_flood_depth_m=sim["max_flood_depth_m"],
+            wave_front_velocity_ms=sim["wave_front_velocity_ms"],
+            points=point_models,
+            hazard_summary=sim["hazard_summary"],
+            tile_url_template="/api/v1/tiles/hazard/flood-inundation/{simulation_id}/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.aoi_id, "TAILINGS-04")
+        self.assertEqual(len(resp.points), 3)
+
+    def test_landslide_susceptibility_contracts_and_math(self):
+        """Verify infinite slope Factor of Safety, Newmark critical acceleration, and co-seismic displacement."""
+        # 1. Enums
+        self.assertEqual(LandslideSusceptibilityTier.HIGH.value, "high")
+        self.assertEqual(LandslideTriggerType.SEISMIC.value, "seismic")
+
+        # 2. Stable slope scenario (mild slope, low PGA)
+        stable = calculate_landslide_susceptibility(
+            slope_deg=12.0,
+            cohesion_kpa=25.0,
+            friction_angle_deg=35.0,
+            soil_depth_m=2.5,
+            pga_g=0.05,
+            water_table_ratio=0.10
+        )
+        self.assertGreater(stable["static_fs"], 1.50)
+        self.assertEqual(stable["susceptibility_tier"], LandslideSusceptibilityTier.LOW.value)
+        self.assertFalse(stable["failure_warning"])
+
+        # 3. Critical steep slope scenario (high slope, high water table, high PGA)
+        critical = calculate_landslide_susceptibility(
+            slope_deg=38.0,
+            cohesion_kpa=5.0,
+            friction_angle_deg=28.0,
+            soil_depth_m=4.0,
+            pga_g=0.45,
+            water_table_ratio=0.80
+        )
+        self.assertLess(critical["static_fs"], 1.20)
+        self.assertGreaterEqual(critical["critical_accel_g"], 0.0)
+        self.assertTrue(critical["failure_warning"])
+        self.assertIn(critical["susceptibility_tier"], [LandslideSusceptibilityTier.HIGH.value, LandslideSusceptibilityTier.VERY_HIGH.value])
+        self.assertGreater(critical["runout_distance_m"], 0.0)
+
+        # Marginally stable slope to verify positive critical acceleration
+        marginal = calculate_landslide_susceptibility(
+            slope_deg=26.0,
+            cohesion_kpa=8.0,
+            friction_angle_deg=30.0,
+            soil_depth_m=3.0,
+            pga_g=0.35,
+            water_table_ratio=0.30
+        )
+        self.assertGreater(marginal["static_fs"], 1.0)
+        self.assertGreater(marginal["critical_accel_g"], 0.0)
+
+        # 4. Tile URL builder
+        tile_url = build_landslide_tile_url("SLOPE-SECTOR-01", 14, 2500, 5000)
+        self.assertIn("/api/v1/tiles/hazard/landslide/SLOPE-SECTOR-01/14/2500/5000.png", tile_url)
+        self.assertIn("colormap=turbo", tile_url)
+
+        # 5. Request / Response models
+        req = LandslideSusceptibilityRequest(
+            slope=32.0,
+            cohesion=10.0,
+            friction_angle=30.0,
+            pga=0.30,
+            m=0.50
+        )
+        self.assertEqual(req.slope_deg, 32.0)
+        self.assertEqual(req.cohesion_kpa, 10.0)
+        self.assertEqual(req.pga_g, 0.30)
+        self.assertEqual(req.water_table_ratio, 0.50)
+
+        resp = LandslideSusceptibilityResponse(
+            aoi_id=req.aoi_id,
+            static_fs=critical["static_fs"],
+            critical_accel_g=critical["critical_accel_g"],
+            newmark_displacement_cm=critical["newmark_displacement_cm"],
+            runout_distance_m=critical["runout_distance_m"],
+            susceptibility_tier=LandslideSusceptibilityTier(critical["susceptibility_tier"]),
+            hazard_probability=critical["hazard_probability"],
+            failure_warning=critical["failure_warning"],
+            tile_url_template="/api/v1/tiles/hazard/landslide/{asset_id}/{z}/{x}/{y}.png"
+        )
+        self.assertTrue(resp.failure_warning)
+
+    def test_vegetation_health_index_drought_contracts_and_math(self):
+        """Verify Kogan (1995) VCI, TCI, and composite Vegetation Health Index (VHI) drought monitoring."""
+        # 1. Enums
+        self.assertEqual(DroughtSeverityTier.EXTREME_DROUGHT.value, "extreme_drought")
+        self.assertEqual(DroughtSeverityTier.NO_DROUGHT.value, "no_drought")
+
+        # 2. Healthy vegetation (high NDVI, cool LST) -> No drought
+        healthy = calculate_vegetation_health_index(
+            ndvi=0.68,
+            lst_c=22.0,
+            ndvi_min=0.15,
+            ndvi_max=0.75,
+            lst_min_c=18.0,
+            lst_max_c=42.0,
+            alpha=0.50
+        )
+        self.assertGreater(healthy["vci"], 80.0)
+        self.assertGreater(healthy["tci"], 75.0)
+        self.assertGreater(healthy["vhi"], 75.0)
+        self.assertEqual(healthy["tier"], DroughtSeverityTier.NO_DROUGHT.value)
+        self.assertFalse(healthy["is_drought"])
+
+        # 3. Severe drought (low NDVI, extreme hot LST)
+        drought = calculate_vegetation_health_index(
+            ndvi=0.22,
+            lst_c=40.0,
+            ndvi_min=0.15,
+            ndvi_max=0.75,
+            lst_min_c=18.0,
+            lst_max_c=42.0,
+            alpha=0.50
+        )
+        self.assertLess(drought["vci"], 20.0)
+        self.assertLess(drought["tci"], 15.0)
+        self.assertLess(drought["vhi"], 20.0)
+        self.assertIn(drought["tier"], [DroughtSeverityTier.SEVERE_DROUGHT.value, DroughtSeverityTier.EXTREME_DROUGHT.value])
+        self.assertTrue(drought["is_drought"])
+
+        # 4. Classification helper
+        self.assertEqual(classify_drought_tier(8.5), DroughtSeverityTier.EXTREME_DROUGHT)
+        self.assertEqual(classify_drought_tier(15.2), DroughtSeverityTier.SEVERE_DROUGHT)
+        self.assertEqual(classify_drought_tier(25.0), DroughtSeverityTier.MODERATE_DROUGHT)
+        self.assertEqual(classify_drought_tier(35.0), DroughtSeverityTier.MILD_DROUGHT)
+        self.assertEqual(classify_drought_tier(60.0), DroughtSeverityTier.NO_DROUGHT)
+
+        # 5. Tile URL builder
+        tile_url = build_drought_vhi_tile_url("sentinel-2-l2a", "S2A_DROUGHT_AOI", 11, 450, 900)
+        self.assertIn("/api/v1/tiles/drought/vhi/sentinel-2-l2a/S2A_DROUGHT_AOI/11/450/900.png", tile_url)
+        self.assertIn("colormap=rdylgn", tile_url)
+
+        # 6. Request / Response models
+        req = DroughtAnalysisRequest(
+            collection=SatelliteCollection.SENTINEL_2,
+            item_id="S2A_2026_DROUGHT",
+            sample_ndvi=0.35,
+            sample_lst=34.0,
+            alpha=0.60
+        )
+        self.assertEqual(req.vci_weight, 0.60)
+        self.assertEqual(req.sample_lst_c, 34.0)
+
+        resp = DroughtAnalysisResponse(
+            item_id=req.item_id,
+            mean_vci=drought["vci"],
+            mean_tci=drought["tci"],
+            mean_vhi=drought["vhi"],
+            drought_tier=DroughtSeverityTier(drought["tier"]),
+            affected_area_ha=124.5,
+            affected_area_pct=38.5,
+            tier_breakdown={"severe_drought": 38.5, "no_drought": 61.5},
+            tile_url_template="/api/v1/tiles/drought/vhi/{collection}/{item_id}/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.drought_tier, DroughtSeverityTier(drought["tier"]))
+
+    def test_spectral_angle_mapper_mineral_contracts_and_math(self):
+        """Verify Spectral Angle Mapper (SAM) angle and mineral endmember matching."""
+        # 1. Enums and Library
+        self.assertEqual(MineralEndmemberType.PYRITE.value, "pyrite")
+        self.assertIn("pyrite", MINERAL_ENDMEMBER_LIBRARY)
+        self.assertIn("kaolinite", MINERAL_ENDMEMBER_LIBRARY)
+        pyrite_spec = get_mineral_endmember_spec("pyrite")
+        self.assertIn("swir2", pyrite_spec)
+
+        # 2. Perfect match scenario: pixel vector identical to pyrite
+        perfect = calculate_spectral_angle_mapper(pyrite_spec, pyrite_spec)
+        self.assertAlmostEqual(perfect["spectral_angle_rad"], 0.0, places=3)
+        self.assertAlmostEqual(perfect["spectral_angle_deg"], 0.0, places=1)
+        self.assertTrue(perfect["is_match"])
+        self.assertEqual(perfect["match_confidence"], "high")
+        self.assertAlmostEqual(perfect["similarity_score"], 1.0, places=3)
+
+        # 3. Scaled illumination invariance: scalar multiplier should yield angle 0
+        scaled_pyrite = {b: val * 2.5 for b, val in pyrite_spec.items()}
+        scaled_match = calculate_spectral_angle_mapper(scaled_pyrite, pyrite_spec)
+        self.assertAlmostEqual(scaled_match["spectral_angle_rad"], 0.0, places=3)
+        self.assertTrue(scaled_match["is_match"])
+
+        # 4. Dissimilar endmember comparison (pyrite vs kaolinite)
+        kaolinite_spec = get_mineral_endmember_spec("kaolinite")
+        dissimilar = calculate_spectral_angle_mapper(pyrite_spec, kaolinite_spec)
+        self.assertGreater(dissimilar["spectral_angle_rad"], 0.15)
+        self.assertLess(dissimilar["similarity_score"], 0.90)
+
+        # 5. Tile URL builder
+        tile_url = build_sam_mineral_tile_url("sentinel-2-l2a", "S2A_MINING_AOI", "pyrite", 13, 1200, 2400)
+        self.assertIn("/api/v1/tiles/geology/sam/sentinel-2-l2a/S2A_MINING_AOI/pyrite/13/1200/2400.png", tile_url)
+        self.assertIn("colormap=viridis", tile_url)
+
+        # 6. Request / Response models
+        req = SAMAnalysisRequest(
+            mineral="pyrite",
+            angle_threshold=0.10,
+            item_id="S2A_TAILINGS_2026"
+        )
+        self.assertEqual(req.target_endmember, MineralEndmemberType.PYRITE)
+        self.assertEqual(req.max_angle_rad, 0.10)
+
+        resp = SAMAnalysisResponse(
+            target_endmember=req.target_endmember,
+            spectral_angle_rad=perfect["spectral_angle_rad"],
+            spectral_angle_deg=perfect["spectral_angle_deg"],
+            is_match=perfect["is_match"],
+            match_confidence=perfect["match_confidence"],
+            similarity_score=perfect["similarity_score"],
+            classified_area_ha=32.4,
+            classified_area_pct=12.8,
+            tile_url_template="/api/v1/tiles/geology/sam/{collection}/{item_id}/{endmember}/{z}/{x}/{y}.png"
+        )
+        self.assertTrue(resp.is_match)
+        self.assertEqual(resp.match_confidence, "high")
+
+    def test_cloud_native_vector_serialization_contracts(self):
+        """Verify vector export serialization formats, filename formatting, and vector tile URL generation."""
+        # 1. Enums
+        self.assertEqual(GeospatialSerializationFormat.GEOPARQUET.value, "geoparquet")
+        self.assertEqual(GeospatialSerializationFormat.FLATGEOBUF.value, "flatgeobuf")
+        self.assertEqual(GeospatialSerializationFormat.MVT_PBF.value, "mvt_pbf")
+
+        # 2. Filename formatting
+        fn_parquet = format_vector_export_filename("critical-infrastructure", GeospatialSerializationFormat.GEOPARQUET, timestamp="20260930T200000Z")
+        self.assertEqual(fn_parquet, "gios_critical_infrastructure_20260930T200000Z.parquet")
+
+        fn_fgb = format_vector_export_filename("dams_tailings", GeospatialSerializationFormat.FLATGEOBUF, timestamp="20260930T200000Z")
+        self.assertEqual(fn_fgb, "gios_dams_tailings_20260930T200000Z.fgb")
+
+        # 3. Vector tile URL builder
+        tile_url = build_vector_tile_url("hazards_active", 14, 2500, 5000)
+        self.assertEqual(tile_url, "/api/v1/tiles/vector/hazards_active/14/2500/5000.pbf")
+
+        # 4. Request / Response models
+        req = VectorExportRequest(
+            layer="infrastructure_sensors",
+            export_format=GeospatialSerializationFormat.GEOPARQUET,
+            simplify_tolerance_deg=0.0005
+        )
+        self.assertEqual(req.layer_id, "infrastructure_sensors")
+        self.assertEqual(req.format, GeospatialSerializationFormat.GEOPARQUET)
+
+        resp = VectorExportResponse(
+            export_id="EXP-1234",
+            layer_id=req.layer_id,
+            format=req.format,
+            feature_count=85,
+            file_size_bytes=32400,
+            download_url="/api/v1/analysis/vector/export/EXP-1234/download",
+            mime_type="application/vnd.apache.parquet"
+        )
+        self.assertEqual(resp.feature_count, 85)
+        self.assertIn("parquet", resp.mime_type)
+
+        tile_req = VectorTileRequest(layer_id="sensors", z=12, x=600, y=1200)
+        self.assertEqual(tile_req.layer_id, "sensors")
+        self.assertEqual(tile_req.z, 12)
+
 if __name__ == "__main__":
     unittest.main()
+
 
 

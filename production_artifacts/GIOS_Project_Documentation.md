@@ -1,5 +1,5 @@
 # GIOS: Global Intelligence & Observation System
-**Project Dossier & Scientific Specification (v2.5.3 Enterprise Release)**  
+**Project Dossier & Scientific Specification (v2.5.4 Enterprise Release)**  
 *Live Production: [https://gios-react.vercel.app](https://gios-react.vercel.app)*  
 *Backend Engine: FastAPI + rio-tiler + odc-stac + Leaflet Web GIS*
 
@@ -134,6 +134,16 @@ Every pixel rendered on screen adheres to strict remote sensing physics and biop
 | `GET` | `/api/v1/tiles/soil/salinity/{collection}/{item_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for soil salinity hazard rasters |
 | `POST` | `/api/v1/analysis/wildfire/thermal-hotspots` | Active fire thermal hotspot detection & Wooster Stefan-Boltzmann FRP estimation |
 | `GET` | `/api/v1/tiles/wildfire/thermal-hotspots/{collection}/{item_id}/{z}/{x}/{y}.png` | Dynamic XYZ tile streaming for thermal hotspot & fire radiative power overlays |
+| `POST` | `/api/v1/analysis/hazards/dam-breach` | Tailings dam breach hydrodynamic inundation runout & Froehlich peak discharge |
+| `GET` | `/api/v1/tiles/hazard/flood-inundation/{model_id}/{z}/{x}/{y}.png` | Dynamic XYZ flood inundation depth & velocity hazard tile stream |
+| `POST` | `/api/v1/analysis/hazards/landslide` | Limit equilibrium Factor of Safety & Newmark critical acceleration hazard zonation |
+| `GET` | `/api/v1/tiles/hazard/landslide/{sector_id}/{z}/{x}/{y}.png` | Dynamic XYZ landslide susceptibility tiering tile stream |
+| `POST` | `/api/v1/analysis/drought/vhi` | Kogan Vegetation Health Index (VHI) & composite agricultural drought tiers |
+| `GET` | `/api/v1/tiles/drought/vhi/{collection}/{item_id}/{z}/{x}/{y}.png` | Dynamic XYZ agricultural drought severity tile stream |
+| `POST` | `/api/v1/analysis/spectral/sam-mineral` | Kruse Spectral Angle Mapper (SAM) & USGS/ASTER mineral endmember classification |
+| `GET` | `/api/v1/tiles/spectral/sam/{collection}/{item_id}/{mineral}/{z}/{x}/{y}.png` | Dynamic XYZ mineral & tailings endmember classification tile stream |
+| `POST` | `/api/v1/analysis/vector/export` | Multi-format cloud-native vector export (GeoParquet, FlatGeobuf, GeoJSON, MVT) |
+| `GET` | `/api/v1/tiles/vector/{layer_id}/{z}/{x}/{y}.pbf` | Dynamic Mapbox Vector Tile (MVT PBF) streaming |
 | `GET` | `/api/v1/annotations` | Geotechnical field inspection defect annotations (RFC 7946 GeoJSON) |
 | `POST` | `/api/v1/work-orders` | Automated maintenance work order dispatch & ticket tracking |
 | `GET` | `/api/v1/subscriptions` | Automated continuous AOI monitoring subscriptions & alert triggers |
@@ -146,11 +156,11 @@ Every pixel rendered on screen adheres to strict remote sensing physics and biop
 
 ## 5. Verification & Quality Assurance
 
-- **Unit & Integration Test Suite**: 153 tests passing across `test_schemas.py` (114), `test_api.py` (28), `test_scientific_rigor.py` (6), `test_stac_signing.py` (1), and `test_tile_server.py` (4) in ~21s with 0 failures, 0 regressions, and 0 warnings.
-- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,858 modules in 10.55s with 0 errors).
+- **Unit & Integration Test Suite**: 173 tests passing across `test_schemas.py` (120), `test_api.py` (42), `test_scientific_rigor.py` (6), `test_stac_signing.py` (1), and `test_tile_server.py` (4) in ~33s with 0 failures, 0 regressions, and 0 warnings.
+- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,859 modules in 10.15s with 0 errors).
 - **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, cache storage, database integrity, and host system RAM.
 - **Live Production Telemetry**: Continuous surveillance confirms System Status HEALTHY with 0 active anomalies and stable headroom.
 
 ---
-*GIOS v2.5.3 — Verified and Approved for Production Deployment.*
+*GIOS v2.5.4 — Verified and Approved for Production Deployment.*
 

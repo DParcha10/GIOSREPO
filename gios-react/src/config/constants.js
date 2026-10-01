@@ -811,7 +811,21 @@ export const API_ENDPOINTS = {
   TILES_SOIL_SALINITY: (collection, itemId, metric, z, x, y) => `/api/v1/tiles/soil/salinity/${collection}/${itemId}/${metric}/${z}/${x}/${y}.png`,
   ANALYSIS_THERMAL_HOTSPOTS: '/api/v1/analysis/thermal/hotspots',
   ANALYSIS_THERMAL_HOTSPOTS_SHORT: '/analysis/thermal/hotspots',
-  TILES_THERMAL_HOTSPOTS: (collection, itemId, z, x, y) => `/api/v1/tiles/thermal/hotspots/${collection}/${itemId}/${z}/${x}/${y}.png`
+  TILES_THERMAL_HOTSPOTS: (collection, itemId, z, x, y) => `/api/v1/tiles/thermal/hotspots/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_DAM_BREACH: '/api/v1/analysis/hazard/dam-breach',
+  ANALYSIS_DAM_BREACH_SHORT: '/analysis/dam-breach',
+  TILES_FLOOD_INUNDATION: (simulationId, z, x, y) => `/api/v1/tiles/hazard/flood-inundation/${simulationId}/${z}/${x}/${y}.png`,
+  ANALYSIS_LANDSLIDE: '/api/v1/analysis/hazard/landslide-susceptibility',
+  ANALYSIS_LANDSLIDE_SHORT: '/analysis/landslide',
+  TILES_LANDSLIDE: (assetId, z, x, y) => `/api/v1/tiles/hazard/landslide/${assetId}/${z}/${x}/${y}.png`,
+  ANALYSIS_DROUGHT_VHI: '/api/v1/analysis/drought/vhi',
+  ANALYSIS_DROUGHT_VHI_SHORT: '/analysis/vhi',
+  TILES_DROUGHT_VHI: (collection, itemId, z, x, y) => `/api/v1/tiles/drought/vhi/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_SAM_MINERAL: '/api/v1/analysis/geology/sam',
+  ANALYSIS_SAM_MINERAL_SHORT: '/analysis/sam',
+  TILES_SAM_MINERAL: (collection, itemId, endmember, z, x, y) => `/api/v1/tiles/geology/sam/${collection}/${itemId}/${endmember}/${z}/${x}/${y}.png`,
+  TILES_VECTOR_PBF: (layerId, z, x, y) => `/api/v1/tiles/vector/${layerId}/${z}/${x}/${y}.pbf`,
+  ANALYSIS_VECTOR_EXPORT: '/api/v1/analysis/vector/export'
 };
 
 /**
@@ -897,6 +911,16 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'item-01', params.metric || 'ndsi', params.z, params.x, params.y);
       case 'TILES_THERMAL_HOTSPOTS':
         return endpoint(params.collection || 'landsat-c2-l2', params.itemId || params.item_id || 'item-01', params.z, params.x, params.y);
+      case 'TILES_FLOOD_INUNDATION':
+        return endpoint(params.simulationId || params.simulation_id || 'SIM-01', params.z, params.x, params.y);
+      case 'TILES_LANDSLIDE':
+        return endpoint(params.assetId || params.asset_id || 'SLOPE-01', params.z, params.x, params.y);
+      case 'TILES_DROUGHT_VHI':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'item-01', params.z, params.x, params.y);
+      case 'TILES_SAM_MINERAL':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'item-01', params.endmember || params.mineral || 'pyrite', params.z, params.x, params.y);
+      case 'TILES_VECTOR_PBF':
+        return endpoint(params.layerId || params.layer_id || 'critical_infrastructure', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -4028,3 +4052,407 @@ export const buildThermalHotspotTileUrl = (collection, itemId, z, x, y, options 
 
 
 
+
+
+// ============================================================================
+// T-90: TAILINGS DAM BREACH HYDRODYNAMIC INUNDATION RUNOUT
+// ============================================================================
+
+export const INUNDATION_HAZARD_TIERS = {
+  LOW_HAZARD: 'low_hazard',
+  MODERATE_HAZARD: 'moderate_hazard',
+  HIGH_HAZARD: 'high_hazard',
+  EXTREME_HAZARD: 'extreme_hazard'
+};
+
+export const DAM_BREACH_FAILURE_MODES = {
+  OVERTOPPING: 'overtopping',
+  PIPING_SEEPAGE: 'piping_seepage',
+  FOUNDATION_SLIDE: 'foundation_slide',
+  SEISMIC_LIQUEFACTION: 'seismic_liquefaction'
+};
+
+export const calculateDamBreachInundation = (volumeM3, breachHeightM, options = {}) => {
+  const vol = Math.max(1000.0, Number(volumeM3));
+  const h0 = Math.max(1.0, Number(breachHeightM));
+  const s0 = Math.max(0.0001, Number(options.downstreamSlope ?? 0.015));
+  const n = Math.max(0.01, Number(options.manningsN ?? 0.045));
+  const distKm = Math.max(1.0, Number(options.simulationDistanceKm ?? 25.0));
+  const baseElev = Number(options.baseElevationM ?? 220.0);
+
+  // Froehlich (2008) peak breach discharge: Q_p = 0.607 * (V_w)^0.295 * (h_w)^1.24
+  const qPeak = 0.607 * Math.pow(vol, 0.295) * Math.pow(h0, 1.24);
+
+  // Wave velocity at breach: v = (1/n) * (R_h)^(2/3) * (S_0)^(1/2)
+  const rH0 = Math.max(0.5, 0.6 * h0);
+  let vWave = (1.0 / n) * Math.pow(rH0, 2.0 / 3.0) * Math.sqrt(s0);
+  vWave = Math.max(1.5, Math.min(18.0, vWave));
+
+  const numStations = Math.max(4, Math.floor(distKm / 2.5) + 1);
+  const points = [];
+  let totAreaM2 = 0.0;
+  const tierCounts = {
+    [INUNDATION_HAZARD_TIERS.LOW_HAZARD]: 0,
+    [INUNDATION_HAZARD_TIERS.MODERATE_HAZARD]: 0,
+    [INUNDATION_HAZARD_TIERS.HIGH_HAZARD]: 0,
+    [INUNDATION_HAZARD_TIERS.EXTREME_HAZARD]: 0
+  };
+
+  for (let idx = 0; idx < numStations; idx++) {
+    const dxKm = (idx / (numStations - 1)) * distKm;
+    const dxM = dxKm * 1000.0;
+
+    const qX = qPeak * Math.exp(-0.035 * dxKm);
+    const hX = Math.max(0.2, h0 * Math.exp(-0.045 * dxKm));
+    const vX = Math.max(0.8, (1.0 / n) * Math.pow(0.6 * hX, 2.0 / 3.0) * Math.sqrt(s0));
+    const tArrMin = dxM > 0 ? dxM / (vWave * 60.0) : 0.0;
+    const elev = baseElev - (dxM * s0);
+
+    const vh = vX * hX;
+    let tier = INUNDATION_HAZARD_TIERS.LOW_HAZARD;
+    if (hX > 3.0 || vh > 1.5) {
+      tier = INUNDATION_HAZARD_TIERS.EXTREME_HAZARD;
+    } else if (hX > 1.5) {
+      tier = INUNDATION_HAZARD_TIERS.HIGH_HAZARD;
+    } else if (hX > 0.5) {
+      tier = INUNDATION_HAZARD_TIERS.MODERATE_HAZARD;
+    }
+
+    tierCounts[tier]++;
+    const wX = 15.0 * Math.sqrt(hX) * 10.0;
+    totAreaM2 += wX * (distKm * 1000.0 / numStations);
+
+    points.push({
+      distance_km: Number(dxKm.toFixed(2)),
+      elevation_m: Number(elev.toFixed(1)),
+      max_depth_m: Number(hX.toFixed(2)),
+      peak_discharge_m3s: Number(qX.toFixed(1)),
+      arrival_time_min: Number(tArrMin.toFixed(1)),
+      velocity_ms: Number(vX.toFixed(2)),
+      hazard_tier: tier
+    });
+  }
+
+  const totAreaHa = Number((totAreaM2 / 10000.0).toFixed(1));
+  const hazardSummary = {};
+  for (const [tier, count] of Object.entries(tierCounts)) {
+    hazardSummary[tier] = Number(((count / numStations) * 100.0).toFixed(1));
+  }
+
+  return {
+    peak_breach_discharge_m3s: Number(qPeak.toFixed(1)),
+    total_inundation_area_ha: totAreaHa,
+    max_flood_depth_m: Number(h0.toFixed(2)),
+    wave_front_velocity_ms: Number(vWave.toFixed(2)),
+    points,
+    hazard_summary: hazardSummary
+  };
+};
+
+export const buildFloodInundationTileUrl = (simulationId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const rescale = options.rescale || '0.0,10.0';
+  const colormap = options.colormap || 'blues';
+  return `${basePrefix}/tiles/hazard/flood-inundation/${simulationId}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
+// ============================================================================
+// T-90: LANDSLIDE SUSCEPTIBILITY & DEBRIS FLOW RUNOUT
+// ============================================================================
+
+export const LANDSLIDE_SUSCEPTIBILITY_TIERS = {
+  LOW: 'low',
+  MODERATE: 'moderate',
+  HIGH: 'high',
+  VERY_HIGH: 'very_high'
+};
+
+export const LANDSLIDE_TRIGGER_TYPES = {
+  SEISMIC: 'seismic',
+  RAINFALL: 'rainfall',
+  RAPID_DRAWDOWN: 'rapid_drawdown',
+  EXCAVATION: 'excavation'
+};
+
+export const calculateLandslideSusceptibility = (slopeDeg, options = {}) => {
+  const alphaDeg = Math.max(1.0, Math.min(85.0, Number(slopeDeg)));
+  const alpha = (alphaDeg * Math.PI) / 180.0;
+  const cPrime = Math.max(0.0, Number(options.cohesionKpa ?? 12.5));
+  const phiDeg = Math.max(5.0, Math.min(55.0, Number(options.frictionAngleDeg ?? 32.0)));
+  const phi = (phiDeg * Math.PI) / 180.0;
+  const z = Math.max(0.5, Number(options.soilDepthM ?? 3.5));
+  const pga = Math.max(0.0, Number(options.pgaG ?? 0.25));
+  const m = Math.max(0.0, Math.min(1.0, Number(options.waterTableRatio ?? 0.40)));
+  const gamma = Math.max(10.0, Number(options.soilUnitWeightKnM3 ?? 19.5));
+  const gammaW = 9.81;
+
+  const sinAlpha = Math.sin(alpha);
+  const cosAlpha = Math.cos(alpha);
+  const tanPhi = Math.tan(phi);
+
+  const tauD = Math.max(0.01, gamma * z * sinAlpha * cosAlpha);
+  const effUnitWeight = Math.max(1.0, gamma - (m * gammaW));
+  const tauR = cPrime + (effUnitWeight * z * Math.pow(cosAlpha, 2) * tanPhi);
+
+  const staticFs = tauR / tauD;
+
+  let aC = 0.0;
+  if (staticFs > 1.0) {
+    aC = Math.max(0.0, Math.min(1.5, (staticFs - 1.0) * sinAlpha));
+  }
+
+  let dnCm = 0.0;
+  if (pga <= 0.001 || staticFs < 0.90) {
+    dnCm = staticFs < 0.90 ? 50.0 : 0.0;
+  } else if (aC < pga) {
+    const ratio = aC / pga;
+    const term1 = Math.pow(1.0 - ratio, 2.341);
+    const term2 = Math.pow(ratio, -1.438);
+    const logDn = 0.215 + Math.log10(term1 * term2);
+    dnCm = Math.max(0.0, Math.min(100.0, Math.pow(10.0, logDn)));
+  }
+
+  const deltaH = z * Math.sin(alpha) * 15.0;
+  const runoutM = deltaH > 0 ? deltaH / 0.32 : 0.0;
+
+  let tier = LANDSLIDE_SUSCEPTIBILITY_TIERS.LOW;
+  let prob = 0.08;
+  let warning = false;
+
+  if (dnCm > 15.0 || staticFs < 1.0) {
+    tier = LANDSLIDE_SUSCEPTIBILITY_TIERS.VERY_HIGH;
+    prob = 0.88;
+    warning = true;
+  } else if (dnCm > 5.0 || staticFs < 1.20) {
+    tier = LANDSLIDE_SUSCEPTIBILITY_TIERS.HIGH;
+    prob = 0.65;
+    warning = true;
+  } else if (dnCm > 1.0 || staticFs < 1.50) {
+    tier = LANDSLIDE_SUSCEPTIBILITY_TIERS.MODERATE;
+    prob = 0.32;
+    warning = false;
+  }
+
+  return {
+    static_fs: Number(staticFs.toFixed(3)),
+    critical_accel_g: Number(aC.toFixed(4)),
+    newmark_displacement_cm: Number(dnCm.toFixed(2)),
+    runout_distance_m: Number(runoutM.toFixed(1)),
+    susceptibility_tier: tier,
+    hazard_probability: Number(prob.toFixed(2)),
+    failure_warning: warning
+  };
+};
+
+export const buildLandslideTileUrl = (assetId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const rescale = options.rescale || '0.0,1.0';
+  const colormap = options.colormap || 'turbo';
+  return `${basePrefix}/tiles/hazard/landslide/${assetId}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
+// ============================================================================
+// T-90: VEGETATION HEALTH INDEX (VHI) & DROUGHT HAZARDS
+// ============================================================================
+
+export const DROUGHT_SEVERITY_TIERS = {
+  NO_DROUGHT: 'no_drought',
+  MILD_DROUGHT: 'mild_drought',
+  MODERATE_DROUGHT: 'moderate_drought',
+  SEVERE_DROUGHT: 'severe_drought',
+  EXTREME_DROUGHT: 'extreme_drought'
+};
+
+export const calculateVegetationHealthIndex = (ndvi, lstC, options = {}) => {
+  const curNdvi = Number(ndvi);
+  const curLst = Number(lstC);
+  const nMin = Number(options.ndviMin ?? 0.15);
+  const nMax = Number(options.ndviMax ?? 0.75);
+  const tMin = Number(options.lstMinC ?? 18.0);
+  const tMax = Number(options.lstMaxC ?? 42.0);
+  const wVci = Math.max(0.0, Math.min(1.0, Number(options.alpha ?? 0.50)));
+
+  const nDenom = Math.max(1e-4, nMax - nMin);
+  let vci = ((curNdvi - nMin) / nDenom) * 100.0;
+  vci = Math.max(0.0, Math.min(100.0, vci));
+
+  const tDenom = Math.max(1e-4, tMax - tMin);
+  let tci = ((tMax - curLst) / tDenom) * 100.0;
+  tci = Math.max(0.0, Math.min(100.0, tci));
+
+  let vhi = (wVci * vci) + ((1.0 - wVci) * tci);
+  vhi = Math.max(0.0, Math.min(100.0, vhi));
+
+  let tier = DROUGHT_SEVERITY_TIERS.NO_DROUGHT;
+  let label = 'No Drought (VHI >= 40)';
+  let color = '#1a9850';
+
+  if (vhi < 10.0) {
+    tier = DROUGHT_SEVERITY_TIERS.EXTREME_DROUGHT;
+    label = 'Extreme Drought (VHI < 10)';
+    color = '#7f0000';
+  } else if (vhi < 20.0) {
+    tier = DROUGHT_SEVERITY_TIERS.SEVERE_DROUGHT;
+    label = 'Severe Drought (10 <= VHI < 20)';
+    color = '#d73027';
+  } else if (vhi < 30.0) {
+    tier = DROUGHT_SEVERITY_TIERS.MODERATE_DROUGHT;
+    label = 'Moderate Drought (20 <= VHI < 30)';
+    color = '#fc8d59';
+  } else if (vhi < 40.0) {
+    tier = DROUGHT_SEVERITY_TIERS.MILD_DROUGHT;
+    label = 'Mild Drought (30 <= VHI < 40)';
+    color = '#fee08b';
+  }
+
+  return {
+    vci: Number(vci.toFixed(2)),
+    tci: Number(tci.toFixed(2)),
+    vhi: Number(vhi.toFixed(2)),
+    tier,
+    label,
+    color,
+    is_drought: vhi < 40.0
+  };
+};
+
+export const classifyDroughtTier = (vhi) => {
+  const val = Number(vhi);
+  if (val < 10.0) return DROUGHT_SEVERITY_TIERS.EXTREME_DROUGHT;
+  if (val < 20.0) return DROUGHT_SEVERITY_TIERS.SEVERE_DROUGHT;
+  if (val < 30.0) return DROUGHT_SEVERITY_TIERS.MODERATE_DROUGHT;
+  if (val < 40.0) return DROUGHT_SEVERITY_TIERS.MILD_DROUGHT;
+  return DROUGHT_SEVERITY_TIERS.NO_DROUGHT;
+};
+
+export const buildDroughtVhiTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const rescale = options.rescale || '0.0,100.0';
+  const colormap = options.colormap || 'rdylgn';
+  return `${basePrefix}/tiles/drought/vhi/${collection}/${itemId}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
+// ============================================================================
+// T-90: SPECTRAL ANGLE MAPPER (SAM) & MINERAL ENDMEMBERS
+// ============================================================================
+
+export const MINERAL_ENDMEMBER_TYPES = {
+  PYRITE: 'pyrite',
+  CHALCOPYRITE: 'chalcopyrite',
+  GOETHITE: 'goethite',
+  HEMATITE: 'hematite',
+  KAOLINITE: 'kaolinite',
+  CALCITE: 'calcite',
+  ACID_MINE_DRAINAGE: 'acid_mine_drainage'
+};
+
+export const MINERAL_ENDMEMBER_LIBRARY = {
+  pyrite: { blue: 0.042, green: 0.065, red: 0.098, nir: 0.145, swir1: 0.285, swir2: 0.362 },
+  chalcopyrite: { blue: 0.038, green: 0.058, red: 0.082, nir: 0.120, swir1: 0.235, swir2: 0.310 },
+  goethite: { blue: 0.055, green: 0.092, red: 0.165, nir: 0.320, swir1: 0.380, swir2: 0.290 },
+  hematite: { blue: 0.048, green: 0.075, red: 0.185, nir: 0.340, swir1: 0.410, swir2: 0.335 },
+  kaolinite: { blue: 0.185, green: 0.245, red: 0.285, nir: 0.325, swir1: 0.420, swir2: 0.210 },
+  calcite: { blue: 0.210, green: 0.275, red: 0.315, nir: 0.350, swir1: 0.410, swir2: 0.185 },
+  acid_mine_drainage: { blue: 0.035, green: 0.072, red: 0.145, nir: 0.260, swir1: 0.350, swir2: 0.380 }
+};
+
+export const calculateSpectralAngleMapper = (pixelReflectance, endmemberReflectance) => {
+  const commonBands = Object.keys(pixelReflectance).filter((b) => b in endmemberReflectance);
+  if (commonBands.length === 0) {
+    return {
+      spectral_angle_rad: Math.PI / 2.0,
+      spectral_angle_deg: 90.0,
+      is_match: false,
+      match_confidence: 'none',
+      similarity_score: 0.0
+    };
+  }
+
+  let dotProduct = 0.0;
+  let normRSq = 0.0;
+  let normESq = 0.0;
+
+  for (const b of commonBands) {
+    const rVal = Math.max(0.0, Number(pixelReflectance[b]));
+    const eVal = Math.max(0.0, Number(endmemberReflectance[b]));
+    dotProduct += rVal * eVal;
+    normRSq += rVal * rVal;
+    normESq += eVal * eVal;
+  }
+
+  const denom = Math.sqrt(normRSq) * Math.sqrt(normESq);
+  let angleRad = Math.PI / 2.0;
+  if (denom > 1e-8) {
+    const cosTheta = Math.max(-1.0, Math.min(1.0, dotProduct / denom));
+    angleRad = Math.acos(cosTheta);
+  }
+
+  const angleDeg = (angleRad * 180.0) / Math.PI;
+  const similarity = Math.max(0.0, 1.0 - (angleRad / (Math.PI / 2.0)));
+
+  let conf = 'none';
+  let matched = false;
+
+  if (angleRad <= 0.08) {
+    conf = 'high';
+    matched = true;
+  } else if (angleRad <= 0.15) {
+    conf = 'moderate';
+    matched = true;
+  } else if (angleRad <= 0.25) {
+    conf = 'low';
+    matched = false;
+  }
+
+  return {
+    spectral_angle_rad: Number(angleRad.toFixed(4)),
+    spectral_angle_deg: Number(angleDeg.toFixed(2)),
+    is_match: matched,
+    match_confidence: conf,
+    similarity_score: Number(similarity.toFixed(4))
+  };
+};
+
+export const getMineralEndmemberSpec = (endmemberName) => {
+  const norm = String(endmemberName || '').toLowerCase().trim();
+  return MINERAL_ENDMEMBER_LIBRARY[norm] || MINERAL_ENDMEMBER_LIBRARY.pyrite;
+};
+
+export const buildSamMineralTileUrl = (collection, itemId, endmember, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const rescale = options.rescale || '0.0,0.3';
+  const colormap = options.colormap || 'viridis';
+  return `${basePrefix}/tiles/geology/sam/${collection}/${itemId}/${endmember}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+};
+
+// ============================================================================
+// T-90: CLOUD-NATIVE VECTOR TILE & GEOPARQUET DATA SERIALIZATION
+// ============================================================================
+
+export const GEOSPATIAL_SERIALIZATION_FORMATS = {
+  GEOJSON: 'geojson',
+  GEOPARQUET: 'geoparquet',
+  FLATGEOBUF: 'flatgeobuf',
+  MVT_PBF: 'mvt_pbf',
+  SHAPEFILE_ZIP: 'shapefile_zip'
+};
+
+export const buildVectorTileUrl = (layerId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/vector/${layerId}/${z}/${x}/${y}.pbf`;
+};
+
+export const formatVectorExportFilename = (layerId, format, timestamp = null) => {
+  const ts = timestamp || new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  const fmtStr = String(format || 'geoparquet').toLowerCase();
+  const extMap = {
+    geojson: 'geojson',
+    geoparquet: 'parquet',
+    flatgeobuf: 'fgb',
+    mvt_pbf: 'pbf',
+    shapefile_zip: 'zip'
+  };
+  const ext = extMap[fmtStr] || 'bin';
+  const cleanLayer = String(layerId || 'layer').toLowerCase().replace(/-/g, '_');
+  return `gios_${cleanLayer}_${ts}.${ext}`;
+};
