@@ -13,16 +13,13 @@ import {
 } from '../api/giosApi';
 import { 
   DIRECT_GEOREFERENCING_TIERS,
-  classifyDirectGeoreferencingTier,
   calculateDirectGeoreferencing,
   buildDirectGeoreferencingTileUrl,
   CREST_SETTLEMENT_TIERS,
-  classifyCrestSettlementTier,
   calculateCrestAlignmentVectorization,
   buildCrestAlignmentTileUrl,
   APS_FILTER_MODES,
   PS_INSAR_STABILITY_TIERS,
-  classifyPsInsarStabilityTier,
   calculatePsInsarStackDisplacement,
   buildPsInsarTileUrl
 } from '../config/constants';
@@ -73,8 +70,8 @@ export default function DirectGeoreferencingModal({
   const [focalLengthMm, setFocalLengthMm] = useState(24.0);
   const [sensorWidthMm, setSensorWidthMm] = useState(35.9);
   const [sensorHeightMm, setSensorHeightMm] = useState(24.0);
-  const [imageWidthPx, setImageWidthPx] = useState(6000);
-  const [imageHeightPx, setImageHeightPx] = useState(4000);
+  const [imageWidthPx, _setImageWidthPx] = useState(6000);
+  const [imageHeightPx, _setImageHeightPx] = useState(4000);
 
   // Uncertainties
   const [gnssUncertaintyM, setGnssUncertaintyM] = useState(0.018);
@@ -112,7 +109,7 @@ export default function DirectGeoreferencingModal({
   const [apsFilterMode, setApsFilterMode] = useState(APS_FILTER_MODES.SPATIOTEMPORAL_GAUSSIAN);
   const [coherenceThreshold, setCoherenceThreshold] = useState(0.70);
   const [dispersionThreshold, setDispersionThreshold] = useState(0.25);
-  const [radarWavelengthM, setRadarWavelengthM] = useState(0.055465); // Sentinel-1 C-band
+  const [radarWavelengthM, _setRadarWavelengthM] = useState(0.055465); // Sentinel-1 C-band
   const [selectedPsPointId, setSelectedPsPointId] = useState('PS-CREST-02');
 
   const [psResult, setPsResult] = useState(null);

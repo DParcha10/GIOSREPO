@@ -229,3 +229,65 @@ async def get_drone_tile(ortho_id: str, z: int, x: int, y: int):
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=86400"}
     )
+
+
+# ============================================================================
+# T-103: DRONE DIRECT GEOREFERENCING & IMU/BORESIGHT MISALIGNMENT CALIBRATION
+# ============================================================================
+
+@router.post("/direct-georeferencing", response_model=DirectGeoreferencingResponse)
+@router.post("/direct_georeferencing", response_model=DirectGeoreferencingResponse, include_in_schema=False)
+@router.post("/boresight", response_model=DirectGeoreferencingResponse, include_in_schema=False)
+async def calibrate_drone_direct_georeferencing(req: DirectGeoreferencingRequest):
+    """Calculates UAV direct exterior orientation with IMU lever-arm translation, boresight misalignment rotation, and CEP95 uncertainty."""
+    res = calculate_direct_georeferencing(
+        gnss_lat=req.gnss_latitude,
+        gnss_lon=req.gnss_longitude,
+        gnss_alt_m=req.gnss_altitude_m,
+        ground_elev_m=req.ground_elevation_m,
+        roll_deg=req.roll_deg,
+        pitch_deg=req.pitch_deg,
+        yaw_deg=req.yaw_deg,
+        lever_arm=req.lever_arm,
+        boresight=req.boresight,
+        sensor_spec=req.sensor_spec,
+        gnss_uncertainty_m=req.gnss_uncertainty_m,
+        attitude_uncertainty_deg=req.attitude_uncertainty_deg
+    )
+    tile_url = build_direct_georeferencing_tile_url(
+        mission_id=req.mission_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    return DirectGeoreferencingResponse(
+        mission_id=req.mission_id,
+        camera_latitude=res["camera_latitude"],
+        camera_longitude=res["camera_longitude"],
+        camera_altitude_m=res["camera_altitude_m"],
+        corrected_roll_deg=res["corrected_roll_deg"],
+        corrected_pitch_deg=res["corrected_pitch_deg"],
+        corrected_yaw_deg=res["corrected_yaw_deg"],
+        flight_height_agl_m=res["flight_height_agl_m"],
+        gsd_cm_px=res["gsd_cm_px"],
+        footprint_width_m=res["footprint_width_m"],
+        footprint_height_m=res["footprint_height_m"],
+        footprint_polygon=res["footprint_polygon"],
+        horizontal_cep95_m=res["horizontal_cep95_m"],
+        quality_tier=res["quality_tier"],
+        tile_url_template=tile_url,
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@router.get("/direct-georeferencing/{mission_id}/tiles/{z}/{x}/{y}.png")
+async def get_drone_direct_georeferencing_tile(mission_id: str, z: int, x: int, y: int):
+    """Serve dynamic centimeter-scale direct georeferencing footprint tiles."""
+    from app.services.tile_service import tile_service
+    png_bytes = tile_service.render_direct_georeferencing_tile(mission_id, z, x, y)
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-DIRECT-GEOREF-v2.5"}
+    )
+

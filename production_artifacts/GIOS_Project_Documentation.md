@@ -1,5 +1,5 @@
 # GIOS: Global Intelligence & Observation System
-**Project Dossier & Scientific Specification (v2.5.6 Enterprise Release)**  
+**Project Dossier & Scientific Specification (v2.5.7 Enterprise Release)**  
 *Live Production: [https://gios-react.vercel.app](https://gios-react.vercel.app)*  
 *Backend Engine: FastAPI + rio-tiler + odc-stac + Leaflet Web GIS*
 
@@ -172,12 +172,12 @@ Every pixel rendered on screen adheres to strict remote sensing physics and biop
 
 ## 5. Verification & Quality Assurance
 
-- **Unit & Integration Test Suite**: 194 tests passing across `test_schemas.py` (130), `test_api.py` (53), `test_scientific_rigor.py` (6), `test_stac_signing.py` (1), and `test_tile_server.py` (4) in ~32-44s with 0 failures, 0 regressions, and 0 warnings.
-- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,861 modules in ~7-19s with 0 errors).
+- **Unit & Integration Test Suite**: 203 tests passing across `test_schemas.py` (136), `test_api.py` (56), `test_scientific_rigor.py` (6), `test_stac_signing.py` (1), and `test_tile_server.py` (4) in ~40s with 0 failures, 0 regressions, and 0 warnings.
+- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,862 modules in ~10s with 0 errors).
 - **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, cache storage, database integrity, and host system RAM.
 - **Live Production Telemetry**: Continuous surveillance confirms System Status HEALTHY with 0 active anomalies and stable headroom.
 
 ---
-*GIOS v2.5.6 — Verified and Approved for Production Deployment.*
+*GIOS v2.5.7 — Verified and Approved for Production Deployment.*
 
 

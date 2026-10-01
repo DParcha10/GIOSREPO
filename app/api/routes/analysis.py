@@ -267,7 +267,52 @@ from app.models.schemas import (
     PyramidSplineResponse,
     calculate_laplacian_pyramid_blend,
     classify_seam_radiometric_quality,
-    build_spline_mosaic_tile_url
+    build_spline_mosaic_tile_url,
+    DirectGeoreferencingTier,
+    DirectGeoreferencingRequest,
+    DirectGeoreferencingResponse,
+    calculate_direct_georeferencing,
+    build_direct_georeferencing_tile_url,
+    CrestSettlementTier,
+    CrestStationPoint,
+    EmbankmentCrestRequest,
+    EmbankmentCrestResponse,
+    calculate_crest_alignment_vectorization,
+    build_crest_alignment_tile_url,
+    APSFilterMode,
+    PSInSARStabilityTier,
+    PSPointDisplacement,
+    PSInSARStackRequest,
+    PSInSARStackResponse,
+    calculate_ps_insar_stack_displacement,
+    build_ps_insar_tile_url,
+    SARMoistureModel,
+    SoilMoistureHazardTier,
+    SoilMoistureInversionRequest,
+    SoilMoistureInversionResponse,
+    calculate_sar_soil_moisture_inversion,
+    build_soil_moisture_tile_url,
+    SDBModelType,
+    SiltationSeverityTier,
+    SatelliteBathymetryRequest,
+    SatelliteBathymetryResponse,
+    calculate_satellite_derived_bathymetry,
+    build_bathymetry_tile_url,
+    GPRMediumType,
+    GPRAnomalyType,
+    GPRAnomalySeverity,
+    GPRScanStation,
+    GPRProfileRequest,
+    GPRProfileResponse,
+    calculate_gpr_subsurface_profile,
+    build_gpr_profile_tile_url,
+    OMAMethod,
+    VibrationRiskTier,
+    VibrationMode,
+    StructuralModalRequest,
+    StructuralModalResponse,
+    calculate_operational_modal_analysis,
+    build_vibration_telemetry_tile_url
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -4704,6 +4749,603 @@ def get_analysis_spline_mosaic_tile(
     rescale: Optional[str] = "0.0,255.0"
 ):
     return get_spline_mosaic_tile(z=z, x=x, y=y, mosaic_id=mosaic_id, blend_mode=blend_mode, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# T-103: DRONE DIRECT GEOREFERENCING & IMU/BORESIGHT MISALIGNMENT CALIBRATION
+# ============================================================================
+
+@router.post("/drone/direct-georeferencing", response_model=DirectGeoreferencingResponse)
+@router.post("/direct-georeferencing", response_model=DirectGeoreferencingResponse, include_in_schema=False)
+@router.post("/drone-direct-georeferencing", response_model=DirectGeoreferencingResponse, include_in_schema=False)
+def analyze_drone_direct_georeferencing(req: DirectGeoreferencingRequest):
+    """Calculates UAV direct exterior orientation with IMU lever-arm translation, boresight misalignment rotation, and CEP95 uncertainty."""
+    res = calculate_direct_georeferencing(
+        gnss_lat=req.gnss_latitude,
+        gnss_lon=req.gnss_longitude,
+        gnss_alt_m=req.gnss_altitude_m,
+        ground_elev_m=req.ground_elevation_m,
+        roll_deg=req.roll_deg,
+        pitch_deg=req.pitch_deg,
+        yaw_deg=req.yaw_deg,
+        lever_arm=req.lever_arm,
+        boresight=req.boresight,
+        sensor_spec=req.sensor_spec,
+        gnss_uncertainty_m=req.gnss_uncertainty_m,
+        attitude_uncertainty_deg=req.attitude_uncertainty_deg
+    )
+    tile_url = build_direct_georeferencing_tile_url(
+        mission_id=req.mission_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return DirectGeoreferencingResponse(
+        mission_id=req.mission_id,
+        camera_latitude=res["camera_latitude"],
+        camera_longitude=res["camera_longitude"],
+        camera_altitude_m=res["camera_altitude_m"],
+        corrected_roll_deg=res["corrected_roll_deg"],
+        corrected_pitch_deg=res["corrected_pitch_deg"],
+        corrected_yaw_deg=res["corrected_yaw_deg"],
+        flight_height_agl_m=res["flight_height_agl_m"],
+        gsd_cm_px=res["gsd_cm_px"],
+        footprint_width_m=res["footprint_width_m"],
+        footprint_height_m=res["footprint_height_m"],
+        footprint_polygon=res["footprint_polygon"],
+        horizontal_cep95_m=res["horizontal_cep95_m"],
+        quality_tier=res["quality_tier"],
+        tile_url_template=tile_url,
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/drone/direct-georeferencing/{mission_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/drone/direct-georeferencing/{z}/{x}/{y}.png")
+def get_direct_georeferencing_tile(
+    z: int,
+    x: int,
+    y: int,
+    mission_id: Optional[str] = "drone_mission_01",
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,1.0"
+):
+    png_bytes = tile_service.render_direct_georeferencing_tile(
+        mission_id=mission_id or "drone_mission_01",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "turbo",
+        rescale=rescale or "0.0,1.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-DIRECT-GEOREF-v2.5"}
+    )
+
+
+@router.get("/tiles/drone/direct-georeferencing/{mission_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/drone/direct-georeferencing/{z}/{x}/{y}.png")
+def get_analysis_direct_georeferencing_tile(
+    z: int,
+    x: int,
+    y: int,
+    mission_id: Optional[str] = "drone_mission_01",
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,1.0"
+):
+    return get_direct_georeferencing_tile(z=z, x=x, y=y, mission_id=mission_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# T-103: EMBANKMENT CREST ALIGNMENT VECTORIZATION & DIFFERENTIAL SETTLEMENT
+# ============================================================================
+
+@router.post("/geotechnical/crest-alignment", response_model=EmbankmentCrestResponse)
+@router.post("/geotechnical/crest_alignment", response_model=EmbankmentCrestResponse, include_in_schema=False)
+@router.post("/crest-alignment", response_model=EmbankmentCrestResponse, include_in_schema=False)
+@router.post("/crest_alignment", response_model=EmbankmentCrestResponse, include_in_schema=False)
+def analyze_embankment_crest_alignment(req: EmbankmentCrestRequest):
+    """Computes arc-length stationing, normal cross-sections, and differential settlement along embankment centerline."""
+    calc_res = calculate_crest_alignment_vectorization(
+        centerline_points=req.centerline_points,
+        design_elevation_m=req.design_elevation_m,
+        station_interval_m=req.station_interval_m,
+        crest_width_m=req.crest_width_m
+    )
+    tile_url = build_crest_alignment_tile_url(
+        alignment_id=req.alignment_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return EmbankmentCrestResponse(
+        alignment_id=req.alignment_id,
+        total_length_m=calc_res["total_length_m"],
+        station_count=calc_res["station_count"],
+        design_elevation_m=calc_res["design_elevation_m"],
+        min_measured_elevation_m=calc_res["min_measured_elevation_m"],
+        max_measured_elevation_m=calc_res["max_measured_elevation_m"],
+        max_settlement_m=calc_res["max_settlement_m"],
+        mean_settlement_m=calc_res["mean_settlement_m"],
+        worst_settlement_station=calc_res["worst_settlement_station"],
+        overall_severity_tier=calc_res["overall_severity_tier"],
+        overtopping_risk_detected=calc_res["overtopping_risk_detected"],
+        stations=calc_res["stations"],
+        tile_url_template=tile_url,
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/geotechnical/crest-alignment/{alignment_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/geotechnical/crest-alignment/{z}/{x}/{y}.png")
+def get_crest_alignment_tile(
+    z: int,
+    x: int,
+    y: int,
+    alignment_id: Optional[str] = "crest_tsf_01",
+    colormap: Optional[str] = "rdylbu_r",
+    rescale: Optional[str] = "0.0,0.5"
+):
+    png_bytes = tile_service.render_crest_alignment_tile(
+        alignment_id=alignment_id or "crest_tsf_01",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "rdylbu_r",
+        rescale=rescale or "0.0,0.5"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-CREST-ALIGN-v2.5"}
+    )
+
+
+@router.get("/tiles/geotechnical/crest-alignment/{alignment_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/geotechnical/crest-alignment/{z}/{x}/{y}.png")
+def get_analysis_crest_alignment_tile(
+    z: int,
+    x: int,
+    y: int,
+    alignment_id: Optional[str] = "crest_tsf_01",
+    colormap: Optional[str] = "rdylbu_r",
+    rescale: Optional[str] = "0.0,0.5"
+):
+    return get_crest_alignment_tile(z=z, x=x, y=y, alignment_id=alignment_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# T-103: InSAR ATMOSPHERIC PHASE SCREEN (APS) FILTERING & PS-InSAR STACKING ENGINE
+# ============================================================================
+
+@router.post("/sar/ps-insar-stack", response_model=PSInSARStackResponse)
+@router.post("/sar/ps_insar_stack", response_model=PSInSARStackResponse, include_in_schema=False)
+@router.post("/sar/ps-insar", response_model=PSInSARStackResponse, include_in_schema=False)
+@router.post("/ps-insar-stack", response_model=PSInSARStackResponse, include_in_schema=False)
+@router.post("/ps-insar", response_model=PSInSARStackResponse, include_in_schema=False)
+def process_ps_insar_stack(req: PSInSARStackRequest):
+    """Processes Persistent Scatterer InSAR stack with spatiotemporal APS filtering and evaluates millimeter-scale ground displacement velocities."""
+    calc_res = calculate_ps_insar_stack_displacement(
+        coherence_thresh=req.coherence_threshold,
+        dispersion_thresh=req.dispersion_threshold,
+        wavelength_m=req.wavelength_m,
+        aps_filter_mode=req.aps_filter_mode,
+        ps_candidates=req.ps_candidates,
+        master_date=req.master_date,
+        slave_dates=req.slave_dates
+    )
+    tile_url = build_ps_insar_tile_url(
+        stack_id=req.stack_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return PSInSARStackResponse(
+        stack_id=req.stack_id,
+        aps_filter_mode=req.aps_filter_mode,
+        master_date=calc_res["master_date"],
+        slave_count=calc_res["slave_count"],
+        temporal_baseline_days=calc_res["temporal_baseline_days"],
+        total_candidates=calc_res["total_candidates"],
+        accepted_ps_count=calc_res["accepted_ps_count"],
+        mean_temporal_coherence=calc_res["mean_temporal_coherence"],
+        mean_los_velocity_mm_yr=calc_res["mean_los_velocity_mm_yr"],
+        max_subsidence_mm_yr=calc_res["max_subsidence_mm_yr"],
+        max_uplift_mm_yr=calc_res["max_uplift_mm_yr"],
+        overall_stability_tier=calc_res["overall_stability_tier"],
+        critical_subsidence_detected=calc_res["critical_subsidence_detected"],
+        ps_points=calc_res["ps_points"],
+        tile_url_template=tile_url,
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/sar/ps-insar/{stack_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/sar/ps-insar/{z}/{x}/{y}.png")
+def get_ps_insar_tile(
+    z: int,
+    x: int,
+    y: int,
+    stack_id: Optional[str] = "ps_stack_tsf_01",
+    colormap: Optional[str] = "seismic_r",
+    rescale: Optional[str] = "-20.0,10.0"
+):
+    png_bytes = tile_service.render_ps_insar_tile(
+        stack_id=stack_id or "ps_stack_tsf_01",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "seismic_r",
+        rescale=rescale or "-20.0,10.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-PS-INSAR-v2.5"}
+    )
+
+
+@router.get("/tiles/sar/ps-insar/{stack_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/sar/ps-insar/{z}/{x}/{y}.png")
+def get_analysis_ps_insar_tile(
+    z: int,
+    x: int,
+    y: int,
+    stack_id: Optional[str] = "ps_stack_tsf_01",
+    colormap: Optional[str] = "seismic_r",
+    rescale: Optional[str] = "-20.0,10.0"
+):
+    return get_ps_insar_tile(z=z, x=x, y=y, stack_id=stack_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# SAR SOIL & SUBSURFACE MOISTURE INVERSION (DUBOIS / OH & TOPP MODELS)
+# ============================================================================
+
+@router.post("/geotechnical/soil-moisture", response_model=SoilMoistureInversionResponse)
+@router.post("/geotechnical/soil_moisture", response_model=SoilMoistureInversionResponse, include_in_schema=False)
+@router.post("/sar/soil-moisture", response_model=SoilMoistureInversionResponse, include_in_schema=False)
+def invert_sar_soil_moisture(req: SoilMoistureInversionRequest):
+    """Inverts relative dielectric permittivity and volumetric soil moisture from SAR backscatter."""
+    calc_res = calculate_sar_soil_moisture_inversion(
+        sigma0_vv_db=req.sigma0_vv_db,
+        sigma0_hh_db=req.sigma0_hh_db,
+        sigma0_vh_db=req.sigma0_vh_db,
+        incidence_angle_deg=req.incidence_angle_deg,
+        rms_roughness_cm=req.rms_roughness_cm,
+        radar_frequency_ghz=req.radar_frequency_ghz,
+        clay_fraction=req.clay_fraction,
+        model_type=req.model_type
+    )
+    col_str = req.collection.value if hasattr(req.collection, "value") else str(req.collection)
+    tile_url = build_soil_moisture_tile_url(
+        collection=col_str,
+        item_id=req.item_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return SoilMoistureInversionResponse(
+        asset_id=req.asset_id,
+        collection=col_str,
+        item_id=req.item_id,
+        model_type=req.model_type,
+        dielectric_permittivity_real=calc_res["dielectric_permittivity_real"],
+        volumetric_soil_moisture_m3m3=calc_res["volumetric_soil_moisture_m3m3"],
+        soil_moisture_percentage=calc_res["soil_moisture_percentage"],
+        estimated_rms_roughness_cm=calc_res["estimated_rms_roughness_cm"],
+        pore_water_pressure_proxy_kpa=calc_res["pore_water_pressure_proxy_kpa"],
+        hazard_tier=calc_res["hazard_tier"],
+        liquefaction_warning=calc_res["liquefaction_warning"],
+        tile_url_template=tile_url,
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/geotechnical/soil-moisture/{collection}/{item_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/geotechnical/soil-moisture/{z}/{x}/{y}.png")
+def get_soil_moisture_tile(
+    z: int,
+    x: int,
+    y: int,
+    collection: Optional[str] = "sentinel-1-rtc",
+    item_id: Optional[str] = "s1_sample",
+    colormap: Optional[str] = "blues",
+    rescale: Optional[str] = "0.0,0.5"
+):
+    png_bytes = tile_service.render_soil_moisture_tile(
+        collection=collection or "sentinel-1-rtc",
+        item_id=item_id or "s1_sample",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "blues",
+        rescale=rescale or "0.0,0.5"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-SOIL-MOISTURE-v2.5"}
+    )
+
+
+@router.get("/tiles/geotechnical/soil-moisture/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/geotechnical/soil-moisture/{z}/{x}/{y}.png")
+def get_analysis_soil_moisture_tile(
+    z: int,
+    x: int,
+    y: int,
+    collection: Optional[str] = "sentinel-1-rtc",
+    item_id: Optional[str] = "s1_sample",
+    colormap: Optional[str] = "blues",
+    rescale: Optional[str] = "0.0,0.5"
+):
+    return get_soil_moisture_tile(z=z, x=x, y=y, collection=collection, item_id=item_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# SATELLITE-DERIVED BATHYMETRY & RESERVOIR SILTATION INVERSION CONTRACTS
+# ============================================================================
+
+@router.post("/water/satellite-bathymetry", response_model=SatelliteBathymetryResponse)
+@router.post("/water/satellite_bathymetry", response_model=SatelliteBathymetryResponse, include_in_schema=False)
+@router.post("/water/bathymetry", response_model=SatelliteBathymetryResponse, include_in_schema=False)
+@router.post("/satellite-bathymetry", response_model=SatelliteBathymetryResponse, include_in_schema=False)
+def analyze_satellite_bathymetry(req: SatelliteBathymetryRequest):
+    """Calculates satellite-derived optical bathymetric depth, active storage volume, and siltation capacity loss."""
+    calc_res = calculate_satellite_derived_bathymetry(
+        blue_reflectance=req.blue_reflectance,
+        green_reflectance=req.green_reflectance,
+        red_reflectance=req.red_reflectance,
+        design_capacity_m3=req.design_capacity_m3,
+        design_max_depth_m=req.design_max_depth_m,
+        surface_area_ha=req.surface_area_ha,
+        calibration_m1=req.calibration_m1,
+        calibration_m0=req.calibration_m0,
+        model_type=req.model_type
+    )
+    col_str = req.collection.value if hasattr(req.collection, "value") else str(req.collection)
+    tile_url = build_bathymetry_tile_url(
+        collection=col_str,
+        item_id=req.item_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return SatelliteBathymetryResponse(
+        asset_id=req.asset_id,
+        collection=col_str,
+        item_id=req.item_id,
+        model_type=req.model_type,
+        mean_depth_m=calc_res["mean_depth_m"],
+        max_depth_m=calc_res["max_depth_m"],
+        estimated_volume_m3=calc_res["estimated_volume_m3"],
+        estimated_volume_acre_feet=calc_res["estimated_volume_acre_feet"],
+        design_capacity_m3=calc_res["design_capacity_m3"],
+        siltation_volume_loss_m3=calc_res["siltation_volume_loss_m3"],
+        siltation_loss_percentage=calc_res["siltation_loss_percentage"],
+        estimated_remaining_years=calc_res["estimated_remaining_years"],
+        severity_tier=calc_res["severity_tier"],
+        critical_siltation_warning=calc_res["critical_siltation_warning"],
+        tile_url_template=tile_url,
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/water/bathymetry/{collection}/{item_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/water/bathymetry/{z}/{x}/{y}.png")
+def get_bathymetry_tile(
+    z: int,
+    x: int,
+    y: int,
+    collection: Optional[str] = "sentinel-2-l2a",
+    item_id: Optional[str] = "s2_sample",
+    colormap: Optional[str] = "mako_r",
+    rescale: Optional[str] = "0.0,40.0"
+):
+    png_bytes = tile_service.render_bathymetry_tile(
+        collection=collection or "sentinel-2-l2a",
+        item_id=item_id or "s2_sample",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "mako_r",
+        rescale=rescale or "0.0,40.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-BATHYMETRY-v2.5"}
+    )
+
+
+@router.get("/tiles/water/bathymetry/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/water/bathymetry/{z}/{x}/{y}.png")
+def get_analysis_bathymetry_tile(
+    z: int,
+    x: int,
+    y: int,
+    collection: Optional[str] = "sentinel-2-l2a",
+    item_id: Optional[str] = "s2_sample",
+    colormap: Optional[str] = "mako_r",
+    rescale: Optional[str] = "0.0,40.0"
+):
+    return get_bathymetry_tile(z=z, x=x, y=y, collection=collection, item_id=item_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# SUBSURFACE GROUND PENETRATING RADAR (GPR) & GEOPHYSICAL CONTRACTS
+# ============================================================================
+
+@router.post("/geotechnical/gpr-profile", response_model=GPRProfileResponse)
+@router.post("/geotechnical/gpr_profile", response_model=GPRProfileResponse, include_in_schema=False)
+@router.post("/geotechnical/gpr", response_model=GPRProfileResponse, include_in_schema=False)
+@router.post("/gpr-profile", response_model=GPRProfileResponse, include_in_schema=False)
+def process_gpr_profile(req: GPRProfileRequest):
+    """Processes subsurface Ground Penetrating Radar (GPR) scan profile and evaluates dielectric anomalies."""
+    calc_res = calculate_gpr_subsurface_profile(
+        relative_permittivity=req.relative_permittivity,
+        max_time_window_ns=req.max_time_window_ns,
+        transect_length_m=req.transect_length_m,
+        station_interval_m=req.station_interval_m,
+        antenna_frequency_mhz=req.antenna_frequency_mhz,
+        raw_scan_traces=req.raw_scan_traces
+    )
+    tile_url = build_gpr_profile_tile_url(
+        profile_id=req.profile_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return GPRProfileResponse(
+        profile_id=req.profile_id,
+        medium_type=req.medium_type,
+        antenna_frequency_mhz=req.antenna_frequency_mhz,
+        em_wave_velocity_m_ns=calc_res["em_wave_velocity_m_ns"],
+        max_penetration_depth_m=calc_res["max_penetration_depth_m"],
+        total_stations_scanned=calc_res["total_stations_scanned"],
+        anomalies_detected_count=calc_res["anomalies_detected_count"],
+        critical_void_detected=calc_res["critical_void_detected"],
+        overall_severity=calc_res["overall_severity"],
+        scan_stations=calc_res["scan_stations"],
+        tile_url_template=tile_url,
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/geotechnical/gpr/{profile_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/geotechnical/gpr/{z}/{x}/{y}.png")
+def get_gpr_tile(
+    z: int,
+    x: int,
+    y: int,
+    profile_id: Optional[str] = "gpr_transect_01",
+    colormap: Optional[str] = "seismic",
+    rescale: Optional[str] = "-300.0,300.0"
+):
+    png_bytes = tile_service.render_gpr_tile(
+        profile_id=profile_id or "gpr_transect_01",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "seismic",
+        rescale=rescale or "-300.0,300.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-GPR-v2.5"}
+    )
+
+
+@router.get("/tiles/geotechnical/gpr/{profile_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/geotechnical/gpr/{z}/{x}/{y}.png")
+def get_analysis_gpr_tile(
+    z: int,
+    x: int,
+    y: int,
+    profile_id: Optional[str] = "gpr_transect_01",
+    colormap: Optional[str] = "seismic",
+    rescale: Optional[str] = "-300.0,300.0"
+):
+    return get_gpr_tile(z=z, x=x, y=y, profile_id=profile_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# OPERATIONAL MODAL ANALYSIS (OMA) & STRUCTURAL VIBRATION CONTRACTS
+# ============================================================================
+
+@router.post("/structural/modal-vibration", response_model=StructuralModalResponse)
+@router.post("/structural/modal_vibration", response_model=StructuralModalResponse, include_in_schema=False)
+@router.post("/structural/vibration", response_model=StructuralModalResponse, include_in_schema=False)
+@router.post("/modal-vibration", response_model=StructuralModalResponse, include_in_schema=False)
+def analyze_structural_modal(req: StructuralModalRequest):
+    """Extracts structural modal frequencies, damping ratios, and evaluates vibration damage risk via OMA."""
+    calc_res = calculate_operational_modal_analysis(
+        observed_ppv_mm_s=req.observed_ppv_mm_s if req.observed_ppv_mm_s is not None else 8.4,
+        design_fundamental_freq_hz=req.design_fundamental_freq_hz,
+        sampling_rate_hz=req.sampling_rate_hz,
+        duration_seconds=req.duration_seconds,
+        method=req.method
+    )
+    tile_url = build_vibration_telemetry_tile_url(
+        asset_id=req.asset_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return StructuralModalResponse(
+        asset_id=req.asset_id,
+        sensor_location=req.sensor_location,
+        method=req.method,
+        sampling_rate_hz=req.sampling_rate_hz,
+        fundamental_frequency_hz=calc_res["fundamental_frequency_hz"],
+        frequency_shift_percentage=calc_res["frequency_shift_percentage"],
+        peak_particle_velocity_mm_s=calc_res["peak_particle_velocity_mm_s"],
+        usbm_limit_ppv_mm_s=calc_res["usbm_limit_ppv_mm_s"],
+        risk_tier=calc_res["risk_tier"],
+        structural_damage_warning=calc_res["structural_damage_warning"],
+        frequency_drop_detected=calc_res["frequency_drop_detected"],
+        modes=calc_res["modes"],
+        tile_url_template=tile_url,
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/structural/vibration/{asset_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/structural/vibration/{z}/{x}/{y}.png")
+def get_vibration_tile(
+    z: int,
+    x: int,
+    y: int,
+    asset_id: Optional[str] = "spillway_monolith_01",
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,25.0"
+):
+    png_bytes = tile_service.render_vibration_tile(
+        asset_id=asset_id or "spillway_monolith_01",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "turbo",
+        rescale=rescale or "0.0,25.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-VIBRATION-v2.5"}
+    )
+
+
+@router.get("/tiles/structural/vibration/{asset_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/structural/vibration/{z}/{x}/{y}.png")
+def get_analysis_vibration_tile(
+    z: int,
+    x: int,
+    y: int,
+    asset_id: Optional[str] = "spillway_monolith_01",
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,25.0"
+):
+    return get_vibration_tile(z=z, x=x, y=y, asset_id=asset_id, colormap=colormap, rescale=rescale)
+
+
 
 
 

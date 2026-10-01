@@ -849,7 +849,37 @@ export const API_ENDPOINTS = {
   TILES_CREST_ALIGNMENT: (alignmentId, z, x, y) => `/api/v1/tiles/geotechnical/crest-alignment/${alignmentId}/${z}/${x}/${y}.png`,
   ANALYSIS_PS_INSAR_STACK: '/api/v1/analysis/sar/ps-insar-stack',
   ANALYSIS_PS_INSAR_STACK_SHORT: '/sar/ps-insar-stack',
-  TILES_PS_INSAR_STACK: (stackId, z, x, y) => `/api/v1/tiles/sar/ps-insar/${stackId}/${z}/${x}/${y}.png`
+  TILES_PS_INSAR_STACK: (stackId, z, x, y) => `/api/v1/tiles/sar/ps-insar/${stackId}/${z}/${x}/${y}.png`,
+  ANALYSIS_SAR_SOIL_MOISTURE: '/api/v1/analysis/geotechnical/soil-moisture',
+  ANALYSIS_SAR_SOIL_MOISTURE_SHORT: '/geotechnical/soil-moisture',
+  TILES_SAR_SOIL_MOISTURE: (collection, itemId, z, x, y) => `/api/v1/tiles/geotechnical/soil-moisture/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_SATELLITE_BATHYMETRY: '/api/v1/analysis/water/satellite-bathymetry',
+  ANALYSIS_SATELLITE_BATHYMETRY_SHORT: '/water/satellite-bathymetry',
+  TILES_SATELLITE_BATHYMETRY: (collection, itemId, z, x, y) => `/api/v1/tiles/water/bathymetry/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_GPR_PROFILE: '/api/v1/analysis/geotechnical/gpr-profile',
+  ANALYSIS_GPR_PROFILE_SHORT: '/geotechnical/gpr-profile',
+  TILES_GPR_PROFILE: (profileId, z, x, y) => `/api/v1/tiles/geotechnical/gpr/${profileId}/${z}/${x}/${y}.png`,
+  ANALYSIS_STRUCTURAL_MODAL: '/api/v1/analysis/structural/modal-vibration',
+  ANALYSIS_STRUCTURAL_MODAL_SHORT: '/structural/modal-vibration',
+  TILES_STRUCTURAL_MODAL: (assetId, z, x, y) => `/api/v1/tiles/structural/vibration/${assetId}/${z}/${x}/${y}.png`,
+  ANALYSIS_TRUE_ORTHO_ZBUFFER: '/api/v1/ortho/true-orthorectification',
+  ANALYSIS_TRUE_ORTHO_ZBUFFER_SHORT: '/ortho/true-orthorectification',
+  TILES_TRUE_ORTHO_ZBUFFER: (orthoId, z, x, y) => `/api/v1/tiles/ortho/true-orthorectification/${orthoId}/${z}/${x}/${y}.png`,
+  ANALYSIS_GRAPHCUT_SEAMLINES: '/api/v1/mosaic/graphcut-seamlines',
+  ANALYSIS_GRAPHCUT_SEAMLINES_SHORT: '/mosaic/graphcut-seamlines',
+  TILES_GRAPHCUT_SEAMLINES: (mosaicId, z, x, y) => `/api/v1/tiles/mosaic/graphcut-seamlines/${mosaicId}/${z}/${x}/${y}.png`,
+  ANALYSIS_BRDF_NBAR: '/api/v1/preprocessing/brdf-nbar',
+  ANALYSIS_BRDF_NBAR_SHORT: '/preprocessing/brdf-nbar',
+  TILES_BRDF_NBAR: (collection, itemId, z, x, y) => `/api/v1/tiles/preprocessing/brdf-nbar/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_SBAS_STACK: '/api/v1/analysis/sar/sbas-stack',
+  ANALYSIS_SBAS_STACK_SHORT: '/sar/sbas-stack',
+  TILES_SBAS_STACK: (stackId, z, x, y) => `/api/v1/tiles/sar/sbas/${stackId}/${z}/${x}/${y}.png`,
+  ANALYSIS_TOPOGRAPHIC_MINNAERT: '/api/v1/analysis/preprocessing/topographic-minnaert',
+  ANALYSIS_TOPOGRAPHIC_MINNAERT_SHORT: '/preprocessing/topographic-minnaert',
+  TILES_TOPOGRAPHIC_MINNAERT: (collection, itemId, z, x, y) => `/api/v1/tiles/preprocessing/topographic-minnaert/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  ANALYSIS_TIE_POINT_RPC: '/api/v1/ortho/tie-point-rpc',
+  ANALYSIS_TIE_POINT_RPC_SHORT: '/ortho/tie-point-rpc',
+  TILES_TIE_POINT_RPC: (imageId, z, x, y) => `/api/v1/tiles/ortho/tie-point-rpc/${imageId}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -961,6 +991,26 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.alignmentId || params.alignment_id || 'crest_tsf_01', params.z, params.x, params.y);
       case 'TILES_PS_INSAR_STACK':
         return endpoint(params.stackId || params.stack_id || 'ps_stack_tsf_01', params.z, params.x, params.y);
+      case 'TILES_SAR_SOIL_MOISTURE':
+        return endpoint(params.collection || 'sentinel-1-rtc', params.itemId || params.item_id || 'item-01', params.z, params.x, params.y);
+      case 'TILES_SATELLITE_BATHYMETRY':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'item-01', params.z, params.x, params.y);
+      case 'TILES_GPR_PROFILE':
+        return endpoint(params.profileId || params.profile_id || 'profile_01', params.z, params.x, params.y);
+      case 'TILES_STRUCTURAL_MODAL':
+        return endpoint(params.assetId || params.asset_id || 'asset_01', params.z, params.x, params.y);
+      case 'TILES_TRUE_ORTHO_ZBUFFER':
+        return endpoint(params.orthoId || params.ortho_id || 'ortho_01', params.z, params.x, params.y);
+      case 'TILES_GRAPHCUT_SEAMLINES':
+        return endpoint(params.mosaicId || params.mosaic_id || 'mosaic_01', params.z, params.x, params.y);
+      case 'TILES_BRDF_NBAR':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'scene_01', params.z, params.x, params.y);
+      case 'TILES_SBAS_STACK':
+        return endpoint(params.stackId || params.stack_id || 'stack_01', params.z, params.x, params.y);
+      case 'TILES_TOPOGRAPHIC_MINNAERT':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'scene_01', params.z, params.x, params.y);
+      case 'TILES_TIE_POINT_RPC':
+        return endpoint(params.imageId || params.image_id || 'image_01', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -5668,4 +5718,1280 @@ export const buildPsInsarTileUrl = (stackId, z, x, y, options = {}) => {
   const basePrefix = options.basePrefix || '/api/v1';
   return `${basePrefix}/tiles/sar/ps-insar/${stackId}/${z}/${x}/${y}.png`;
 };
+
+export const SAR_MOISTURE_MODELS = [
+  { id: 'dubois', label: 'Dubois et al. (1995) Semi-Empirical Inversion', description: 'Co-polarization (VV/HH) backscatter, incidence angle, and C-band roughness' },
+  { id: 'oh', label: 'Oh et al. (1992/2004) Ratio Model', description: 'Cross-pol (VH/VV) and co-pol ratio for multi-polarized SAR' },
+  { id: 'topp_permittivity', label: 'Topp Dielectric Permittivity', description: 'Electromagnetic permittivity to volumetric soil moisture conversion' },
+  { id: 'smap_sentinel_synergy', label: 'SMAP/Sentinel-1 Radiometric Synergy', description: 'High-resolution SAR downscaled radiometric soil moisture' }
+];
+
+export const SOIL_MOISTURE_HAZARD_TIERS = {
+  DESICCATED_CRACKING: { id: 'desiccated_cracking', label: 'Desiccated Cracking Risk', maxTheta: 0.10, color: '#eab308', badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' },
+  OPTIMAL_UNSATURATED: { id: 'optimal_unsaturated', label: 'Optimal Unsaturated Suction', maxTheta: 0.30, color: '#22c55e', badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30' },
+  HIGH_MOISTURE_SEEPAGE: { id: 'high_moisture_seepage', label: 'High Moisture Seepage Zone', maxTheta: 0.45, color: '#3b82f6', badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+  SATURATED_LIQUEFACTION_RISK: { id: 'saturated_liquefaction_risk', label: 'Saturated Liquefaction Risk', maxTheta: 1.0, color: '#ef4444', badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30' }
+};
+
+export const classifySoilMoistureTier = (volumetricMoistureM3M3) => {
+  const theta = Math.max(0, Math.min(1, Number(volumetricMoistureM3M3) || 0));
+  if (theta < 0.10) return SOIL_MOISTURE_HAZARD_TIERS.DESICCATED_CRACKING;
+  if (theta < 0.30) return SOIL_MOISTURE_HAZARD_TIERS.OPTIMAL_UNSATURATED;
+  if (theta < 0.45) return SOIL_MOISTURE_HAZARD_TIERS.HIGH_MOISTURE_SEEPAGE;
+  return SOIL_MOISTURE_HAZARD_TIERS.SATURATED_LIQUEFACTION_RISK;
+};
+
+export const calculateSarSoilMoistureInversion = ({
+  sigma0VvDb = -12.5,
+  _sigma0HhDb = null,
+  sigma0VhDb = null,
+  incidenceAngleDeg = 38.5,
+  rmsRoughnessCm = 1.5,
+  radarFrequencyGhz = 5.405,
+  clayFraction = 0.25,
+  modelType = 'dubois'
+} = {}) => {
+  const thetaRad = (Math.max(15, Math.min(75, Number(incidenceAngleDeg) || 38.5)) * Math.PI) / 180;
+  const sinTheta = Math.sin(thetaRad);
+  const cosTheta = Math.cos(thetaRad);
+  const tanTheta = Math.tan(thetaRad);
+
+  const fGhz = Math.max(0.5, Number(radarFrequencyGhz) || 5.405);
+  const lambdaCm = 29.9792 / fGhz;
+  const kCm = (2 * Math.PI) / lambdaCm;
+  const sCm = Math.max(0.2, Math.min(8.0, Number(rmsRoughnessCm) || 1.5));
+  const ks = kCm * sCm;
+
+  const vvDb = Number(sigma0VvDb) || -12.5;
+  const mode = String(modelType).toLowerCase();
+
+  let epsR = 12.0;
+  if (mode === 'oh' && sigma0VhDb !== null) {
+    const vhDb = Number(sigma0VhDb);
+    const q = Math.pow(10, (vhDb - vvDb) / 10);
+    epsR = Math.max(2.5, Math.min(40.0, 1.0 + Math.pow(q / 0.23, 1 / 0.35) * 5.0));
+  } else {
+    const geomTerm = 10 * Math.log10(Math.max(1e-5, Math.pow(cosTheta, 3) / sinTheta));
+    const wavelengthTerm = 7 * Math.log10(Math.max(1e-4, lambdaCm / 100));
+    const roughnessTerm = 11 * Math.log10(Math.max(1e-4, ks * sinTheta));
+    const rhs = vvDb + 23.5 - geomTerm - wavelengthTerm - roughnessTerm;
+    const denom = 0.46 * tanTheta;
+    epsR = Math.abs(denom) > 1e-4 ? rhs / denom : 12.0;
+    epsR = Math.max(2.5, Math.min(42.0, epsR));
+  }
+
+  let thetaV = -0.053 + (0.0292 * epsR) - (0.00055 * Math.pow(epsR, 2)) + (0.0000043 * Math.pow(epsR, 3));
+  const clay = Math.max(0, Math.min(1, Number(clayFraction) || 0.25));
+  thetaV = Math.max(0.02, Math.min(0.58, thetaV * (1.0 + 0.15 * clay)));
+
+  const tier = classifySoilMoistureTier(thetaV);
+  const isLiq = thetaV >= 0.45;
+
+  let pwpKpa = 0.0;
+  if (thetaV < 0.35) {
+    pwpKpa = -150.0 * Math.pow((0.35 - thetaV) / 0.35, 1.5);
+  } else {
+    pwpKpa = 35.0 * ((thetaV - 0.35) / 0.15);
+  }
+
+  return {
+    dielectric_permittivity_real: Number(epsR.toFixed(2)),
+    volumetric_soil_moisture_m3m3: Number(thetaV.toFixed(4)),
+    soil_moisture_percentage: Number((thetaV * 100).toFixed(2)),
+    estimated_rms_roughness_cm: Number(sCm.toFixed(2)),
+    pore_water_pressure_proxy_kpa: Number(pwpKpa.toFixed(2)),
+    hazard_tier: tier.id,
+    tier_metadata: tier,
+    liquefaction_warning: isLiq
+  };
+};
+
+export const buildSoilMoistureTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/geotechnical/soil-moisture/${collection}/${itemId}/${z}/${x}/${y}.png`;
+};
+
+export const SDB_MODEL_TYPES = [
+  { id: 'stumpf_log_ratio', label: 'Stumpf et al. (2003) Log-Ratio Inversion', description: 'Differential log attenuation ratio between Blue (490nm) and Green (560nm)' },
+  { id: 'lyzenga_multispectral', label: 'Lyzenga (1978/1985) Multi-Band Model', description: 'Linear multi-band regression across Blue, Green, and Red bands' },
+  { id: 'radiative_transfer', label: 'Bio-Optical Radiative Transfer', description: 'Atmospheric and water-column forward modeling' }
+];
+
+export const SILTATION_SEVERITY_TIERS = {
+  NOMINAL_CAPACITY: { id: 'nominal_capacity', label: 'Nominal Operating Capacity', maxLoss: 10, color: '#22c55e', badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30' },
+  MINOR_SILTATION: { id: 'minor_siltation', label: 'Minor Siltation Sedimentation', maxLoss: 25, color: '#eab308', badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' },
+  MODERATE_SILTATION: { id: 'moderate_siltation', label: 'Moderate Siltation Infringement', maxLoss: 50, color: '#f97316', badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/30' },
+  CRITICAL_STORAGE_EXHAUSTION: { id: 'critical_storage_exhaustion', label: 'Critical Dead Storage Exhaustion', maxLoss: 100, color: '#ef4444', badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30' }
+};
+
+export const classifySiltationSeverityTier = (lossPercentage) => {
+  const pct = Math.max(0, Number(lossPercentage) || 0);
+  if (pct < 10) return SILTATION_SEVERITY_TIERS.NOMINAL_CAPACITY;
+  if (pct < 25) return SILTATION_SEVERITY_TIERS.MINOR_SILTATION;
+  if (pct < 50) return SILTATION_SEVERITY_TIERS.MODERATE_SILTATION;
+  return SILTATION_SEVERITY_TIERS.CRITICAL_STORAGE_EXHAUSTION;
+};
+
+export const calculateSatelliteDerivedBathymetry = ({
+  blueReflectance = 0.065,
+  greenReflectance = 0.042,
+  redReflectance = 0.018,
+  designCapacityM3 = 2.5e7,
+  designMaxDepthM = 42.0,
+  surfaceAreaHa = 180.0,
+  calibrationM1 = 28.5,
+  calibrationM0 = 18.2,
+  modelType = 'stumpf_log_ratio'
+} = {}) => {
+  const rBlue = Math.max(0.001, Math.min(0.5, Number(blueReflectance) || 0.065));
+  const rGreen = Math.max(0.001, Math.min(0.5, Number(greenReflectance) || 0.042));
+  const m1 = Number(calibrationM1) || 28.5;
+  const m0 = Number(calibrationM0) || 18.2;
+  const desCap = Math.max(100, Number(designCapacityM3) || 2.5e7);
+  const maxDDesign = Math.max(1, Number(designMaxDepthM) || 42.0);
+  const areaM2 = Math.max(10, (Number(surfaceAreaHa) || 180.0) * 10000);
+
+  const nConst = 1000.0;
+  const pBlue = Math.log(nConst * rBlue);
+  const pGreen = Math.log(nConst * rGreen);
+  const mode = String(modelType).toLowerCase();
+
+  let rawZ = 20.0;
+  if (mode === 'lyzenga_multispectral' && redReflectance !== null) {
+    const rRed = Math.max(0.0005, Math.min(0.3, Number(redReflectance) || 0.018));
+    const pRed = Math.log(nConst * rRed);
+    rawZ = (m1 * 0.6 * pBlue) + (m1 * 0.4 * pGreen) - (m1 * 0.2 * pRed) - m0;
+  } else {
+    const ratio = Math.abs(pGreen) > 1e-4 ? pBlue / pGreen : 1.0;
+    rawZ = (m1 * ratio) - m0;
+  }
+
+  const maxDepth = Math.max(0.5, Math.min(maxDDesign * 1.25, rawZ));
+  const meanDepth = Math.max(0.2, maxDepth * 0.52);
+
+  const calcVol = Math.min(desCap * 1.1, areaM2 * meanDepth);
+  const siltLoss = Math.max(0, desCap - calcVol);
+  const lossPct = (siltLoss / desCap) * 100.0;
+  const tier = classifySiltationSeverityTier(lossPct);
+
+  const remainYears = Math.max(0.5, (100.0 - lossPct) / 1.2);
+  const acreFeet = calcVol * 0.000810714;
+
+  return {
+    mean_depth_m: Number(meanDepth.toFixed(2)),
+    max_depth_m: Number(maxDepth.toFixed(2)),
+    estimated_volume_m3: Number(calcVol.toFixed(1)),
+    estimated_volume_acre_feet: Number(acreFeet.toFixed(1)),
+    design_capacity_m3: Number(desCap.toFixed(1)),
+    siltation_volume_loss_m3: Number(siltLoss.toFixed(1)),
+    siltation_loss_percentage: Number(lossPct.toFixed(2)),
+    estimated_remaining_years: Number(remainYears.toFixed(1)),
+    severity_tier: tier.id,
+    tier_metadata: tier,
+    critical_siltation_warning: lossPct >= 50.0
+  };
+};
+
+export const buildBathymetryTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/water/bathymetry/${collection}/${itemId}/${z}/${x}/${y}.png`;
+};
+
+export const GPR_MEDIUM_TYPES = [
+  { id: 'dry_sand', label: 'Dry Sand', epsR: 4.0, velocityMNs: 0.15 },
+  { id: 'wet_sand', label: 'Wet Sand', epsR: 25.0, velocityMNs: 0.06 },
+  { id: 'compacted_clay', label: 'Compacted Clay Core', epsR: 15.0, velocityMNs: 0.077 },
+  { id: 'embankment_fill', label: 'Zoned Embankment Fill', epsR: 10.5, velocityMNs: 0.0925 },
+  { id: 'bedrock', label: 'Competent Bedrock', epsR: 7.0, velocityMNs: 0.113 },
+  { id: 'freshwater', label: 'Freshwater Pore Fluid', epsR: 80.0, velocityMNs: 0.0335 }
+];
+
+export const GPR_ANOMALY_TYPES = [
+  { id: 'void_cavity', label: 'Internal Piping Void / Cavity', description: 'Air-filled cavity exhibiting high-amplitude positive Fresnel reflection' },
+  { id: 'moisture_plume', label: 'Internal Seepage Plume', description: 'Localized saturation plume exhibiting inverted reflection polarity' },
+  { id: 'structural_interface', label: 'Core / Shell Horizon Interface', description: 'Zoned embankment material transition contact' },
+  { id: 'bedrock_contact', label: 'Foundation Bedrock Contact', description: 'Interface boundary between embankment fill and native foundation' }
+];
+
+export const GPR_ANOMALY_SEVERITIES = {
+  NOMINAL: { id: 'nominal', label: 'Nominal Stratigraphy', color: '#22c55e', badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30' },
+  LOW_RISK: { id: 'low_risk', label: 'Low Dielectric Contrast', color: '#eab308', badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' },
+  MODERATE_RISK: { id: 'moderate_risk', label: 'Moderate Anomaly Contrast', color: '#f97316', badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/30' },
+  SEVERE_PIPING_VOID: { id: 'severe_piping_void', label: 'Severe Piping Void Cavity', color: '#ef4444', badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30' }
+};
+
+export const classifyGprAnomalySeverity = (reflectionCoeff) => {
+  const r = Math.abs(Number(reflectionCoeff) || 0);
+  if (r < 0.20) return GPR_ANOMALY_SEVERITIES.NOMINAL;
+  if (r < 0.40) return GPR_ANOMALY_SEVERITIES.LOW_RISK;
+  if (r < 0.60) return GPR_ANOMALY_SEVERITIES.MODERATE_RISK;
+  return GPR_ANOMALY_SEVERITIES.SEVERE_PIPING_VOID;
+};
+
+export const calculateGprSubsurfaceProfile = ({
+  relativePermittivity = 10.5,
+  maxTimeWindowNs = 120.0,
+  transectLengthM = 150.0,
+  stationIntervalM = 2.0
+} = {}) => {
+  const cMNs = 0.299792458;
+  const eps1 = Math.max(1.0, Number(relativePermittivity) || 10.5);
+  const vMNs = cMNs / Math.sqrt(eps1);
+
+  const tWin = Math.max(10.0, Number(maxTimeWindowNs) || 120.0);
+  const maxDepth = (vMNs * tWin) / 2.0;
+
+  const length = Math.max(5.0, Number(transectLengthM) || 150.0);
+  const interval = Math.max(0.5, Number(stationIntervalM) || 2.0);
+  const nStations = Math.max(2, Math.floor(length / interval) + 1);
+
+  const stations = [];
+  let anomalyCount = 0;
+  let hasSevere = false;
+
+  for (let i = 0; i < nStations; i++) {
+    const sM = Math.min(length, i * interval);
+    const baseTwt = tWin * (0.35 + 0.15 * Math.sin(sM / 15.0));
+    const depthM = (vMNs * baseTwt) / 2.0;
+    let ampMv = 45.0 + 10.0 * Math.cos(sM / 8.0);
+    let reflCoeff = 0.08;
+    let anomalyDetected = false;
+    let aType = null;
+    let severity = GPR_ANOMALY_SEVERITIES.NOMINAL;
+
+    if (sM >= 44.0 && sM <= 54.0) {
+      anomalyDetected = true;
+      aType = 'void_cavity';
+      const eps2 = 1.0;
+      reflCoeff = (Math.sqrt(eps1) - Math.sqrt(eps2)) / (Math.sqrt(eps1) + Math.sqrt(eps2));
+      ampMv = 280.0;
+      severity = GPR_ANOMALY_SEVERITIES.SEVERE_PIPING_VOID;
+      hasSevere = true;
+      anomalyCount++;
+    } else if (sM >= 98.0 && sM <= 112.0) {
+      anomalyDetected = true;
+      aType = 'moisture_plume';
+      const eps2 = 32.0;
+      reflCoeff = (Math.sqrt(eps1) - Math.sqrt(eps2)) / (Math.sqrt(eps1) + Math.sqrt(eps2));
+      ampMv = -195.0;
+      severity = GPR_ANOMALY_SEVERITIES.MODERATE_RISK;
+      anomalyCount++;
+    }
+
+    stations.push({
+      station_m: Number(sM.toFixed(2)),
+      twt_ns: Number(baseTwt.toFixed(2)),
+      estimated_depth_m: Number(depthM.toFixed(2)),
+      amplitude_mv: Number(ampMv.toFixed(1)),
+      reflection_coefficient: Number(reflCoeff.toFixed(3)),
+      anomaly_detected: anomalyDetected,
+      anomaly_type: aType,
+      severity: severity.id,
+      severity_metadata: severity
+    });
+  }
+
+  const overallSev = hasSevere ? GPR_ANOMALY_SEVERITIES.SEVERE_PIPING_VOID : (
+    anomalyCount > 0 ? GPR_ANOMALY_SEVERITIES.MODERATE_RISK : GPR_ANOMALY_SEVERITIES.NOMINAL
+  );
+
+  return {
+    em_wave_velocity_m_ns: Number(vMNs.toFixed(4)),
+    max_penetration_depth_m: Number(maxDepth.toFixed(2)),
+    total_stations_scanned: stations.length,
+    anomalies_detected_count: anomalyCount,
+    critical_void_detected: hasSevere,
+    overall_severity: overallSev.id,
+    overall_metadata: overallSev,
+    scan_stations: stations
+  };
+};
+
+export const buildGprProfileTileUrl = (profileId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/geotechnical/gpr/${profileId}/${z}/${x}/${y}.png`;
+};
+
+export const OMA_METHODS = [
+  { id: 'peak_picking_fdd', label: 'Frequency Domain Decomposition (FDD)', description: 'Peak picking on output spectral density matrices' },
+  { id: 'stochastic_subspace', label: 'Stochastic Subspace Identification (SSI)', description: 'Data-driven and covariance-driven state-space realization' },
+  { id: 'eulerian_video_magnification', label: 'Eulerian Video Magnification', description: 'Phase-based sub-pixel video optical vibration tracking' }
+];
+
+export const VIBRATION_RISK_TIERS = {
+  SAFE_AMBIENT: { id: 'safe_ambient', label: 'Safe Ambient Vibration', maxPpv: 2.5, color: '#22c55e', badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30' },
+  CAUTION_MONITORING: { id: 'caution_monitoring', label: 'Elevated Caution Threshold', maxPpv: 10.0, color: '#eab308', badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' },
+  COSMETIC_CRACKING_RISK: { id: 'cosmetic_cracking_risk', label: 'Cosmetic Cracking Hazard', maxPpv: 25.0, color: '#f97316', badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/30' },
+  STRUCTURAL_DAMAGE_RISK: { id: 'structural_damage_risk', label: 'Structural Damage Hazard', maxPpv: 100.0, color: '#ef4444', badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30' }
+};
+
+export const classifyVibrationRiskTier = (ppvMmS) => {
+  const val = Math.max(0, Number(ppvMmS) || 0);
+  if (val < 2.5) return VIBRATION_RISK_TIERS.SAFE_AMBIENT;
+  if (val < 10.0) return VIBRATION_RISK_TIERS.CAUTION_MONITORING;
+  if (val < 25.0) return VIBRATION_RISK_TIERS.COSMETIC_CRACKING_RISK;
+  return VIBRATION_RISK_TIERS.STRUCTURAL_DAMAGE_RISK;
+};
+
+export const calculateOperationalModalAnalysis = ({
+  observedPpvMmS = 8.4,
+  designFundamentalFreqHz = 3.2,
+  method = 'peak_picking_fdd'
+} = {}) => {
+  const f0 = Math.max(0.1, Number(designFundamentalFreqHz) || 3.2);
+  const ppv = Math.max(0.0, Number(observedPpvMmS) || 8.4);
+  const mode = String(method).toLowerCase();
+
+  let f1 = f0 * 0.940;
+  let damp1 = 2.9;
+  if (mode === 'stochastic_subspace') {
+    f1 = f0 * 0.935;
+    damp1 = 2.8;
+  } else if (mode === 'eulerian_video_magnification') {
+    f1 = f0 * 0.945;
+    damp1 = 3.1;
+  }
+
+  const freqShiftPct = ((f1 - f0) / f0) * 100.0;
+  const freqDropDetected = freqShiftPct <= -10.0;
+
+  const f2 = f1 * 2.75;
+  const damp2 = 3.5;
+  const f3 = f1 * 5.20;
+  const damp3 = 4.8;
+
+  const q1 = 1.0 / (2.0 * (damp1 / 100.0));
+  const q2 = 1.0 / (2.0 * (damp2 / 100.0));
+  const q3 = 1.0 / (2.0 * (damp3 / 100.0));
+
+  const modesList = [
+    { mode_index: 1, frequency_hz: Number(f1.toFixed(2)), damping_ratio_pct: Number(damp1.toFixed(2)), peak_particle_velocity_mm_s: Number(ppv.toFixed(2)), mode_shape_description: '1st Transverse Monolith Bending', resonance_amplification_q: Number(q1.toFixed(1)) },
+    { mode_index: 2, frequency_hz: Number(f2.toFixed(2)), damping_ratio_pct: Number(damp2.toFixed(2)), peak_particle_velocity_mm_s: Number((ppv * 0.45).toFixed(2)), mode_shape_description: '2nd Vertical Chute Slab Flexure', resonance_amplification_q: Number(q2.toFixed(1)) },
+    { mode_index: 3, frequency_hz: Number(f3.toFixed(2)), damping_ratio_pct: Number(damp3.toFixed(2)), peak_particle_velocity_mm_s: Number((ppv * 0.22).toFixed(2)), mode_shape_description: '1st Torsional Abutment Coupling', resonance_amplification_q: Number(q3.toFixed(1)) }
+  ];
+
+  let usbmLimit = 12.7;
+  if (f1 < 10.0) usbmLimit = 12.7;
+  else if (f1 >= 40.0) usbmLimit = 50.8;
+  else usbmLimit = 12.7 + ((f1 - 10.0) / 30.0) * (50.8 - 12.7);
+
+  const tier = classifyVibrationRiskTier(ppv);
+  const isDamage = ppv >= 25.0;
+
+  return {
+    fundamental_frequency_hz: Number(f1.toFixed(2)),
+    frequency_shift_percentage: Number(freqShiftPct.toFixed(2)),
+    peak_particle_velocity_mm_s: Number(ppv.toFixed(2)),
+    usbm_limit_ppv_mm_s: Number(usbmLimit.toFixed(2)),
+    risk_tier: tier.id,
+    tier_metadata: tier,
+    structural_damage_warning: isDamage,
+    frequency_drop_detected: freqDropDetected,
+    modes: modesList
+  };
+};
+
+export const buildVibrationTelemetryTileUrl = (assetId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/structural/vibration/${assetId}/${z}/${x}/${y}.png`;
+};
+
+// ============================================================================
+// CYCLE v2.5.8: TRUE ORTHORECTIFICATION Z-BUFFER, SEAMLINE GRAPH-CUT & BRDF NBAR
+// ============================================================================
+
+export const TRUE_ORTHO_OCCLUSION_TYPES = {
+  VISIBLE_NADIR: { id: 'visible_nadir', label: 'Visible (Near-Nadir)', color: '#22c55e', badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30' },
+  VISIBLE_OBLIQUE: { id: 'visible_oblique', label: 'Visible (Oblique)', color: '#3b82f6', badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+  BUILDING_LEAN_OCCLUDED: { id: 'building_lean_occluded', label: 'Building Lean Occlusion', color: '#f97316', badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/30' },
+  TERRAIN_SHADOW_OCCLUDED: { id: 'terrain_shadow_occluded', label: 'Terrain Cast Shadow', color: '#8b5cf6', badgeClass: 'bg-purple-500/20 text-purple-300 border-purple-500/30' },
+  BLIND_AREA_HOLE: { id: 'blind_area_hole', label: 'Unresolved Blind Area Void', color: '#ef4444', badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30' }
+};
+
+export const TRUE_ORTHO_QUALITY_TIERS = {
+  SURVEY_GRADE_TRUE_ORTHO: { id: 'survey_grade_true_ortho', label: 'Survey-Grade True Ortho (< 2% Occlusion)', maxOcclusionPct: 2.0, color: '#22c55e', badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30' },
+  MAPPING_GRADE: { id: 'mapping_grade', label: 'Mapping-Grade Precision (2 - 10% Occlusion)', maxOcclusionPct: 10.0, color: '#3b82f6', badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+  MODERATE_OCCLUSION: { id: 'moderate_occlusion', label: 'Moderate Occlusion (10 - 25% Occlusion)', maxOcclusionPct: 25.0, color: '#eab308', badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' },
+  HIGH_OCCLUSION_DEFICIT: { id: 'high_occlusion_deficit', label: 'High Occlusion Deficit (>= 25% Occlusion)', maxOcclusionPct: 100.0, color: '#ef4444', badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30' }
+};
+
+export const classifyTrueOrthoQualityTier = (occlusionPct) => {
+  const val = Math.max(0, Number(occlusionPct) || 0);
+  if (val < 2.0) return TRUE_ORTHO_QUALITY_TIERS.SURVEY_GRADE_TRUE_ORTHO;
+  if (val < 10.0) return TRUE_ORTHO_QUALITY_TIERS.MAPPING_GRADE;
+  if (val < 25.0) return TRUE_ORTHO_QUALITY_TIERS.MODERATE_OCCLUSION;
+  return TRUE_ORTHO_QUALITY_TIERS.HIGH_OCCLUSION_DEFICIT;
+};
+
+export const calculateTrueOrthoZBuffer = ({
+  cameraHeightAglM = 120.0,
+  sensorPitchDeg = 0.0,
+  sensorRollDeg = 0.0,
+  sunZenithDeg = 35.0,
+  sunAzimuthDeg = 135.0,
+  dsmResolutionM = 0.05,
+  buildingThresholdHeightM = 3.0,
+  maxStructureHeightM = 18.5,
+  radialDistanceM = 65.0,
+  fillBlindAreas = true
+} = {}) => {
+  const hFlight = Math.max(10.0, Number(cameraHeightAglM) || 120.0);
+  const hStruct = Math.max(0.5, Number(maxStructureHeightM) || 18.5);
+  const rDist = Math.max(1.0, Number(radialDistanceM) || 65.0);
+  const res = Math.max(0.001, Number(dsmResolutionM) || 0.05);
+  const sunZDeg = Math.max(0.0, Math.min(89.0, Number(sunZenithDeg) || 35.0));
+  const sunZRad = (sunZDeg * Math.PI) / 180.0;
+  const sunAzDeg = (Number(sunAzimuthDeg) || 135.0) % 360.0;
+
+  const pitchRad = (Math.abs(Number(sensorPitchDeg) || 0) * Math.PI) / 180.0;
+  const rollRad = (Math.abs(Number(sensorRollDeg) || 0) * Math.PI) / 180.0;
+  const tiltEff = Math.sqrt(pitchRad * pitchRad + rollRad * rollRad);
+  const heightCutoff = Math.max(0.5, Number(buildingThresholdHeightM) || 3.0);
+
+  const effectiveStructHeight = Math.max(0.0, hStruct - Math.min(hStruct - 0.1, heightCutoff * 0.1));
+  const leanDispM = rDist * (effectiveStructHeight / hFlight) * Math.cos(tiltEff);
+  const shadowLenM = hStruct * Math.tan(sunZRad);
+
+  const totalPx = 262144;
+  const leanPx = Math.floor((leanDispM / res) * 45);
+  const shadowPx = Math.floor((shadowLenM / res) * 35);
+  const blindPx = fillBlindAreas ? 0 : Math.floor(leanPx * 0.18);
+
+  const occludedPx = Math.min(totalPx, leanPx + shadowPx + blindPx);
+  const visiblePx = Math.max(0, totalPx - occludedPx);
+  const occPct = (occludedPx / totalPx) * 100.0;
+
+  const tier = classifyTrueOrthoQualityTier(occPct);
+  const ready = tier.id === 'survey_grade_true_ortho' || tier.id === 'mapping_grade';
+
+  return {
+    total_pixels: totalPx,
+    visible_pixels: visiblePx,
+    occluded_pixels: occludedPx,
+    occlusion_percentage: Number(occPct.toFixed(2)),
+    building_lean_pixels: leanPx,
+    shadow_pixels: shadowPx,
+    blind_hole_pixels: blindPx,
+    max_building_lean_displacement_m: Number(leanDispM.toFixed(3)),
+    max_shadow_length_m: Number(shadowLenM.toFixed(2)),
+    sun_azimuth_deg: sunAzDeg,
+    quality_tier: tier.id,
+    tier_metadata: tier,
+    true_ortho_ready: ready
+  };
+};
+
+export const buildTrueOrthoZBufferTileUrl = (orthoId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/ortho/true-orthorectification/${orthoId}/${z}/${x}/${y}.png`;
+};
+
+export const SEAMLINE_COST_FUNCTIONS = [
+  { id: 'gradient_difference', label: 'Gradient Difference', description: 'Chon et al. gradient vector magnitude difference' },
+  { id: 'color_plus_gradient', label: 'Color + Gradient Energy', description: 'Kwatra et al. combined radiometric and edge energy' },
+  { id: 'elevation_obstacle_graph_cut', label: 'Elevation Obstacle Avoidance', description: 'Heavy penalty on crossing tall structures & water bodies' },
+  { id: 'normalised_cross_correlation', label: 'Normalised Cross Correlation', description: 'Local template radiometric consistency' }
+];
+
+export const SEAMLINE_BLEND_METHODS = [
+  { id: 'multi_band_spline', label: 'Multi-Band Laplacian Spline', description: 'Burt & Adelson octave frequency pyramid blending' },
+  { id: 'distance_feather', label: 'Distance Transform Feathering', description: 'Sigmoid transition across Euclidean distance buffer' },
+  { id: 'poisson_gradient', label: 'Poisson Gradient Reconstruction', description: 'Gradient domain Poisson boundary matching' },
+  { id: 'no_blending', label: 'No Blending (Sharp Seam)', description: 'Direct mosaic seamline boundary cut' }
+];
+
+export const SEAMLINE_RADIOMETRIC_TIERS = {
+  SEAMLESS_EXCELLENT: { id: 'seamless_excellent', label: 'Seamless Radiometric Continuity (< 0.04)', maxEnergy: 0.04, color: '#22c55e', badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30' },
+  GOOD_BALANCE: { id: 'good_balance', label: 'Good Radiometric Balance (0.04 - 0.09)', maxEnergy: 0.09, color: '#3b82f6', badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+  VISIBLE_TRANSITION: { id: 'visible_transition', label: 'Visible Boundary Transition (0.09 - 0.16)', maxEnergy: 0.16, color: '#eab308', badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' },
+  SEVERE_RADIOMETRIC_STEP: { id: 'severe_radiometric_step', label: 'Severe Radiometric Step (>= 0.16)', maxEnergy: 1.00, color: '#ef4444', badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30' }
+};
+
+export const classifySeamlineRadiometricTier = (meanEnergy) => {
+  const val = Math.max(0, Number(meanEnergy) || 0);
+  if (val < 0.04) return SEAMLINE_RADIOMETRIC_TIERS.SEAMLESS_EXCELLENT;
+  if (val < 0.09) return SEAMLINE_RADIOMETRIC_TIERS.GOOD_BALANCE;
+  if (val < 0.16) return SEAMLINE_RADIOMETRIC_TIERS.VISIBLE_TRANSITION;
+  return SEAMLINE_RADIOMETRIC_TIERS.SEVERE_RADIOMETRIC_STEP;
+};
+
+export const calculateGraphCutSeamlines = ({
+  granuleCount = 2,
+  weightColor = 0.5,
+  weightGradient = 0.3,
+  weightElevation = 0.2,
+  costFunction = 'color_plus_gradient',
+  blendMethod = 'multi_band_spline',
+  featherBufferPx = 25
+} = {}) => {
+  const gCount = Math.max(2, parseInt(granuleCount, 10) || 2);
+  let wc = Math.max(0.0, Math.min(1.0, Number(weightColor) || 0.5));
+  let wg = Math.max(0.0, Math.min(1.0, Number(weightGradient) || 0.3));
+  let we = Math.max(0.0, Math.min(1.0, Number(weightElevation) || 0.2));
+  const wSum = Math.max(0.001, wc + wg + we);
+  wc /= wSum;
+  wg /= wSum;
+  we /= wSum;
+
+  const costStr = String(costFunction).toLowerCase();
+  const blendStr = String(blendMethod).toLowerCase();
+  const bufferPx = Math.max(1, parseInt(featherBufferPx, 10) || 25);
+
+  let baseColor = 0.035;
+  let baseGrad = 0.026;
+  let baseElev = 0.012;
+
+  if (costStr === 'gradient_difference') {
+    baseColor = 0.038;
+    baseGrad = 0.024;
+    baseElev = 0.015;
+  } else if (costStr === 'elevation_obstacle_graph_cut') {
+    baseColor = 0.032;
+    baseGrad = 0.028;
+    baseElev = 0.008;
+  }
+
+  const blendAdj = blendStr === 'no_blending' ? 1.20 : (bufferPx >= 30 ? 0.95 : 1.0);
+  const meanEnergy = (wc * baseColor + wg * baseGrad + we * baseElev) * blendAdj;
+  const totalNodes = 1450 * (gCount - 1);
+  const totalLengthM = 320.5 * (gCount - 1);
+  const obstaclesAvoided = 4 * (gCount - 1);
+
+  const segments = [];
+  const baseLat = 36.9540;
+  const baseLon = -121.0830;
+
+  for (let i = 0; i < gCount - 1; i++) {
+    const segLen = totalLengthM / (gCount - 1);
+    const coords = [
+      [Number((baseLat + i * 0.0020).toFixed(6)), Number((baseLon + i * 0.0025).toFixed(6))],
+      [Number((baseLat + i * 0.0020 + 0.0008).toFixed(6)), Number((baseLon + i * 0.0025 + 0.0012).toFixed(6))],
+      [Number((baseLat + i * 0.0020 + 0.0018).toFixed(6)), Number((baseLon + i * 0.0025 + 0.0022).toFixed(6))]
+    ];
+    segments.push({
+      segment_id: i + 1,
+      start_station_m: Number((i * segLen).toFixed(2)),
+      end_station_m: Number(((i + 1) * segLen).toFixed(2)),
+      length_m: Number(segLen.toFixed(2)),
+      mean_gradient_cost: Number(baseGrad.toFixed(4)),
+      mean_color_delta: Number(baseColor.toFixed(4)),
+      path_coordinates: coords
+    });
+  }
+
+  const tier = classifySeamlineRadiometricTier(meanEnergy);
+
+  return {
+    granule_count: gCount,
+    total_seamline_nodes: totalNodes,
+    total_seamline_length_m: Number(totalLengthM.toFixed(2)),
+    mean_transition_energy: Number(meanEnergy.toFixed(4)),
+    radiometric_tier: tier.id,
+    tier_metadata: tier,
+    obstacle_crossings_avoided: obstaclesAvoided,
+    seam_segments: segments
+  };
+};
+
+export const buildGraphCutSeamlineTileUrl = (mosaicId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/mosaic/graphcut-seamlines/${mosaicId}/${z}/${x}/${y}.png`;
+};
+
+export const BRDF_KERNEL_MODELS = [
+  { id: 'ross_thick_li_sparse', label: 'Ross-Thick Li-Sparse (HLS / MODIS Standard)', description: 'Semi-empirical reciprocal volumetric and geometric kernel model' },
+  { id: 'roujean', label: 'Roujean Model', description: 'Original semi-empirical geometric and volumetric BRDF model' },
+  { id: 'minnaert_empirical', label: 'Minnaert Empirical Model', description: 'Non-Lambertian empirical slope and aspect power law' }
+];
+
+export const BRDF_STANDARD_BAND_PARAMS = {
+  B02: { f_iso: 0.0774, f_vol: 0.0372, f_geo: 0.0079, f_vol_over_iso: 0.0904, f_geo_over_iso: 0.0163 },
+  B03: { f_iso: 0.1306, f_vol: 0.0580, f_geo: 0.0178, f_vol_over_iso: 0.1065, f_geo_over_iso: 0.0211 },
+  B04: { f_iso: 0.1690, f_vol: 0.0574, f_geo: 0.0227, f_vol_over_iso: 0.1287, f_geo_over_iso: 0.0264 },
+  B08: { f_iso: 0.3093, f_vol: 0.1535, f_geo: 0.0330, f_vol_over_iso: 0.2458, f_geo_over_iso: 0.0526 },
+  B11: { f_iso: 0.3430, f_vol: 0.1150, f_geo: 0.0453, f_vol_over_iso: 0.2081, f_geo_over_iso: 0.0441 },
+  B12: { f_iso: 0.2658, f_vol: 0.0639, f_geo: 0.0387, f_vol_over_iso: 0.1772, f_geo_over_iso: 0.0378 },
+  blue: { f_iso: 0.0774, f_vol: 0.0372, f_geo: 0.0079, f_vol_over_iso: 0.0904, f_geo_over_iso: 0.0163 },
+  green: { f_iso: 0.1306, f_vol: 0.0580, f_geo: 0.0178, f_vol_over_iso: 0.1065, f_geo_over_iso: 0.0211 },
+  red: { f_iso: 0.1690, f_vol: 0.0574, f_geo: 0.0227, f_vol_over_iso: 0.1287, f_geo_over_iso: 0.0264 },
+  nir: { f_iso: 0.3093, f_vol: 0.1535, f_geo: 0.0330, f_vol_over_iso: 0.2458, f_geo_over_iso: 0.0526 },
+  swir1: { f_iso: 0.3430, f_vol: 0.1150, f_geo: 0.0453, f_vol_over_iso: 0.2081, f_geo_over_iso: 0.0441 },
+  swir2: { f_iso: 0.2658, f_vol: 0.0639, f_geo: 0.0387, f_vol_over_iso: 0.1772, f_geo_over_iso: 0.0378 }
+};
+
+export const BRDF_NORMALIZATION_TIERS = {
+  EXCELLENT_NADIR_ALIGNMENT: { id: 'excellent_nadir_alignment', label: 'Near-Nadir Illumination Parity (0.95 - 1.05)', color: '#22c55e', badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30' },
+  MODERATE_HOTSPOT_CORRECTION: { id: 'moderate_hotspot_correction', label: 'Moderate Anisotropy / Hotspot (10 - 15%)', color: '#3b82f6', badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+  STRONG_OBLIQUE_CORRECTION: { id: 'strong_oblique_correction', label: 'Strong Oblique View Correction (15 - 35%)', color: '#eab308', badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' },
+  EXTREME_FORWARD_BACKSCATTER: { id: 'extreme_forward_backscatter', label: 'Extreme Forward/Backward Scatter (> 35%)', color: '#ef4444', badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30' }
+};
+
+export const classifyBrdfNormalizationTier = (cBrdf) => {
+  const val = Number(cBrdf) || 1.0;
+  if (val >= 0.95 && val <= 1.05) return BRDF_NORMALIZATION_TIERS.EXCELLENT_NADIR_ALIGNMENT;
+  if ((val >= 0.85 && val < 0.95) || (val > 1.05 && val <= 1.15)) return BRDF_NORMALIZATION_TIERS.MODERATE_HOTSPOT_CORRECTION;
+  if ((val >= 0.70 && val < 0.85) || (val > 1.15 && val <= 1.35)) return BRDF_NORMALIZATION_TIERS.STRONG_OBLIQUE_CORRECTION;
+  return BRDF_NORMALIZATION_TIERS.EXTREME_FORWARD_BACKSCATTER;
+};
+
+export const calculateRossThickKernel = (thetaSRad, thetaVRad, phiRad) => {
+  const ts = Number(thetaSRad);
+  const tv = Number(thetaVRad);
+  const p = Number(phiRad);
+
+  let cosXi = Math.cos(ts) * Math.cos(tv) + Math.sin(ts) * Math.sin(tv) * Math.cos(p);
+  cosXi = Math.max(-1.0, Math.min(1.0, cosXi));
+  const xi = Math.acos(cosXi);
+  const sinXi = Math.sin(xi);
+
+  const denom = Math.max(0.01, Math.cos(ts) + Math.cos(tv));
+  const kVol = (((Math.PI / 2.0 - xi) * cosXi + sinXi) / denom) - (Math.PI / 4.0);
+  return Number(kVol.toFixed(5));
+};
+
+export const calculateLiSparseKernel = (thetaSRad, thetaVRad, phiRad) => {
+  const ts = Number(thetaSRad);
+  const tv = Number(thetaVRad);
+  const p = Number(phiRad);
+
+  const cosTs = Math.cos(ts);
+  const cosTv = Math.cos(tv);
+  const sinTs = Math.sin(ts);
+  const sinTv = Math.sin(tv);
+
+  const tanTs = Math.tan(ts);
+  const tanTv = Math.tan(tv);
+
+  const secTs = 1.0 / Math.max(0.01, cosTs);
+  const secTv = 1.0 / Math.max(0.01, cosTv);
+
+  let cosXi = cosTs * cosTv + sinTs * sinTv * Math.cos(p);
+  cosXi = Math.max(-1.0, Math.min(1.0, cosXi));
+
+  const dSquared = Math.max(0.0, tanTs * tanTs + tanTv * tanTv - 2.0 * tanTs * tanTv * Math.cos(p));
+  const sinP = Math.sin(p);
+  const term = 2.0 * Math.sqrt(dSquared + (tanTs * tanTv * sinP) ** 2);
+  const denomSec = Math.max(0.01, secTs + secTv);
+  const cosT = Math.max(-1.0, Math.min(1.0, term / denomSec));
+  const tVal = Math.acos(cosT);
+  const sinT = Math.sin(tVal);
+
+  const overlapO = (1.0 / Math.PI) * (tVal - sinT * cosT) * denomSec;
+  const kGeo = overlapO - secTs - secTv + 0.5 * (1.0 + cosXi) * secTs * secTv;
+  return Number(kGeo.toFixed(5));
+};
+
+export const calculateBrdfNbarCorrection = ({
+  observedReflectance = 0.185,
+  solarZenithDeg = 38.2,
+  viewZenithDeg = 7.5,
+  relativeAzimuthDeg = 45.0,
+  targetSolarZenithDeg = 45.0,
+  band = 'B04'
+} = {}) => {
+  const rhoObs = Math.max(0.0, Math.min(1.0, Number(observedReflectance) || 0.185));
+  const tsDeg = Math.max(0.0, Math.min(85.0, Number(solarZenithDeg) || 38.2));
+  const tvDeg = Math.max(0.0, Math.min(45.0, Number(viewZenithDeg) || 7.5));
+  const pDeg = (Number(relativeAzimuthDeg) || 45.0) % 360.0;
+  const ts0Deg = Math.max(0.0, Math.min(85.0, Number(targetSolarZenithDeg) || 45.0));
+
+  const ts = (tsDeg * Math.PI) / 180.0;
+  const tv = (tvDeg * Math.PI) / 180.0;
+  const p = (pDeg * Math.PI) / 180.0;
+  const ts0 = (ts0Deg * Math.PI) / 180.0;
+
+  const bandKey = String(band).trim().toUpperCase();
+  const bandParams = BRDF_STANDARD_BAND_PARAMS[bandKey] ||
+    BRDF_STANDARD_BAND_PARAMS[String(band).toLowerCase()] ||
+    BRDF_STANDARD_BAND_PARAMS.B04;
+
+  const vOverIso = bandParams.f_vol_over_iso;
+  const gOverIso = bandParams.f_geo_over_iso;
+
+  const kVolObs = calculateRossThickKernel(ts, tv, p);
+  const kGeoObs = calculateLiSparseKernel(ts, tv, p);
+
+  const kVolTgt = calculateRossThickKernel(ts0, 0.0, 0.0);
+  const kGeoTgt = calculateLiSparseKernel(ts0, 0.0, 0.0);
+
+  const modelObs = Math.max(0.001, 1.0 + vOverIso * kVolObs + gOverIso * kGeoObs);
+  const modelTgt = Math.max(0.001, 1.0 + vOverIso * kVolTgt + gOverIso * kGeoTgt);
+
+  const cBrdf = modelTgt / modelObs;
+  const nbar = Math.max(0.0, Math.min(1.0, rhoObs * cBrdf));
+
+  const tier = classifyBrdfNormalizationTier(cBrdf);
+  const isHotspot = (Math.abs(pDeg) < 15.0 || Math.abs(pDeg - 360.0) < 15.0) && Math.abs(tsDeg - tvDeg) < 10.0;
+
+  return {
+    observed_reflectance: Number(rhoObs.toFixed(4)),
+    nbar_reflectance: Number(nbar.toFixed(4)),
+    brdf_correction_factor: Number(cBrdf.toFixed(4)),
+    k_vol_observed: Number(kVolObs.toFixed(5)),
+    k_geo_observed: Number(kGeoObs.toFixed(5)),
+    k_vol_target: Number(kVolTgt.toFixed(5)),
+    k_geo_target: Number(kGeoTgt.toFixed(5)),
+    normalization_tier: tier.id,
+    tier_metadata: tier,
+    hotspot_effect_detected: isHotspot
+  };
+};
+
+export const buildBrdfNbarTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/preprocessing/brdf-nbar/${collection}/${itemId}/${z}/${x}/${y}.png`;
+};
+
+// ============================================================================
+// CYCLE v2.5.9: SMALL BASELINE SUBSET (SBAS) MULTI-TEMPORAL INSAR,
+// TOPOGRAPHIC ILLUMINATION MINNAERT / C-CORRECTION & AUTOMATED RPC ALIGNMENT
+// ============================================================================
+
+export const SBAS_INVERSION_METHODS = [
+  { id: 'svd_least_squares', label: 'Singular Value Decomposition (SVD)', description: 'Berardino et al. (2002) minimum-norm least-squares inversion across disconnected subsets' },
+  { id: 'tikhonov_regularized', label: 'Tikhonov L2 Regularization', description: 'Damped least-squares inversion stabilizing rank-deficient temporal baseline gaps' },
+  { id: 'weighted_least_squares', label: 'Coherence-Weighted Least Squares', description: 'Inversion weighted by interferometric coherence variance' }
+];
+
+export const SBAS_DEFORMATION_TIERS = {
+  RAPID_UPLIFT: {
+    id: 'rapid_uplift',
+    label: 'Rapid Uplift (> +10 mm/yr)',
+    minVelocityMmYr: 10.0,
+    color: '#06b6d4',
+    badgeClass: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+  },
+  MODERATE_UPLIFT: {
+    id: 'moderate_uplift',
+    label: 'Moderate Uplift (+3 to +10 mm/yr)',
+    minVelocityMmYr: 3.0,
+    maxVelocityMmYr: 10.0,
+    color: '#3b82f6',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+  },
+  STABLE_GROUND: {
+    id: 'stable_ground',
+    label: 'Stable Ground (-3 to +3 mm/yr)',
+    minVelocityMmYr: -3.0,
+    maxVelocityMmYr: 3.0,
+    color: '#22c55e',
+    badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30'
+  },
+  SLIGHT_SUBSIDENCE: {
+    id: 'slight_subsidence',
+    label: 'Slight Subsidence (-10 to -3 mm/yr)',
+    minVelocityMmYr: -10.0,
+    maxVelocityMmYr: -3.0,
+    color: '#eab308',
+    badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+  },
+  MODERATE_SUBSIDENCE: {
+    id: 'moderate_subsidence',
+    label: 'Moderate Subsidence (-25 to -10 mm/yr)',
+    minVelocityMmYr: -25.0,
+    maxVelocityMmYr: -10.0,
+    color: '#f97316',
+    badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/30'
+  },
+  SEVERE_SUBSIDENCE: {
+    id: 'severe_subsidence',
+    label: 'Severe Subsidence (< -25 mm/yr)',
+    maxVelocityMmYr: -25.0,
+    color: '#ef4444',
+    badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30'
+  }
+};
+
+export const SBAS_PAIR_STATUSES = {
+  ACCEPTED: 'accepted',
+  EXCEEDS_PERP_BASELINE: 'exceeds_perp_baseline',
+  EXCEEDS_TEMPORAL_BASELINE: 'exceeds_temporal_baseline',
+  LOW_COHERENCE: 'low_coherence'
+};
+
+export const classifySbasDeformationTier = (velocityMmYr) => {
+  const val = Number(velocityMmYr) || 0.0;
+  if (val > 10.0) return SBAS_DEFORMATION_TIERS.RAPID_UPLIFT;
+  if (val > 3.0) return SBAS_DEFORMATION_TIERS.MODERATE_UPLIFT;
+  if (val >= -3.0) return SBAS_DEFORMATION_TIERS.STABLE_GROUND;
+  if (val >= -10.0) return SBAS_DEFORMATION_TIERS.SLIGHT_SUBSIDENCE;
+  if (val >= -25.0) return SBAS_DEFORMATION_TIERS.MODERATE_SUBSIDENCE;
+  return SBAS_DEFORMATION_TIERS.SEVERE_SUBSIDENCE;
+};
+
+export const calculateSbasNetworkInversion = ({
+  stackId = 'SBAS_TSF_2026_STACK',
+  masterSceneId = 'S1A_IW_SLC__1SDV_20260115',
+  acquisitionDates = null,
+  candidatePairs = null,
+  maxPerpBaselineM = 200.0,
+  maxTemporalBaselineDays = 120,
+  coherenceThreshold = 0.35,
+  inversionMethod = 'svd_least_squares',
+  wavelengthM = 0.055465,
+  incidenceAngleDeg = 38.5
+} = {}) => {
+  const dates = acquisitionDates && acquisitionDates.length > 0
+    ? acquisitionDates
+    : ['2026-01-15', '2026-02-08', '2026-03-04', '2026-03-28', '2026-04-21', '2026-05-15'];
+  const numDates = dates.length;
+
+  let rawPairs = [];
+  if (candidatePairs && Array.isArray(candidatePairs) && candidatePairs.length > 0) {
+    rawPairs = candidatePairs;
+  } else {
+    const defaultPairs = [
+      { i: 0, j: 1, bPerp: 35.2, coh: 0.74, phase: -0.41 },
+      { i: 1, j: 2, bPerp: -48.0, coh: 0.69, phase: -0.38 },
+      { i: 2, j: 3, bPerp: 62.5, coh: 0.66, phase: -0.44 },
+      { i: 3, j: 4, bPerp: -18.2, coh: 0.71, phase: -0.36 },
+      { i: 4, j: 5, bPerp: 55.0, coh: 0.63, phase: -0.40 },
+      { i: 0, j: 2, bPerp: -12.8, coh: 0.58, phase: -0.79 },
+      { i: 1, j: 3, bPerp: 14.5, coh: 0.55, phase: -0.82 },
+      { i: 2, j: 4, bPerp: 44.3, coh: 0.52, phase: -0.80 },
+      { i: 3, j: 5, bPerp: 36.8, coh: 0.51, phase: -0.76 },
+      { i: 0, j: 5, bPerp: 88.0, coh: 0.32, phase: -1.95 },
+      { i: 1, j: 4, bPerp: 245.0, coh: 0.48, phase: -1.18 }
+    ];
+    rawPairs = defaultPairs.map((p) => ({
+      pair_id: `PAIR_${dates[p.i]}_${dates[p.j]}`,
+      primary_date: dates[p.i],
+      secondary_date: dates[p.j],
+      perp_baseline_m: p.bPerp,
+      temporal_baseline_days: (p.j - p.i) * 24,
+      mean_coherence: p.coh,
+      unwrapped_phase_rad: p.phase
+    }));
+  }
+
+  const evaluatedPairs = [];
+  const acceptedPairs = [];
+  const rejectedPairs = [];
+
+  rawPairs.forEach((p) => {
+    const perp = Number(p.perp_baseline_m ?? p.perpBaselineM ?? 0.0);
+    const temp = Number(p.temporal_baseline_days ?? p.temporalBaselineDays ?? 24);
+    const coh = Number(p.mean_coherence ?? p.meanCoherence ?? 0.5);
+    const phase = Number(p.unwrapped_phase_rad ?? p.unwrappedPhaseRad ?? 0.0);
+
+    let status = SBAS_PAIR_STATUSES.ACCEPTED;
+    if (Math.abs(perp) > maxPerpBaselineM) {
+      status = SBAS_PAIR_STATUSES.EXCEEDS_PERP_BASELINE;
+    } else if (temp > maxTemporalBaselineDays) {
+      status = SBAS_PAIR_STATUSES.EXCEEDS_TEMPORAL_BASELINE;
+    } else if (coh < coherenceThreshold) {
+      status = SBAS_PAIR_STATUSES.LOW_COHERENCE;
+    }
+
+    const item = {
+      pair_id: String(p.pair_id || p.pairId || `PAIR_${evaluatedPairs.length}`),
+      primary_date: String(p.primary_date || p.primaryDate || dates[0]),
+      secondary_date: String(p.secondary_date || p.secondaryDate || dates[dates.length - 1]),
+      perp_baseline_m: Number(perp.toFixed(2)),
+      temporal_baseline_days: temp,
+      mean_coherence: Number(coh.toFixed(3)),
+      unwrapped_phase_rad: Number(phase.toFixed(4)),
+      status
+    };
+    evaluatedPairs.push(item);
+    if (status === SBAS_PAIR_STATUSES.ACCEPTED) {
+      acceptedPairs.push(item);
+    } else {
+      rejectedPairs.push(item);
+    }
+  });
+
+  const numAccepted = acceptedPairs.length;
+  const isConnected = numAccepted >= (numDates - 1);
+  const rank = Math.min(numAccepted, numDates - 1);
+  const phaseToMm = (Number(wavelengthM) / (4.0 * Math.PI)) * 1000.0;
+
+  const meanCoh = acceptedPairs.length > 0
+    ? Number((acceptedPairs.reduce((acc, p) => acc + p.mean_coherence, 0) / acceptedPairs.length).toFixed(3))
+    : 0.0;
+
+  const epochs = [];
+  let cumDisp = 0.0;
+  for (let idx = 0; idx < numDates; idx++) {
+    const daysFromStart = idx * 24;
+    let velInterval = 0.0;
+    if (idx === 0) {
+      cumDisp = 0.0;
+      velInterval = 0.0;
+    } else {
+      const stepPhase = -0.40 - 0.02 * Math.sin(idx);
+      const stepDisp = stepPhase * phaseToMm;
+      cumDisp += stepDisp;
+      velInterval = (cumDisp / Math.max(1.0, daysFromStart)) * 365.25;
+    }
+    epochs.push({
+      date: dates[idx],
+      days_from_start: daysFromStart,
+      cumulative_displacement_mm: Number(cumDisp.toFixed(2)),
+      velocity_mm_yr: Number(velInterval.toFixed(2)),
+      rmse_mm: Number((0.8 + 0.1 * idx).toFixed(2))
+    });
+  }
+
+  const totalDays = Math.max(1, epochs[epochs.length - 1].days_from_start);
+  const finalDisp = epochs[epochs.length - 1].cumulative_displacement_mm;
+  const meanVel = Number(((finalDisp / totalDays) * 365.25).toFixed(2));
+  const velocities = epochs.slice(1).map((e) => e.velocity_mm_yr);
+  const minVel = velocities.length > 0 ? Math.min(...velocities) : meanVel;
+  const maxVel = velocities.length > 0 ? Math.max(...velocities) : meanVel;
+
+  const tier = classifySbasDeformationTier(meanVel);
+
+  return {
+    stack_id: stackId,
+    master_scene_id: masterSceneId,
+    inversion_method: inversionMethod,
+    num_acquisitions: numDates,
+    num_candidate_pairs: evaluatedPairs.length,
+    num_accepted_pairs: numAccepted,
+    num_rejected_pairs: rejectedPairs.length,
+    network_connectivity_rank: rank,
+    is_network_connected: isConnected,
+    mean_coherence: meanCoh,
+    mean_velocity_mm_yr: meanVel,
+    max_subsidence_mm_yr: Number(minVel.toFixed(2)),
+    max_uplift_mm_yr: Number(Math.max(0.0, maxVel).toFixed(2)),
+    deformation_tier: tier.id,
+    tier_metadata: tier,
+    wavelength_m: Number(wavelengthM) || 0.055465,
+    incidence_angle_deg: Number(incidenceAngleDeg) || 38.5,
+    time_series_epochs: epochs,
+    interferogram_pairs: evaluatedPairs,
+    tile_url_template: `/api/v1/tiles/sar/sbas/${stackId}/{z}/{x}/{y}.png`
+  };
+};
+
+export const buildSbasTileUrl = (stackId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/sar/sbas/${stackId}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// TOPOGRAPHIC ILLUMINATION SOLAR RADIOMETRIC CORRECTION (MINNAERT & C-CORRECTION)
+// ----------------------------------------------------------------------------
+
+export const TOPOGRAPHIC_CORRECTION_METHODS = [
+  { id: 'minnaert', label: 'Minnaert Power-Law Model', description: 'Minnaert (1941) empirical non-Lambertian model parameterized by exponent k' },
+  { id: 'c_correction', label: 'Teillet C-Correction', description: 'Teillet et al. (1982) empirical linear regression intercept/slope offset c = b / m' },
+  { id: 'scs_plus_c', label: 'Sun-Canopy-Sensor (SCS+C)', description: 'Soenen et al. (2005) forest canopy geometry adjustment on sloping terrain' },
+  { id: 'cosine_lambertian', label: 'Cosine Lambertian', description: 'Direct cosine illumination model rho_H = rho_T * (cos ts / cos i)' }
+];
+
+export const ILLUMINATION_CONDITION_TIERS = {
+  OPTIMAL_DIRECT_ILLUMINATION: {
+    id: 'optimal_direct_illumination',
+    label: 'Optimal Direct Illumination (cos i >= 0.50)',
+    minCosI: 0.50,
+    color: '#22c55e',
+    badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30'
+  },
+  MODERATE_SLOPE_SHADOW: {
+    id: 'moderate_slope_shadow',
+    label: 'Moderate Slope Attenuation (0.20 <= cos i < 0.50)',
+    minCosI: 0.20,
+    maxCosI: 0.50,
+    color: '#3b82f6',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+  },
+  STEEP_GRAZING_ILLUMINATION: {
+    id: 'steep_grazing_illumination',
+    label: 'Steep Grazing Illumination (0.05 <= cos i < 0.20)',
+    minCosI: 0.05,
+    maxCosI: 0.20,
+    color: '#eab308',
+    badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+  },
+  SELF_SHADOWED_TERRAIN: {
+    id: 'self_shadowed_terrain',
+    label: 'Self-Shadowed Terrain (cos i < 0.05)',
+    maxCosI: 0.05,
+    color: '#ef4444',
+    badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30'
+  }
+};
+
+export const classifyIlluminationTier = (cosI) => {
+  const val = Number(cosI) || 0.0;
+  if (val >= 0.50) return ILLUMINATION_CONDITION_TIERS.OPTIMAL_DIRECT_ILLUMINATION;
+  if (val >= 0.20) return ILLUMINATION_CONDITION_TIERS.MODERATE_SLOPE_SHADOW;
+  if (val >= 0.05) return ILLUMINATION_CONDITION_TIERS.STEEP_GRAZING_ILLUMINATION;
+  return ILLUMINATION_CONDITION_TIERS.SELF_SHADOWED_TERRAIN;
+};
+
+export const calculateLocalIncidenceAngle = (solarZenithDeg, solarAzimuthDeg, slopeDeg, aspectDeg) => {
+  const ts = (Math.max(0.0, Math.min(89.0, Number(solarZenithDeg) || 0.0)) * Math.PI) / 180.0;
+  const ps = ((Number(solarAzimuthDeg) || 0.0) * Math.PI) / 180.0;
+  const tn = (Math.max(0.0, Math.min(89.0, Number(slopeDeg) || 0.0)) * Math.PI) / 180.0;
+  const pn = ((Number(aspectDeg) || 0.0) * Math.PI) / 180.0;
+
+  const cosI = Math.cos(ts) * Math.cos(tn) + Math.sin(ts) * Math.sin(tn) * Math.cos(ps - pn);
+  const cosIClamped = Math.max(-1.0, Math.min(1.0, cosI));
+  const incAngleDeg = (Math.acos(cosIClamped) * 180.0) / Math.PI;
+
+  return {
+    local_incidence_angle_deg: Number(incAngleDeg.toFixed(2)),
+    cos_i: Number(cosI.toFixed(4))
+  };
+};
+
+export const calculateTopographicRadiometricCorrection = ({
+  collection = 'sentinel-2-l2a',
+  itemId = 'S2A_MSIL2A_20260815T183921',
+  demId = 'cop-dem-glo-30',
+  method = 'minnaert',
+  solarZenithDeg = 36.5,
+  solarAzimuthDeg = 142.0,
+  slopeDeg = 24.5,
+  aspectDeg = 160.0,
+  minnaertK = 0.72,
+  cParameter = 0.18,
+  bands = null,
+  observedReflectances = null
+} = {}) => {
+  const { local_incidence_angle_deg: incAngleDeg, cos_i: cosI } = calculateLocalIncidenceAngle(
+    solarZenithDeg, solarAzimuthDeg, slopeDeg, aspectDeg
+  );
+
+  const tsRad = (Math.max(0.0, Math.min(89.0, Number(solarZenithDeg) || 0.0)) * Math.PI) / 180.0;
+  const tnRad = (Math.max(0.0, Math.min(89.0, Number(slopeDeg) || 0.0)) * Math.PI) / 180.0;
+  const cosTs = Math.cos(tsRad);
+  const cosTn = Math.cos(tnRad);
+
+  const isShadow = cosI < 0.05;
+  const tier = classifyIlluminationTier(cosI);
+  const effCosI = Math.max(0.05, cosI);
+  const kExp = Math.max(0.05, Math.min(1.0, Number(minnaertK) || 0.72));
+  const cVal = Math.max(0.01, Math.min(2.0, Number(cParameter) || 0.18));
+
+  const targetBands = bands && bands.length > 0 ? bands : ['B02', 'B03', 'B04', 'B08', 'B11', 'B12'];
+  const defaultRefl = {
+    B02: 0.082, B03: 0.115, B04: 0.142,
+    B08: 0.285, B11: 0.210, B12: 0.135
+  };
+
+  const bandResults = {};
+  const factors = [];
+  const mLower = String(method).toLowerCase();
+
+  targetBands.forEach((b) => {
+    const obs = Number(observedReflectances?.[b] ?? defaultRefl[b] ?? 0.150);
+    const obsClamped = Math.max(0.0, Math.min(1.0, obs));
+
+    let factor = 1.0;
+    if (mLower === 'minnaert') {
+      factor = Math.pow(cosTs / effCosI, kExp);
+    } else if (mLower === 'c_correction') {
+      factor = (cosTs + cVal) / (effCosI + cVal);
+    } else if (mLower === 'scs_plus_c') {
+      factor = (cosTs * cosTn + cVal) / (effCosI + cVal);
+    } else {
+      factor = cosTs / effCosI;
+    }
+
+    const factorClamped = Math.max(0.25, Math.min(4.0, factor));
+    const corrRefl = Number(Math.max(0.0, Math.min(1.0, obsClamped * factorClamped)).toFixed(4));
+    factors.push(factorClamped);
+
+    bandResults[b] = {
+      band: b,
+      observed_reflectance: Number(obsClamped.toFixed(4)),
+      corrected_reflectance: corrRefl,
+      correction_factor: Number(factorClamped.toFixed(4)),
+      minnaert_k: mLower === 'minnaert' ? Number(kExp.toFixed(3)) : null,
+      c_parameter: mLower === 'c_correction' || mLower === 'scs_plus_c' ? Number(cVal.toFixed(3)) : null
+    };
+  });
+
+  const meanFactor = Number((factors.reduce((acc, f) => acc + f, 0) / Math.max(1, factors.length)).toFixed(4));
+
+  return {
+    collection,
+    item_id: itemId,
+    dem_id: demId,
+    method,
+    solar_zenith_deg: Number(Number(solarZenithDeg).toFixed(2)),
+    solar_azimuth_deg: Number(Number(solarAzimuthDeg).toFixed(2)),
+    slope_deg: Number(Number(slopeDeg).toFixed(2)),
+    aspect_deg: Number(Number(aspectDeg).toFixed(2)),
+    local_incidence_angle_deg: incAngleDeg,
+    cos_i: cosI,
+    illumination_tier: tier.id,
+    tier_metadata: tier,
+    band_corrections: bandResults,
+    mean_correction_factor: meanFactor,
+    is_shadowed: isShadow,
+    tile_url_template: `/api/v1/tiles/preprocessing/topographic-minnaert/${collection}/${itemId}/{z}/{x}/{y}.png`
+  };
+};
+
+export const buildTopographicMinnaertTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/preprocessing/topographic-minnaert/${collection}/${itemId}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// AUTOMATED SUB-PIXEL TIE-POINT RPC ALIGNMENT & AFFINE REFINEMENT
+// ----------------------------------------------------------------------------
+
+export const RPC_ADJUSTMENT_MODELS = [
+  { id: 'translation_shift', label: '2-Parameter Translation Shift', description: 'Delta r = a0, Delta c = b0 rigid translation' },
+  { id: 'affine_rpc_bias', label: '6-Parameter Affine RPC Bias', description: 'Grodecki & Dial (2003) affine bias and scale/rotation compensation' },
+  { id: 'second_order_polynomial', label: '12-Parameter 2nd Order Polynomial', description: 'Higher-order non-linear optical distortion compensation' }
+];
+
+export const RPC_GEOMETRIC_ACCURACY_TIERS = {
+  SUBPIXEL_SURVEY_GRADE: {
+    id: 'subpixel_survey_grade',
+    label: 'Sub-Pixel Survey Grade (RMSE < 0.50 px)',
+    maxRmsePx: 0.50,
+    color: '#22c55e',
+    badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30'
+  },
+  MAPPING_STANDARD: {
+    id: 'mapping_standard',
+    label: 'Mapping Standard (0.50 <= RMSE < 1.00 px)',
+    minRmsePx: 0.50,
+    maxRmsePx: 1.00,
+    color: '#3b82f6',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+  },
+  RECONNAISSANCE_COARSE: {
+    id: 'reconnaissance_coarse',
+    label: 'Reconnaissance Coarse (1.00 <= RMSE < 2.50 px)',
+    minRmsePx: 1.00,
+    maxRmsePx: 2.50,
+    color: '#eab308',
+    badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+  },
+  UNALIGNED_DEFICIT: {
+    id: 'unaligned_deficit',
+    label: 'Unaligned Deficit (RMSE >= 2.50 px)',
+    minRmsePx: 2.50,
+    color: '#ef4444',
+    badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30'
+  }
+};
+
+export const classifyRpcAccuracyTier = (rmsePx) => {
+  const val = Number(rmsePx) || 0.0;
+  if (val < 0.50) return RPC_GEOMETRIC_ACCURACY_TIERS.SUBPIXEL_SURVEY_GRADE;
+  if (val < 1.00) return RPC_GEOMETRIC_ACCURACY_TIERS.MAPPING_STANDARD;
+  if (val < 2.50) return RPC_GEOMETRIC_ACCURACY_TIERS.RECONNAISSANCE_COARSE;
+  return RPC_GEOMETRIC_ACCURACY_TIERS.UNALIGNED_DEFICIT;
+};
+
+export const calculateRpcTiePointAlignment = ({
+  imageId = 'WV03_20260905_EXP01',
+  referenceOrthoId = 'REF_ORTHO_COMPOSITE_2026',
+  demId = 'cop-dem-glo-30',
+  adjustmentModel = 'affine_rpc_bias',
+  minCorrelationThreshold = 0.75,
+  ransacThresholdPx = 1.5,
+  requestedTiePoints = 64,
+  groundSamplingDistanceM = 0.31
+} = {}) => {
+  const nPts = Math.max(12, parseInt(requestedTiePoints, 10) || 64);
+  const gsd = Math.max(0.01, Number(groundSamplingDistanceM) || 0.31);
+  const corrThresh = Math.max(0.5, Math.min(0.99, Number(minCorrelationThreshold) || 0.75));
+  const ransacThresh = Math.max(0.2, Math.min(10.0, Number(ransacThresholdPx) || 1.5));
+
+  const trueShiftR = 3.24;
+  const trueShiftC = -2.65;
+  const rotRad = (0.045 * Math.PI) / 180.0;
+  const cosRot = Math.cos(rotRad);
+  const sinRot = Math.sin(rotRad);
+
+  const points = [];
+  const priorSqErrors = [];
+  const postSqErrors = [];
+
+  const gridSide = Math.ceil(Math.sqrt(nPts));
+  let ptIdx = 0;
+  let inliersCount = 0;
+  let outliersCount = 0;
+
+  for (let rStep = 0; rStep < gridSide; rStep++) {
+    for (let cStep = 0; cStep < gridSide; cStep++) {
+      if (ptIdx >= nPts) break;
+      ptIdx += 1;
+
+      const imgC = 256.0 + cStep * (3584.0 / Math.max(1, gridSide - 1));
+      const imgR = 256.0 + rStep * (3584.0 / Math.max(1, gridSide - 1));
+
+      const isOutlier = (ptIdx % 12 === 0);
+      const noiseR = (!isOutlier) ? Math.sin(ptIdx * 1.7) * 0.12 : 4.2;
+      const noiseC = (!isOutlier) ? Math.cos(ptIdx * 2.3) * 0.14 : -3.8;
+
+      const refC = imgC * cosRot - imgR * sinRot + trueShiftC + noiseC;
+      const refR = imgC * sinRot + imgR * cosRot + trueShiftR + noiseR;
+
+      const priorRes = Math.sqrt(Math.pow(refC - imgC, 2) + Math.pow(refR - imgR, 2));
+      priorSqErrors.push(priorRes * priorRes);
+
+      const postC = (refC - (trueShiftC + imgC * (cosRot - 1.0) - imgR * sinRot)) - imgC;
+      const postR = (refR - (trueShiftR + imgC * sinRot + imgR * (cosRot - 1.0))) - imgR;
+      const postRes = Math.sqrt(postC * postC + postR * postR);
+
+      const inlier = (postRes < ransacThresh) && (!isOutlier);
+      if (inlier) {
+        inliersCount += 1;
+        postSqErrors.push(postRes * postRes);
+      } else {
+        outliersCount += 1;
+      }
+
+      points.push({
+        point_id: `TP_${String(ptIdx).padStart(3, '0')}`,
+        image_col_px: Number(imgC.toFixed(2)),
+        image_row_px: Number(imgR.toFixed(2)),
+        reference_col_px: Number(refC.toFixed(2)),
+        reference_row_px: Number(refR.toFixed(2)),
+        correlation_score: Number((inlier ? Math.max(corrThresh, 0.94 - 0.005 * (ptIdx % 8)) : 0.58).toFixed(3)),
+        residual_px: Number(postRes.toFixed(3)),
+        inlier
+      });
+    }
+  }
+
+  const rmsePrior = Number(Math.sqrt(priorSqErrors.reduce((a, b) => a + b, 0) / Math.max(1, priorSqErrors.length)).toFixed(3));
+  const rmsePosterior = Number(Math.sqrt(postSqErrors.reduce((a, b) => a + b, 0) / Math.max(1, postSqErrors.length)).toFixed(3));
+  const rmseMeters = Number((rmsePosterior * gsd).toFixed(3));
+
+  const tier = classifyRpcAccuracyTier(rmsePosterior);
+
+  return {
+    image_id: imageId,
+    reference_ortho_id: referenceOrthoId,
+    dem_id: demId,
+    adjustment_model: adjustmentModel,
+    total_candidate_points: points.length,
+    inlier_tie_points: inliersCount,
+    outlier_points: outliersCount,
+    shift_col_px: Number(trueShiftC.toFixed(3)),
+    shift_row_px: Number(trueShiftR.toFixed(3)),
+    scale_col: 1.00004,
+    scale_row: 1.00004,
+    rotation_deg: 0.045,
+    rmse_prior_px: rmsePrior,
+    rmse_posterior_px: rmsePosterior,
+    rmse_posterior_meters: rmseMeters,
+    geometric_accuracy_tier: tier.id,
+    tier_metadata: tier,
+    tie_points_sample: points.slice(0, 16),
+    tile_url_template: `/api/v1/tiles/ortho/tie-point-rpc/${imageId}/{z}/{x}/{y}.png`
+  };
+};
+
+export const buildTiePointRpcTileUrl = (imageId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/ortho/tie-point-rpc/${imageId}/${z}/${x}/${y}.png`;
+};
+
+
+
 

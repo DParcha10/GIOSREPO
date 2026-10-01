@@ -1,5 +1,6 @@
 """Sensor-specific masking and normalisation service."""
 import gc
+import math
 from typing import Optional, Union, Dict, Any
 import numpy as np
 from scipy.ndimage import binary_dilation
@@ -400,5 +401,79 @@ class PreprocessingService:
                 )
 
         return dataset
+
+    @staticmethod
+    def apply_brdf_nbar(
+        reflectance: Any,
+        band: str = "B04",
+        solar_zenith_deg: float = 38.2,
+        view_zenith_deg: float = 7.5,
+        relative_azimuth_deg: float = 45.0,
+        target_solar_zenith_deg: float = 45.0,
+        kernel_model: str = "ross_thick_li_sparse"
+    ) -> Any:
+        """Applies Ross-Thick Li-Sparse BRDF kernel normalization to standard nadir view (NBAR)."""
+        from app.models.schemas import calculate_brdf_nbar_correction
+        if isinstance(reflectance, (int, float, np.number)):
+            calc = calculate_brdf_nbar_correction(
+                band=band,
+                solar_zenith_deg=solar_zenith_deg,
+                view_zenith_deg=view_zenith_deg,
+                relative_azimuth_deg=relative_azimuth_deg,
+                target_solar_zenith_deg=target_solar_zenith_deg,
+                observed_reflectance=float(reflectance),
+                kernel_model=kernel_model
+            )
+            return calc["nbar_reflectance"]
+
+        arr = np.asarray(reflectance, dtype=np.float32)
+        calc = calculate_brdf_nbar_correction(
+            band=band,
+            solar_zenith_deg=solar_zenith_deg,
+            view_zenith_deg=view_zenith_deg,
+            relative_azimuth_deg=relative_azimuth_deg,
+            target_solar_zenith_deg=target_solar_zenith_deg,
+            observed_reflectance=0.185,
+            kernel_model=kernel_model
+        )
+        c_brdf = calc["brdf_correction_factor"]
+        return np.clip(arr * c_brdf, 0.0, 1.0)
+
+    @staticmethod
+    def apply_topographic_minnaert(
+        reflectance: Any,
+        solar_zenith_deg: float = 36.5,
+        solar_azimuth_deg: float = 142.0,
+        slope_deg: float = 24.5,
+        aspect_deg: float = 160.0,
+        minnaert_k: float = 0.72,
+        method: str = "minnaert",
+        c_parameter: float = 0.18
+    ) -> Any:
+        """Applies Minnaert or C-correction topographic radiometric illumination normalization."""
+        from app.models.schemas import calculate_local_incidence_angle
+        inc_angle_deg, cos_i = calculate_local_incidence_angle(
+            solar_zenith_deg, solar_azimuth_deg, slope_deg, aspect_deg
+        )
+        ts_rad = math.radians(max(0.0, min(89.0, float(solar_zenith_deg))))
+        cos_ts = math.cos(ts_rad)
+        eff_cos_i = max(0.05, cos_i)
+        k_exp = max(0.05, min(1.0, float(minnaert_k)))
+        c_val = max(0.01, min(2.0, float(c_parameter)))
+
+        m_lower = str(method).lower()
+        if m_lower == "minnaert":
+            factor = (cos_ts / eff_cos_i) ** k_exp
+        elif m_lower in ("c_correction", "c-correction"):
+            factor = (cos_ts + c_val) / (eff_cos_i + c_val)
+        else:
+            factor = cos_ts / eff_cos_i
+
+        factor_clamped = max(0.25, min(4.0, factor))
+        if isinstance(reflectance, (int, float, np.number)):
+            return float(np.clip(float(reflectance) * factor_clamped, 0.0, 1.0))
+
+        arr = np.asarray(reflectance, dtype=np.float32)
+        return np.clip(arr * factor_clamped, 0.0, 1.0)
 
 preprocessing_service = PreprocessingService()

@@ -1393,7 +1393,130 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(res_tile.headers.get("content-type"), "image/png")
         self.assertGreater(len(res_tile.content), 100)
 
+    def test_drone_direct_georeferencing_and_tiles_api(self):
+        """Test POST /api/v1/drone/direct-georeferencing, aliases, and dynamic footprint tiles."""
+        payload = {
+            "mission_id": "TEST_UAV_01",
+            "gnss_latitude": 36.9532,
+            "gnss_longitude": -121.0825,
+            "gnss_altitude_m": 420.0,
+            "ground_elevation_m": 350.0,
+            "roll_deg": 1.5,
+            "pitch_deg": -0.8,
+            "yaw_deg": 45.0,
+            "lever_arm": {"lx_m": 0.05, "ly_m": -0.02, "lz_m": 0.15},
+            "boresight": {"omega_deg": 0.12, "phi_deg": -0.08, "kappa_deg": 0.25},
+            "sensor_spec": {
+                "focal_length_mm": 24.0,
+                "sensor_width_mm": 35.9,
+                "sensor_height_mm": 24.0,
+                "image_width_px": 5472,
+                "image_height_px": 3648
+            },
+            "gnss_uncertainty_m": 0.02,
+            "attitude_uncertainty_deg": 0.01
+        }
+        res = self.client.post("/api/v1/drone/direct-georeferencing", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["mission_id"], "TEST_UAV_01")
+        self.assertIn("camera_latitude", data)
+        self.assertIn("camera_longitude", data)
+        self.assertIn("camera_altitude_m", data)
+        self.assertIn("flight_height_agl_m", data)
+        self.assertIn("gsd_cm_px", data)
+        self.assertIn("footprint_polygon", data)
+        self.assertIn("quality_tier", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/drone/boresight", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/drone/direct-georeferencing", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Direct Georeferencing tile
+        res_tile = self.client.get("/api/v1/drone/direct-georeferencing/TEST_UAV_01/tiles/16/1200/2400.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_embankment_crest_alignment_and_tiles_api(self):
+        """Test POST /api/v1/analysis/geotechnical/crest-alignment, aliases, and dynamic crest tiles."""
+        payload = {
+            "alignment_id": "ALIGN_TEST_01",
+            "centerline_points": [
+                [36.9540, -121.0830, 350.00],
+                [36.9546, -121.0818, 349.55],
+                [36.9552, -121.0806, 349.95]
+            ],
+            "design_elevation_m": 350.0,
+            "station_interval_m": 20.0,
+            "crest_width_m": 12.0
+        }
+        res = self.client.post("/api/v1/analysis/geotechnical/crest-alignment", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["alignment_id"], "ALIGN_TEST_01")
+        self.assertIn("total_length_m", data)
+        self.assertIn("station_count", data)
+        self.assertIn("max_settlement_m", data)
+        self.assertIn("overall_severity_tier", data)
+        self.assertTrue(data["overtopping_risk_detected"])
+        self.assertIn("stations", data)
+        self.assertGreater(len(data["stations"]), 0)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/crest-alignment", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/geotechnical/crest_alignment", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Crest Alignment tile
+        res_tile = self.client.get("/api/v1/tiles/geotechnical/crest-alignment/ALIGN_TEST_01/16/1200/2400.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_ps_insar_stack_and_tiles_api(self):
+        """Test POST /api/v1/analysis/sar/ps-insar-stack, aliases, and dynamic PS-InSAR tiles."""
+        payload = {
+            "stack_id": "STACK_TEST_01",
+            "master_date": "2026-01-10",
+            "slave_dates": ["2026-02-03", "2026-03-11", "2026-04-16", "2026-05-22"],
+            "filter_mode": "spatiotemporal_gaussian",
+            "coherence_threshold": 0.70,
+            "dispersion_threshold": 0.25,
+            "wavelength_m": 0.055465
+        }
+        res = self.client.post("/api/v1/analysis/sar/ps-insar-stack", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["stack_id"], "STACK_TEST_01")
+        self.assertEqual(data["master_date"], "2026-01-10")
+        self.assertEqual(data["slave_count"], 4)
+        self.assertIn("mean_temporal_coherence", data)
+        self.assertIn("mean_los_velocity_mm_yr", data)
+        self.assertIn("overall_stability_tier", data)
+        self.assertIn("ps_points", data)
+        self.assertGreater(len(data["ps_points"]), 0)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/sar/ps-insar", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/ps-insar-stack", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic PS-InSAR tile
+        res_tile = self.client.get("/api/v1/tiles/sar/ps-insar/STACK_TEST_01/16/1200/2400.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
 if __name__ == "__main__":
     unittest.main()
+
 
 

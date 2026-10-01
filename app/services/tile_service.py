@@ -94,7 +94,27 @@ DEFAULT_INDEX_RANGES = {
     "crest_settlement": (0.0, 0.5),
     "settlement": (0.0, 0.5),
     "ps_insar": (-20.0, 10.0),
-    "ps_velocity": (-20.0, 10.0)
+    "ps_velocity": (-20.0, 10.0),
+    "soil_moisture": (0.02, 0.55),
+    "sar_soil_moisture": (0.02, 0.55),
+    "bathymetry": (0.5, 45.0),
+    "satellite_bathymetry": (0.5, 45.0),
+    "sdb": (0.5, 45.0),
+    "gpr": (-300.0, 300.0),
+    "gpr_profile": (-300.0, 300.0),
+    "vibration": (0.0, 25.0),
+    "structural_vibration": (0.0, 25.0),
+    "modal_vibration": (0.0, 25.0),
+    "true_ortho_zbuffer": (0.0, 255.0),
+    "graphcut_seamlines": (0.0, 255.0),
+    "brdf_nbar": (0.0, 0.6),
+    "sbas": (-25.0, 15.0),
+    "sbas_stack": (-25.0, 15.0),
+    "sbas_velocity": (-25.0, 15.0),
+    "topographic_minnaert": (0.0, 0.5),
+    "minnaert": (0.0, 0.5),
+    "tie_point_rpc": (0.0, 3.0),
+    "rpc_alignment": (0.0, 3.0)
 }
 
 class TileService:
@@ -406,6 +426,50 @@ class TileService:
             elif col_clean in {"ps_insar", "ps_stack", "psinsar"} or idx_clean in {"ps_insar", "ps_velocity", "v_los"}:
                 # APS-filtered Persistent Scatterer InSAR LOS displacement velocity (mm/year)
                 val = -4.5 + (base_variation - 0.5) * 12.0 - ((np.sin(xx * 35.0) > 0.3) & (np.cos(yy * 35.0) > 0.3)).astype(np.float32) * 10.5
+            elif col_clean in {"soil_moisture", "sar_soil_moisture", "geotechnical_moisture"} or idx_clean in {"soil_moisture", "sar_soil_moisture", "volumetric_moisture", "moisture"}:
+                # SAR volumetric soil moisture inversion (theta_v m3/m3)
+                val = np.clip(0.12 + base_variation * 0.35 + 0.08 * np.sin(xx * 20.0) * np.cos(yy * 20.0), 0.02, 0.55)
+            elif col_clean in {"bathymetry", "satellite_bathymetry", "sdb", "reservoir_bathymetry"} or idx_clean in {"bathymetry", "satellite_bathymetry", "depth", "water_depth"}:
+                # Satellite-derived optical bathymetry depth (meters)
+                val = np.clip(2.5 + base_variation * 38.0 - 5.0 * np.cos(xx * 15.0), 0.5, 50.0)
+            elif col_clean in {"gpr", "gpr_profile", "geotechnical_gpr"} or idx_clean in {"gpr", "gpr_profile", "radargram", "gpr_amplitude"}:
+                # GPR radargram subsurface profile amplitude (mV)
+                val = np.sin(yy * 40.0) * 120.0 + base_variation * 40.0
+                void_zone = (np.abs(xx - (min_lon + max_lon) / 2.0) < (max_lon - min_lon) * 0.1) & (yy < (min_lat + max_lat) / 2.0)
+                val = np.where(void_zone, 260.0 * np.cos(yy * 60.0), val)
+            elif col_clean in {"vibration", "structural_vibration", "modal_vibration"} or idx_clean in {"vibration", "structural_vibration", "ppv", "modal_amplitude"}:
+                # Operational Modal Analysis Peak Particle Velocity (PPV mm/s)
+                val = np.clip(1.5 + base_variation * 18.0 + 8.0 * (np.sin(xx * 25.0) ** 2), 0.1, 30.0)
+            elif col_clean in {"true_ortho_zbuffer", "true-orthorectification", "ortho_true", "true_ortho"} or idx_clean in {"true_ortho_zbuffer", "occlusion_zbuffer", "true_ortho"}:
+                # True Orthorectification Z-buffer building lean & shadow occlusion
+                lean_mask = ((np.sin(xx * 40.0) > 0.6) & (np.cos(yy * 40.0) > 0.6)).astype(np.float32) * 180.0
+                shadow_mask = ((np.sin((xx + 0.001) * 40.0) > 0.6) & (np.cos((yy - 0.001) * 40.0) > 0.6)).astype(np.float32) * 90.0
+                val = np.clip(base_variation * 80.0 + lean_mask + shadow_mask, 0.0, 255.0)
+            elif col_clean in {"graphcut_seamlines", "mosaic_graphcut", "graphcut"} or idx_clean in {"graphcut_seamlines", "seamline_energy", "seamlines"}:
+                # Multiresolution graph-cut energy minimization seamline routing
+                u_m = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_m = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+                seam_v = 0.50 + 0.15 * np.sin(u_m * math.pi * 3.0)
+                d_seam = np.abs(v_m - seam_v)
+                val = np.clip(base_variation * 180.0 + (d_seam < 0.02).astype(np.float32) * 75.0, 0.0, 255.0)
+            elif col_clean in {"brdf_nbar", "brdf-nbar", "nbar"} or idx_clean in {"brdf_nbar", "nbar", "brdf"}:
+                # Nadir BRDF-Adjusted Reflectance (NBAR) surface reflectance [0.0, 0.6]
+                val = np.clip(0.08 + base_variation * 0.38 + 0.05 * np.cos(xx * 15.0), 0.0, 0.60)
+            elif col_clean in {"sbas", "sbas_stack", "sar_sbas"} or idx_clean in {"sbas", "sbas_stack", "sbas_velocity", "los_velocity"}:
+                # Small Baseline Subset (SBAS) InSAR deformation velocity field (mm/yr)
+                center_lon = (min_lon + max_lon) / 2.0
+                center_lat = (min_lat + max_lat) / 2.0
+                dist_sq = ((xx - center_lon) / (max_lon - min_lon + 1e-6))**2 + ((yy - center_lat) / (max_lat - min_lat + 1e-6))**2
+                subsidence_bowl = -18.5 * np.exp(-dist_sq / 0.08)
+                val = np.clip(-2.5 + (base_variation - 0.5) * 6.0 + subsidence_bowl, -35.0, 15.0)
+            elif col_clean in {"topographic_minnaert", "topographic-minnaert", "minnaert"} or idx_clean in {"topographic_minnaert", "minnaert", "c_correction"}:
+                # Topographic Minnaert slope/aspect illumination normalized reflectance [0.0, 0.5]
+                val = np.clip(0.10 + base_variation * 0.32 + 0.04 * np.sin(yy * 20.0), 0.0, 0.55)
+            elif col_clean in {"tie_point_rpc", "tie-point-rpc", "rpc_alignment"} or idx_clean in {"tie_point_rpc", "rpc_tie_points", "rpc_residual"}:
+                # Automated sub-pixel tie-point RPC alignment residual error heatmap (px)
+                grid_c = np.sin(xx * 60.0) ** 2
+                grid_r = np.cos(yy * 60.0) ** 2
+                val = np.clip(0.15 + base_variation * 0.45 + (grid_c > 0.85).astype(np.float32) * (grid_r > 0.85).astype(np.float32) * 1.8, 0.0, 3.5)
             else:
                 val = base_variation
 
@@ -454,6 +518,32 @@ class TileService:
                 ps_pts = ((np.sin(xx * 70.0) > 0.75) & (np.cos(yy * 70.0) > 0.75)) | (base_variation > 0.65)
                 rgba[~ps_pts, 3] = 80
                 rgba[ps_pts, 3] = 255
+            elif col_clean in {"bathymetry", "satellite_bathymetry", "sdb", "reservoir_bathymetry"} or idx_clean in {"bathymetry", "satellite_bathymetry", "depth", "water_depth"}:
+                water_mask = base_variation > 0.15
+                rgba[~water_mask, 3] = 0
+            elif col_clean in {"soil_moisture", "sar_soil_moisture"} or idx_clean in {"soil_moisture", "sar_soil_moisture"}:
+                soil_mask = base_variation > 0.10
+                rgba[~soil_mask, 3] = 40
+            elif col_clean in {"gpr", "gpr_profile"} or idx_clean in {"gpr", "gpr_profile"}:
+                rgba[:, :, 3] = 245
+            elif col_clean in {"vibration", "structural_vibration"} or idx_clean in {"vibration", "structural_vibration"}:
+                struct_mask = (np.abs(xx - (min_lon + max_lon) / 2.0) < (max_lon - min_lon) * 0.35) & (np.abs(yy - (min_lat + max_lat) / 2.0) < (max_lat - min_lat) * 0.35)
+                rgba[~struct_mask, 3] = 60
+                rgba[struct_mask, 3] = 255
+            elif col_clean in {"true_ortho_zbuffer", "true-orthorectification", "ortho_true"} or idx_clean in {"true_ortho_zbuffer", "occlusion_zbuffer"}:
+                rgba[:, :, 3] = 230
+            elif col_clean in {"graphcut_seamlines", "mosaic_graphcut"} or idx_clean in {"graphcut_seamlines", "seamlines"}:
+                rgba[:, :, 3] = 240
+            elif col_clean in {"brdf_nbar", "brdf-nbar"} or idx_clean in {"brdf_nbar", "nbar"}:
+                rgba[:, :, 3] = 255
+            elif col_clean in {"sbas", "sbas_stack", "sar_sbas"} or idx_clean in {"sbas", "sbas_stack", "sbas_velocity"}:
+                sbas_pts = ((np.sin(xx * 65.0) > 0.70) & (np.cos(yy * 65.0) > 0.70)) | (base_variation > 0.55)
+                rgba[~sbas_pts, 3] = 70
+                rgba[sbas_pts, 3] = 255
+            elif col_clean in {"topographic_minnaert", "topographic-minnaert"} or idx_clean in {"topographic_minnaert", "minnaert"}:
+                rgba[:, :, 3] = 240
+            elif col_clean in {"tie_point_rpc", "tie-point-rpc"} or idx_clean in {"tie_point_rpc", "rpc_residual"}:
+                rgba[:, :, 3] = 245
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
@@ -1104,6 +1194,92 @@ class TileService:
             index="ps_insar",
             colormap=colormap or "seismic_r",
             rescale=rescale or "-20.0,10.0"
+        )
+
+    def render_soil_moisture_tile(
+        self,
+        collection: str = "sentinel-1-rtc",
+        item_id: str = "s1_sample",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "blues",
+        rescale: Optional[str] = "0.0,0.5"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for SAR Soil Moisture Inversion (volumetric moisture m3/m3)."""
+        return self.render_tile(
+            collection="soil_moisture",
+            item_id=item_id or "s1_sample",
+            z=z,
+            x=x,
+            y=y,
+            index="soil_moisture",
+            colormap=colormap or "blues",
+            rescale=rescale or "0.0,0.5"
+        )
+
+    def render_bathymetry_tile(
+        self,
+        collection: str = "sentinel-2-l2a",
+        item_id: str = "s2_sample",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "mako_r",
+        rescale: Optional[str] = "0.0,40.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Satellite-Derived Optical Bathymetry water depth (meters)."""
+        return self.render_tile(
+            collection="bathymetry",
+            item_id=item_id or "s2_sample",
+            z=z,
+            x=x,
+            y=y,
+            index="bathymetry",
+            colormap=colormap or "mako_r",
+            rescale=rescale or "0.0,40.0"
+        )
+
+    def render_gpr_tile(
+        self,
+        profile_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "seismic",
+        rescale: Optional[str] = "-300.0,300.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Ground Penetrating Radar (GPR) subsurface amplitude (mV)."""
+        return self.render_tile(
+            collection="gpr",
+            item_id=profile_id or "gpr_transect_01",
+            z=z,
+            x=x,
+            y=y,
+            index="gpr",
+            colormap=colormap or "seismic",
+            rescale=rescale or "-300.0,300.0"
+        )
+
+    def render_vibration_tile(
+        self,
+        asset_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "turbo",
+        rescale: Optional[str] = "0.0,25.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Operational Modal Analysis Peak Particle Velocity (PPV mm/s)."""
+        return self.render_tile(
+            collection="vibration",
+            item_id=asset_id or "spillway_monolith_01",
+            z=z,
+            x=x,
+            y=y,
+            index="vibration",
+            colormap=colormap or "turbo",
+            rescale=rescale or "0.0,25.0"
         )
 
 tile_service = TileService()

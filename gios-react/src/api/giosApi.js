@@ -14,7 +14,10 @@ import {
 import {
   getCameraCalibrationPreset,
   listCameraCalibrationPresets,
-  listSoilPresets
+  listSoilPresets,
+  calculateSbasNetworkInversion,
+  calculateTopographicRadiometricCorrection,
+  calculateRpcTiePointAlignment
 } from '../config/constants.js';
 
 export {
@@ -246,7 +249,43 @@ export {
   SEAM_RADIOMETRIC_QUALITIES,
   classifySeamRadiometricQuality,
   calculateLaplacianPyramidBlend,
-  buildSplineMosaicTileUrl
+  buildSplineMosaicTileUrl,
+  TRUE_ORTHO_OCCLUSION_TYPES,
+  TRUE_ORTHO_QUALITY_TIERS,
+  classifyTrueOrthoQualityTier,
+  calculateTrueOrthoZBuffer,
+  buildTrueOrthoZBufferTileUrl,
+  SEAMLINE_COST_FUNCTIONS,
+  SEAMLINE_BLEND_METHODS,
+  SEAMLINE_RADIOMETRIC_TIERS,
+  classifySeamlineRadiometricTier,
+  calculateGraphCutSeamlines,
+  buildGraphCutSeamlineTileUrl,
+  BRDF_KERNEL_MODELS,
+  BRDF_STANDARD_BAND_PARAMS,
+  BRDF_NORMALIZATION_TIERS,
+  classifyBrdfNormalizationTier,
+  calculateRossThickKernel,
+  calculateLiSparseKernel,
+  calculateBrdfNbarCorrection,
+  buildBrdfNbarTileUrl,
+  SBAS_INVERSION_METHODS,
+  SBAS_DEFORMATION_TIERS,
+  SBAS_PAIR_STATUSES,
+  classifySbasDeformationTier,
+  calculateSbasNetworkInversion,
+  buildSbasTileUrl,
+  TOPOGRAPHIC_CORRECTION_METHODS,
+  ILLUMINATION_CONDITION_TIERS,
+  classifyIlluminationTier,
+  calculateLocalIncidenceAngle,
+  calculateTopographicRadiometricCorrection,
+  buildTopographicMinnaertTileUrl,
+  RPC_ADJUSTMENT_MODELS,
+  RPC_GEOMETRIC_ACCURACY_TIERS,
+  classifyRpcAccuracyTier,
+  calculateRpcTiePointAlignment,
+  buildTiePointRpcTileUrl
 } from '../config/constants.js';
 
 /**
@@ -1897,6 +1936,157 @@ const demoAdapter = async (config) => {
         tile_url_template: '/api/v1/tiles/sar/ps-insar/ps_stack_tsf_01/{z}/{x}/{y}.png',
         analyzed_at: new Date().toISOString()
       };
+      else if (url.includes('/api/v1/analysis/geotechnical/soil-moisture') || url.includes('/geotechnical/soil-moisture')) data = {
+        asset_id: 'TSF_DAM_04',
+        collection: 'sentinel-1-rtc',
+        item_id: 'S1A_IW_GRDH_1SDV_20260915',
+        model_type: 'dubois',
+        dielectric_permittivity_real: 14.85,
+        volumetric_soil_moisture_m3m3: 0.2850,
+        soil_moisture_percentage: 28.50,
+        estimated_rms_roughness_cm: 1.50,
+        pore_water_pressure_proxy_kpa: -12.45,
+        hazard_tier: 'optimal_unsaturated',
+        liquefaction_warning: false,
+        tile_url_template: '/api/v1/tiles/geotechnical/soil-moisture/sentinel-1-rtc/S1A_IW_GRDH_1SDV_20260915/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/water/satellite-bathymetry') || url.includes('/water/satellite-bathymetry')) data = {
+        asset_id: 'SAN_LUIS_RES_01',
+        collection: 'sentinel-2-l2a',
+        item_id: 'S2A_MSIL2A_20260815',
+        model_type: 'stumpf_log_ratio',
+        mean_depth_m: 18.42,
+        max_depth_m: 35.42,
+        estimated_volume_m3: 21500000.0,
+        estimated_volume_acre_feet: 17430.3,
+        design_capacity_m3: 25000000.0,
+        siltation_volume_loss_m3: 3500000.0,
+        siltation_loss_percentage: 14.0,
+        estimated_remaining_years: 71.7,
+        severity_tier: 'minor_siltation',
+        critical_siltation_warning: false,
+        tile_url_template: '/api/v1/tiles/water/bathymetry/sentinel-2-l2a/S2A_MSIL2A_20260815/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/geotechnical/gpr-profile') || url.includes('/geotechnical/gpr-profile')) data = {
+        profile_id: 'GPR_CREST_TRANSECT_01',
+        medium_type: 'embankment_fill',
+        antenna_frequency_mhz: 400.0,
+        em_wave_velocity_m_ns: 0.0925,
+        max_penetration_depth_m: 5.55,
+        total_stations_scanned: 76,
+        anomalies_detected_count: 2,
+        critical_void_detected: true,
+        overall_severity: 'severe_piping_void',
+        scan_stations: [
+          { station_m: 0.0, twt_ns: 42.0, estimated_depth_m: 1.94, amplitude_mv: 52.0, reflection_coefficient: 0.08, anomaly_detected: false, anomaly_type: null, severity: 'nominal' },
+          { station_m: 50.0, twt_ns: 45.0, estimated_depth_m: 2.08, amplitude_mv: 280.0, reflection_coefficient: 0.528, anomaly_detected: true, anomaly_type: 'void_cavity', severity: 'severe_piping_void' },
+          { station_m: 104.0, twt_ns: 44.0, estimated_depth_m: 2.03, amplitude_mv: -195.0, reflection_coefficient: -0.272, anomaly_detected: true, anomaly_type: 'moisture_plume', severity: 'moderate_risk' }
+        ],
+        tile_url_template: '/api/v1/tiles/geotechnical/gpr/GPR_CREST_TRANSECT_01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/structural/modal-vibration') || url.includes('/structural/modal-vibration')) data = {
+        asset_id: 'OROVILLE_SPILLWAY_01',
+        sensor_location: 'Crest Monolith 12 - Chute Station 4+20',
+        method: 'peak_picking_fdd',
+        sampling_rate_hz: 100.0,
+        fundamental_frequency_hz: 3.01,
+        frequency_shift_percentage: -5.94,
+        peak_particle_velocity_mm_s: 8.40,
+        usbm_limit_ppv_mm_s: 12.70,
+        risk_tier: 'caution_monitoring',
+        structural_damage_warning: false,
+        frequency_drop_detected: false,
+        modes: [
+          { mode_index: 1, frequency_hz: 3.01, damping_ratio_pct: 2.9, peak_particle_velocity_mm_s: 8.40, mode_shape_description: '1st Transverse Monolith Bending', resonance_amplification_q: 17.2 },
+          { mode_index: 2, frequency_hz: 8.28, damping_ratio_pct: 3.5, peak_particle_velocity_mm_s: 3.78, mode_shape_description: '2nd Vertical Chute Slab Flexure', resonance_amplification_q: 14.3 },
+          { mode_index: 3, frequency_hz: 15.65, damping_ratio_pct: 4.8, peak_particle_velocity_mm_s: 1.85, mode_shape_description: '1st Torsional Abutment Coupling', resonance_amplification_q: 10.4 }
+        ],
+        tile_url_template: '/api/v1/tiles/structural/vibration/OROVILLE_SPILLWAY_01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/ortho/true-orthorectification') || url.includes('/ortho/true-orthorectification')) data = {
+        ortho_id: 'ORTHO_URBAN_HIGHRISE_01',
+        dsm_source: 'lidar_dsm_1m',
+        sensor_altitude_m: 650.0,
+        ground_resolution_m: 0.05,
+        total_building_polygons: 142,
+        building_footprint_area_m2: 48500.0,
+        occlusion_area_m2: 8950.0,
+        occlusion_percentage: 18.45,
+        shadow_occlusion_area_m2: 5200.0,
+        shadow_occlusion_percentage: 10.72,
+        max_building_displacement_m: 14.8,
+        quality_tier: 'production_grade',
+        secondary_fill_scenes: ['SCENE_ADJACENT_RUN_02', 'SCENE_CROSS_TIE_03'],
+        unfilled_void_area_m2: 120.0,
+        processing_duration_s: 3.42,
+        tile_url_template: '/api/v1/tiles/ortho/true-ortho/ORTHO_URBAN_HIGHRISE_01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/mosaic/graphcut-seamlines') || url.includes('/mosaic/graphcut-seamlines')) data = {
+        mosaic_id: 'MOSAIC_REGIONAL_SEAM_01',
+        input_scene_count: 4,
+        scene_ids: ['SCENE_NORTH_01', 'SCENE_SOUTH_02', 'SCENE_EAST_03', 'SCENE_WEST_04'],
+        cost_function: 'gradient_radiometric_hybrid',
+        blend_method: 'multiresolution_spline',
+        multiresolution_levels: 5,
+        total_seamline_length_m: 4250.0,
+        mean_gradient_magnitude: 0.082,
+        mean_radiometric_difference_dn: 4.15,
+        seamline_radiometric_tier: 'seamless_grade',
+        segments: [
+          { segment_id: 'SEAM_SEG_01', left_scene_id: 'SCENE_NORTH_01', right_scene_id: 'SCENE_SOUTH_02', length_m: 2150.0, mean_energy_cost: 0.075, max_energy_cost: 0.142, coordinates: [[-121.085, 37.052], [-121.082, 37.056], [-121.079, 37.060]] },
+          { segment_id: 'SEAM_SEG_02', left_scene_id: 'SCENE_EAST_03', right_scene_id: 'SCENE_WEST_04', length_m: 2100.0, mean_energy_cost: 0.089, max_energy_cost: 0.165, coordinates: [[-121.080, 37.050], [-121.076, 37.055], [-121.072, 37.059]] }
+        ],
+        unblended_energy: 1420.5,
+        optimized_energy: 348.2,
+        energy_reduction_percentage: 75.49,
+        processing_duration_s: 4.12,
+        tile_url_template: '/api/v1/tiles/mosaic/graphcut-seamlines/MOSAIC_REGIONAL_SEAM_01/{z}/{x}/{y}.png',
+        analyzed_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/preprocessing/brdf-nbar') || url.includes('/preprocessing/brdf-nbar')) data = {
+        item_id: 'HLS.L30.T10SEH.2026210T184230.v2.0',
+        platform: 'landsat_8',
+        target_solar_zenith_deg: 45.0,
+        target_view_zenith_deg: 0.0,
+        observed_solar_zenith_deg: 32.5,
+        observed_view_zenith_deg: 5.2,
+        observed_relative_azimuth_deg: 64.0,
+        kernel_model: 'ross_thick_li_sparse',
+        normalization_tier: 'tier_1_nbar_calibrated',
+        band_results: {
+          blue: { f_iso: 0.0774, f_geo: 0.0079, f_vol: 0.0372, observed_reflectance: 0.082, c_factor: 0.985, nbar_reflectance: 0.0808 },
+          green: { f_iso: 0.1306, f_geo: 0.0178, f_vol: 0.0580, observed_reflectance: 0.125, c_factor: 0.982, nbar_reflectance: 0.1228 },
+          red: { f_iso: 0.1690, f_geo: 0.0227, f_vol: 0.0574, observed_reflectance: 0.158, c_factor: 0.981, nbar_reflectance: 0.1550 },
+          nir: { f_iso: 0.3093, f_geo: 0.0330, f_vol: 0.1535, observed_reflectance: 0.342, c_factor: 0.978, nbar_reflectance: 0.3345 },
+          swir1: { f_iso: 0.3430, f_geo: 0.0453, f_vol: 0.1154, observed_reflectance: 0.310, c_factor: 0.980, nbar_reflectance: 0.3038 },
+          swir2: { f_iso: 0.2658, f_geo: 0.0387, f_vol: 0.0639, observed_reflectance: 0.220, c_factor: 0.982, nbar_reflectance: 0.2160 }
+        },
+        mean_relative_adjustment_pct: 1.95,
+        max_relative_adjustment_pct: 2.20,
+        shadow_attenuation_applied: false,
+        tile_url_template: '/api/v1/tiles/preprocessing/brdf-nbar/HLS.L30.T10SEH.2026210T184230.v2.0/{z}/{x}/{y}.png',
+        corrected_at: new Date().toISOString()
+      };
+      else if (url.includes('/api/v1/analysis/sar/sbas-stack') || url.includes('/sar/sbas-stack')) {
+        let parsed = {};
+        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+        data = calculateSbasNetworkInversion(parsed);
+      }
+      else if (url.includes('/api/v1/analysis/preprocessing/topographic-minnaert') || url.includes('/preprocessing/topographic-minnaert')) {
+        let parsed = {};
+        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+        data = calculateTopographicRadiometricCorrection(parsed);
+      }
+      else if (url.includes('/api/v1/ortho/tie-point-rpc') || url.includes('/ortho/tie-point-rpc')) {
+        let parsed = {};
+        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+        data = calculateRpcTiePointAlignment(parsed);
+      }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
@@ -4161,7 +4351,541 @@ export const processPsInsarStack = async (params) => {
   return response.data;
 };
 
+/**
+ * @typedef {Object} SoilMoistureInversionRequest
+ * @property {string} [asset_id='TSF_DAM_04'] - Target geotechnical asset
+ * @property {string} [collection='sentinel-1-rtc'] - SAR satellite collection
+ * @property {string} [item_id='S1A_IW_GRDH_1SDV_20260915'] - Scene identifier
+ * @property {'dubois'|'oh'|'topp_permittivity'|'smap_sentinel_synergy'} [model_type='dubois'] - Inversion model
+ * @property {number} [sigma0_vv_db=-12.5] - Mean calibrated VV backscatter in dB
+ * @property {number} [sigma0_hh_db] - Mean calibrated HH backscatter in dB
+ * @property {number} [sigma0_vh_db] - Mean calibrated VH cross-pol backscatter in dB
+ * @property {number} [incidence_angle_deg=38.5] - Local incidence angle in degrees
+ * @property {number} [rms_roughness_cm=1.5] - RMS surface roughness in cm
+ * @property {number} [radar_frequency_ghz=5.405] - Radar frequency in GHz
+ * @property {number} [clay_fraction=0.25] - Soil clay fraction
+ * @property {Object} [geometry] - AOI geometry
+ * @property {Array<number>} [bbox] - Bounding box
+ */
+
+/**
+ * @typedef {Object} SoilMoistureInversionResponse
+ * @property {string} asset_id - Asset identifier
+ * @property {string} collection - SAR source collection
+ * @property {string} item_id - SAR scene identifier
+ * @property {string} model_type - Applied model
+ * @property {number} dielectric_permittivity_real - Real relative dielectric permittivity
+ * @property {number} volumetric_soil_moisture_m3m3 - Volumetric soil moisture in m3/m3
+ * @property {number} soil_moisture_percentage - Soil moisture in volumetric percent
+ * @property {number} estimated_rms_roughness_cm - Effective RMS surface roughness in cm
+ * @property {number} pore_water_pressure_proxy_kpa - Estimated suction proxy in kPa
+ * @property {'desiccated_cracking'|'optimal_unsaturated'|'high_moisture_seepage'|'saturated_liquefaction_risk'} hazard_tier - Risk tier
+ * @property {boolean} liquefaction_warning - High saturation warning flag
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Inverts relative dielectric permittivity and volumetric soil moisture from SAR backscatter.
+ * 
+ * @param {SoilMoistureInversionRequest} params - Soil moisture parameters
+ * @returns {Promise<SoilMoistureInversionResponse>} Inverted permittivity and volumetric moisture
+ */
+export const invertSarSoilMoisture = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/soil-moisture', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} SatelliteBathymetryRequest
+ * @property {string} [asset_id='SAN_LUIS_RES_01'] - Reservoir identifier
+ * @property {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {string} [item_id='S2A_MSIL2A_20260815'] - Scene ID
+ * @property {'stumpf_log_ratio'|'lyzenga_multispectral'|'radiative_transfer'} [model_type='stumpf_log_ratio'] - Inversion model
+ * @property {number} [blue_reflectance=0.065] - Blue band reflectance
+ * @property {number} [green_reflectance=0.042] - Green band reflectance
+ * @property {number} [red_reflectance=0.018] - Red band reflectance
+ * @property {number} [design_capacity_m3=25000000.0] - Design capacity in m3
+ * @property {number} [design_max_depth_m=42.0] - Nominal peak depth in meters
+ * @property {number} [surface_area_ha=180.0] - Surface area in hectares
+ * @property {number} [calibration_m1=28.5] - Stumpf scaling factor
+ * @property {number} [calibration_m0=18.2] - Stumpf offset
+ */
+
+/**
+ * @typedef {Object} SatelliteBathymetryResponse
+ * @property {string} asset_id - Asset identifier
+ * @property {string} collection - Source collection
+ * @property {string} item_id - Scene ID
+ * @property {string} model_type - Model formulation
+ * @property {number} mean_depth_m - Estimated mean bathymetric depth
+ * @property {number} max_depth_m - Estimated peak bathymetric depth
+ * @property {number} estimated_volume_m3 - Estimated active water storage volume in m3
+ * @property {number} estimated_volume_acre_feet - Estimated storage in acre-feet
+ * @property {number} design_capacity_m3 - Original design capacity in m3
+ * @property {number} siltation_volume_loss_m3 - Cumulative sediment volume loss in m3
+ * @property {number} siltation_loss_percentage - Siltation capacity loss percentage
+ * @property {number} estimated_remaining_years - Projected years before dead storage exhaustion
+ * @property {'nominal_capacity'|'minor_siltation'|'moderate_siltation'|'critical_storage_exhaustion'} severity_tier - Siltation severity
+ * @property {boolean} critical_siltation_warning - Critical siltation flag
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Calculates satellite-derived bathymetry, remaining reservoir water volume, and siltation capacity loss.
+ * 
+ * @param {SatelliteBathymetryRequest} params - Bathymetric parameters
+ * @returns {Promise<SatelliteBathymetryResponse>} Inverted depths, storage volume, and siltation tiers
+ */
+export const analyzeSatelliteBathymetry = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/water/satellite-bathymetry', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} GPRScanStation
+ * @property {number} station_m - Survey station distance in meters
+ * @property {number} twt_ns - Two-way travel time in nanoseconds
+ * @property {number} estimated_depth_m - Calculated depth in meters
+ * @property {number} amplitude_mv - Reflected signal amplitude in mV
+ * @property {number} reflection_coefficient - Fresnel reflection coefficient
+ * @property {boolean} anomaly_detected - Whether anomalous contrast is present
+ * @property {string|null} anomaly_type - Anomaly category
+ * @property {'nominal'|'low_risk'|'moderate_risk'|'severe_piping_void'} severity - Severity tier
+ */
+
+/**
+ * @typedef {Object} GPRProfileRequest
+ * @property {string} [profile_id='GPR_CREST_TRANSECT_01'] - Profile identifier
+ * @property {'dry_sand'|'wet_sand'|'compacted_clay'|'embankment_fill'|'bedrock'|'freshwater'} [medium_type='embankment_fill'] - Host material
+ * @property {number} [antenna_frequency_mhz=400.0] - GPR antenna frequency in MHz
+ * @property {number} [relative_permittivity=10.5] - Relative permittivity
+ * @property {number} [max_time_window_ns=120.0] - Time window in ns
+ * @property {number} [transect_length_m=150.0] - Survey length in meters
+ * @property {number} [station_interval_m=2.0] - Sampling interval in meters
+ */
+
+/**
+ * @typedef {Object} GPRProfileResponse
+ * @property {string} profile_id - Profile identifier
+ * @property {string} medium_type - Host material
+ * @property {number} antenna_frequency_mhz - Antenna frequency
+ * @property {number} em_wave_velocity_m_ns - EM wave velocity in m/ns
+ * @property {number} max_penetration_depth_m - Peak depth in meters
+ * @property {number} total_stations_scanned - Number of scan stations
+ * @property {number} anomalies_detected_count - Number of detected anomalies
+ * @property {boolean} critical_void_detected - Piping void warning flag
+ * @property {'nominal'|'low_risk'|'moderate_risk'|'severe_piping_void'} overall_severity - Severity tier
+ * @property {Array<GPRScanStation>} scan_stations - Scan station records
+ * @property {string} tile_url_template - Dynamic XYZ radargram tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Inverts subsurface GPR geophysical profile to detect internal dam piping voids and seepage plumes.
+ * 
+ * @param {GPRProfileRequest} params - GPR profiling parameters
+ * @returns {Promise<GPRProfileResponse>} Inverted velocity, depth section, and detected anomalies
+ */
+export const processGprProfile = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/gpr-profile', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} VibrationMode
+ * @property {number} mode_index - Mode order
+ * @property {number} frequency_hz - Resonant frequency in Hz
+ * @property {number} damping_ratio_pct - Damping ratio in percent
+ * @property {number} peak_particle_velocity_mm_s - Peak particle velocity in mm/s
+ * @property {string} mode_shape_description - Deformation description
+ * @property {number} resonance_amplification_q - Dynamic quality factor Q
+ */
+
+/**
+ * @typedef {Object} StructuralModalRequest
+ * @property {string} [asset_id='OROVILLE_SPILLWAY_01'] - Asset identifier
+ * @property {string} [sensor_location='Crest Monolith 12 - Chute Station 4+20'] - Sensor location
+ * @property {'peak_picking_fdd'|'stochastic_subspace'|'eulerian_video_magnification'} [method='peak_picking_fdd'] - OMA method
+ * @property {number} [sampling_rate_hz=100.0] - Sampling rate in Hz
+ * @property {number} [duration_seconds=60.0] - Sampling duration in seconds
+ * @property {number} [observed_ppv_mm_s=8.4] - Measured PPV in mm/s
+ * @property {string} [excitation_source='high_discharge_hydraulic_flow'] - Excitation source
+ * @property {number} [design_fundamental_freq_hz=3.2] - Design frequency in Hz
+ */
+
+/**
+ * @typedef {Object} StructuralModalResponse
+ * @property {string} asset_id - Asset identifier
+ * @property {string} sensor_location - Location
+ * @property {string} method - Applied identification method
+ * @property {number} sampling_rate_hz - Sampling rate in Hz
+ * @property {number} fundamental_frequency_hz - 1st fundamental frequency in Hz
+ * @property {number} frequency_shift_percentage - Frequency delta from design baseline (%)
+ * @property {number} peak_particle_velocity_mm_s - Measured peak particle velocity in mm/s
+ * @property {number} usbm_limit_ppv_mm_s - Applicable USBM RI 8507 velocity limit
+ * @property {'safe_ambient'|'caution_monitoring'|'cosmetic_cracking_risk'|'structural_damage_risk'} risk_tier - Vibration damage risk tier
+ * @property {boolean} structural_damage_warning - Structural damage warning flag
+ * @property {boolean} frequency_drop_detected - Stiffness loss warning flag
+ * @property {Array<VibrationMode>} modes - Identified vibration modes
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates Operational Modal Analysis (OMA) and structural vibration damage risk.
+ * 
+ * @param {StructuralModalRequest} params - Structural vibration parameters
+ * @returns {Promise<StructuralModalResponse>} Identified natural frequencies, damping, and damage risk
+ */
+export const analyzeStructuralModalVibration = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/structural/modal-vibration', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} TrueOrthoZBufferRequest
+ * @property {string} [ortho_id='ORTHO_URBAN_HIGHRISE_01'] - Orthomosaic identifier
+ * @property {string} [dsm_source='lidar_dsm_1m'] - Source Digital Surface Model identifier
+ * @property {number} [sensor_altitude_m=650.0] - Camera altitude above terrain in meters
+ * @property {number} [sensor_pitch_deg=0.0] - Camera pitch angle in degrees
+ * @property {number} [sensor_roll_deg=0.0] - Camera roll angle in degrees
+ * @property {number} [sun_zenith_deg=35.0] - Sun zenith angle in degrees
+ * @property {number} [sun_azimuth_deg=135.0] - Sun azimuth angle in degrees
+ * @property {number} [ground_resolution_m=0.05] - Target true orthophoto GSD in meters
+ * @property {number} [building_threshold_height_m=2.5] - Minimum elevation difference above DTM in meters
+ * @property {string} [occlusion_mode='ray_tracing_zbuffer'] - Occlusion detection method
+ * @property {Array<string>} [secondary_fill_scenes=[]] - Secondary image IDs for filling occluded blind spots
+ */
+
+/**
+ * @typedef {Object} TrueOrthoZBufferResponse
+ * @property {string} ortho_id - Orthomosaic identifier
+ * @property {string} dsm_source - Source DSM identifier
+ * @property {number} sensor_altitude_m - Sensor altitude in meters
+ * @property {number} ground_resolution_m - Ground sampling distance in meters
+ * @property {number} total_building_polygons - Detected above-ground structure count
+ * @property {number} building_footprint_area_m2 - Total building footprint in m2
+ * @property {number} occlusion_area_m2 - Total hidden perspective occlusion area in m2
+ * @property {number} occlusion_percentage - Occlusion percentage relative to footprint
+ * @property {number} shadow_occlusion_area_m2 - Cast shadow occlusion area in m2
+ * @property {number} shadow_occlusion_percentage - Shadow occlusion percentage
+ * @property {number} max_building_displacement_m - Maximum relief displacement in meters
+ * @property {'research_grade'|'production_grade'|'advisory_voids'|'severe_occlusion_voids'} quality_tier - True ortho quality tier
+ * @property {Array<string>} secondary_fill_scenes - Candidate secondary images utilized for texture inpainting
+ * @property {number} unfilled_void_area_m2 - Persistent unfillable void area in m2
+ * @property {number} processing_duration_s - Execution duration in seconds
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 evaluation timestamp
+ */
+
+/**
+ * Executes True Orthorectification via Z-Buffer ray-tracing occlusion analysis.
+ * 
+ * @param {TrueOrthoZBufferRequest} params - True orthorectification parameters
+ * @returns {Promise<TrueOrthoZBufferResponse>} Occlusion metrics, building lean displacement, and tile URL template
+ */
+export const analyzeTrueOrthoZBuffer = async (params) => {
+  const response = await giosApi.post('/api/v1/ortho/true-orthorectification', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} SeamlineSegment
+ * @property {string} segment_id - Seam segment identifier
+ * @property {string} left_scene_id - Primary adjacent scene
+ * @property {string} right_scene_id - Secondary adjacent scene
+ * @property {number} length_m - Segment ground distance in meters
+ * @property {number} mean_energy_cost - Mean graph-cut transition energy
+ * @property {number} max_energy_cost - Peak transition energy along segment
+ * @property {Array<[number, number]>} coordinates - Seamline polyline coordinates [lon, lat]
+ */
+
+/**
+ * @typedef {Object} GraphCutSeamlineRequest
+ * @property {string} [mosaic_id='MOSAIC_REGIONAL_SEAM_01'] - Target mosaic job identifier
+ * @property {Array<string>} [scene_ids=['SCENE_NORTH_01', 'SCENE_SOUTH_02']] - Contributing scene IDs
+ * @property {'gradient_radiometric_hybrid'|'radiometric_difference'|'gradient_magnitude'|'chm_obstacle_penalty'|'salience_weighted'} [cost_function='gradient_radiometric_hybrid'] - Graph-cut energy cost formulation
+ * @property {'multiresolution_spline'|'feather_linear'|'poisson_blending'|'laplacian_pyramid'} [blend_method='multiresolution_spline'] - Transition feathering method
+ * @property {number} [multiresolution_levels=5] - Laplacian/Gaussian decomposition pyramid levels
+ * @property {number} [feather_buffer_px=32] - Feathering transition buffer width in pixels
+ * @property {number} [obstacle_penalty_weight=2.5] - Energy penalty multiplier for crossing tall structures or CHM obstacles
+ */
+
+/**
+ * @typedef {Object} GraphCutSeamlineResponse
+ * @property {string} mosaic_id - Mosaic job identifier
+ * @property {number} input_scene_count - Number of input scenes
+ * @property {Array<string>} scene_ids - Evaluated scene IDs
+ * @property {string} cost_function - Energy cost formulation used
+ * @property {string} blend_method - Radiometric transition blend method
+ * @property {number} multiresolution_levels - Pyramid levels
+ * @property {number} total_seamline_length_m - Total seamline length in meters
+ * @property {number} mean_gradient_magnitude - Mean gradient along seam path
+ * @property {number} mean_radiometric_difference_dn - Mean difference in DN across seam
+ * @property {'seamless_grade'|'optimal_grade'|'visible_transitions'|'severe_radiometric_mismatch'} seamline_radiometric_tier - Seamline tier
+ * @property {Array<SeamlineSegment>} segments - Computed seamline segments
+ * @property {number} unblended_energy - Initial straight cut transition energy
+ * @property {number} optimized_energy - Minimized graph-cut boundary energy
+ * @property {number} energy_reduction_percentage - Percentage energy reduction
+ * @property {number} processing_duration_s - Optimization duration in seconds
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 evaluation timestamp
+ */
+
+/**
+ * Computes energy-minimizing multiresolution seamline networks using graph-cut optimization.
+ * 
+ * @param {GraphCutSeamlineRequest} params - Seamline optimization parameters
+ * @returns {Promise<GraphCutSeamlineResponse>} Optimized seamline paths, energy reduction metrics, and tile URL template
+ */
+export const optimizeGraphCutSeamlines = async (params) => {
+  const response = await giosApi.post('/api/v1/mosaic/graphcut-seamlines', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} BRDFBandResult
+ * @property {number} f_iso - Isotropic scattering kernel parameter
+ * @property {number} f_geo - Li-Sparse geometric scattering kernel parameter
+ * @property {number} f_vol - Ross-Thick volumetric scattering kernel parameter
+ * @property {number} observed_reflectance - Raw observed TOA/BOA surface reflectance
+ * @property {number} c_factor - BRDF NBAR conversion coefficient (C-factor)
+ * @property {number} nbar_reflectance - Nadir BRDF-adjusted surface reflectance
+ */
+
+/**
+ * @typedef {Object} BRDFNBARRequest
+ * @property {string} [item_id='HLS.L30.T10SEH.2026210T184230.v2.0'] - Observation scene or tile identifier
+ * @property {'landsat_8'|'landsat_9'|'sentinel_2a'|'sentinel_2b'|'modis'} [platform='landsat_8'] - Satellite sensor platform
+ * @property {number} [target_solar_zenith_deg=45.0] - Target normalized solar zenith angle in degrees
+ * @property {number} [target_view_zenith_deg=0.0] - Target view zenith angle in degrees (0.0 = nadir)
+ * @property {number} [observed_solar_zenith_deg=35.0] - Actual observed solar zenith in degrees
+ * @property {number} [observed_view_zenith_deg=6.5] - Actual observed view zenith in degrees
+ * @property {number} [observed_relative_azimuth_deg=45.0] - Relative azimuth angle between solar and view azimuths in degrees
+ * @property {'ross_thick_li_sparse'|'ross_thin_li_dense'|'roujean'|'walthall'} [kernel_model='ross_thick_li_sparse'] - BRDF semi-empirical kernel formulation
+ * @property {Object<string, number>} [band_reflectance] - Dictionary of observed band surface reflectances
+ * @property {boolean} [apply_shadow_attenuation=false] - Whether to apply terrain shadow attenuation
+ */
+
+/**
+ * @typedef {Object} BRDFNBARResponse
+ * @property {string} item_id - Scene or observation identifier
+ * @property {string} platform - Sensor platform
+ * @property {number} target_solar_zenith_deg - Target solar zenith angle
+ * @property {number} target_view_zenith_deg - Target view zenith angle
+ * @property {number} observed_solar_zenith_deg - Observed solar zenith angle
+ * @property {number} observed_view_zenith_deg - Observed view zenith angle
+ * @property {number} observed_relative_azimuth_deg - Observed relative azimuth angle
+ * @property {string} kernel_model - Semi-empirical kernel model used
+ * @property {'tier_1_nbar_calibrated'|'tier_2_moderate_view_angle'|'tier_3_high_view_angle'|'tier_4_extreme_zenith'} normalization_tier - Normalization tier
+ * @property {Object<string, BRDFBandResult>} band_results - Per-band BRDF kernel parameters and NBAR reflectances
+ * @property {number} mean_relative_adjustment_pct - Mean relative percentage correction across bands
+ * @property {number} max_relative_adjustment_pct - Maximum relative percentage correction across bands
+ * @property {boolean} shadow_attenuation_applied - Whether shadow attenuation was applied
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} corrected_at - ISO 8601 timestamp
+ */
+
+/**
+ * Normalizes multi-angle surface reflectance to Nadir BRDF-Adjusted Reflectance (NBAR).
+ * 
+ * @param {BRDFNBARRequest} params - BRDF NBAR correction parameters
+ * @returns {Promise<BRDFNBARResponse>} Corrected NBAR reflectances, C-factors, and tile URL template
+ */
+export const normalizeBrdfNbar = async (params) => {
+  const response = await giosApi.post('/api/v1/preprocessing/brdf-nbar', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} SBASInterferogramPair
+ * @property {string} pair_id - Unique pair identifier
+ * @property {string} primary_date - Master acquisition date (YYYY-MM-DD)
+ * @property {string} secondary_date - Slave acquisition date (YYYY-MM-DD)
+ * @property {number} perp_baseline_m - Perpendicular baseline in meters
+ * @property {number} temporal_baseline_days - Temporal baseline in days
+ * @property {number} mean_coherence - Mean coherence score
+ * @property {number} [unwrapped_phase_rad=0.0] - Mean unwrapped phase in radians
+ * @property {'accepted'|'exceeds_perp_baseline'|'exceeds_temporal_baseline'|'low_coherence'} status - Baseline gating status
+ */
+
+/**
+ * @typedef {Object} SBASTimeSeriesEpoch
+ * @property {string} date - Observation date (YYYY-MM-DD)
+ * @property {number} days_from_start - Days elapsed from master epoch
+ * @property {number} cumulative_displacement_mm - Cumulative LOS displacement in mm
+ * @property {number} velocity_mm_yr - Deformation velocity in mm/yr
+ * @property {number} rmse_mm - Residual uncertainty error in mm
+ */
+
+/**
+ * @typedef {Object} SBASStackRequest
+ * @property {string} [stack_id='SBAS_TSF_2026_STACK'] - InSAR stack dataset identifier
+ * @property {string} [master_scene_id='S1A_IW_SLC__1SDV_20260115'] - Primary master acquisition scene ID
+ * @property {string[]} [acquisition_dates] - Ordered array of acquisition dates
+ * @property {SBASInterferogramPair[]} [candidate_pairs] - Optional custom candidate pairs
+ * @property {number} [max_perp_baseline_m=200.0] - Maximum spatial baseline threshold
+ * @property {number} [max_temporal_baseline_days=120] - Maximum temporal baseline threshold
+ * @property {number} [coherence_threshold=0.35] - Coherence cutoff for pair inclusion
+ * @property {'svd_least_squares'|'tikhonov_regularized'|'weighted_least_squares'} [inversion_method='svd_least_squares'] - Regularization method
+ * @property {number} [wavelength_m=0.055465] - Radar carrier wavelength in meters
+ * @property {number} [incidence_angle_deg=38.5] - Incidence angle in degrees
+ */
+
+/**
+ * @typedef {Object} SBASStackResponse
+ * @property {string} stack_id - Stack dataset identifier
+ * @property {string} master_scene_id - Master scene identifier
+ * @property {string} inversion_method - Applied inversion method
+ * @property {number} num_acquisitions - Total acquisition dates count
+ * @property {number} num_candidate_pairs - Candidate pairs count
+ * @property {number} num_accepted_pairs - Accepted pairs count
+ * @property {number} num_rejected_pairs - Rejected pairs count
+ * @property {number} network_connectivity_rank - Inversion matrix rank
+ * @property {boolean} is_network_connected - Whether graph is fully connected
+ * @property {number} mean_coherence - Mean coherence of network
+ * @property {number} mean_velocity_mm_yr - Mean deformation velocity
+ * @property {number} max_subsidence_mm_yr - Maximum subsidence rate
+ * @property {number} max_uplift_mm_yr - Maximum uplift rate
+ * @property {string} deformation_tier - Deformation stability tier
+ * @property {Object} [tier_metadata] - Tier badge styling and labels
+ * @property {SBASTimeSeriesEpoch[]} time_series_epochs - Chronological displacement time series
+ * @property {SBASInterferogramPair[]} interferogram_pairs - Evaluated interferograms
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} processed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Computes Small Baseline Subset (SBAS) multi-temporal InSAR deformation time series and velocity.
+ * 
+ * @param {SBASStackRequest} params - SBAS stack processing parameters
+ * @returns {Promise<SBASStackResponse>} Displacement epochs, velocity fields, and tile URL template
+ */
+export const processSbasStack = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/sar/sbas-stack', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} TopographicBandCorrection
+ * @property {string} band - Band identifier
+ * @property {number} observed_reflectance - Raw observed reflectance
+ * @property {number} corrected_reflectance - Topographically corrected reflectance
+ * @property {number} correction_factor - Multiplicative factor
+ * @property {number|null} [minnaert_k] - Applied Minnaert exponent
+ * @property {number|null} [c_parameter] - Applied C-parameter
+ */
+
+/**
+ * @typedef {Object} TopographicMinnaertRequest
+ * @property {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @property {string} [item_id='S2A_MSIL2A_20260815T183921'] - Observation granule identifier
+ * @property {string} [dem_id='cop-dem-glo-30'] - DEM collection identifier
+ * @property {'minnaert'|'c_correction'|'scs_plus_c'|'cosine_lambertian'} [method='minnaert'] - Correction model
+ * @property {number} [solar_zenith_deg=36.5] - Solar zenith in degrees
+ * @property {number} [solar_azimuth_deg=142.0] - Solar azimuth in degrees
+ * @property {number} [slope_deg=24.5] - Terrain slope in degrees
+ * @property {number} [aspect_deg=160.0] - Terrain aspect in degrees
+ * @property {number} [minnaert_k=0.72] - Minnaert exponent k
+ * @property {number} [c_parameter=0.18] - C-correction offset parameter
+ * @property {string[]} [bands] - Target spectral bands
+ * @property {Object<string, number>} [observed_reflectances] - Optional observed reflectances
+ */
+
+/**
+ * @typedef {Object} TopographicMinnaertResponse
+ * @property {string} collection - Satellite collection
+ * @property {string} item_id - Granule identifier
+ * @property {string} dem_id - DEM identifier
+ * @property {string} method - Applied correction model
+ * @property {number} solar_zenith_deg - Solar zenith angle
+ * @property {number} solar_azimuth_deg - Solar azimuth angle
+ * @property {number} slope_deg - Terrain slope
+ * @property {number} aspect_deg - Terrain aspect
+ * @property {number} local_incidence_angle_deg - Local incidence angle i
+ * @property {number} cos_i - Cosine of incidence angle
+ * @property {string} illumination_tier - Illumination tier
+ * @property {Object} [tier_metadata] - Tier badge styling and labels
+ * @property {Object<string, TopographicBandCorrection>} band_corrections - Per-band correction results
+ * @property {number} mean_correction_factor - Mean factor across bands
+ * @property {boolean} is_shadowed - Whether terrain is in self-shadow
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} normalized_at - ISO 8601 timestamp
+ */
+
+/**
+ * Normalizes terrain slope-aspect radiometric illumination using Minnaert or C-correction.
+ * 
+ * @param {TopographicMinnaertRequest} params - Topographic illumination parameters
+ * @returns {Promise<TopographicMinnaertResponse>} Normalized spectral reflectances and tile URL template
+ */
+export const correctTopographicMinnaert = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/preprocessing/topographic-minnaert', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} RPCTiePoint
+ * @property {string} point_id - Tie-point identifier
+ * @property {number} image_col_px - Column coordinate in image
+ * @property {number} image_row_px - Row coordinate in image
+ * @property {number} reference_col_px - Master reference column
+ * @property {number} reference_row_px - Master reference row
+ * @property {number} correlation_score - NCC correlation score
+ * @property {number} residual_px - Post-fit residual error in pixels
+ * @property {boolean} inlier - Inlier status from RANSAC
+ */
+
+/**
+ * @typedef {Object} RPCTiePointRequest
+ * @property {string} [image_id='WV03_20260905_EXP01'] - Unaligned satellite image identifier
+ * @property {string} [reference_ortho_id='REF_ORTHO_COMPOSITE_2026'] - Reference orthomosaic identifier
+ * @property {string} [dem_id='cop-dem-glo-30'] - DEM identifier
+ * @property {'translation_shift'|'affine_rpc_bias'|'second_order_polynomial'} [adjustment_model='affine_rpc_bias'] - Adjustment model
+ * @property {number} [min_correlation_threshold=0.75] - Minimum NCC cutoff
+ * @property {number} [ransac_threshold_px=1.5] - RANSAC inlier threshold in pixels
+ * @property {number} [requested_tie_points=64] - Target tie-point count
+ * @property {number} [ground_sampling_distance_m=0.31] - GSD in meters/pixel
+ */
+
+/**
+ * @typedef {Object} RPCTiePointResponse
+ * @property {string} image_id - Image identifier
+ * @property {string} reference_ortho_id - Reference orthomosaic identifier
+ * @property {string} adjustment_model - Applied model
+ * @property {number} total_candidate_points - Candidate count
+ * @property {number} inlier_tie_points - Inlier count
+ * @property {number} outlier_points - Outlier count
+ * @property {number} shift_col_px - Horizontal shift in pixels
+ * @property {number} shift_row_px - Vertical shift in pixels
+ * @property {number} scale_col - Horizontal scale factor
+ * @property {number} scale_row - Vertical scale factor
+ * @property {number} rotation_deg - Rotation angle in degrees
+ * @property {number} rmse_prior_px - Pre-adjustment RMSE in pixels
+ * @property {number} rmse_posterior_px - Post-adjustment RMSE in pixels
+ * @property {number} rmse_posterior_meters - Post-adjustment RMSE in ground meters
+ * @property {string} geometric_accuracy_tier - Accuracy tier
+ * @property {Object} [tier_metadata] - Tier badge styling and labels
+ * @property {RPCTiePoint[]} tie_points_sample - Representative tie-point matches
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} aligned_at - ISO 8601 timestamp
+ */
+
+/**
+ * Refines Rational Polynomial Coefficients (RPCs) using automated sub-pixel tie points.
+ * 
+ * @param {RPCTiePointRequest} params - RPC refinement parameters
+ * @returns {Promise<RPCTiePointResponse>} Inlier tie points, affine shifts, and tile URL template
+ */
+export const refineTiePointRpc = async (params) => {
+  const response = await giosApi.post('/api/v1/ortho/tie-point-rpc', params);
+  return response.data;
+};
+
 export default giosApi;
+
 
 
 

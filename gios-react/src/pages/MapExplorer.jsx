@@ -274,16 +274,13 @@ import {
   calculateLaplacianPyramidBlend,
   buildSplineMosaicTileUrl,
   DIRECT_GEOREFERENCING_TIERS,
-  classifyDirectGeoreferencingTier,
   calculateDirectGeoreferencing,
   buildDirectGeoreferencingTileUrl,
   CREST_SETTLEMENT_TIERS,
-  classifyCrestSettlementTier,
   calculateCrestAlignmentVectorization,
   buildCrestAlignmentTileUrl,
   APS_FILTER_MODES,
   PS_INSAR_STABILITY_TIERS,
-  classifyPsInsarStabilityTier,
   calculatePsInsarStackDisplacement,
   buildPsInsarTileUrl
 } from '../config/constants';
@@ -980,24 +977,24 @@ export default function MapExplorer() {
   const [directGeorefLayerUrl, setDirectGeorefLayerUrl] = useState(null);
   const [directGeorefOpacity, setDirectGeorefOpacity] = useState(0.85);
   const [directGeorefMissionId, setDirectGeorefMissionId] = useState('drone_mission_direct_01');
-  const [directGeorefLat, setDirectGeorefLat] = useState(37.0582);
-  const [directGeorefLon, setDirectGeorefLon] = useState(-121.0744);
+  const [directGeorefLat, _setDirectGeorefLat] = useState(37.0582);
+  const [directGeorefLon, _setDirectGeorefLon] = useState(-121.0744);
   const [directGeorefAltM, setDirectGeorefAltM] = useState(485.5);
   const [directGeorefGroundElevM, setDirectGeorefGroundElevM] = useState(350.0);
   const [directGeorefRoll, setDirectGeorefRoll] = useState(1.2);
   const [directGeorefPitch, setDirectGeorefPitch] = useState(-2.4);
   const [directGeorefYaw, setDirectGeorefYaw] = useState(135.0);
-  const [directGeorefLeverLx, setDirectGeorefLeverLx] = useState(0.05);
-  const [directGeorefLeverLy, setDirectGeorefLeverLy] = useState(-0.12);
-  const [directGeorefLeverLz, setDirectGeorefLeverLz] = useState(0.25);
-  const [directGeorefBoresightRoll, setDirectGeorefBoresightRoll] = useState(0.045);
-  const [directGeorefBoresightPitch, setDirectGeorefBoresightPitch] = useState(-0.082);
-  const [directGeorefBoresightYaw, setDirectGeorefBoresightYaw] = useState(0.120);
-  const [directGeorefFocalMm, setDirectGeorefFocalMm] = useState(24.0);
-  const [directGeorefSensorWMm, setDirectGeorefSensorWMm] = useState(35.9);
-  const [directGeorefSensorHMm, setDirectGeorefSensorHMm] = useState(24.0);
-  const [directGeorefGnssUncertaintyM, setDirectGeorefGnssUncertaintyM] = useState(0.018);
-  const [directGeorefAttUncertaintyDeg, setDirectGeorefAttUncertaintyDeg] = useState(0.008);
+  const [directGeorefLeverLx, _setDirectGeorefLeverLx] = useState(0.05);
+  const [directGeorefLeverLy, _setDirectGeorefLeverLy] = useState(-0.12);
+  const [directGeorefLeverLz, _setDirectGeorefLeverLz] = useState(0.25);
+  const [directGeorefBoresightRoll, _setDirectGeorefBoresightRoll] = useState(0.045);
+  const [directGeorefBoresightPitch, _setDirectGeorefBoresightPitch] = useState(-0.082);
+  const [directGeorefBoresightYaw, _setDirectGeorefBoresightYaw] = useState(0.120);
+  const [directGeorefFocalMm, _setDirectGeorefFocalMm] = useState(24.0);
+  const [directGeorefSensorWMm, _setDirectGeorefSensorWMm] = useState(35.9);
+  const [directGeorefSensorHMm, _setDirectGeorefSensorHMm] = useState(24.0);
+  const [directGeorefGnssUncertaintyM, _setDirectGeorefGnssUncertaintyM] = useState(0.018);
+  const [directGeorefAttUncertaintyDeg, _setDirectGeorefAttUncertaintyDeg] = useState(0.008);
   const [directGeorefResult, setDirectGeorefResult] = useState(null);
   const [directGeorefFootprint, setDirectGeorefFootprint] = useState(null);
   const [directGeorefCameraPos, setDirectGeorefCameraPos] = useState(null);
@@ -1028,14 +1025,14 @@ export default function MapExplorer() {
   const [psInsarLayerUrl, setPsInsarLayerUrl] = useState(null);
   const [psInsarOpacity, setPsInsarOpacity] = useState(0.85);
   const [psStackId, setPsStackId] = useState('ps_stack_san_luis_01');
-  const [psMasterDate, setPsMasterDate] = useState('2026-01-10');
+  const [psMasterDate, _setPsMasterDate] = useState('2026-01-10');
   const [psApsFilterMode, setPsApsFilterMode] = useState(APS_FILTER_MODES.SPATIOTEMPORAL_GAUSSIAN);
   const [psCoherenceThresh, setPsCoherenceThresh] = useState(0.70);
   const [psDispersionThresh, setPsDispersionThresh] = useState(0.25);
   const [psRadarWavelengthM, _setPsRadarWavelengthM] = useState(0.055465);
   const [psResult, setPsResult] = useState(null);
   const [psScattererPins, setPsScattererPins] = useState([]);
-  const [selectedPsScatterer, setSelectedPsScatterer] = useState(null);
+  const [_selectedPsScatterer, setSelectedPsScatterer] = useState(null);
   const [loadingPsInsar, setLoadingPsInsar] = useState(false);
 
   // T-53 Embankment Transect Cross-Section State
@@ -4439,6 +4436,186 @@ export default function MapExplorer() {
               />
             )}
 
+            {/* T-102/T-104: Drone Direct Georeferencing Dynamic Tile Layer */}
+            {showDirectGeorefLayer && !curtainActive && (
+              <TileLayer 
+                key={`direct-georef-${directGeorefMissionId}-${directGeorefOpacity}`}
+                url={directGeorefLayerUrl || buildDirectGeoreferencingTileUrl(directGeorefMissionId, '{z}', '{x}', '{y}')}
+                opacity={directGeorefOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-102/T-104: Drone Direct Georeferencing Footprint & Camera Position */}
+            {directGeorefFootprint && directGeorefFootprint.length >= 3 && (
+              <Polygon
+                positions={directGeorefFootprint}
+                pathOptions={{
+                  color: '#a855f7',
+                  fillColor: '#c084fc',
+                  fillOpacity: 0.25,
+                  weight: 2,
+                  dashArray: '4, 4'
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="flex items-center gap-1 text-purple-400 font-bold">
+                      <Plane className="w-3.5 h-3.5" />
+                      <span>DIRECT GEOREFERENCED FOOTPRINT</span>
+                    </div>
+                    <div>Mission: <span className="font-bold text-white">{directGeorefMissionId}</span></div>
+                    <div>GSD: <span className="text-emerald-400 font-bold">{directGeorefResult?.gsd_cm_px || '2.80'} cm/px</span></div>
+                    <div>CEP95: <span className="text-purple-300 font-bold">{directGeorefResult?.horizontal_cep95_m || '0.044'} m</span></div>
+                    <div>AGL: <span className="text-white">{directGeorefResult?.flight_height_agl_m || '135.5'} m</span></div>
+                    <div className="text-[10px] text-gray-400 uppercase">Tier: {directGeorefResult?.quality_tier || 'survey_grade'}</div>
+                  </div>
+                </Popup>
+              </Polygon>
+            )}
+
+            {directGeorefCameraPos && (
+              <CircleMarker
+                center={directGeorefCameraPos}
+                radius={6}
+                pathOptions={{
+                  color: '#a855f7',
+                  fillColor: '#9333ea',
+                  fillOpacity: 0.9,
+                  weight: 2
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 font-mono text-xs">
+                    <div className="text-purple-400 font-bold">📷 Corrected Perspective Center</div>
+                    <div className="text-gray-300">Lat: {directGeorefCameraPos[0].toFixed(6)}°</div>
+                    <div className="text-gray-300">Lon: {directGeorefCameraPos[1].toFixed(6)}°</div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            )}
+
+            {/* T-102/T-104: Embankment Crest Alignment Dynamic Tile Layer */}
+            {showCrestAlignmentLayer && !curtainActive && (
+              <TileLayer 
+                key={`crest-live-${crestAlignmentId}-${crestAlignmentOpacity}`}
+                url={crestAlignmentLayerUrl || buildCrestAlignmentTileUrl(crestAlignmentId, '{z}', '{x}', '{y}')}
+                opacity={crestAlignmentOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-102/T-104: Embankment Crest Centerline & Shoulder Vectors */}
+            {crestStations && crestStations.length >= 2 && (
+              <>
+                <Polyline
+                  positions={crestStations.map(s => [s.lat, s.lon])}
+                  pathOptions={{
+                    color: '#06b6d4',
+                    weight: 3.5,
+                    opacity: 0.95
+                  }}
+                />
+                <Polyline
+                  positions={crestStations.map(s => s.left_shoulder)}
+                  pathOptions={{
+                    color: '#22d3ee',
+                    weight: 1.5,
+                    dashArray: '3, 3',
+                    opacity: 0.75
+                  }}
+                />
+                <Polyline
+                  positions={crestStations.map(s => s.right_shoulder)}
+                  pathOptions={{
+                    color: '#22d3ee',
+                    weight: 1.5,
+                    dashArray: '3, 3',
+                    opacity: 0.75
+                  }}
+                />
+                {crestStations.map((st, idx) => (
+                  <CircleMarker
+                    key={`crest-st-${idx}`}
+                    center={[st.lat, st.lon]}
+                    radius={st.settlement_tier === 'critical_overtopping_risk' ? 7 : 4.5}
+                    pathOptions={{
+                      color: st.settlement_tier === 'critical_overtopping_risk' ? '#f43f5e' : '#06b6d4',
+                      fillColor: st.settlement_tier === 'critical_overtopping_risk' ? '#ef4444' : '#22d3ee',
+                      fillOpacity: 0.9,
+                      weight: 1.5
+                    }}
+                  >
+                    <Popup className="custom-popup">
+                      <div className="p-1 space-y-1 font-mono text-xs">
+                        <div className="flex items-center gap-1 text-cyan-400 font-bold">
+                          <Activity className="w-3.5 h-3.5" />
+                          <span>{st.station_code}</span>
+                        </div>
+                        <div>Measured Z: <span className="font-bold text-white">{st.measured_elevation_m}m</span></div>
+                        <div>Design Z₀: <span className="text-gray-300">{st.design_elevation_m}m</span></div>
+                        <div>
+                          Settlement: <span className={`font-bold ${Math.abs(st.settlement_m) >= 0.30 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                            {st.settlement_m > 0 ? `+${st.settlement_m}` : st.settlement_m}m
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-gray-400">Azimuth: {st.normal_azimuth_deg}°</div>
+                        <div className="text-[10px] uppercase font-bold text-cyan-300">{st.settlement_tier}</div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+              </>
+            )}
+
+            {/* T-102/T-104: PS-InSAR Multi-Temporal Stacking Dynamic Tile Layer */}
+            {showPsInsarLayer && !curtainActive && (
+              <TileLayer 
+                key={`ps-insar-${psStackId}-${psInsarOpacity}`}
+                url={psInsarLayerUrl || buildPsInsarTileUrl(psStackId, '{z}', '{x}', '{y}')}
+                opacity={psInsarOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-102/T-104: PS-InSAR Persistent Scatterer Pins */}
+            {psScattererPins.map((ps, idx) => (
+              <CircleMarker
+                key={`ps-pin-${idx}`}
+                center={[ps.lat, ps.lon]}
+                radius={6}
+                pathOptions={{
+                  color: ps.tier_metadata?.color || '#10b981',
+                  fillColor: ps.tier_metadata?.color || '#10b981',
+                  fillOpacity: 0.85,
+                  weight: 2
+                }}
+                eventHandlers={{
+                  click: () => setSelectedPsScatterer(ps)
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="flex items-center gap-1 font-bold" style={{ color: ps.tier_metadata?.color || '#10b981' }}>
+                      <Radar className="w-3.5 h-3.5" />
+                      <span>{ps.point_id}</span>
+                    </div>
+                    <div>vLOS: <span className={`font-bold ${ps.mean_velocity_mm_yr < -5.0 ? 'text-rose-400' : 'text-emerald-400'}`}>{ps.mean_velocity_mm_yr} mm/yr</span></div>
+                    <div>Coherence (γ): <span className="text-white font-bold">{ps.temporal_coherence}</span></div>
+                    <div>Dispersion (DA): <span className="text-gray-300">{ps.amplitude_dispersion}</span></div>
+                    <div>Total Δ: <span className="text-white font-bold">{ps.total_displacement_mm} mm</span></div>
+                    <div className="text-[10px] uppercase font-bold text-gray-400">{ps.stability_tier}</div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            ))}
+
             {/* T-86/T-88: Active Fire Thermal Hotspot Pins */}
             {activeHotspotPins.map((spot, idx) => (
               <CircleMarker
@@ -5792,6 +5969,21 @@ export default function MapExplorer() {
                 <span>Environmental Studio</span>
               </button>
 
+              {/* T-102/T-104 Direct Georeferencing & InSAR Studio Shortcut */}
+              <button
+                onClick={() => {
+                  setDirectGeorefInitialTab('direct_georef');
+                  setDirectGeorefModalOpen(true);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-purple-300 hover:text-white hover:bg-purple-500/20 border border-purple-500/30 ${
+                  directGeorefModalOpen ? 'bg-purple-600 text-white shadow-[0_0_12px_rgba(168,85,247,0.6)]' : ''
+                }`}
+                title="Direct Georeferencing Studio: Drone IMU Boresight Calibration, Embankment Crest Vectorization & PS-InSAR Phase Stacking"
+              >
+                <Crosshair className="w-3.5 h-3.5 text-purple-400" />
+                <span>Georef & InSAR Studio</span>
+              </button>
+
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
               <button
                 onClick={() => {
@@ -6766,6 +6958,36 @@ export default function MapExplorer() {
                         <Layers className="w-3.5 h-3.5 text-cyan-400" />
                         Spline Mosaic {showSplineMosaicLayer && '(Streaming)'}
                       </button>
+                      <button
+                        onClick={() => {
+                          setAnalyticsSubTab('direct_georef');
+                          if (!directGeorefResult && !loadingDirectGeoref) handleExecuteDirectGeoref();
+                        }}
+                        className={`px-3 py-1 rounded transition-all flex items-center gap-1.5 ${analyticsSubTab === 'direct_georef' ? 'bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        <Plane className="w-3.5 h-3.5 text-purple-400" />
+                        Direct Georef {showDirectGeorefLayer && '(Streaming)'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAnalyticsSubTab('crest_alignment');
+                          if (!crestResult && !loadingCrest) handleExecuteCrestAlignment();
+                        }}
+                        className={`px-3 py-1 rounded transition-all flex items-center gap-1.5 ${analyticsSubTab === 'crest_alignment' ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/30' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                        Crest Alignment {showCrestAlignmentLayer && '(Streaming)'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAnalyticsSubTab('ps_insar');
+                          if (!psResult && !loadingPsInsar) handleExecutePsInsar();
+                        }}
+                        className={`px-3 py-1 rounded transition-all flex items-center gap-1.5 ${analyticsSubTab === 'ps_insar' ? 'bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        <Radar className="w-3.5 h-3.5 text-rose-400" />
+                        PS-InSAR Stacking {showPsInsarLayer && '(Streaming)'}
+                      </button>
                     </div>
                   </div>
 
@@ -7270,6 +7492,81 @@ export default function MapExplorer() {
                         >
                           <Layers className="w-3 h-3" />
                           <span>Spline Studio</span>
+                        </button>
+                      </>
+                    )}
+                    {analyticsSubTab === 'direct_georef' && (
+                      <>
+                        <button
+                          onClick={() => setShowDirectGeorefLayer(prev => !prev)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 transition-all ${
+                            showDirectGeorefLayer ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                          }`}
+                          title="Toggle Live Direct Georeferencing Tiles on Map"
+                        >
+                          {showDirectGeorefLayer ? <Eye className="w-3 h-3 text-purple-400" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{showDirectGeorefLayer ? 'Hide Georef' : 'Show Georef'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDirectGeorefInitialTab('direct_georef');
+                            setDirectGeorefModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shadow"
+                          title="Open Full Direct Georeferencing & Boresight Studio"
+                        >
+                          <Crosshair className="w-3 h-3" />
+                          <span>Georef Studio</span>
+                        </button>
+                      </>
+                    )}
+                    {analyticsSubTab === 'crest_alignment' && (
+                      <>
+                        <button
+                          onClick={() => setShowCrestAlignmentLayer(prev => !prev)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 transition-all ${
+                            showCrestAlignmentLayer ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                          }`}
+                          title="Toggle Live Crest Alignment Tiles on Map"
+                        >
+                          {showCrestAlignmentLayer ? <Eye className="w-3 h-3 text-cyan-400" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{showCrestAlignmentLayer ? 'Hide Crest' : 'Show Crest'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDirectGeorefInitialTab('crest_alignment');
+                            setDirectGeorefModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shadow"
+                          title="Open Full Embankment Crest Alignment Inspector"
+                        >
+                          <Activity className="w-3 h-3" />
+                          <span>Crest Studio</span>
+                        </button>
+                      </>
+                    )}
+                    {analyticsSubTab === 'ps_insar' && (
+                      <>
+                        <button
+                          onClick={() => setShowPsInsarLayer(prev => !prev)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 transition-all ${
+                            showPsInsarLayer ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                          }`}
+                          title="Toggle Live PS-InSAR Phase Stacking Tiles on Map"
+                        >
+                          {showPsInsarLayer ? <Eye className="w-3 h-3 text-rose-400" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{showPsInsarLayer ? 'Hide PS-InSAR' : 'Show PS-InSAR'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDirectGeorefInitialTab('ps_insar');
+                            setDirectGeorefModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shadow"
+                          title="Open Full PS-InSAR Stacking & APS Studio"
+                        >
+                          <Radar className="w-3 h-3" />
+                          <span>InSAR Studio</span>
                         </button>
                       </>
                     )}
@@ -15406,6 +15703,533 @@ export default function MapExplorer() {
                   </div>
                 )}
 
+                {/* T-102/T-104: Drone Direct Georeferencing Subtab Panel */}
+                {analyticsSubTab === 'direct_georef' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Left: Direct Georef Controls */}
+                      <div className="space-y-3 p-3 bg-black/40 border border-slate-800 rounded-xl">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Plane className="w-4 h-4 text-purple-400" />
+                            <span className="font-bold text-xs text-white uppercase font-mono">Drone Direct Georeferencing</span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setDirectGeorefInitialTab('direct_georef');
+                              setDirectGeorefModalOpen(true);
+                            }}
+                            className="text-[10px] text-purple-300 font-mono hover:underline flex items-center gap-1"
+                          >
+                            <span>Open Studio</span>
+                            <ArrowUpRight className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] text-gray-400 block font-mono mb-1">Mission ID</label>
+                          <input
+                            type="text"
+                            value={directGeorefMissionId}
+                            onChange={(e) => setDirectGeorefMissionId(e.target.value)}
+                            className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] text-gray-400 block font-mono mb-1">GNSS Alt (ASL m)</label>
+                            <input
+                              type="number"
+                              step="1"
+                              value={directGeorefAltM}
+                              onChange={(e) => setDirectGeorefAltM(parseFloat(e.target.value))}
+                              className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-gray-400 block font-mono mb-1">Ground Elev (m)</label>
+                            <input
+                              type="number"
+                              step="1"
+                              value={directGeorefGroundElevM}
+                              onChange={(e) => setDirectGeorefGroundElevM(parseFloat(e.target.value))}
+                              className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="text-[9px] text-gray-400 block font-mono mb-1">Roll (°)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={directGeorefRoll}
+                              onChange={(e) => setDirectGeorefRoll(parseFloat(e.target.value))}
+                              className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-gray-400 block font-mono mb-1">Pitch (°)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={directGeorefPitch}
+                              onChange={(e) => setDirectGeorefPitch(parseFloat(e.target.value))}
+                              className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-gray-400 block font-mono mb-1">Yaw (°)</label>
+                            <input
+                              type="number"
+                              step="1"
+                              value={directGeorefYaw}
+                              onChange={(e) => setDirectGeorefYaw(parseFloat(e.target.value))}
+                              className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={handleExecuteDirectGeoref}
+                          disabled={loadingDirectGeoref}
+                          className="w-full py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold transition flex items-center justify-center gap-1.5 shadow"
+                        >
+                          {loadingDirectGeoref ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Crosshair className="w-3.5 h-3.5" />}
+                          <span>Calibrate Direct Georeferencing</span>
+                        </button>
+                      </div>
+
+                      {/* Right: Results & Tile Overlay */}
+                      <div className="lg:col-span-2 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Accuracy Tier</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">
+                              {directGeorefResult?.tier_metadata?.label || 'Survey-Grade (< 0.05m)'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Class: {directGeorefResult?.quality_tier || 'survey_grade'}</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Horizontal CEP95</span>
+                            <span className="text-base font-bold font-mono text-purple-400">
+                              {directGeorefResult ? `${directGeorefResult.horizontal_cep95_m} m` : '0.044 m'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">1-σ POS: {directGeorefGnssUncertaintyM}m</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Mean GSD</span>
+                            <span className="text-base font-bold font-mono text-cyan-400">
+                              {directGeorefResult ? `${directGeorefResult.gsd_cm_px} cm/px` : '2.80 cm/px'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Micro Centimeter Scale</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Flight AGL</span>
+                            <span className="text-base font-bold font-mono text-white">
+                              {directGeorefResult ? `${directGeorefResult.flight_height_agl_m} m` : `${(directGeorefAltM - directGeorefGroundElevM).toFixed(1)} m`}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Camera Center ASL</span>
+                          </div>
+                        </div>
+
+                        {/* Tile Overlay Toggle & Action Buttons */}
+                        <div className="p-3 bg-purple-950/30 border border-purple-500/30 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Plane className="w-4 h-4 text-purple-400" />
+                            <div>
+                              <span className="font-bold text-white block text-xs">Direct Georeferencing Dynamic Tile Layer</span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {directGeorefLayerUrl || buildDirectGeoreferencingTileUrl(directGeorefMissionId, '{z}', '{x}', '{y}')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{Math.round(directGeorefOpacity * 100)}%</span>
+                              <input
+                                type="range"
+                                min="0.1"
+                                max="1.0"
+                                step="0.05"
+                                value={directGeorefOpacity}
+                                onChange={(e) => setDirectGeorefOpacity(parseFloat(e.target.value))}
+                                className="w-16 h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                                title="Layer Opacity"
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowDirectGeorefLayer(prev => !prev)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                showDirectGeorefLayer ? 'bg-purple-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {showDirectGeorefLayer ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              {showDirectGeorefLayer ? 'Hide on Map' : 'Stream to Map'}
+                            </button>
+                            {directGeorefResult?.footprint_polygon && (
+                              <button
+                                onClick={() => {
+                                  setDirectGeorefFootprint(directGeorefResult.footprint_polygon);
+                                  if (directGeorefResult.camera_latitude && directGeorefResult.camera_longitude) {
+                                    setDirectGeorefCameraPos([directGeorefResult.camera_latitude, directGeorefResult.camera_longitude]);
+                                  }
+                                }}
+                                className="px-3 py-1.5 rounded text-xs font-bold bg-slate-800 text-purple-300 hover:text-white border border-purple-500/30 flex items-center gap-1"
+                              >
+                                <Crosshair className="w-3.5 h-3.5" />
+                                <span>Show Footprint</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* T-102/T-104: Embankment Crest Alignment Subtab Panel */}
+                {analyticsSubTab === 'crest_alignment' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Left: Crest Alignment Controls */}
+                      <div className="space-y-3 p-3 bg-black/40 border border-slate-800 rounded-xl">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Activity className="w-4 h-4 text-cyan-400" />
+                            <span className="font-bold text-xs text-white uppercase font-mono">Embankment Crest Vectorization</span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setDirectGeorefInitialTab('crest_alignment');
+                              setDirectGeorefModalOpen(true);
+                            }}
+                            className="text-[10px] text-cyan-300 font-mono hover:underline flex items-center gap-1"
+                          >
+                            <span>Open Studio</span>
+                            <ArrowUpRight className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] text-gray-400 block font-mono mb-1">Alignment ID</label>
+                          <input
+                            type="text"
+                            value={crestAlignmentId}
+                            onChange={(e) => setCrestAlignmentId(e.target.value)}
+                            className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="text-[9px] text-gray-400 block font-mono mb-1">Design Z₀ (m)</label>
+                            <input
+                              type="number"
+                              step="1"
+                              value={crestDesignElevationM}
+                              onChange={(e) => setCrestDesignElevationM(parseFloat(e.target.value))}
+                              className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-gray-400 block font-mono mb-1">Interval (m)</label>
+                            <input
+                              type="number"
+                              step="5"
+                              value={crestStationIntervalM}
+                              onChange={(e) => setCrestStationIntervalM(parseFloat(e.target.value))}
+                              className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-gray-400 block font-mono mb-1">Width (m)</label>
+                            <input
+                              type="number"
+                              step="1"
+                              value={crestWidthM}
+                              onChange={(e) => setCrestWidthM(parseFloat(e.target.value))}
+                              className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={handleExecuteCrestAlignment}
+                          disabled={loadingCrest}
+                          className="w-full py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold transition flex items-center justify-center gap-1.5 shadow"
+                        >
+                          {loadingCrest ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+                          <span>Vectorize Crest & Settlement</span>
+                        </button>
+                      </div>
+
+                      {/* Right: Results & Tile Overlay */}
+                      <div className="lg:col-span-2 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Total Length</span>
+                            <span className="text-base font-bold font-mono text-white">
+                              {crestResult ? `${crestResult.total_length_m} m` : '820.0 m'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Stations: {crestResult?.station_count || 42}</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Peak Settlement Loss</span>
+                            <span className={`text-base font-bold font-mono ${crestResult?.max_settlement_m >= 0.30 ? 'text-rose-400' : 'text-cyan-400'}`}>
+                              {crestResult ? `${crestResult.max_settlement_m} m` : '0.125 m'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Freeboard Tol: 0.30m</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Worst Station</span>
+                            <span className="text-base font-bold font-mono text-amber-300">
+                              {crestResult?.worst_settlement_station || 'STA 4+20.00'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Peak Sag Chainage</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Integrity Tier</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">
+                              {crestResult?.overall_metadata?.label || 'Normal (< 0.05m)'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Status: COMPLIANT</span>
+                          </div>
+                        </div>
+
+                        {crestResult?.overtopping_risk_detected && (
+                          <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/50 flex items-center gap-2 text-rose-300 text-xs font-mono">
+                            <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+                            <span>Overtopping risk advisory: peak crest loss exceeds freeboard tolerance (&ge; 0.30 m).</span>
+                          </div>
+                        )}
+
+                        {/* Tile Overlay Toggle */}
+                        <div className="p-3 bg-cyan-950/30 border border-cyan-500/30 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Activity className="w-4 h-4 text-cyan-400" />
+                            <div>
+                              <span className="font-bold text-white block text-xs">Crest Alignment Dynamic Tile Layer</span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {crestAlignmentLayerUrl || buildCrestAlignmentTileUrl(crestAlignmentId, '{z}', '{x}', '{y}')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{Math.round(crestAlignmentOpacity * 100)}%</span>
+                              <input
+                                type="range"
+                                min="0.1"
+                                max="1.0"
+                                step="0.05"
+                                value={crestAlignmentOpacity}
+                                onChange={(e) => setCrestAlignmentOpacity(parseFloat(e.target.value))}
+                                className="w-16 h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-cyan-500"
+                                title="Layer Opacity"
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowCrestAlignmentLayer(prev => !prev)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                showCrestAlignmentLayer ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {showCrestAlignmentLayer ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              {showCrestAlignmentLayer ? 'Hide on Map' : 'Stream to Map'}
+                            </button>
+                            {crestResult?.stations && (
+                              <button
+                                onClick={() => setCrestStations(crestResult.stations)}
+                                className="px-3 py-1.5 rounded text-xs font-bold bg-slate-800 text-cyan-300 hover:text-white border border-cyan-500/30 flex items-center gap-1"
+                              >
+                                <Crosshair className="w-3.5 h-3.5" />
+                                <span>Overlay Vector</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* T-102/T-104: PS-InSAR Multi-Temporal Stacking Subtab Panel */}
+                {analyticsSubTab === 'ps_insar' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Left: PS-InSAR Controls */}
+                      <div className="space-y-3 p-3 bg-black/40 border border-slate-800 rounded-xl">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Radar className="w-4 h-4 text-rose-400" />
+                            <span className="font-bold text-xs text-white uppercase font-mono">PS-InSAR Phase Stacking</span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setDirectGeorefInitialTab('ps_insar');
+                              setDirectGeorefModalOpen(true);
+                            }}
+                            className="text-[10px] text-rose-300 font-mono hover:underline flex items-center gap-1"
+                          >
+                            <span>Open Studio</span>
+                            <ArrowUpRight className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] text-gray-400 block font-mono mb-1">Stack ID</label>
+                          <input
+                            type="text"
+                            value={psStackId}
+                            onChange={(e) => setPsStackId(e.target.value)}
+                            className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] text-gray-400 block font-mono mb-1">APS Atmospheric Filter Mode</label>
+                          <select
+                            value={psApsFilterMode}
+                            onChange={(e) => setPsApsFilterMode(e.target.value)}
+                            className="w-full px-2 py-1 bg-black/60 border border-slate-800 rounded text-xs text-white font-mono"
+                          >
+                            <option value={APS_FILTER_MODES.SPATIOTEMPORAL_GAUSSIAN}>Spatiotemporal 2D Gaussian</option>
+                            <option value={APS_FILTER_MODES.SPATIAL_LOWPASS_TEMPORAL_HIGHPASS}>Spatial LP + Temporal HP</option>
+                            <option value={APS_FILTER_MODES.EXTERNAL_WEATHER_ERA5}>External ERA5 Reanalysis</option>
+                            <option value={APS_FILTER_MODES.EMPIRICAL_ELEVATION_CORRECTION}>Empirical Topographic</option>
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[9px] text-gray-400 block font-mono mb-1">γ &ge; {psCoherenceThresh}</label>
+                            <input
+                              type="range"
+                              min="0.5"
+                              max="0.95"
+                              step="0.05"
+                              value={psCoherenceThresh}
+                              onChange={(e) => setPsCoherenceThresh(parseFloat(e.target.value))}
+                              className="w-full accent-rose-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-gray-400 block font-mono mb-1">DA &le; {psDispersionThresh}</label>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="0.4"
+                              step="0.05"
+                              value={psDispersionThresh}
+                              onChange={(e) => setPsDispersionThresh(parseFloat(e.target.value))}
+                              className="w-full accent-rose-500"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={handleExecutePsInsar}
+                          disabled={loadingPsInsar}
+                          className="w-full py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded font-mono text-xs font-bold transition flex items-center justify-center gap-1.5 shadow"
+                        >
+                          {loadingPsInsar ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Radar className="w-3.5 h-3.5" />}
+                          <span>Process InSAR Stack</span>
+                        </button>
+                      </div>
+
+                      {/* Right: Results & Tile Overlay */}
+                      <div className="lg:col-span-2 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Accepted PS</span>
+                            <span className="text-base font-bold font-mono text-white">
+                              {psResult ? `${psResult.accepted_ps_count} / ${psResult.total_candidates}` : '6 / 7'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Gated Targets</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Mean Coherence (γ)</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">
+                              {psResult?.mean_temporal_coherence || '0.88'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Phase Quality</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Peak Subsidence</span>
+                            <span className={`text-base font-bold font-mono ${(psResult?.max_subsidence_mm_yr || -16.2) < -15.0 ? 'text-rose-400' : 'text-amber-400'}`}>
+                              {psResult ? `${psResult.max_subsidence_mm_yr} mm/yr` : '-16.2 mm/yr'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Critical: -15 mm/yr</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Stability Tier</span>
+                            <span className="text-base font-bold font-mono text-rose-400">
+                              {psResult?.overall_metadata?.label || 'Severe Subsidence'}
+                            </span>
+                            <span className="text-[9px] text-gray-500 block">Status: ADVISORY</span>
+                          </div>
+                        </div>
+
+                        {psResult?.critical_subsidence_detected && (
+                          <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/50 flex items-center gap-2 text-rose-300 text-xs font-mono">
+                            <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+                            <span>Critical subsidence warning: persistent scatterer velocity exceeds -15.0 mm/yr.</span>
+                          </div>
+                        )}
+
+                        {/* Tile Overlay Toggle */}
+                        <div className="p-3 bg-rose-950/30 border border-rose-500/30 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Radar className="w-4 h-4 text-rose-400" />
+                            <div>
+                              <span className="font-bold text-white block text-xs">PS-InSAR Phase Stacking Dynamic Tile Layer</span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {psInsarLayerUrl || buildPsInsarTileUrl(psStackId, '{z}', '{x}', '{y}')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{Math.round(psInsarOpacity * 100)}%</span>
+                              <input
+                                type="range"
+                                min="0.1"
+                                max="1.0"
+                                step="0.05"
+                                value={psInsarOpacity}
+                                onChange={(e) => setPsInsarOpacity(parseFloat(e.target.value))}
+                                className="w-16 h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-rose-500"
+                                title="Layer Opacity"
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowPsInsarLayer(prev => !prev)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                showPsInsarLayer ? 'bg-rose-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {showPsInsarLayer ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              {showPsInsarLayer ? 'Hide on Map' : 'Stream to Map'}
+                            </button>
+                            {psResult?.ps_points && (
+                              <button
+                                onClick={() => setPsScattererPins(psResult.ps_points)}
+                                className="px-3 py-1.5 rounded text-xs font-bold bg-slate-800 text-rose-300 hover:text-white border border-rose-500/30 flex items-center gap-1"
+                              >
+                                <Crosshair className="w-3.5 h-3.5" />
+                                <span>Plot PS Targets</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
               </div>
             )}
           </div>
@@ -15630,6 +16454,27 @@ export default function MapExplorer() {
         onClose={() => setEnvironmentalModalOpen(false)}
         initialTab={environmentalInitialTab}
         onApplyTileLayer={handleApplyTileLayer}
+      />
+
+      {/* Direct Georeferencing, Embankment Crest & PS-InSAR Studio Modal (T-102/T-104) */}
+      <DirectGeoreferencingModal
+        isOpen={directGeorefModalOpen}
+        onClose={() => setDirectGeorefModalOpen(false)}
+        initialTab={directGeorefInitialTab}
+        onApplyTileLayer={handleApplyTileLayer}
+        onApplyFootprint={(footprint, camPos) => {
+          setDirectGeorefFootprint(footprint);
+          if (camPos) setDirectGeorefCameraPos(camPos);
+          setShowDirectGeorefLayer(true);
+        }}
+        onApplyCrestAlignment={(stations) => {
+          setCrestStations(stations);
+          setShowCrestAlignmentLayer(true);
+        }}
+        onApplyPsPoints={(points) => {
+          setPsScattererPins(points);
+          setShowPsInsarLayer(true);
+        }}
       />
 
     </div>

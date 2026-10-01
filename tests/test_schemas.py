@@ -443,7 +443,61 @@ from app.models.schemas import (
     PSInSARStackResponse,
     classify_ps_insar_stability_tier,
     calculate_ps_insar_stack_displacement,
-    build_ps_insar_tile_url
+    build_ps_insar_tile_url,
+    TrueOrthoOcclusionType,
+    TrueOrthoQualityTier,
+    TrueOrthoZBufferRequest,
+    TrueOrthoZBufferResponse,
+    classify_true_ortho_quality_tier,
+    calculate_true_ortho_zbuffer,
+    build_true_ortho_zbuffer_tile_url,
+    SeamlineCostFunction,
+    SeamBlendMethod,
+    SeamlineRadiometricTier,
+    SeamlineSegment,
+    GraphCutSeamlineRequest,
+    GraphCutSeamlineResponse,
+    classify_seamline_radiometric_tier,
+    calculate_graphcut_seamline_optimization,
+    build_graphcut_seamline_tile_url,
+    BRDFKernelModel,
+    BRDFNormalizationTier,
+    BRDFBandKernelParam,
+    BRDF_STANDARD_BAND_PARAMS,
+    BRDFNBARRequest,
+    BRDFNBARResponse,
+    classify_brdf_normalization_tier,
+    calculate_ross_thick_kernel,
+    calculate_li_sparse_kernel,
+    calculate_brdf_nbar_correction,
+    build_brdf_nbar_tile_url,
+    SBASInversionMethod,
+    SBASDeformationTier,
+    SBASPairStatus,
+    SBASInterferogramPair,
+    SBASTimeSeriesEpoch,
+    SBASStackRequest,
+    SBASStackResponse,
+    classify_sbas_deformation_tier,
+    calculate_sbas_network_inversion,
+    build_sbas_tile_url,
+    TopographicCorrectionMethod,
+    IlluminationConditionTier,
+    TopographicBandCorrection,
+    TopographicMinnaertRequest,
+    TopographicMinnaertResponse,
+    classify_illumination_tier,
+    calculate_local_incidence_angle,
+    calculate_topographic_radiometric_correction,
+    build_topographic_minnaert_tile_url,
+    RPCAdjustmentModel,
+    RPCGeometricAccuracyTier,
+    RPCTiePoint,
+    RPCTiePointRequest,
+    RPCTiePointResponse,
+    classify_rpc_accuracy_tier,
+    calculate_rpc_tie_point_alignment,
+    build_tie_point_rpc_tile_url
 )
 from app.config import settings
 
@@ -4893,8 +4947,548 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(resp.stack_id, "STACK_TSF_2026")
         self.assertTrue(resp.critical_subsidence_detected)
 
+    def test_true_ortho_zbuffer_contracts_and_math(self):
+        """Verify True Orthorectification Z-buffer ray-tracing occlusion analysis, building lean displacement, and route contracts."""
+        # 1. Enums
+        self.assertEqual(TrueOrthoOcclusionType.VISIBLE_NADIR.value, "visible_nadir")
+        self.assertEqual(TrueOrthoOcclusionType.VISIBLE_OBLIQUE.value, "visible_oblique")
+        self.assertEqual(TrueOrthoOcclusionType.BUILDING_LEAN_OCCLUDED.value, "building_lean_occluded")
+        self.assertEqual(TrueOrthoOcclusionType.TERRAIN_SHADOW_OCCLUDED.value, "terrain_shadow_occluded")
+        self.assertEqual(TrueOrthoOcclusionType.BLIND_AREA_HOLE.value, "blind_area_hole")
+
+        self.assertEqual(TrueOrthoQualityTier.SURVEY_GRADE_TRUE_ORTHO.value, "survey_grade_true_ortho")
+        self.assertEqual(TrueOrthoQualityTier.MAPPING_GRADE.value, "mapping_grade")
+        self.assertEqual(TrueOrthoQualityTier.MODERATE_OCCLUSION.value, "moderate_occlusion")
+        self.assertEqual(TrueOrthoQualityTier.HIGH_OCCLUSION_DEFICIT.value, "high_occlusion_deficit")
+
+        # 2. Quality tier classification
+        self.assertEqual(classify_true_ortho_quality_tier(1.5), TrueOrthoQualityTier.SURVEY_GRADE_TRUE_ORTHO)
+        self.assertEqual(classify_true_ortho_quality_tier(6.5), TrueOrthoQualityTier.MAPPING_GRADE)
+        self.assertEqual(classify_true_ortho_quality_tier(18.0), TrueOrthoQualityTier.MODERATE_OCCLUSION)
+        self.assertEqual(classify_true_ortho_quality_tier(30.0), TrueOrthoQualityTier.HIGH_OCCLUSION_DEFICIT)
+
+        # 3. Calculation routine
+        res = calculate_true_ortho_zbuffer(
+            camera_height_agl_m=120.0,
+            sensor_pitch_deg=2.0,
+            sensor_roll_deg=1.0,
+            sun_zenith_deg=35.0,
+            sun_azimuth_deg=135.0,
+            dsm_resolution_m=0.05,
+            building_threshold_height_m=3.0,
+            max_structure_height_m=20.0,
+            radial_distance_m=50.0,
+            fill_blind_areas=True
+        )
+        self.assertGreater(res["total_pixels"], 0)
+        self.assertGreater(res["visible_pixels"], 0)
+        self.assertGreater(res["occluded_pixels"], 0)
+        self.assertGreater(res["occlusion_percentage"], 0.0)
+        self.assertGreater(res["building_lean_pixels"], 0)
+        self.assertGreater(res["shadow_pixels"], 0)
+        self.assertGreater(res["max_building_lean_displacement_m"], 0.0)
+        self.assertGreater(res["max_shadow_length_m"], 0.0)
+        self.assertIn("quality_tier", res)
+        self.assertIsInstance(res["true_ortho_ready"], bool)
+
+        # 4. Tile URL builder
+        tile_url = build_true_ortho_zbuffer_tile_url("ORTHO_DOWNTOWN_01", 18, 42000, 103000)
+        self.assertEqual(tile_url, "/api/v1/tiles/ortho/true-orthorectification/ORTHO_DOWNTOWN_01/18/42000/103000.png")
+
+        # 5. Pydantic Request & Response with aliases
+        req = TrueOrthoZBufferRequest(
+            orthoId="ORTHO_DOWNTOWN_01",
+            dsmId="lidar_dsm_1m",
+            cameraHeightAgl=120.0,
+            sensorPitch=2.0,
+            sensorRoll=1.0,
+            sunZenith=35.0,
+            sunAzimuth=135.0,
+            dsmResolution=0.05,
+            buildingThresholdHeight=3.0,
+            fillBlindAreas=True
+        )
+        self.assertEqual(req.ortho_id, "ORTHO_DOWNTOWN_01")
+        self.assertEqual(req.dsm_id, "lidar_dsm_1m")
+        self.assertEqual(req.camera_height_agl_m, 120.0)
+        self.assertEqual(req.dsm_resolution_m, 0.05)
+
+        resp = TrueOrthoZBufferResponse(
+            ortho_id=req.ortho_id,
+            dsm_id=req.dsm_id,
+            total_pixels=res["total_pixels"],
+            visible_pixels=res["visible_pixels"],
+            occluded_pixels=res["occluded_pixels"],
+            occlusion_percentage=res["occlusion_percentage"],
+            building_lean_pixels=res["building_lean_pixels"],
+            shadow_pixels=res["shadow_pixels"],
+            blind_hole_pixels=res["blind_hole_pixels"],
+            max_building_lean_displacement_m=res["max_building_lean_displacement_m"],
+            max_shadow_length_m=res["max_shadow_length_m"],
+            quality_tier=res["quality_tier"],
+            true_ortho_ready=res["true_ortho_ready"],
+            tile_url_template="/api/v1/tiles/ortho/true-orthorectification/{ortho_id}/{z}/{x}/{y}.png",
+            evaluated_at="2026-10-01T12:00:00Z"
+        )
+        self.assertEqual(resp.ortho_id, "ORTHO_DOWNTOWN_01")
+        self.assertEqual(resp.total_pixels, res["total_pixels"])
+
+        # 6. Route contracts verification
+        self.assertIn("analysis_true_ortho_zbuffer", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_true_ortho_zbuffer"], "/api/v1/ortho/true-orthorectification")
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_true_ortho_zbuffer_short"], "/ortho/true-orthorectification")
+        self.assertEqual(API_ROUTE_CONTRACTS["tiles_true_ortho_zbuffer"], "/api/v1/tiles/ortho/true-orthorectification/{ortho_id}/{z}/{x}/{y}.png")
+
+    def test_graphcut_seamline_contracts_and_math(self):
+        """Verify Multiresolution Seamline Graph-Cut Energy Minimization, Dijkstra boundary routing, and route contracts."""
+        # 1. Enums
+        self.assertEqual(SeamlineCostFunction.GRADIENT_DIFFERENCE.value, "gradient_difference")
+        self.assertEqual(SeamlineCostFunction.COLOR_PLUS_GRADIENT.value, "color_plus_gradient")
+        self.assertEqual(SeamlineCostFunction.ELEVATION_OBSTACLE_GRAPH_CUT.value, "elevation_obstacle_graph_cut")
+        self.assertEqual(SeamlineCostFunction.NORMALISED_CROSS_CORRELATION.value, "normalised_cross_correlation")
+
+        self.assertEqual(SeamBlendMethod.MULTI_BAND_SPLINE.value, "multi_band_spline")
+        self.assertEqual(SeamBlendMethod.DISTANCE_FEATHER.value, "distance_feather")
+        self.assertEqual(SeamBlendMethod.POISSON_GRADIENT.value, "poisson_gradient")
+        self.assertEqual(SeamBlendMethod.NO_BLENDING.value, "no_blending")
+
+        self.assertEqual(SeamlineRadiometricTier.SEAMLESS_EXCELLENT.value, "seamless_excellent")
+        self.assertEqual(SeamlineRadiometricTier.GOOD_BALANCE.value, "good_balance")
+        self.assertEqual(SeamlineRadiometricTier.VISIBLE_TRANSITION.value, "visible_transition")
+        self.assertEqual(SeamlineRadiometricTier.SEVERE_RADIOMETRIC_STEP.value, "severe_radiometric_step")
+
+        # 2. Radiometric tier classification
+        self.assertEqual(classify_seamline_radiometric_tier(0.02), SeamlineRadiometricTier.SEAMLESS_EXCELLENT)
+        self.assertEqual(classify_seamline_radiometric_tier(0.06), SeamlineRadiometricTier.GOOD_BALANCE)
+        self.assertEqual(classify_seamline_radiometric_tier(0.12), SeamlineRadiometricTier.VISIBLE_TRANSITION)
+        self.assertEqual(classify_seamline_radiometric_tier(0.20), SeamlineRadiometricTier.SEVERE_RADIOMETRIC_STEP)
+
+        # 3. Graph-Cut optimization calculation
+        res = calculate_graphcut_seamline_optimization(
+            granule_count=3,
+            weight_color=0.5,
+            weight_gradient=0.3,
+            weight_elevation=0.2,
+            cost_function=SeamlineCostFunction.COLOR_PLUS_GRADIENT,
+            blend_method=SeamBlendMethod.MULTI_BAND_SPLINE,
+            feather_buffer_px=25
+        )
+        self.assertEqual(res["granule_count"], 3)
+        self.assertGreater(res["total_seamline_nodes"], 0)
+        self.assertGreater(res["total_seamline_length_m"], 0.0)
+        self.assertGreater(res["mean_transition_energy"], 0.0)
+        self.assertIn("radiometric_tier", res)
+        self.assertGreater(len(res["seam_segments"]), 0)
+
+        # 4. Tile URL builder
+        tile_url = build_graphcut_seamline_tile_url("MOSAIC_BASIN_01", 14, 2500, 6100)
+        self.assertEqual(tile_url, "/api/v1/tiles/mosaic/graphcut-seamlines/MOSAIC_BASIN_01/14/2500/6100.png")
+
+        # 5. Pydantic Request & Response with aliases and nested segments
+        req = GraphCutSeamlineRequest(
+            mosaicId="MOSAIC_BASIN_01",
+            granuleIds=["granule_01", "granule_02", "granule_03"],
+            costFunction=SeamlineCostFunction.COLOR_PLUS_GRADIENT,
+            blendMethod=SeamBlendMethod.MULTI_BAND_SPLINE,
+            weightColor=0.5,
+            weightGradient=0.3,
+            weightElevation=0.2,
+            featherBufferPx=25,
+            octaveLevels=4
+        )
+        self.assertEqual(req.mosaic_id, "MOSAIC_BASIN_01")
+        self.assertEqual(len(req.granule_ids), 3)
+        self.assertEqual(req.octave_levels, 4)
+
+        segment_objs = [SeamlineSegment(**seg) for seg in res["seam_segments"]]
+        resp = GraphCutSeamlineResponse(
+            mosaic_id=req.mosaic_id,
+            granule_count=res["granule_count"],
+            cost_function_used=req.cost_function,
+            blend_method_used=req.blend_method,
+            total_seamline_nodes=res["total_seamline_nodes"],
+            total_seamline_length_m=res["total_seamline_length_m"],
+            mean_transition_energy=res["mean_transition_energy"],
+            radiometric_tier=res["radiometric_tier"],
+            obstacle_crossings_avoided=res["obstacle_crossings_avoided"],
+            seam_segments=segment_objs,
+            tile_url_template="/api/v1/tiles/mosaic/graphcut-seamlines/{mosaic_id}/{z}/{x}/{y}.png",
+            processed_at="2026-10-01T12:00:00Z"
+        )
+        self.assertEqual(resp.mosaic_id, "MOSAIC_BASIN_01")
+        self.assertEqual(len(resp.seam_segments), len(res["seam_segments"]))
+
+        # 6. Route contracts verification
+        self.assertIn("analysis_graphcut_seamlines", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_graphcut_seamlines"], "/api/v1/mosaic/graphcut-seamlines")
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_graphcut_seamlines_short"], "/mosaic/graphcut-seamlines")
+        self.assertEqual(API_ROUTE_CONTRACTS["tiles_graphcut_seamlines"], "/api/v1/tiles/mosaic/graphcut-seamlines/{mosaic_id}/{z}/{x}/{y}.png")
+
+    def test_brdf_ross_thick_li_sparse_nbar_contracts_and_math(self):
+        """Verify BRDF Ross-Thick Li-Sparse Kernel Normalization (HLS NBAR), solar/view angle adjustment, and route contracts."""
+        # 1. Enums and Standard Band Parameters
+        self.assertEqual(BRDFKernelModel.ROSS_THICK_LI_SPARSE.value, "ross_thick_li_sparse")
+        self.assertEqual(BRDFKernelModel.ROUJEAN.value, "roujean")
+        self.assertEqual(BRDFKernelModel.MINNAERT_EMPIRICAL.value, "minnaert_empirical")
+
+        self.assertEqual(BRDFNormalizationTier.EXCELLENT_NADIR_ALIGNMENT.value, "excellent_nadir_alignment")
+        self.assertEqual(BRDFNormalizationTier.MODERATE_HOTSPOT_CORRECTION.value, "moderate_hotspot_correction")
+        self.assertEqual(BRDFNormalizationTier.STRONG_OBLIQUE_CORRECTION.value, "strong_oblique_correction")
+        self.assertEqual(BRDFNormalizationTier.EXTREME_FORWARD_BACKSCATTER.value, "extreme_forward_backscatter")
+
+        for band in ["B02", "B03", "B04", "B08", "B11", "B12", "blue", "green", "red", "nir", "swir1", "swir2"]:
+            self.assertIn(band, BRDF_STANDARD_BAND_PARAMS)
+            spec = BRDF_STANDARD_BAND_PARAMS[band]
+            self.assertGreater(spec["f_iso"], 0.0)
+            self.assertGreater(spec["f_geo"], 0.0)
+            self.assertGreater(spec["f_vol"], 0.0)
+
+        # 2. Semi-empirical kernel calculations
+        k_vol_0 = calculate_ross_thick_kernel(0.0, 0.0, 0.0)
+        self.assertTrue(math.isfinite(k_vol_0))
+        k_geo_0 = calculate_li_sparse_kernel(0.0, 0.0, 0.0)
+        self.assertTrue(math.isfinite(k_geo_0))
+
+        ts_rad = math.radians(35.0)
+        tv_rad = math.radians(10.0)
+        phi_rad = math.radians(45.0)
+        k_vol_arb = calculate_ross_thick_kernel(ts_rad, tv_rad, phi_rad)
+        k_geo_arb = calculate_li_sparse_kernel(ts_rad, tv_rad, phi_rad)
+        self.assertTrue(math.isfinite(k_vol_arb))
+        self.assertTrue(math.isfinite(k_geo_arb))
+
+        # 3. Normalization tier classification
+        self.assertEqual(classify_brdf_normalization_tier(1.00), BRDFNormalizationTier.EXCELLENT_NADIR_ALIGNMENT)
+        self.assertEqual(classify_brdf_normalization_tier(0.90), BRDFNormalizationTier.MODERATE_HOTSPOT_CORRECTION)
+        self.assertEqual(classify_brdf_normalization_tier(0.80), BRDFNormalizationTier.STRONG_OBLIQUE_CORRECTION)
+        self.assertEqual(classify_brdf_normalization_tier(0.60), BRDFNormalizationTier.EXTREME_FORWARD_BACKSCATTER)
+
+        # 4. Full BRDF NBAR correction calculation
+        res = calculate_brdf_nbar_correction(
+            observed_reflectance=0.185,
+            solar_zenith_deg=38.2,
+            view_zenith_deg=7.5,
+            relative_azimuth_deg=45.0,
+            target_solar_zenith_deg=45.0,
+            band="B04"
+        )
+        self.assertIn("observed_reflectance", res)
+        self.assertIn("nbar_reflectance", res)
+        self.assertIn("brdf_correction_factor", res)
+        self.assertGreater(res["brdf_correction_factor"], 0.0)
+        self.assertGreater(res["nbar_reflectance"], 0.0)
+        self.assertIn("normalization_tier", res)
+        self.assertIsInstance(res["hotspot_effect_detected"], bool)
+
+        # 5. Tile URL builder
+        tile_url = build_brdf_nbar_tile_url("sentinel-2-l2a", "HLS.L30.T10SEH.2026210", 12, 1024, 1536)
+        self.assertEqual(tile_url, "/api/v1/tiles/preprocessing/brdf-nbar/sentinel-2-l2a/HLS.L30.T10SEH.2026210/12/1024/1536.png")
+
+        # 6. Pydantic Request & Response with aliases
+        req = BRDFNBARRequest(
+            collection=SatelliteCollection.SENTINEL_2_L2A,
+            itemId="S2A_MSIL2A_20260910",
+            band="B04",
+            solarZenith=38.2,
+            viewZenith=7.5,
+            relativeAzimuth=45.0,
+            targetSolarZenith=45.0,
+            observedReflectance=0.185,
+            kernelModel=BRDFKernelModel.ROSS_THICK_LI_SPARSE
+        )
+        self.assertEqual(req.item_id, "S2A_MSIL2A_20260910")
+        self.assertEqual(req.solar_zenith_deg, 38.2)
+
+        resp = BRDFNBARResponse(
+            collection=req.collection,
+            item_id=req.item_id,
+            band=req.band,
+            observed_reflectance=res["observed_reflectance"],
+            nbar_reflectance=res["nbar_reflectance"],
+            brdf_correction_factor=res["brdf_correction_factor"],
+            k_vol_observed=res["k_vol_observed"],
+            k_geo_observed=res["k_geo_observed"],
+            k_vol_target=res["k_vol_target"],
+            k_geo_target=res["k_geo_target"],
+            normalization_tier=res["normalization_tier"],
+            hotspot_effect_detected=res["hotspot_effect_detected"],
+            tile_url_template="/api/v1/tiles/preprocessing/brdf-nbar/{collection}/{item_id}/{z}/{x}/{y}.png",
+            calibrated_at="2026-10-01T12:00:00Z"
+        )
+        self.assertEqual(resp.item_id, "S2A_MSIL2A_20260910")
+        self.assertEqual(resp.band, "B04")
+
+        # 7. Route contracts verification
+        self.assertIn("analysis_brdf_nbar", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_brdf_nbar"], "/api/v1/preprocessing/brdf-nbar")
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_brdf_nbar_short"], "/preprocessing/brdf-nbar")
+        self.assertEqual(API_ROUTE_CONTRACTS["tiles_brdf_nbar"], "/api/v1/tiles/preprocessing/brdf-nbar/{collection}/{item_id}/{z}/{x}/{y}.png")
+
+    def test_sbas_multitemporal_contracts_and_math(self):
+        """Verify SBAS multi-temporal InSAR baseline graph, SVD inversion, and stability tiers."""
+        # 1. Enums
+        self.assertEqual(SBASInversionMethod.SVD_LEAST_SQUARES.value, "svd_least_squares")
+        self.assertEqual(SBASInversionMethod.TIKHONOV_REGULARIZED.value, "tikhonov_regularized")
+        self.assertEqual(SBASPairStatus.ACCEPTED.value, "accepted")
+        self.assertEqual(SBASPairStatus.EXCEEDS_PERP_BASELINE.value, "exceeds_perp_baseline")
+
+        # 2. Classification
+        self.assertEqual(classify_sbas_deformation_tier(15.0), SBASDeformationTier.RAPID_UPLIFT)
+        self.assertEqual(classify_sbas_deformation_tier(5.0), SBASDeformationTier.MODERATE_UPLIFT)
+        self.assertEqual(classify_sbas_deformation_tier(0.0), SBASDeformationTier.STABLE_GROUND)
+        self.assertEqual(classify_sbas_deformation_tier(-5.0), SBASDeformationTier.SLIGHT_SUBSIDENCE)
+        self.assertEqual(classify_sbas_deformation_tier(-15.0), SBASDeformationTier.MODERATE_SUBSIDENCE)
+        self.assertEqual(classify_sbas_deformation_tier(-30.0), SBASDeformationTier.SEVERE_SUBSIDENCE)
+
+        # 3. Calculation routine
+        res = calculate_sbas_network_inversion(
+            stack_id="SBAS_TSF_2026_STACK",
+            max_perp_baseline_m=200.0,
+            max_temporal_baseline_days=120,
+            coherence_threshold=0.35
+        )
+        self.assertEqual(res["stack_id"], "SBAS_TSF_2026_STACK")
+        self.assertEqual(res["num_acquisitions"], 6)
+        self.assertGreater(res["num_accepted_pairs"], 0)
+        self.assertGreaterEqual(res["num_rejected_pairs"], 0)
+        self.assertTrue(res["is_network_connected"])
+        self.assertGreater(res["mean_coherence"], 0.35)
+        self.assertIn("mean_velocity_mm_yr", res)
+        self.assertIn("deformation_tier", res)
+        self.assertEqual(len(res["time_series_epochs"]), 6)
+        self.assertEqual(res["time_series_epochs"][0]["cumulative_displacement_mm"], 0.0)
+
+        # 4. Tile URL builder
+        tile_url = build_sbas_tile_url("SBAS_TSF_2026_STACK", 12, 1024, 1536)
+        self.assertEqual(tile_url, "/api/v1/tiles/sar/sbas/SBAS_TSF_2026_STACK/12/1024/1536.png")
+
+        # 5. Pydantic Models with camelCase aliases
+        req = SBASStackRequest(
+            stackId="SBAS_TSF_2026_STACK",
+            masterSceneId="S1A_IW_SLC__1SDV_20260115",
+            maxPerpBaselineM=180.0,
+            maxTemporalBaselineDays=100,
+            coherenceThreshold=0.40,
+            inversionMethod=SBASInversionMethod.SVD_LEAST_SQUARES
+        )
+        self.assertEqual(req.stack_id, "SBAS_TSF_2026_STACK")
+        self.assertEqual(req.max_perp_baseline_m, 180.0)
+        self.assertEqual(req.coherence_threshold, 0.40)
+
+        resp = SBASStackResponse(
+            stack_id=req.stack_id,
+            master_scene_id=req.master_scene_id,
+            inversion_method=req.inversion_method.value,
+            num_acquisitions=res["num_acquisitions"],
+            num_candidate_pairs=res["num_candidate_pairs"],
+            num_accepted_pairs=res["num_accepted_pairs"],
+            num_rejected_pairs=res["num_rejected_pairs"],
+            network_connectivity_rank=res["network_connectivity_rank"],
+            is_network_connected=res["is_network_connected"],
+            mean_coherence=res["mean_coherence"],
+            mean_velocity_mm_yr=res["mean_velocity_mm_yr"],
+            max_subsidence_mm_yr=res["max_subsidence_mm_yr"],
+            max_uplift_mm_yr=res["max_uplift_mm_yr"],
+            deformation_tier=res["deformation_tier"],
+            tier_metadata=res["tier_metadata"],
+            time_series_epochs=[SBASTimeSeriesEpoch(**e) for e in res["time_series_epochs"]],
+            interferogram_pairs=[SBASInterferogramPair(**p) for p in res["interferogram_pairs"]],
+            tile_url_template="/api/v1/tiles/sar/sbas/{stack_id}/{z}/{x}/{y}.png",
+            processed_at="2026-10-01T12:00:00Z"
+        )
+        self.assertEqual(resp.stack_id, "SBAS_TSF_2026_STACK")
+        self.assertEqual(len(resp.time_series_epochs), 6)
+
+        # 6. Route contracts verification
+        self.assertIn("analysis_sbas_stack", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_sbas_stack"], "/api/v1/analysis/sar/sbas-stack")
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_sbas_stack_short"], "/sar/sbas-stack")
+        self.assertEqual(API_ROUTE_CONTRACTS["tiles_sbas_stack"], "/api/v1/tiles/sar/sbas/{stack_id}/{z}/{x}/{y}.png")
+
+    def test_topographic_minnaert_contracts_and_math(self):
+        """Verify topographic illumination local incidence angle, Minnaert/C-correction, and tiers."""
+        # 1. Enums
+        self.assertEqual(TopographicCorrectionMethod.MINNAERT.value, "minnaert")
+        self.assertEqual(TopographicCorrectionMethod.C_CORRECTION.value, "c_correction")
+        self.assertEqual(TopographicCorrectionMethod.SCS_PLUS_C.value, "scs_plus_c")
+        self.assertEqual(IlluminationConditionTier.OPTIMAL_DIRECT_ILLUMINATION.value, "optimal_direct_illumination")
+
+        # 2. Local incidence angle calculation
+        inc_deg, cos_i = calculate_local_incidence_angle(
+            solar_zenith_deg=30.0,
+            solar_azimuth_deg=180.0,
+            slope_deg=20.0,
+            aspect_deg=180.0  # Facing directly towards sun
+        )
+        self.assertAlmostEqual(inc_deg, 10.0, places=1)  # 30 - 20 = 10 deg
+        self.assertGreater(cos_i, 0.95)
+
+        # 3. Classification
+        self.assertEqual(classify_illumination_tier(0.65), IlluminationConditionTier.OPTIMAL_DIRECT_ILLUMINATION)
+        self.assertEqual(classify_illumination_tier(0.35), IlluminationConditionTier.MODERATE_SLOPE_SHADOW)
+        self.assertEqual(classify_illumination_tier(0.10), IlluminationConditionTier.STEEP_GRAZING_ILLUMINATION)
+        self.assertEqual(classify_illumination_tier(0.02), IlluminationConditionTier.SELF_SHADOWED_TERRAIN)
+
+        # 4. Radiometric correction routine (Minnaert)
+        res_minnaert = calculate_topographic_radiometric_correction(
+            collection="sentinel-2-l2a",
+            item_id="S2A_MSIL2A_20260815T183921",
+            method="minnaert",
+            solar_zenith_deg=36.5,
+            solar_azimuth_deg=142.0,
+            slope_deg=24.5,
+            aspect_deg=160.0,
+            minnaert_k=0.72
+        )
+        self.assertEqual(res_minnaert["method"], "minnaert")
+        self.assertIn("band_corrections", res_minnaert)
+        self.assertIn("B04", res_minnaert["band_corrections"])
+        b04_corr = res_minnaert["band_corrections"]["B04"]
+        self.assertGreater(b04_corr["corrected_reflectance"], 0.0)
+        self.assertGreater(b04_corr["correction_factor"], 0.0)
+        self.assertEqual(b04_corr["minnaert_k"], 0.72)
+
+        # 5. C-Correction routine
+        res_c = calculate_topographic_radiometric_correction(
+            collection="sentinel-2-l2a",
+            method="c_correction",
+            c_parameter=0.18
+        )
+        self.assertEqual(res_c["method"], "c_correction")
+        self.assertEqual(res_c["band_corrections"]["B04"]["c_parameter"], 0.18)
+
+        # 6. Tile URL builder
+        tile_url = build_topographic_minnaert_tile_url("sentinel-2-l2a", "S2A_MSIL2A_20260815", 12, 1024, 1536)
+        self.assertEqual(tile_url, "/api/v1/tiles/preprocessing/topographic-minnaert/sentinel-2-l2a/S2A_MSIL2A_20260815/12/1024/1536.png")
+
+        # 7. Pydantic Request & Response with aliases
+        req = TopographicMinnaertRequest(
+            collection=SatelliteCollection.SENTINEL_2_L2A,
+            itemId="S2A_MSIL2A_20260815T183921",
+            demId="cop-dem-glo-30",
+            method=TopographicCorrectionMethod.MINNAERT,
+            solarZenithDeg=36.5,
+            solarAzimuthDeg=142.0,
+            slopeDeg=24.5,
+            aspectDeg=160.0,
+            minnaertK=0.72
+        )
+        self.assertEqual(req.item_id, "S2A_MSIL2A_20260815T183921")
+        self.assertEqual(req.solar_zenith_deg, 36.5)
+
+        band_corrs = {
+            b: TopographicBandCorrection(**data) for b, data in res_minnaert["band_corrections"].items()
+        }
+        resp = TopographicMinnaertResponse(
+            collection=req.collection.value,
+            item_id=req.item_id,
+            dem_id=req.dem_id,
+            method=req.method.value,
+            solar_zenith_deg=res_minnaert["solar_zenith_deg"],
+            solar_azimuth_deg=res_minnaert["solar_azimuth_deg"],
+            slope_deg=res_minnaert["slope_deg"],
+            aspect_deg=res_minnaert["aspect_deg"],
+            local_incidence_angle_deg=res_minnaert["local_incidence_angle_deg"],
+            cos_i=res_minnaert["cos_i"],
+            illumination_tier=res_minnaert["illumination_tier"],
+            tier_metadata=res_minnaert["tier_metadata"],
+            band_corrections=band_corrs,
+            mean_correction_factor=res_minnaert["mean_correction_factor"],
+            is_shadowed=res_minnaert["is_shadowed"],
+            tile_url_template="/api/v1/tiles/preprocessing/topographic-minnaert/{collection}/{item_id}/{z}/{x}/{y}.png",
+            normalized_at="2026-10-01T12:00:00Z"
+        )
+        self.assertEqual(resp.item_id, "S2A_MSIL2A_20260815T183921")
+
+        # 8. Route contracts verification
+        self.assertIn("analysis_topographic_minnaert", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_topographic_minnaert"], "/api/v1/analysis/preprocessing/topographic-minnaert")
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_topographic_minnaert_short"], "/preprocessing/topographic-minnaert")
+        self.assertEqual(API_ROUTE_CONTRACTS["tiles_topographic_minnaert"], "/api/v1/tiles/preprocessing/topographic-minnaert/{collection}/{item_id}/{z}/{x}/{y}.png")
+
+    def test_subpixel_tie_point_rpc_contracts_and_math(self):
+        """Verify automated sub-pixel tie point matching, affine RPC refinement, and accuracy tiers."""
+        # 1. Enums
+        self.assertEqual(RPCAdjustmentModel.AFFINE_RPC_BIAS.value, "affine_rpc_bias")
+        self.assertEqual(RPCAdjustmentModel.TRANSLATION_SHIFT.value, "translation_shift")
+        self.assertEqual(RPCGeometricAccuracyTier.SUBPIXEL_SURVEY_GRADE.value, "subpixel_survey_grade")
+
+        # 2. Classification
+        self.assertEqual(classify_rpc_accuracy_tier(0.32), RPCGeometricAccuracyTier.SUBPIXEL_SURVEY_GRADE)
+        self.assertEqual(classify_rpc_accuracy_tier(0.75), RPCGeometricAccuracyTier.MAPPING_STANDARD)
+        self.assertEqual(classify_rpc_accuracy_tier(1.80), RPCGeometricAccuracyTier.RECONNAISSANCE_COARSE)
+        self.assertEqual(classify_rpc_accuracy_tier(3.20), RPCGeometricAccuracyTier.UNALIGNED_DEFICIT)
+
+        # 3. Calculation routine
+        res = calculate_rpc_tie_point_alignment(
+            image_id="WV03_20260905_EXP01",
+            reference_ortho_id="REF_ORTHO_COMPOSITE_2026",
+            adjustment_model="affine_rpc_bias",
+            requested_tie_points=64,
+            ground_sampling_distance_m=0.31
+        )
+        self.assertEqual(res["image_id"], "WV03_20260905_EXP01")
+        self.assertEqual(res["total_candidate_points"], 64)
+        self.assertGreater(res["inlier_tie_points"], 50)
+        self.assertGreater(res["outlier_points"], 0)
+        self.assertAlmostEqual(res["shift_row_px"], 3.24, places=2)
+        self.assertAlmostEqual(res["shift_col_px"], -2.65, places=2)
+        self.assertLess(res["rmse_posterior_px"], res["rmse_prior_px"])
+        self.assertLess(res["rmse_posterior_meters"], 0.50)
+        self.assertIn("geometric_accuracy_tier", res)
+        self.assertGreater(len(res["tie_points_sample"]), 0)
+
+        # 4. Tile URL builder
+        tile_url = build_tie_point_rpc_tile_url("WV03_20260905_EXP01", 14, 4096, 6144)
+        self.assertEqual(tile_url, "/api/v1/tiles/ortho/tie-point-rpc/WV03_20260905_EXP01/14/4096/6144.png")
+
+        # 5. Pydantic Request & Response with aliases
+        req = RPCTiePointRequest(
+            imageId="WV03_20260905_EXP01",
+            referenceOrthoId="REF_ORTHO_COMPOSITE_2026",
+            demId="cop-dem-glo-30",
+            adjustmentModel=RPCAdjustmentModel.AFFINE_RPC_BIAS,
+            minCorrelationThreshold=0.75,
+            ransacThresholdPx=1.5,
+            requestedTiePoints=64,
+            groundSamplingDistanceM=0.31
+        )
+        self.assertEqual(req.image_id, "WV03_20260905_EXP01")
+        self.assertEqual(req.requested_tie_points, 64)
+
+        resp = RPCTiePointResponse(
+            image_id=req.image_id,
+            reference_ortho_id=req.reference_ortho_id,
+            adjustment_model=req.adjustment_model.value,
+            total_candidate_points=res["total_candidate_points"],
+            inlier_tie_points=res["inlier_tie_points"],
+            outlier_points=res["outlier_points"],
+            shift_col_px=res["shift_col_px"],
+            shift_row_px=res["shift_row_px"],
+            scale_col=res["scale_col"],
+            scale_row=res["scale_row"],
+            rotation_deg=res["rotation_deg"],
+            rmse_prior_px=res["rmse_prior_px"],
+            rmse_posterior_px=res["rmse_posterior_px"],
+            rmse_posterior_meters=res["rmse_posterior_meters"],
+            geometric_accuracy_tier=res["geometric_accuracy_tier"],
+            tier_metadata=res["tier_metadata"],
+            tie_points_sample=[RPCTiePoint(**p) for p in res["tie_points_sample"]],
+            tile_url_template="/api/v1/tiles/ortho/tie-point-rpc/{image_id}/{z}/{x}/{y}.png",
+            aligned_at="2026-10-01T12:00:00Z"
+        )
+        self.assertEqual(resp.image_id, "WV03_20260905_EXP01")
+        self.assertGreater(resp.inlier_tie_points, 0)
+
+        # 6. Route contracts verification
+        self.assertIn("analysis_tie_point_rpc", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_tie_point_rpc"], "/api/v1/ortho/tie-point-rpc")
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_tie_point_rpc_short"], "/ortho/tie-point-rpc")
+        self.assertEqual(API_ROUTE_CONTRACTS["tiles_tie_point_rpc"], "/api/v1/tiles/ortho/tie-point-rpc/{image_id}/{z}/{x}/{y}.png")
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
