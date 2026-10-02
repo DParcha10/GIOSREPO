@@ -879,7 +879,29 @@ export const API_ENDPOINTS = {
   TILES_TOPOGRAPHIC_MINNAERT: (collection, itemId, z, x, y) => `/api/v1/tiles/preprocessing/topographic-minnaert/${collection}/${itemId}/${z}/${x}/${y}.png`,
   ANALYSIS_TIE_POINT_RPC: '/api/v1/ortho/tie-point-rpc',
   ANALYSIS_TIE_POINT_RPC_SHORT: '/ortho/tie-point-rpc',
-  TILES_TIE_POINT_RPC: (imageId, z, x, y) => `/api/v1/tiles/ortho/tie-point-rpc/${imageId}/${z}/${x}/${y}.png`
+  TILES_TIE_POINT_RPC: (imageId, z, x, y) => `/api/v1/tiles/ortho/tie-point-rpc/${imageId}/${z}/${x}/${y}.png`,
+  ANALYSIS_CSF_FILTER: '/api/v1/analysis/pointcloud/csf-filter',
+  ANALYSIS_CSF_FILTER_SHORT: '/pointcloud/csf-filter',
+  TILES_CSF_FILTER: (cloudId, z, x, y) => `/api/v1/tiles/pointcloud/csf/${cloudId}/${z}/${x}/${y}.png`,
+  ANALYSIS_DINSAR_DEFORMATION: '/api/v1/analysis/sar/dinsar',
+  ANALYSIS_DINSAR_DEFORMATION_SHORT: '/sar/dinsar',
+  TILES_DINSAR_DEFORMATION: (pairId, z, x, y) => `/api/v1/tiles/sar/dinsar/${pairId}/${z}/${x}/${y}.png`,
+  ANALYSIS_PANSHARPEN: '/api/v1/analysis/imagery/pan-sharpen',
+  ANALYSIS_PANSHARPEN_SHORT: '/imagery/pan-sharpen',
+  TILES_PANSHARPEN: (collection, itemId, z, x, y) => `/api/v1/tiles/imagery/pan-sharpen/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  DRONE_ODM_TASKS: '/api/v1/drone/odm-tasks',
+  DRONE_ODM_TASKS_SHORT: '/drone/odm-tasks',
+  DRONE_ODM_TASK_DETAIL: (taskId) => `/api/v1/drone/odm-tasks/${taskId}`,
+  DRONE_ODM_TASK_DETAIL_SHORT: (taskId) => `/drone/odm-tasks/${taskId}`,
+  MOSAIC_QUALITY: '/api/v1/mosaic/quality-mosaic',
+  MOSAIC_QUALITY_SHORT: '/mosaic/quality-mosaic',
+  TILES_MOSAIC_QUALITY: (mosaicId, z, x, y) => `/api/v1/tiles/mosaic/quality/${mosaicId}/${z}/${x}/${y}.png`,
+  ALERTS_SUBSCRIPTIONS: '/api/v1/alerts/subscriptions',
+  ALERTS_SUBSCRIPTIONS_SHORT: '/alerts/subscriptions',
+  ALERTS_STREAM: '/api/v1/alerts/stream',
+  ALERTS_STREAM_SHORT: '/alerts/stream',
+  ALERTS_DISPATCH: '/api/v1/alerts/dispatch',
+  ALERTS_DISPATCH_SHORT: '/alerts/dispatch'
 };
 
 /**
@@ -1011,6 +1033,17 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'scene_01', params.z, params.x, params.y);
       case 'TILES_TIE_POINT_RPC':
         return endpoint(params.imageId || params.image_id || 'image_01', params.z, params.x, params.y);
+      case 'TILES_CSF_FILTER':
+        return endpoint(params.cloudId || params.cloud_id || 'cloud_01', params.z, params.x, params.y);
+      case 'TILES_DINSAR_DEFORMATION':
+        return endpoint(params.pairId || params.pair_id || 'pair_01', params.z, params.x, params.y);
+      case 'TILES_PANSHARPEN':
+        return endpoint(params.collection || 'landsat-c2-l2', params.itemId || params.item_id || 'scene_01', params.z, params.x, params.y);
+      case 'DRONE_ODM_TASK_DETAIL':
+      case 'DRONE_ODM_TASK_DETAIL_SHORT':
+        return endpoint(params.taskId || params.task_id || 'task_01');
+      case 'TILES_MOSAIC_QUALITY':
+        return endpoint(params.mosaicId || params.mosaic_id || 'mosaic_01', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -6991,6 +7024,1043 @@ export const buildTiePointRpcTileUrl = (imageId, z, x, y, options = {}) => {
   const basePrefix = options.basePrefix || '/api/v1';
   return `${basePrefix}/tiles/ortho/tie-point-rpc/${imageId}/${z}/${x}/${y}.png`;
 };
+
+// ----------------------------------------------------------------------------
+// CLOTH SIMULATION FILTERING (CSF) & PROGRESSIVE MORPHOLOGICAL DTM EXTRACTION
+// ----------------------------------------------------------------------------
+
+export const CSF_RIGIDNESS_MODES = [
+  { id: 'flat_terrain', label: 'Flat Terrain (Rigidness = 1)', description: 'High cloth stiffness preserving flat roadways, embankments and tailings crests' },
+  { id: 'relief_slope', label: 'Relief Slope (Rigidness = 2)', description: 'Moderate stiffness adapting to rolling hills and gentle slopes' },
+  { id: 'steep_mountain', label: 'Steep Mountain (Rigidness = 3)', description: 'Flexible cloth simulation conforming to rugged mountain cliffs' }
+];
+
+export const POINT_CLASSIFICATION_TYPES = {
+  GROUND: { id: 'ground', code: 2, label: 'Bare Earth Ground', color: '#84cc16' },
+  LOW_VEGETATION: { id: 'low_vegetation', code: 3, label: 'Low Vegetation (< 2.0 m)', color: '#10b981' },
+  HIGH_VEGETATION: { id: 'high_vegetation', code: 5, label: 'High Vegetation / Canopy (2.0 - 12.0 m)', color: '#047857' },
+  BUILDING_STRUCTURE: { id: 'building_structure', code: 6, label: 'Building Structure (> 12.0 m)', color: '#f97316' },
+  UNCLASSIFIED_NOISE: { id: 'unclassified_noise', code: 7, label: 'Unclassified / Noise', color: '#6b7280' }
+};
+
+export const CSF_CLASSIFICATION_TIERS = {
+  EXCELLENT_BARE_EARTH_ISOLATION: {
+    id: 'excellent_bare_earth_isolation',
+    label: 'Excellent Bare-Earth Isolation (Ground >= 60%, Residual < 0.15 m)',
+    groundFractionMin: 0.60,
+    maxResidualM: 0.15,
+    color: '#22c55e',
+    badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30'
+  },
+  MODERATE_GROUND_EXTRACTION: {
+    id: 'moderate_ground_extraction',
+    label: 'Moderate Ground Extraction (Ground 40%-60%, Residual < 0.35 m)',
+    groundFractionMin: 0.40,
+    maxResidualM: 0.35,
+    color: '#3b82f6',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+  },
+  COARSE_GROUND_RESIDUAL: {
+    id: 'coarse_ground_residual',
+    label: 'Coarse Ground Residual (Ground 25%-40%, Residual < 0.70 m)',
+    groundFractionMin: 0.25,
+    maxResidualM: 0.70,
+    color: '#eab308',
+    badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+  },
+  HIGH_OCCLUSION_UNCERTAINTY: {
+    id: 'high_occlusion_uncertainty',
+    label: 'High Occlusion Uncertainty (Ground < 25% or Residual >= 0.70 m)',
+    groundFractionMin: 0.0,
+    maxResidualM: 99.0,
+    color: '#ef4444',
+    badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30'
+  }
+};
+
+export const classifyCsfGroundTier = (groundFraction, meanResidualM) => {
+  const gf = Number(groundFraction) || 0.0;
+  const res = Number(meanResidualM) || 0.0;
+  if (gf >= 0.60 && res < 0.15) return CSF_CLASSIFICATION_TIERS.EXCELLENT_BARE_EARTH_ISOLATION;
+  if (gf >= 0.40 && res < 0.35) return CSF_CLASSIFICATION_TIERS.MODERATE_GROUND_EXTRACTION;
+  if (gf >= 0.25 && res < 0.70) return CSF_CLASSIFICATION_TIERS.COARSE_GROUND_RESIDUAL;
+  return CSF_CLASSIFICATION_TIERS.HIGH_OCCLUSION_UNCERTAINTY;
+};
+
+export const calculateClothSimulationFilter = ({
+  cloudId = 'UAV_POINTCLOUD_20261001',
+  clothResolutionM = 1.0,
+  rigidness = 'relief_slope',
+  classificationThresholdM = 0.35,
+  _timeStep = 0.65,
+  _maxIterations = 500,
+  _postSlopeSmooth = true,
+  sampleCount = 120
+} = {}) => {
+  const rigStr = String(rigidness).toLowerCase();
+  const resM = Math.max(0.1, Number(clothResolutionM) || 1.0);
+  const threshM = Math.max(0.05, Number(classificationThresholdM) || 0.35);
+  const nPts = Math.max(24, parseInt(sampleCount, 10) || 120);
+
+  let stiffnessFactor = 0.12;
+  if (rigStr === 'flat_terrain') stiffnessFactor = 0.05;
+  else if (rigStr === 'steep_mountain') stiffnessFactor = 0.22;
+
+  const points = [];
+  let groundCount = 0;
+  let offGroundCount = 0;
+  const groundElevs = [];
+  const canopyHeights = [];
+  const structureHeights = [];
+  const groundResiduals = [];
+
+  const gridSide = Math.ceil(Math.sqrt(nPts));
+  let ptIdx = 0;
+
+  for (let r = 0; r < gridSide; r++) {
+    for (let c = 0; c < gridSide; c++) {
+      if (ptIdx >= nPts) break;
+      ptIdx += 1;
+
+      const x = Number((c * (100.0 / Math.max(1, gridSide - 1))).toFixed(2));
+      const y = Number((r * (100.0 / Math.max(1, gridSide - 1))).toFixed(2));
+
+      const zGroundTrue = 320.0 + 0.08 * x - 0.04 * y + 3.2 * Math.sin(x / 18.0) * Math.cos(y / 24.0);
+
+      const mod = ptIdx % 100;
+      let featureHeight = 0.0;
+      let clsType = 'ground';
+
+      if (mod < 65) {
+        featureHeight = Math.sin(ptIdx * 2.1) * 0.06;
+        clsType = 'ground';
+      } else if (mod < 80) {
+        featureHeight = 0.45 + (ptIdx % 14) * 0.09;
+        clsType = 'low_vegetation';
+      } else if (mod < 92) {
+        featureHeight = 2.5 + (ptIdx % 12) * 0.62;
+        clsType = 'high_vegetation';
+      } else {
+        featureHeight = 8.5 + (ptIdx % 10) * 0.95;
+        clsType = 'building_structure';
+      }
+
+      const zDsm = Number((zGroundTrue + featureHeight).toFixed(3));
+      const clothTensionDelta = stiffnessFactor * Math.sin(x * 0.1) * 0.15;
+      const zCloth = Number((zGroundTrue + clothTensionDelta).toFixed(3));
+
+      const distToCloth = Math.max(0.0, Number((zDsm - zCloth).toFixed(3)));
+      const isGround = distToCloth <= threshM;
+
+      let assignedCls = clsType;
+      if (isGround) {
+        groundCount += 1;
+        groundElevs.push(zDsm);
+        groundResiduals.push(distToCloth);
+        assignedCls = 'ground';
+      } else {
+        offGroundCount += 1;
+        if (distToCloth <= 2.0) {
+          assignedCls = 'low_vegetation';
+          canopyHeights.push(distToCloth);
+        } else if (distToCloth <= 12.0) {
+          assignedCls = 'high_vegetation';
+          canopyHeights.push(distToCloth);
+        } else {
+          assignedCls = 'building_structure';
+          structureHeights.push(distToCloth);
+        }
+      }
+
+      points.push({
+        point_id: `PT_${String(ptIdx).padStart(4, '0')}`,
+        x,
+        y,
+        z_dsm: zDsm,
+        z_cloth: zCloth,
+        distance_to_cloth_m: distToCloth,
+        classification: assignedCls,
+        is_ground: isGround
+      });
+    }
+  }
+
+  const totalPts = points.length;
+  const gf = Number((groundCount / Math.max(1, totalPts)).toFixed(3));
+  const meanGroundZ = Number((groundElevs.reduce((a, b) => a + b, 0) / Math.max(1, groundElevs.length)).toFixed(2));
+  const meanCanopy = canopyHeights.length > 0 ? Number((canopyHeights.reduce((a, b) => a + b, 0) / canopyHeights.length).toFixed(2)) : 1.85;
+  const maxStruct = structureHeights.length > 0 ? Number(Math.max(...structureHeights).toFixed(2)) : 14.5;
+  const meanRes = groundResiduals.length > 0 ? Number((groundResiduals.reduce((a, b) => a + b, 0) / groundResiduals.length).toFixed(3)) : 0.085;
+
+  const tier = classifyCsfGroundTier(gf, meanRes);
+
+  return {
+    cloud_id: cloudId,
+    cloth_resolution_m: resM,
+    rigidness: rigStr,
+    classification_threshold_m: threshM,
+    total_points: totalPts,
+    ground_points_count: groundCount,
+    off_ground_points_count: offGroundCount,
+    ground_fraction: gf,
+    mean_ground_elevation_m: meanGroundZ,
+    mean_canopy_height_m: meanCanopy,
+    max_structure_height_m: maxStruct,
+    mean_residual_m: meanRes,
+    classification_tier: tier.id,
+    tier_metadata: tier,
+    sample_points: points.slice(0, 20),
+    tile_url_template: `/api/v1/tiles/pointcloud/csf/${cloudId}/{z}/{x}/{y}.png`
+  };
+};
+
+export const buildCsfPointFilterTileUrl = (cloudId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/pointcloud/csf/${cloudId}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// TWO-PASS DIFFERENTIAL INSAR (DINSAR) & GOLDSTEIN FILTERING
+// ----------------------------------------------------------------------------
+
+export const DINSAR_PHASE_METHODS = [
+  { id: 'two_pass_external_dem', label: 'Two-Pass External DEM', description: 'Simulates topographic phase using high-resolution external DEM' },
+  { id: 'three_pass_interferometric', label: 'Three-Pass Interferometric', description: 'Decouples topography using reference interferogram pair' },
+  { id: 'four_pass_residual', label: 'Four-Pass Residual Baseline', description: 'Differential baseline stacking and atmospheric screen compensation' }
+];
+
+export const DINSAR_DEFORMATION_TIERS = {
+  RAPID_COSEISMIC_DEFORMATION: {
+    id: 'rapid_coseismic_deformation',
+    label: 'Rapid Coseismic Deformation (|d_LOS| >= 50 mm)',
+    minDispMm: 50.0,
+    color: '#ef4444',
+    badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30'
+  },
+  MODERATE_SUBSIDENCE_OR_SLOPE: {
+    id: 'moderate_subsidence_or_slope',
+    label: 'Moderate Subsidence / Slope Movement (15 <= |d_LOS| < 50 mm)',
+    minDispMm: 15.0,
+    maxDispMm: 50.0,
+    color: '#f97316',
+    badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/30'
+  },
+  MINOR_CREEP_DEFORMATION: {
+    id: 'minor_creep_deformation',
+    label: 'Minor Creep Deformation (4 <= |d_LOS| < 15 mm)',
+    minDispMm: 4.0,
+    maxDispMm: 15.0,
+    color: '#eab308',
+    badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+  },
+  STABLE_PHASE_COHERENCE: {
+    id: 'stable_phase_coherence',
+    label: 'Stable Phase Coherence (|d_LOS| < 4 mm)',
+    maxDispMm: 4.0,
+    color: '#22c55e',
+    badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30'
+  }
+};
+
+export const classifyDInSARDeformationTier = (maxAbsDispMm) => {
+  const val = Math.abs(Number(maxAbsDispMm) || 0.0);
+  if (val >= 50.0) return DINSAR_DEFORMATION_TIERS.RAPID_COSEISMIC_DEFORMATION;
+  if (val >= 15.0) return DINSAR_DEFORMATION_TIERS.MODERATE_SUBSIDENCE_OR_SLOPE;
+  if (val >= 4.0) return DINSAR_DEFORMATION_TIERS.MINOR_CREEP_DEFORMATION;
+  return DINSAR_DEFORMATION_TIERS.STABLE_PHASE_COHERENCE;
+};
+
+export const calculateDInSARDeformation = ({
+  masterId = 'S1A_IW_SLC__1SDV_20260901',
+  slaveId = 'S1A_IW_SLC__1SDV_20260913',
+  demId = 'cop-dem-glo-30',
+  method = 'two_pass_external_dem',
+  perpendicularBaselineM = 78.4,
+  temporalBaselineDays = 12,
+  radarWavelengthM = 0.0554657,
+  incidenceAngleDeg = 39.2,
+  goldsteinAlpha = 0.65,
+  coherenceThreshold = 0.35,
+  sampleCount = 64
+} = {}) => {
+  const mStr = String(method).toLowerCase();
+  const bPerp = Number(perpendicularBaselineM) || 78.4;
+  const wavelength = Math.max(0.01, Number(radarWavelengthM) || 0.0554657);
+  const thetaRad = ((Number(incidenceAngleDeg) || 39.2) * Math.PI) / 180.0;
+  const alpha = Math.max(0.0, Math.min(1.0, Number(goldsteinAlpha) || 0.65));
+  const _cohThresh = Math.max(0.1, Math.min(0.95, Number(coherenceThreshold) || 0.35));
+  const nSamples = Math.max(16, parseInt(sampleCount, 10) || 64);
+
+  const pairId = `DINSAR_${masterId.slice(-8)}_${slaveId.slice(-8)}`;
+  const slantRangeR = 850000.0;
+  const sinTheta = Math.max(0.1, Math.sin(thetaRad));
+  const kTopo = (4.0 * Math.PI / wavelength) * (bPerp / (slantRangeR * sinTheta));
+
+  const baseLat = 36.9540;
+  const baseLon = -121.0830;
+
+  const samples = [];
+  const displacements = [];
+  const coherences = [];
+  const phaseResiduals = [];
+
+  const gridSide = Math.ceil(Math.sqrt(nSamples));
+  let idx = 0;
+
+  for (let r = 0; r < gridSide; r++) {
+    for (let c = 0; c < gridSide; c++) {
+      if (idx >= nSamples) break;
+      idx += 1;
+
+      const lat = Number((baseLat + r * 0.0035).toFixed(5));
+      const lon = Number((baseLon + c * 0.0035).toFixed(5));
+
+      const demElevation = 280.0 + 12.0 * Math.sin(r * 0.8) + 8.0 * Math.cos(c * 0.6);
+      const distCenter = Math.sqrt(Math.pow(r - gridSide / 2.0, 2) + Math.pow(c - gridSide / 2.0, 2));
+      const trueDispMm = -28.5 * Math.exp(-0.5 * Math.pow(distCenter / 2.5, 2)) + 1.2 * Math.sin(idx * 0.5);
+
+      const phiDef = (4.0 * Math.PI / wavelength) * (trueDispMm / 1000.0);
+      const phiTopo = kTopo * demElevation;
+
+      const coherence = Number(Math.max(0.15, Math.min(0.98, 0.88 - 0.04 * distCenter + 0.05 * Math.sin(idx * 1.3))).toFixed(3));
+      const phaseNoise = (1.0 - coherence) * (Math.cos(idx * 2.7) * 0.85);
+
+      const totalUnwrapped = phiTopo + phiDef + phaseNoise;
+      const phiInt = Math.atan2(Math.sin(totalUnwrapped), Math.cos(totalUnwrapped));
+
+      const diffRaw = phiInt - phiTopo;
+      const phiDiff = Math.atan2(Math.sin(diffRaw), Math.cos(diffRaw));
+
+      const filteredNoise = phaseNoise * (1.0 - 0.45 * alpha);
+      const phiFilteredRaw = phiDef + filteredNoise;
+      const phiGoldstein = Math.atan2(Math.sin(phiFilteredRaw), Math.cos(phiFilteredRaw));
+
+      const derivedDispMm = Number(((phiGoldstein * wavelength / (4.0 * Math.PI)) * 1000.0).toFixed(2));
+
+      displacements.push(derivedDispMm);
+      coherences.push(coherence);
+      phaseResiduals.push(Math.abs(phiGoldstein - phiDef));
+
+      samples.push({
+        sample_id: `FRINGE_${String(idx).padStart(3, '0')}`,
+        lat,
+        lon,
+        raw_interferometric_phase_rad: Number(phiInt.toFixed(4)),
+        synthetic_topographic_phase_rad: Number(phiTopo.toFixed(4)),
+        differential_phase_rad: Number(phiDiff.toFixed(4)),
+        goldstein_filtered_phase_rad: Number(phiGoldstein.toFixed(4)),
+        los_displacement_mm: derivedDispMm,
+        coherence
+      });
+    }
+  }
+
+  const meanCoh = Number((coherences.reduce((a, b) => a + b, 0) / Math.max(1, coherences.length)).toFixed(3));
+  const meanDisp = Number((displacements.reduce((a, b) => a + b, 0) / Math.max(1, displacements.length)).toFixed(2));
+  const maxDisp = Number(Math.max(...displacements).toFixed(2));
+  const minDisp = Number(Math.min(...displacements).toFixed(2));
+  const phaseStd = Number(Math.sqrt(phaseResiduals.reduce((a, b) => a + b * b, 0) / Math.max(1, phaseResiduals.length)).toFixed(4));
+
+  const worstAbs = Math.max(Math.abs(maxDisp), Math.abs(minDisp));
+  const tier = classifyDInSARDeformationTier(worstAbs);
+
+  return {
+    pair_id: pairId,
+    master_id: masterId,
+    slave_id: slaveId,
+    dem_id: demId,
+    method: mStr,
+    perpendicular_baseline_m: Number(bPerp.toFixed(2)),
+    temporal_baseline_days: parseInt(temporalBaselineDays, 10),
+    mean_coherence: meanCoh,
+    mean_los_displacement_mm: meanDisp,
+    max_los_displacement_mm: maxDisp,
+    min_los_displacement_mm: minDisp,
+    deformation_tier: tier.id,
+    tier_metadata: tier,
+    goldstein_alpha_applied: Number(alpha.toFixed(2)),
+    phase_std_dev_rad: phaseStd,
+    fringe_samples: samples.slice(0, 16),
+    tile_url_template: `/api/v1/tiles/sar/dinsar/${pairId}/{z}/{x}/{y}.png`
+  };
+};
+
+export const buildDInSARTileUrl = (pairId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/sar/dinsar/${pairId}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// PANCHROMATIC SPECTRAL SHARPENING (PAN-SHARPENING) VIA HPF & GRAM-SCHMIDT
+// ----------------------------------------------------------------------------
+
+export const PANSHARPEN_METHODS = [
+  { id: 'gram_schmidt', label: 'Gram-Schmidt Orthogonalization', description: 'Laben & Brower (2000) high-fidelity multispectral pan-sharpening' },
+  { id: 'high_pass_filter', label: 'High-Pass Filter (HPF)', description: 'Chavez et al. (1991) spatial edge injection filter' },
+  { id: 'brovey_transform', label: 'Brovey Transform', description: 'Normalized color ratio fusion for visual RGB sharpness' },
+  { id: 'ihs_transform', label: 'IHS Transformation', description: 'Intensity component replacement via color space transform' }
+];
+
+export const PANSHARPEN_FIDELITY_TIERS = {
+  PRISTINE_SPECTRAL_PRESERVATION: {
+    id: 'pristine_spectral_preservation',
+    label: 'Pristine Spectral Preservation (SAM < 2.5 deg, ERGAS < 2.0)',
+    maxSamDeg: 2.5,
+    maxErgas: 2.0,
+    color: '#22c55e',
+    badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30'
+  },
+  EXCELLENT_FIDELITY: {
+    id: 'excellent_fidelity',
+    label: 'Excellent Fidelity (2.5 <= SAM < 4.5 deg, ERGAS < 3.5)',
+    maxSamDeg: 4.5,
+    maxErgas: 3.5,
+    color: '#3b82f6',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+  },
+  ACCEPTABLE_BLENDING: {
+    id: 'acceptable_blending',
+    label: 'Acceptable Blending (4.5 <= SAM < 7.0 deg, ERGAS < 5.5)',
+    maxSamDeg: 7.0,
+    maxErgas: 5.5,
+    color: '#eab308',
+    badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+  },
+  HIGH_COLOR_DISTORTION: {
+    id: 'high_color_distortion',
+    label: 'High Color Distortion (SAM >= 7.0 deg or ERGAS >= 5.5)',
+    maxSamDeg: 90.0,
+    maxErgas: 99.0,
+    color: '#ef4444',
+    badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30'
+  }
+};
+
+export const classifySpectralFidelityTier = (samDeg, ergas) => {
+  const s = Number(samDeg) || 0.0;
+  const e = Number(ergas) || 0.0;
+  if (s < 2.5 && e < 2.0) return PANSHARPEN_FIDELITY_TIERS.PRISTINE_SPECTRAL_PRESERVATION;
+  if (s < 4.5 && e < 3.5) return PANSHARPEN_FIDELITY_TIERS.EXCELLENT_FIDELITY;
+  if (s < 7.0 && e < 5.5) return PANSHARPEN_FIDELITY_TIERS.ACCEPTABLE_BLENDING;
+  return PANSHARPEN_FIDELITY_TIERS.HIGH_COLOR_DISTORTION;
+};
+
+export const calculatePanSharpenFusion = ({
+  collection = 'landsat-c2-l2',
+  itemId = 'LC09_L2SP_042034_20260915',
+  panBand = 'B08',
+  msBands = null,
+  method = 'gram_schmidt',
+  sensorPanGsdM = 15.0,
+  sensorMsGsdM = 30.0,
+  _highPassKernelSize = 5,
+  observedPanReflectance = 0.245,
+  observedMsReflectances = null
+} = {}) => {
+  const mStr = String(method).toLowerCase();
+  const panGsd = Math.max(0.1, Number(sensorPanGsdM) || 15.0);
+  const msGsd = Math.max(0.1, Number(sensorMsGsdM) || 30.0);
+  const boost = Number((msGsd / panGsd).toFixed(2));
+  const panObs = Math.max(0.0, Math.min(1.0, Number(observedPanReflectance) || 0.245));
+
+  const targetBands = msBands || ['B02', 'B03', 'B04', 'B05'];
+  const defaultRefl = { B02: 0.095, B03: 0.138, B04: 0.168, B05: 0.310, B06: 0.220, B07: 0.145 };
+  const bandWeightsMap = { B02: 0.15, B03: 0.35, B04: 0.40, B05: 0.10, B06: 0.00, B07: 0.00 };
+
+  const rawWeights = targetBands.map(b => bandWeightsMap[b] !== undefined ? bandWeightsMap[b] : 1.0 / Math.max(1, targetBands.length));
+  const wSum = rawWeights.reduce((a, b) => a + b, 0) || 1.0;
+  const normWeights = rawWeights.map(w => w / wSum);
+
+  const msVals = {};
+  let simPan = 0.0;
+  targetBands.forEach((b, i) => {
+    const val = (observedMsReflectances && observedMsReflectances[b] !== undefined)
+      ? observedMsReflectances[b]
+      : (defaultRefl[b] !== undefined ? defaultRefl[b] : 0.15);
+    const clamped = Math.max(0.0, Math.min(1.0, Number(val)));
+    msVals[b] = clamped;
+    simPan += normWeights[i] * clamped;
+  });
+
+  simPan = Number(simPan.toFixed(4));
+  const panDiff = panObs - simPan;
+
+  const bandResults = {};
+  const lowVec = [];
+  const sharpVec = [];
+  const squaredRelErrors = [];
+
+  targetBands.forEach((b, i) => {
+    const orig = msVals[b];
+    const w = normWeights[i];
+
+    let gain = 1.0;
+    let sharp = orig;
+    let hpfDelta = 0.0;
+    let corr = 0.90;
+
+    if (mStr === 'gram_schmidt') {
+      gain = 0.88 + 0.24 * w;
+      sharp = orig + gain * panDiff;
+      hpfDelta = gain * panDiff;
+      corr = 0.94 - 0.02 * i;
+    } else if (mStr === 'high_pass_filter') {
+      gain = 0.75 + 0.18 * w;
+      sharp = orig + gain * panDiff;
+      hpfDelta = gain * panDiff;
+      corr = 0.91 - 0.02 * i;
+    } else if (mStr === 'brovey_transform') {
+      const ratio = panObs / Math.max(0.01, simPan);
+      sharp = orig * ratio;
+      hpfDelta = sharp - orig;
+      corr = 0.88 - 0.03 * i;
+    } else {
+      sharp = orig + panDiff;
+      hpfDelta = panDiff;
+      corr = 0.86 - 0.03 * i;
+    }
+
+    const sharpClamped = Number(Math.max(0.0, Math.min(1.0, sharp)).toFixed(4));
+    bandResults[b] = {
+      band: b,
+      low_res_reflectance: Number(orig.toFixed(4)),
+      sharpened_reflectance: sharpClamped,
+      high_pass_delta: Number(hpfDelta.toFixed(4)),
+      band_weight: Number(w.toFixed(3)),
+      correlation_with_pan: Number(corr.toFixed(3))
+    };
+
+    lowVec.push(orig);
+    sharpVec.push(sharpClamped);
+    squaredRelErrors.push(Math.pow((sharpClamped - orig) / Math.max(0.01, orig), 2));
+  });
+
+  const dotProd = lowVec.reduce((acc, l, idx) => acc + l * sharpVec[idx], 0);
+  const normLow = Math.sqrt(lowVec.reduce((acc, l) => acc + l * l, 0));
+  const normSharp = Math.sqrt(sharpVec.reduce((acc, s) => acc + s * s, 0));
+  const cosSam = Math.max(-1.0, Math.min(1.0, dotProd / Math.max(1e-6, normLow * normSharp)));
+  const samDeg = Number(((Math.acos(cosSam) * 180.0) / Math.PI).toFixed(2));
+
+  const meanRelSqErr = squaredRelErrors.reduce((a, b) => a + b, 0) / Math.max(1, squaredRelErrors.length);
+  const ergas = Number((100.0 * (panGsd / msGsd) * Math.sqrt(meanRelSqErr)).toFixed(2));
+
+  const tier = classifySpectralFidelityTier(samDeg, ergas);
+
+  return {
+    collection,
+    item_id: itemId,
+    pan_band: panBand,
+    method: mStr,
+    spatial_resolution_boost: boost,
+    pan_gsd_m: panGsd,
+    ms_gsd_m: msGsd,
+    simulated_pan_reflectance: simPan,
+    spectral_angle_mapper_deg: samDeg,
+    ergas_index: ergas,
+    fidelity_tier: tier.id,
+    tier_metadata: tier,
+    bands: bandResults,
+    tile_url_template: `/api/v1/tiles/imagery/pan-sharpen/${collection}/${itemId}/{z}/{x}/{y}.png`
+  };
+};
+
+export const buildPanSharpenTileUrl = (collection, itemId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/imagery/pan-sharpen/${collection}/${itemId}/${z}/${x}/${y}.png`;
+};
+
+// ============================================================================
+// CYCLE v2.5.10: NODEODM PHOTOGRAMMETRY, QUALITY MOSAICS & MULTI-HAZARD ALERTS
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// 1. Asynchronous NodeODM Drone Photogrammetry Worker Queue
+// ----------------------------------------------------------------------------
+
+export const ODM_TASK_STATUSES = {
+  QUEUED: 'queued',
+  RUNNING: 'running',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled'
+};
+
+export const ODM_PROCESSING_STAGES = {
+  QUEUED: 'queued',
+  DATASET_INITIALIZATION: 'dataset_initialization',
+  STRUCTURE_FROM_MOTION: 'structure_from_motion',
+  MVS_DENSE_POINT_CLOUD: 'mvs_dense_point_cloud',
+  DEM_SURFACE_EXTRACTION: 'dem_surface_extraction',
+  ORTHOPHOTO_MOSAICING: 'orthophoto_mosaicing',
+  COG_EXPORT_AND_INDEXING: 'cog_export_and_indexing',
+  COMPLETED: 'completed',
+  FAILED: 'failed'
+};
+
+export const ODM_STAGE_CONFIGS = {
+  queued: {
+    id: 'queued',
+    label: 'Queued in Worker Pool',
+    progress_range: [0.0, 5.0],
+    description: 'Task staged in Celery/Redis queue awaiting available photogrammetry worker allocation.',
+    badge_color: '#94a3b8'
+  },
+  dataset_initialization: {
+    id: 'dataset_initialization',
+    label: 'Dataset & EXIF Extraction',
+    progress_range: [5.0, 15.0],
+    description: 'Validating EXIF metadata, GPS geotags, and optical camera focal length / sensor intrinsics.',
+    badge_color: '#38bdf8'
+  },
+  structure_from_motion: {
+    id: 'structure_from_motion',
+    label: 'Structure from Motion (SfM)',
+    progress_range: [15.0, 45.0],
+    description: 'OpenSfM feature detection, keypoint matching, and sparse bundle adjustment optimization.',
+    badge_color: '#818cf8'
+  },
+  mvs_dense_point_cloud: {
+    id: 'mvs_dense_point_cloud',
+    label: 'Dense Multi-View Stereo (MVS)',
+    progress_range: [45.0, 70.0],
+    description: 'OpenMVS patch-match multi-view stereo densification and 3D point cloud generation.',
+    badge_color: '#a855f7'
+  },
+  dem_surface_extraction: {
+    id: 'dem_surface_extraction',
+    label: 'DEM & CSF Ground Filtering',
+    progress_range: [70.0, 85.0],
+    description: 'Cloth Simulation Filter (CSF) ground classification, 2.5D DSM and DTM rasterization.',
+    badge_color: '#ec4899'
+  },
+  orthophoto_mosaicing: {
+    id: 'orthophoto_mosaicing',
+    label: 'True Orthomosaic Generation',
+    progress_range: [85.0, 95.0],
+    description: 'Multiresolution seamline graph-cut optimization, color balancing, and orthorectification.',
+    badge_color: '#14b8a6'
+  },
+  cog_export_and_indexing: {
+    id: 'cog_export_and_indexing',
+    label: 'Cloud-Optimized GeoTIFF Export',
+    progress_range: [95.0, 100.0],
+    description: 'Generating internal pyramidal tile overviews and registering STAC asset metadata.',
+    badge_color: '#22c55e'
+  },
+  completed: {
+    id: 'completed',
+    label: 'Processing Completed',
+    progress_range: [100.0, 100.0],
+    description: 'All deliverables rendered and tile endpoints online.',
+    badge_color: '#10b981'
+  },
+  failed: {
+    id: 'failed',
+    label: 'Task Execution Failed',
+    progress_range: [0.0, 0.0],
+    description: 'Pipeline aborted due to exception or invalid inputs.',
+    badge_color: '#ef4444'
+  }
+};
+
+export const calculateOdmStageProgress = (stage, elapsedSeconds = 120.0, imageCount = 120, gsdTargetCm = 2.5) => {
+  const sVal = (stage && typeof stage === 'object' && stage.value) ? stage.value : String(stage || 'queued').toLowerCase();
+  const meta = ODM_STAGE_CONFIGS[sVal] || ODM_STAGE_CONFIGS.queued;
+  const [pMin, pMax] = meta.progress_range;
+
+  let progress = 0.0;
+  if (sVal === 'completed') {
+    progress = 100.0;
+  } else if (sVal === 'failed') {
+    progress = 0.0;
+  } else {
+    progress = Number((pMin + (pMax - pMin) * 0.75).toFixed(1));
+  }
+
+  const totalEstSeconds = Math.max(30.0, Number(imageCount) * 3.5);
+  const remSeconds = (sVal === 'completed' || sVal === 'failed')
+    ? 0.0
+    : Math.max(0.0, Number((totalEstSeconds * (1.0 - progress / 100.0)).toFixed(1)));
+
+  let ptsFactor = 0.0;
+  if (sVal === 'structure_from_motion') {
+    ptsFactor = 0.10;
+  } else if (sVal === 'mvs_dense_point_cloud' || sVal === 'dem_surface_extraction') {
+    ptsFactor = 0.85;
+  } else if (sVal === 'orthophoto_mosaicing' || sVal === 'cog_export_and_indexing' || sVal === 'completed') {
+    ptsFactor = 1.00;
+  }
+
+  const reconstructedPts = Math.floor(Number(imageCount) * 14850 * ptsFactor);
+  const reprojectionRmse = (sVal === 'orthophoto_mosaicing' || sVal === 'cog_export_and_indexing' || sVal === 'completed') ? 0.42 : 0.58;
+  const achievedGsd = Number((Number(gsdTargetCm) * (sVal !== 'failed' ? 1.02 : 1.0)).toFixed(2));
+
+  const taskId = 'ODM_TASK_20261001_001';
+  let artifacts = null;
+  if (sVal === 'cog_export_and_indexing' || sVal === 'completed') {
+    artifacts = {
+      orthophoto_asset_url: `/static/drone_outputs/${taskId}/orthophoto.tif`,
+      dtm_asset_url: `/static/drone_outputs/${taskId}/dtm.tif`,
+      dsm_asset_url: `/static/drone_outputs/${taskId}/dsm.tif`,
+      point_cloud_asset_url: `/static/drone_outputs/${taskId}/dense_cloud.laz`,
+      report_pdf_url: `/static/drone_outputs/${taskId}/odm_report.pdf`
+    };
+  }
+
+  const status = sVal === 'completed'
+    ? ODM_TASK_STATUSES.COMPLETED
+    : (sVal === 'failed' ? ODM_TASK_STATUSES.FAILED : ODM_TASK_STATUSES.RUNNING);
+
+  return {
+    task_id: taskId,
+    project_name: 'Embankment_Drone_Survey_2026',
+    status,
+    current_stage: sVal,
+    stage_label: meta.label,
+    progress_percent: progress,
+    elapsed_seconds: Number(Number(elapsedSeconds).toFixed(1)),
+    estimated_remaining_seconds: remSeconds,
+    image_count: Math.floor(Number(imageCount)),
+    reconstructed_points: reconstructedPts,
+    gsd_achieved_cm: achievedGsd,
+    rmse_reprojection_px: reprojectionRmse,
+    artifacts,
+    tile_url_template: `/api/v1/tiles/drone/odm/${taskId}/{z}/{x}/{y}.png`,
+    error_message: sVal === 'failed' ? 'OpenSfM sparse reconstruction failed to find sufficient inliers.' : null
+  };
+};
+
+// ----------------------------------------------------------------------------
+// 2. Multi-Temporal Quality Mosaicing (Greenest/Clearest Pixel Composition)
+// ----------------------------------------------------------------------------
+
+export const QUALITY_MOSAIC_METHODS = {
+  MAX_NDVI: 'max_ndvi',
+  MIN_CLOUD_PROBABILITY: 'min_cloud_probability',
+  TEMPORAL_MEDIAN: 'temporal_median',
+  MEDOID: 'medoid',
+  MAX_NDWI: 'max_ndwi',
+  MIN_SWIR: 'min_swir'
+};
+
+export const QUALITY_MOSAIC_TIERS = {
+  PRISTINE_CLOUD_FREE: 'pristine_cloud_free',
+  HIGH_FIDELITY_MOSAIC: 'high_fidelity_mosaic',
+  MODERATE_OBSCURED: 'moderate_obscured',
+  SUBOPTIMAL_COMPOSITE: 'suboptimal_composite'
+};
+
+export const QUALITY_MOSAIC_TIER_CONFIGS = {
+  pristine_cloud_free: {
+    id: 'pristine_cloud_free',
+    label: 'Pristine Cloud-Free Composite',
+    min_coverage: 95.0,
+    badge_color: '#10b981',
+    description: '>= 95% cloud-free composite suitable for high-precision biophysical baseline modeling.'
+  },
+  high_fidelity_mosaic: {
+    id: 'high_fidelity_mosaic',
+    label: 'High-Fidelity Composite',
+    min_coverage: 85.0,
+    badge_color: '#06b6d4',
+    description: '85% - 94.9% cloud-free coverage with minimal residual cloud shadow artifacts.'
+  },
+  moderate_obscured: {
+    id: 'moderate_obscured',
+    label: 'Moderate Cloud-Obscured',
+    min_coverage: 70.0,
+    badge_color: '#f59e0b',
+    description: '70% - 84.9% cloud-free coverage; some spatial interpolation or mask voids present.'
+  },
+  suboptimal_composite: {
+    id: 'suboptimal_composite',
+    label: 'Suboptimal Heavy Cloud',
+    min_coverage: 0.0,
+    badge_color: '#ef4444',
+    description: '< 70% cloud-free coverage; recommend expanding temporal window.'
+  }
+};
+
+export const classifyQualityMosaicTier = (cloudFreeCoveragePercent) => {
+  const cov = Number(cloudFreeCoveragePercent);
+  if (cov >= 95.0) return QUALITY_MOSAIC_TIER_CONFIGS.pristine_cloud_free;
+  if (cov >= 85.0) return QUALITY_MOSAIC_TIER_CONFIGS.high_fidelity_mosaic;
+  if (cov >= 70.0) return QUALITY_MOSAIC_TIER_CONFIGS.moderate_obscured;
+  return QUALITY_MOSAIC_TIER_CONFIGS.suboptimal_composite;
+};
+
+export const calculateQualityMosaicPixelSelection = (options = {}) => {
+  const mosaicId = options.mosaicId || options.mosaic_id || 'QUALITY_MOSAIC_2026_Q3';
+  const collection = options.collection || 'sentinel-2-l2a';
+  const rawMethod = options.method || 'max_ndvi';
+  const mVal = String(rawMethod).toLowerCase();
+  const cloudThreshold = options.cloudThresholdPercent ?? options.cloud_threshold_percent ?? 20.0;
+  const scenes = options.sceneIds || options.scene_ids || [
+    'S2A_MSIL2A_20260701',
+    'S2B_MSIL2A_20260716',
+    'S2A_MSIL2A_20260805',
+    'S2B_MSIL2A_20260820'
+  ];
+
+  const sceneCloudMap = {
+    'S2A_MSIL2A_20260701': 8.5,
+    'S2B_MSIL2A_20260716': 16.2,
+    'S2A_MSIL2A_20260805': 4.1,
+    'S2B_MSIL2A_20260820': 24.8
+  };
+
+  const validScenes = scenes.filter(s => (sceneCloudMap[s] ?? 10.0) <= cloudThreshold);
+  const activeScenes = validScenes.length > 0 ? validScenes : scenes.slice(0, 1);
+
+  const totalValid = activeScenes.length;
+  const weights = totalValid >= 3 ? [0.22, 0.38, 0.40].slice(0, totalValid) : Array(totalValid).fill(1.0 / totalValid);
+  const wSum = weights.reduce((a, b) => a + b, 0) || 1.0;
+  const normW = weights.map(w => w / wSum);
+
+  const contributions = activeScenes.map((s, i) => {
+    const w = normW[i];
+    const cPct = sceneCloudMap[s] ?? 10.0;
+    const ndvi = mVal === 'max_ndvi' ? 0.68 + 0.05 * i : 0.55 + 0.04 * i;
+    return {
+      scene_id: s,
+      acquisition_date: `2026-07-${String(10 + i * 15).padStart(2, '0')}`,
+      cloud_coverage_percent: cPct,
+      pixel_contribution_percent: Number((w * 100.0).toFixed(1)),
+      mean_ndvi: Number(ndvi.toFixed(3)),
+      valid_pixels: Math.floor(w * 1250000)
+    };
+  });
+
+  const bestSceneCloud = sceneCloudMap[activeScenes[0]] ?? 10.0;
+  const cloudFreeCoverage = Number(Math.min(99.8, 100.0 - bestSceneCloud * 0.15).toFixed(1));
+  const tier = classifyQualityMosaicTier(cloudFreeCoverage);
+  const meanQuality = Number((mVal === 'max_ndvi' ? 0.92 : 0.94).toFixed(3));
+
+  return {
+    mosaic_id: mosaicId,
+    collection,
+    method: mVal,
+    total_input_scenes: scenes.length,
+    valid_scenes_used: activeScenes.length,
+    total_pixels_processed: 1250000,
+    cloud_free_coverage_percent: cloudFreeCoverage,
+    mean_quality_score: meanQuality,
+    quality_tier: tier.id,
+    tier_metadata: tier,
+    scene_contributions: contributions,
+    bands: ['B02', 'B03', 'B04', 'B08', 'B11', 'B12'],
+    tile_url_template: `/api/v1/tiles/mosaic/quality/${mosaicId}/{z}/{x}/{y}.png`
+  };
+};
+
+export const buildQualityMosaicTileUrl = (mosaicId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/mosaic/quality/${mosaicId}/${z}/${x}/${y}.png`;
+};
+
+// ----------------------------------------------------------------------------
+// 3. Multi-Hazard Early-Warning Alert Webhook/SSE Notification Pipelines
+// ----------------------------------------------------------------------------
+
+export const HAZARD_SEVERITY_TIERS = {
+  NORMAL: 'normal',
+  ADVISORY: 'advisory',
+  WATCH: 'watch',
+  WARNING: 'warning',
+  EMERGENCY: 'emergency'
+};
+
+export const HAZARD_ALERT_TYPES = {
+  TAILINGS_CREST_DEFORMATION: 'tailings_crest_deformation',
+  EMBANKMENT_SEEPAGE_SATURATION: 'embankment_seepage_saturation',
+  SUDDEN_RESERVOIR_DRAWDOWN: 'sudden_reservoir_drawdown',
+  WILDFIRE_FLUX_EXPANSION: 'wildfire_flux_expansion',
+  STRUCTURAL_MODAL_DRIFT: 'structural_modal_drift',
+  TURBIDITY_SPIKE_HAB: 'turbidity_spike_hab',
+  LANDSLIDE_SLOPE_INSTABILITY: 'landslide_slope_instability'
+};
+
+export const ALERT_DELIVERY_CHANNELS = {
+  WEBHOOK: 'webhook',
+  SSE_STREAM: 'sse_stream',
+  EMAIL_DIGEST: 'email_digest',
+  SMS_URGENT: 'sms_urgent'
+};
+
+export const ALERT_DELIVERY_STATUSES = {
+  DELIVERED: 'delivered',
+  QUEUED: 'queued',
+  RETRYING: 'retrying',
+  FAILED: 'failed'
+};
+
+export const HAZARD_SEVERITY_TIER_CONFIGS = {
+  normal: {
+    id: 'normal',
+    label: 'Normal Baseline',
+    badge_color: '#10b981',
+    z_threshold: 0.0,
+    siren_alert: false,
+    response_protocol: 'Routine operational monitoring.'
+  },
+  advisory: {
+    id: 'advisory',
+    label: 'Advisory Notice',
+    badge_color: '#38bdf8',
+    z_threshold: 1.0,
+    siren_alert: false,
+    response_protocol: 'Log anomaly into weekly geotechnical review register.'
+  },
+  watch: {
+    id: 'watch',
+    label: 'Hazard Watch',
+    badge_color: '#f59e0b',
+    z_threshold: 2.0,
+    siren_alert: false,
+    response_protocol: 'Increase satellite acquisition cadence; notify on-duty geotechnical engineer within 12 hours.'
+  },
+  warning: {
+    id: 'warning',
+    label: 'Hazard Warning',
+    badge_color: '#f97316',
+    z_threshold: 2.5,
+    siren_alert: true,
+    response_protocol: 'Dispatch visual UAV inspection within 2 hours; verify in-situ piezometer & GNSS telemetry.'
+  },
+  emergency: {
+    id: 'emergency',
+    label: 'Critical Emergency',
+    badge_color: '#ef4444',
+    z_threshold: 3.5,
+    siren_alert: true,
+    response_protocol: 'Immediate facility alert; initiate emergency response plan (ERP) and downstream evacuation advisory.'
+  }
+};
+
+export const HAZARD_ALERT_TYPE_CONFIGS = {
+  tailings_crest_deformation: {
+    id: 'tailings_crest_deformation',
+    name: 'Tailings Dam Crest Displacement Anomaly',
+    sensor: 'Sentinel-1 InSAR / Multi-Temporal SBAS',
+    unit: 'mm/year',
+    nominal_threshold: 15.0,
+    description: 'Accelerating surface displacement along tailings impoundment crest.'
+  },
+  embankment_seepage_saturation: {
+    id: 'embankment_seepage_saturation',
+    name: 'Downstream Embankment Toe Soil Saturation',
+    sensor: 'Sentinel-1 SAR Dubois/Oh Dielectric Permittivity',
+    unit: 'volumetric % (m3/m3)',
+    nominal_threshold: 35.0,
+    description: 'Internal seepage breakout or phreatic line daylighting at embankment toe.'
+  },
+  sudden_reservoir_drawdown: {
+    id: 'sudden_reservoir_drawdown',
+    name: 'Rapid Reservoir Siltation & Drawdown',
+    sensor: 'Sentinel-2 Multi-Spectral SDB Bathymetry',
+    unit: 'm3/day',
+    nominal_threshold: 50000.0,
+    description: 'Rapid water elevation drawdown or catastrophic storage deficit.'
+  },
+  wildfire_flux_expansion: {
+    id: 'wildfire_flux_expansion',
+    name: 'Wildfire Fire Radiative Power Expansion',
+    sensor: 'Landsat-9 / Sentinel-2 dNBR Differenced Burn Index',
+    unit: 'dNBR index units',
+    nominal_threshold: 0.44,
+    description: 'High-severity thermal burn scar encroaching within buffer zone.'
+  },
+  structural_modal_drift: {
+    id: 'structural_modal_drift',
+    name: 'Structural Resonant Frequency Degradation',
+    sensor: 'Optical Video / Accelerometer Modal FDD',
+    unit: 'Hz shift (%)',
+    nominal_threshold: 12.0,
+    description: 'Fundamental modal frequency drop indicating structural stiffness degradation.'
+  },
+  turbidity_spike_hab: {
+    id: 'turbidity_spike_hab',
+    name: 'Harmful Algae Bloom & Microcystin Risk',
+    sensor: 'Sentinel-2 NDCI Chlorophyll-a',
+    unit: 'ug/L proxy',
+    nominal_threshold: 40.0,
+    description: 'Chlorophyll-a bloom proliferation threatening downstream municipal intake.'
+  },
+  landslide_slope_instability: {
+    id: 'landslide_slope_instability',
+    name: 'Steep Slope Shear Failure Instability',
+    sensor: 'Copernicus DEM Slope + InSAR DInSAR Phase',
+    unit: 'mm cumulative',
+    nominal_threshold: 25.0,
+    description: 'Combined steep slope gradient (>35 deg) and shear strain acceleration.'
+  }
+};
+
+export const classifyHazardSeverityTier = (zScore, rateOfChange = 0.0, assetCriticality = 'standard') => {
+  const zAbs = Math.abs(Number(zScore));
+  const critStr = String(assetCriticality || 'standard').toLowerCase();
+  const critMult = (critStr === 'critical' || critStr === 'extreme') ? 0.85 : 1.0;
+
+  if (zAbs >= 3.5 * critMult || Number(rateOfChange) >= 0.50) {
+    return HAZARD_SEVERITY_TIER_CONFIGS.emergency;
+  }
+  if (zAbs >= 2.5 * critMult || Number(rateOfChange) >= 0.25) {
+    return HAZARD_SEVERITY_TIER_CONFIGS.warning;
+  }
+  if (zAbs >= 2.0) {
+    return HAZARD_SEVERITY_TIER_CONFIGS.watch;
+  }
+  if (zAbs >= 1.0) {
+    return HAZARD_SEVERITY_TIER_CONFIGS.advisory;
+  }
+  return HAZARD_SEVERITY_TIER_CONFIGS.normal;
+};
+
+export const dispatchSimulatedHazardAlert = (options = {}) => {
+  const rawAlertType = options.alertType || options.alert_type || 'tailings_crest_deformation';
+  const aType = String(rawAlertType).toLowerCase();
+  const zScore = options.zScore ?? options.z_score ?? 2.85;
+  const assetId = options.assetId || options.asset_id || 'ASSET_TAILINGS_01';
+  const channel = options.channel || 'webhook';
+
+  const meta = HAZARD_ALERT_TYPE_CONFIGS[aType] || HAZARD_ALERT_TYPE_CONFIGS.tailings_crest_deformation;
+  const tier = classifyHazardSeverityTier(zScore);
+  const zAbs = Math.abs(Number(zScore));
+  const measured = Number((meta.nominal_threshold * (1.0 + 0.35 * zAbs)).toFixed(2));
+  const now = new Date();
+  const evtId = `HAZ_${now.toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}_${assetId.slice(0, 6)}`;
+
+  const event = {
+    event_id: evtId,
+    timestamp: now.toISOString(),
+    asset_id: assetId,
+    asset_name: `${assetId.replace(/_/g, ' ')} Impoundment`,
+    alert_type: aType,
+    severity_tier: tier.id,
+    tier_metadata: tier,
+    z_score: Number(zAbs.toFixed(2)),
+    measured_value: measured,
+    threshold_value: meta.nominal_threshold,
+    unit: meta.unit,
+    summary: `Exceeded safety threshold: ${meta.name} measured at ${measured} ${meta.unit} (z=${zAbs.toFixed(2)}sigma).`,
+    action_recommended: tier.response_protocol,
+    latitude: -20.1234,
+    longitude: -44.1234
+  };
+
+  return {
+    dispatch_id: `DISP_${evtId}`,
+    event_id: evtId,
+    recipient_count: channel === 'webhook' ? 4 : 12,
+    channel,
+    delivery_status: 'delivered',
+    latency_ms: 48.5,
+    dispatched_at: now.toISOString(),
+    event
+  };
+};
+
+
 
 
 

@@ -17,7 +17,10 @@ import {
   listSoilPresets,
   calculateSbasNetworkInversion,
   calculateTopographicRadiometricCorrection,
-  calculateRpcTiePointAlignment
+  calculateRpcTiePointAlignment,
+  calculateOdmStageProgress,
+  calculateQualityMosaicPixelSelection,
+  dispatchSimulatedHazardAlert
 } from '../config/constants.js';
 
 export {
@@ -285,7 +288,25 @@ export {
   RPC_GEOMETRIC_ACCURACY_TIERS,
   classifyRpcAccuracyTier,
   calculateRpcTiePointAlignment,
-  buildTiePointRpcTileUrl
+  buildTiePointRpcTileUrl,
+  ODM_TASK_STATUSES,
+  ODM_PROCESSING_STAGES,
+  ODM_STAGE_CONFIGS,
+  calculateOdmStageProgress,
+  QUALITY_MOSAIC_METHODS,
+  QUALITY_MOSAIC_TIERS,
+  QUALITY_MOSAIC_TIER_CONFIGS,
+  classifyQualityMosaicTier,
+  calculateQualityMosaicPixelSelection,
+  buildQualityMosaicTileUrl,
+  HAZARD_SEVERITY_TIERS,
+  HAZARD_ALERT_TYPES,
+  ALERT_DELIVERY_CHANNELS,
+  ALERT_DELIVERY_STATUSES,
+  HAZARD_SEVERITY_TIER_CONFIGS,
+  HAZARD_ALERT_TYPE_CONFIGS,
+  classifyHazardSeverityTier,
+  dispatchSimulatedHazardAlert
 } from '../config/constants.js';
 
 /**
@@ -2086,6 +2107,32 @@ const demoAdapter = async (config) => {
         let parsed = {};
         try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
         data = calculateRpcTiePointAlignment(parsed);
+      }
+      else if (url.includes('/api/v1/drone/odm-tasks') || url.includes('/drone/odm-tasks')) {
+        let parsed = {};
+        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+        data = calculateOdmStageProgress(parsed.stage || 'dataset_initialization', 120.0, parsed.image_count || parsed.imageCount || 120, parsed.gsd_target_cm || parsed.gsdTargetCm || 2.5);
+      }
+      else if (url.includes('/api/v1/mosaic/quality-mosaic') || url.includes('/mosaic/quality-mosaic')) {
+        let parsed = {};
+        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+        data = calculateQualityMosaicPixelSelection(parsed);
+      }
+      else if (url.includes('/api/v1/alerts/subscriptions') || url.includes('/alerts/subscriptions')) {
+        let parsed = {};
+        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+        data = {
+          subscription_id: parsed.subscription_id || parsed.subscriptionId || 'SUB_WEBHOOK_001',
+          recipient_name: parsed.recipient_name || parsed.recipientName || 'Geotechnical Monitoring Center',
+          channel: parsed.channel || 'webhook',
+          status: 'active',
+          created_at: new Date().toISOString()
+        };
+      }
+      else if (url.includes('/api/v1/alerts/dispatch') || url.includes('/alerts/dispatch')) {
+        let parsed = {};
+        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+        data = dispatchSimulatedHazardAlert(parsed);
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -4884,7 +4931,188 @@ export const refineTiePointRpc = async (params) => {
   return response.data;
 };
 
+/**
+ * @typedef {Object} ODMTaskRequest
+ * @property {string} [task_id='ODM_TASK_20261001_001'] - Unique photogrammetry task identifier
+ * @property {string} [project_name='Embankment_Drone_Survey_2026'] - Mission or project name
+ * @property {number} [image_count=120] - Total raw drone aerial photos staged for reconstruction
+ * @property {string} [camera_model='DJI_FC6310R_8.8_5472x3648'] - UAV camera and lens model
+ * @property {number} [gsd_target_cm=2.5] - Target Ground Sampling Distance in centimeters/pixel
+ * @property {string} [feature_quality='high'] - OpenSfM keypoint extraction density
+ * @property {number} [dem_resolution_cm=5.0] - DEM spatial resolution in centimeters/pixel
+ * @property {number} [mesh_octree_depth=10] - OpenMVS Poisson surface reconstruction octree depth
+ * @property {boolean} [use_gpu=true] - Enable CUDA GPU acceleration
+ * @property {boolean} [dsm=true] - Generate Digital Surface Model
+ * @property {boolean} [dtm=true] - Generate bare-earth Digital Terrain Model using CSF filtering
+ * @property {boolean} [orthophoto=true] - Generate orthorectified mosaic
+ * @property {string} [radiometric_calibration='camera+sun'] - Radiometric calibration mode
+ * @property {string} [webhook_callback_url] - Optional webhook URL
+ */
+
+/**
+ * @typedef {Object} ODMTaskResponse
+ * @property {string} task_id - Unique photogrammetry task identifier
+ * @property {string} project_name - Mission or project name
+ * @property {'queued'|'running'|'completed'|'failed'|'cancelled'} status - High-level lifecycle status
+ * @property {string} current_stage - Active photogrammetric pipeline sub-stage
+ * @property {string} stage_label - Human-readable stage title
+ * @property {number} progress_percent - Overall execution progress from 0% to 100%
+ * @property {number} elapsed_seconds - Execution duration in seconds
+ * @property {number} estimated_remaining_seconds - Estimated time remaining in seconds
+ * @property {number} image_count - Total input drone images
+ * @property {number} reconstructed_points - Total 3D points resolved
+ * @property {number} gsd_achieved_cm - Achieved Ground Sampling Distance
+ * @property {number} rmse_reprojection_px - Reprojection error in pixels
+ * @property {Object} [artifacts] - Deliverable download URLs
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} [error_message] - Error message if task failed
+ * @property {string} created_at - ISO 8601 timestamp
+ * @property {string} updated_at - ISO 8601 timestamp
+ */
+
+/**
+ * Submits an asynchronous NodeODM drone photogrammetry reconstruction mission.
+ * 
+ * @param {ODMTaskRequest} params - Photogrammetry reconstruction parameters
+ * @returns {Promise<ODMTaskResponse>} Initial queued task state and tracking identifiers
+ */
+export const submitOdmTask = async (params) => {
+  const response = await giosApi.post('/api/v1/drone/odm-tasks', params);
+  return response.data;
+};
+
+/**
+ * Retrieves the current status, stage progress, and deliverables of an active NodeODM mission.
+ * 
+ * @param {string} taskId - Task identifier
+ * @returns {Promise<ODMTaskResponse>} Real-time stage progress and artifact URLs
+ */
+export const getOdmTaskStatus = async (taskId) => {
+  const response = await giosApi.get(`/api/v1/drone/odm-tasks/${taskId}`);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} QualityMosaicRequest
+ * @property {string} [mosaic_id='QUALITY_MOSAIC_2026_Q3'] - Unique composite mosaic identifier
+ * @property {string} [collection='sentinel-2-l2a'] - Underlying satellite imagery collection
+ * @property {string[]} [scene_ids] - Candidate scene identifiers
+ * @property {string[]} [date_range] - Acquisition date range [start, end]
+ * @property {number[]} [bbox] - Optional bounding box [min_lon, min_lat, max_lon, max_lat]
+ * @property {'max_ndvi'|'min_cloud_probability'|'temporal_median'|'medoid'|'max_ndwi'|'min_swir'} [method='max_ndvi'] - Selection rule
+ * @property {number} [cloud_threshold_percent=20.0] - Pre-filter scene cloud tolerance
+ * @property {string[]} [target_bands] - Target spectral bands
+ * @property {boolean} [mask_shadows=true] - Apply cloud shadow dilation mask
+ * @property {boolean} [mask_snow=true] - Mask out snow/ice pixels
+ */
+
+/**
+ * @typedef {Object} SceneContribution
+ * @property {string} scene_id - Scene identifier
+ * @property {string} acquisition_date - Acquisition date
+ * @property {number} cloud_coverage_percent - Native cloud coverage
+ * @property {number} pixel_contribution_percent - Contribution percentage
+ * @property {number} mean_ndvi - Mean NDVI of selected pixels
+ * @property {number} valid_pixels - Count of selected clear pixels
+ */
+
+/**
+ * @typedef {Object} QualityMosaicResponse
+ * @property {string} mosaic_id - Mosaic identifier
+ * @property {string} collection - Imagery collection
+ * @property {string} method - Compositing rule applied
+ * @property {number} total_input_scenes - Input scene count
+ * @property {number} valid_scenes_used - Valid contributing scene count
+ * @property {number} total_pixels_processed - Total pixels evaluated
+ * @property {number} cloud_free_coverage_percent - Achieved cloud-free percentage
+ * @property {number} mean_quality_score - Mean radiometric quality score
+ * @property {string} quality_tier - Composite quality tier
+ * @property {Object} [tier_metadata] - Tier badge styling and labels
+ * @property {SceneContribution[]} scene_contributions - Scene pixel contribution details
+ * @property {string[]} bands - Spectral bands included
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} composed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Generates a multi-temporal cloud-free quality mosaic composite using greenest/clearest pixel criteria.
+ * 
+ * @param {QualityMosaicRequest} params - Mosaicing parameters
+ * @returns {Promise<QualityMosaicResponse>} Composite metadata, cloud-free coverage, and tile URL template
+ */
+export const processQualityMosaic = async (params) => {
+  const response = await giosApi.post('/api/v1/mosaic/quality-mosaic', params);
+  return response.data;
+};
+
+/**
+ * @typedef {Object} HazardAlertSubscriptionRequest
+ * @property {string} [subscription_id='SUB_WEBHOOK_001'] - Unique subscription identifier
+ * @property {string} [recipient_name='Geotechnical Monitoring Center'] - Organization title
+ * @property {'webhook'|'sse_stream'|'email_digest'|'sms_urgent'} [channel='webhook'] - Dispatch channel
+ * @property {string} [endpoint_url] - Webhook callback URL
+ * @property {string[]} [monitored_asset_ids] - Monitored asset IDs
+ * @property {string[]} [alert_types] - Subscribed hazard alert categories
+ * @property {'normal'|'advisory'|'watch'|'warning'|'emergency'} [minimum_severity='warning'] - Cutoff severity
+ * @property {number} [cooldown_minutes=60] - Alert storm dampening window
+ * @property {boolean} [active=true] - Active listening state
+ */
+
+/**
+ * @typedef {Object} HazardAlertEvent
+ * @property {string} event_id - Incident identifier
+ * @property {string} timestamp - ISO 8601 timestamp
+ * @property {string} asset_id - Asset identifier
+ * @property {string} asset_name - Human-readable asset title
+ * @property {string} alert_type - Hazard type category
+ * @property {string} severity_tier - Threat tier
+ * @property {Object} [tier_metadata] - Tier badge styling and labels
+ * @property {number} z_score - Statistical anomaly z-score
+ * @property {number} measured_value - Observed physical measurement
+ * @property {number} threshold_value - Critical threshold limit
+ * @property {string} unit - Measurement unit
+ * @property {string} summary - Operational alert summary
+ * @property {string} action_recommended - Recommended SOP response action
+ * @property {number} latitude - WGS84 latitude coordinate
+ * @property {number} longitude - WGS84 longitude coordinate
+ */
+
+/**
+ * @typedef {Object} HazardAlertDispatchResponse
+ * @property {string} dispatch_id - Dispatch execution ID
+ * @property {string} event_id - Associated hazard event ID
+ * @property {number} recipient_count - Number of endpoints notified
+ * @property {string} channel - Transmission protocol
+ * @property {'delivered'|'queued'|'retrying'|'failed'} delivery_status - Delivery status
+ * @property {number} latency_ms - Dispatch latency in ms
+ * @property {string} dispatched_at - ISO 8601 timestamp
+ * @property {HazardAlertEvent} [event] - Embedded hazard event
+ */
+
+/**
+ * Subscribes an endpoint or operator to automated multi-hazard early warning alert notifications.
+ * 
+ * @param {HazardAlertSubscriptionRequest} params - Subscription configuration
+ * @returns {Promise<Object>} Created subscription record
+ */
+export const subscribeHazardAlerts = async (params) => {
+  const response = await giosApi.post('/api/v1/alerts/subscriptions', params);
+  return response.data;
+};
+
+/**
+ * Manually dispatches or simulates a multi-hazard early warning alert across configured delivery channels.
+ * 
+ * @param {Object} params - Alert dispatch parameters
+ * @returns {Promise<HazardAlertDispatchResponse>} Dispatch confirmation and recipient telemetry
+ */
+export const dispatchHazardAlert = async (params) => {
+  const response = await giosApi.post('/api/v1/alerts/dispatch', params);
+  return response.data;
+};
+
 export default giosApi;
+
 
 
 

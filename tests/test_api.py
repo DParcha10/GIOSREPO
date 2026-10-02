@@ -1515,6 +1515,362 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(res_tile.headers.get("content-type"), "image/png")
         self.assertGreater(len(res_tile.content), 100)
 
+    def test_geotechnical_soil_moisture_and_tiles_api(self):
+        """Test POST /api/v1/analysis/geotechnical/soil-moisture, aliases, and dynamic moisture tiles."""
+        payload = {
+            "collection": "sentinel-1-rtc",
+            "item_id": "S1A_IW_GRDH_1SDV_20260915"
+        }
+        res = self.client.post("/api/v1/analysis/geotechnical/soil-moisture", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["collection"], "sentinel-1-rtc")
+        self.assertEqual(data["item_id"], "S1A_IW_GRDH_1SDV_20260915")
+        self.assertIn("volumetric_soil_moisture_m3m3", data)
+        self.assertIn("soil_moisture_percentage", data)
+        self.assertIn("hazard_tier", data)
+        self.assertIn("liquefaction_warning", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/geotechnical/soil_moisture", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/sar/soil-moisture", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Soil Moisture tile
+        res_tile = self.client.get("/api/v1/tiles/geotechnical/soil-moisture/sentinel-1-rtc/S1A_TEST/16/1200/2400.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_satellite_bathymetry_and_tiles_api(self):
+        """Test POST /api/v1/analysis/water/satellite-bathymetry, aliases, and dynamic bathymetry tiles."""
+        payload = {
+            "collection": "sentinel-2-l2a",
+            "item_id": "S2A_MSIL2A_20260815"
+        }
+        res = self.client.post("/api/v1/analysis/water/satellite-bathymetry", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["collection"], "sentinel-2-l2a")
+        self.assertIn("mean_depth_m", data)
+        self.assertIn("max_depth_m", data)
+        self.assertIn("estimated_volume_m3", data)
+        self.assertIn("siltation_volume_loss_m3", data)
+        self.assertIn("siltation_loss_percentage", data)
+        self.assertIn("severity_tier", data)
+        self.assertIn("critical_siltation_warning", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/water/satellite_bathymetry", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/water/bathymetry", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+        res_alias3 = self.client.post("/api/v1/analysis/satellite-bathymetry", json=payload)
+        self.assertEqual(res_alias3.status_code, 200)
+
+        # Dynamic Bathymetry tile
+        res_tile = self.client.get("/api/v1/tiles/water/bathymetry/sentinel-2-l2a/S2A_TEST/16/1200/2400.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_gpr_profile_and_tiles_api(self):
+        """Test POST /api/v1/analysis/geotechnical/gpr-profile, aliases, and dynamic GPR radargram tiles."""
+        payload = {
+            "profile_id": "GPR_CREST_TRANSECT_01"
+        }
+        res = self.client.post("/api/v1/analysis/geotechnical/gpr-profile", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["profile_id"], "GPR_CREST_TRANSECT_01")
+        self.assertIn("em_wave_velocity_m_ns", data)
+        self.assertIn("max_penetration_depth_m", data)
+        self.assertIn("total_stations_scanned", data)
+        self.assertIn("anomalies_detected_count", data)
+        self.assertIn("critical_void_detected", data)
+        self.assertIn("overall_severity", data)
+        self.assertIn("scan_stations", data)
+        self.assertGreater(len(data["scan_stations"]), 0)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/geotechnical/gpr_profile", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/geotechnical/gpr", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+        res_alias3 = self.client.post("/api/v1/analysis/gpr-profile", json=payload)
+        self.assertEqual(res_alias3.status_code, 200)
+
+        # Dynamic GPR radargram tile
+        res_tile = self.client.get("/api/v1/tiles/geotechnical/gpr/GPR_CREST_TRANSECT_01/16/1200/2400.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_modal_vibration_and_tiles_api(self):
+        """Test POST /api/v1/analysis/structural/modal-vibration, aliases, and dynamic vibration heatmaps."""
+        payload = {
+            "asset_id": "SAN_LUIS_DAM_MONOLITH_04"
+        }
+        res = self.client.post("/api/v1/analysis/structural/modal-vibration", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["asset_id"], "SAN_LUIS_DAM_MONOLITH_04")
+        self.assertIn("fundamental_frequency_hz", data)
+        self.assertIn("frequency_shift_percentage", data)
+        self.assertIn("peak_particle_velocity_mm_s", data)
+        self.assertIn("usbm_limit_ppv_mm_s", data)
+        self.assertIn("risk_tier", data)
+        self.assertIn("structural_damage_warning", data)
+        self.assertIn("modes", data)
+        self.assertGreater(len(data["modes"]), 0)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/structural/modal_vibration", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/structural/vibration", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+        res_alias3 = self.client.post("/api/v1/analysis/modal-vibration", json=payload)
+        self.assertEqual(res_alias3.status_code, 200)
+
+        # Dynamic Vibration Heatmap tile
+        res_tile = self.client.get("/api/v1/tiles/structural/vibration/SAN_LUIS_DAM_MONOLITH_04/16/1200/2400.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_true_ortho_zbuffer_and_tiles_api(self):
+        """Test POST /api/v1/ortho/true-orthorectification, aliases, and dynamic true ortho Z-buffer tiles."""
+        payload = {
+            "ortho_id": "ORTHO_DOWNTOWN_01",
+            "dsm_id": "lidar_dsm_1m",
+            "camera_height_agl_m": 120.0,
+            "sensor_pitch_deg": 2.0,
+            "sensor_roll_deg": 1.0,
+            "sun_zenith_deg": 35.0,
+            "sun_azimuth_deg": 135.0,
+            "dsm_resolution_m": 0.05,
+            "building_threshold_height_m": 3.0,
+            "fill_blind_areas": True
+        }
+        res = self.client.post("/api/v1/ortho/true-orthorectification", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["ortho_id"], "ORTHO_DOWNTOWN_01")
+        self.assertIn("total_pixels", data)
+        self.assertIn("visible_pixels", data)
+        self.assertIn("occluded_pixels", data)
+        self.assertIn("occlusion_percentage", data)
+        self.assertIn("building_lean_pixels", data)
+        self.assertIn("shadow_pixels", data)
+        self.assertIn("max_building_lean_displacement_m", data)
+        self.assertIn("quality_tier", data)
+        self.assertIn("true_ortho_ready", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/ortho/true_orthorectification", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/true-orthorectification", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic True Ortho Z-Buffer tile
+        res_tile = self.client.get("/api/v1/tiles/ortho/true-orthorectification/ORTHO_DOWNTOWN_01/18/42000/103000.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_graphcut_seamlines_and_tiles_api(self):
+        """Test POST /api/v1/mosaic/graphcut-seamlines, aliases, and dynamic seamline graphcut tiles."""
+        payload = {
+            "mosaic_id": "MOSAIC_BASIN_01",
+            "granule_ids": ["granule_01", "granule_02", "granule_03"],
+            "cost_function": "color_plus_gradient",
+            "blend_method": "multi_band_spline",
+            "weight_color": 0.5,
+            "weight_gradient": 0.3,
+            "weight_elevation": 0.2,
+            "feather_buffer_px": 25,
+            "octave_levels": 4
+        }
+        res = self.client.post("/api/v1/mosaic/graphcut-seamlines", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["mosaic_id"], "MOSAIC_BASIN_01")
+        self.assertIn("granule_count", data)
+        self.assertIn("total_seamline_nodes", data)
+        self.assertIn("total_seamline_length_m", data)
+        self.assertIn("mean_transition_energy", data)
+        self.assertIn("radiometric_tier", data)
+        self.assertIn("seam_segments", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/mosaic/graphcut_seamlines", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/graphcut-seamlines", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Seamline tile
+        res_tile = self.client.get("/api/v1/tiles/mosaic/graphcut-seamlines/MOSAIC_BASIN_01/14/2500/6100.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    # Alias for test_graphcut_seamline_and_tiles_api (T-112)
+    def test_graphcut_seamline_and_tiles_api(self):
+        """Alias for test_graphcut_seamlines_and_tiles_api."""
+        return self.test_graphcut_seamlines_and_tiles_api()
+
+    def test_brdf_nbar_and_tiles_api(self):
+        """Test POST /api/v1/preprocessing/brdf-nbar, aliases, and dynamic BRDF NBAR tiles."""
+        payload = {
+            "collection": "sentinel-2-l2a",
+            "item_id": "S2A_MSIL2A_20260910",
+            "band": "B04",
+            "solar_zenith_deg": 38.2,
+            "view_zenith_deg": 7.5,
+            "relative_azimuth_deg": 45.0,
+            "target_solar_zenith_deg": 45.0,
+            "observed_reflectance": 0.185,
+            "kernel_model": "ross_thick_li_sparse"
+        }
+        res = self.client.post("/api/v1/preprocessing/brdf-nbar", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "S2A_MSIL2A_20260910")
+        self.assertEqual(data["band"], "B04")
+        self.assertIn("observed_reflectance", data)
+        self.assertIn("nbar_reflectance", data)
+        self.assertIn("brdf_correction_factor", data)
+        self.assertIn("normalization_tier", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/preprocessing/brdf_nbar", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/brdf-nbar", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic BRDF NBAR tile
+        res_tile = self.client.get("/api/v1/tiles/preprocessing/brdf-nbar/sentinel-2-l2a/S2A_MSIL2A_20260910/12/1024/1536.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_sbas_stack_and_tiles_api(self):
+        """Test POST /api/v1/sar/sbas-stack, aliases, and dynamic SBAS deformation tiles."""
+        payload = {
+            "stack_id": "SBAS_TSF_2026_STACK",
+            "master_scene_id": "S1A_IW_SLC__1SDV_20260115",
+            "max_perp_baseline_m": 180.0,
+            "max_temporal_baseline_days": 100,
+            "coherence_threshold": 0.40,
+            "inversion_method": "svd_least_squares"
+        }
+        res = self.client.post("/api/v1/sar/sbas-stack", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["stack_id"], "SBAS_TSF_2026_STACK")
+        self.assertIn("num_acquisitions", data)
+        self.assertIn("num_accepted_pairs", data)
+        self.assertIn("mean_coherence", data)
+        self.assertIn("mean_velocity_mm_yr", data)
+        self.assertIn("deformation_tier", data)
+        self.assertIn("time_series_epochs", data)
+        self.assertIn("interferogram_pairs", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/sar/sbas_stack", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/sbas-stack", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic SBAS tile
+        res_tile = self.client.get("/api/v1/tiles/sar/sbas/SBAS_TSF_2026_STACK/12/1024/1536.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_topographic_minnaert_and_tiles_api(self):
+        """Test POST /api/v1/preprocessing/topographic-minnaert, aliases, and dynamic Minnaert tiles."""
+        payload = {
+            "collection": "sentinel-2-l2a",
+            "item_id": "S2A_MSIL2A_20260815T183921",
+            "dem_id": "cop-dem-glo-30",
+            "method": "minnaert",
+            "solar_zenith_deg": 36.5,
+            "solar_azimuth_deg": 142.0,
+            "slope_deg": 24.5,
+            "aspect_deg": 160.0,
+            "minnaert_k": 0.72
+        }
+        res = self.client.post("/api/v1/preprocessing/topographic-minnaert", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["item_id"], "S2A_MSIL2A_20260815T183921")
+        self.assertEqual(data["method"], "minnaert")
+        self.assertIn("cos_i", data)
+        self.assertIn("illumination_tier", data)
+        self.assertIn("band_corrections", data)
+        self.assertIn("mean_correction_factor", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/preprocessing/topographic_minnaert", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/topographic-minnaert", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic Topographic Minnaert tile
+        res_tile = self.client.get("/api/v1/tiles/preprocessing/topographic-minnaert/sentinel-2-l2a/S2A_MSIL2A_20260815T183921/12/1024/1536.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_tie_point_rpc_and_tiles_api(self):
+        """Test POST /api/v1/ortho/tie-point-rpc, aliases, and dynamic RPC alignment tiles."""
+        payload = {
+            "image_id": "WV03_20260905_EXP01",
+            "reference_ortho_id": "REF_ORTHO_COMPOSITE_2026",
+            "dem_id": "cop-dem-glo-30",
+            "adjustment_model": "affine_rpc_bias",
+            "min_correlation_threshold": 0.75,
+            "ransac_threshold_px": 1.5,
+            "requested_tie_points": 64,
+            "ground_sampling_distance_m": 0.31
+        }
+        res = self.client.post("/api/v1/ortho/tie-point-rpc", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["image_id"], "WV03_20260905_EXP01")
+        self.assertIn("total_candidate_points", data)
+        self.assertIn("inlier_tie_points", data)
+        self.assertIn("outlier_points", data)
+        self.assertIn("rmse_prior_px", data)
+        self.assertIn("rmse_posterior_px", data)
+        self.assertIn("rmse_posterior_meters", data)
+        self.assertIn("geometric_accuracy_tier", data)
+        self.assertIn("tie_points_sample", data)
+        self.assertIn("tile_url_template", data)
+
+        # Route aliases
+        res_alias1 = self.client.post("/api/v1/ortho/tie_point_rpc", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/tie-point-rpc", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+
+        # Dynamic RPC alignment tile
+        res_tile = self.client.get("/api/v1/tiles/ortho/tie-point-rpc/WV03_20260905_EXP01/14/4096/6144.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
 if __name__ == "__main__":
     unittest.main()
 

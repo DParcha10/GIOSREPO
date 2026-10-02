@@ -312,7 +312,51 @@ from app.models.schemas import (
     StructuralModalRequest,
     StructuralModalResponse,
     calculate_operational_modal_analysis,
-    build_vibration_telemetry_tile_url
+    build_vibration_telemetry_tile_url,
+    TrueOrthoOcclusionType,
+    TrueOrthoQualityTier,
+    TrueOrthoZBufferRequest,
+    TrueOrthoZBufferResponse,
+    calculate_true_ortho_zbuffer,
+    build_true_ortho_zbuffer_tile_url,
+    SeamlineCostFunction,
+    SeamBlendMethod,
+    SeamlineRadiometricTier,
+    SeamlineSegment,
+    GraphCutSeamlineRequest,
+    GraphCutSeamlineResponse,
+    calculate_graphcut_seamline_optimization,
+    build_graphcut_seamline_tile_url,
+    BRDFKernelModel,
+    BRDFNormalizationTier,
+    BRDFBandKernelParam,
+    BRDFNBARRequest,
+    BRDFNBARResponse,
+    calculate_brdf_nbar_correction,
+    build_brdf_nbar_tile_url,
+    SBASInversionMethod,
+    SBASDeformationTier,
+    SBASPairStatus,
+    SBASInterferogramPair,
+    SBASTimeSeriesEpoch,
+    SBASStackRequest,
+    SBASStackResponse,
+    calculate_sbas_network_inversion,
+    build_sbas_tile_url,
+    TopographicCorrectionMethod,
+    IlluminationConditionTier,
+    TopographicBandCorrection,
+    TopographicMinnaertRequest,
+    TopographicMinnaertResponse,
+    calculate_topographic_radiometric_correction,
+    build_topographic_minnaert_tile_url,
+    RPCAdjustmentModel,
+    RPCGeometricAccuracyTier,
+    RPCTiePoint,
+    RPCTiePointRequest,
+    RPCTiePointResponse,
+    calculate_rpc_tie_point_alignment,
+    build_tie_point_rpc_tile_url
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -324,6 +368,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analysis", tags=["Analysis & Indices"])
 tiles_router = APIRouter(prefix="/tiles", tags=["Dynamic COG Tiles"])
+ortho_router = APIRouter(prefix="/ortho", tags=["Orthorectification"])
+mosaic_router = APIRouter(prefix="/mosaic", tags=["Mosaic & Seamlines"])
+preprocessing_router = APIRouter(prefix="/preprocessing", tags=["Preprocessing & Radiometry"])
+sar_router = APIRouter(prefix="/sar", tags=["SAR Analytics"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -5344,6 +5392,543 @@ def get_analysis_vibration_tile(
     rescale: Optional[str] = "0.0,25.0"
 ):
     return get_vibration_tile(z=z, x=x, y=y, asset_id=asset_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# TRUE ORTHORECTIFICATION Z-BUFFER OCCLUSION RAY-TRACING CONTRACTS (CYCLE v2.5.8 / T-109)
+# ============================================================================
+
+@ortho_router.post("/true-orthorectification", response_model=TrueOrthoZBufferResponse)
+@ortho_router.post("/true_orthorectification", response_model=TrueOrthoZBufferResponse, include_in_schema=False)
+@router.post("/ortho/true-orthorectification", response_model=TrueOrthoZBufferResponse)
+@router.post("/ortho/true_orthorectification", response_model=TrueOrthoZBufferResponse, include_in_schema=False)
+@router.post("/true-orthorectification", response_model=TrueOrthoZBufferResponse, include_in_schema=False)
+def analyze_true_ortho_zbuffer(req: TrueOrthoZBufferRequest):
+    """Calculates visibility z-buffering, building lean displacement, and cast shadow tagging for True Ortho."""
+    calc_res = calculate_true_ortho_zbuffer(
+        camera_height_agl_m=req.camera_height_agl_m,
+        sensor_pitch_deg=req.sensor_pitch_deg,
+        sensor_roll_deg=req.sensor_roll_deg,
+        sun_zenith_deg=req.sun_zenith_deg,
+        sun_azimuth_deg=req.sun_azimuth_deg,
+        dsm_resolution_m=req.dsm_resolution_m,
+        building_threshold_height_m=req.building_threshold_height_m,
+        fill_blind_areas=req.fill_blind_areas
+    )
+    tile_url = build_true_ortho_zbuffer_tile_url(
+        ortho_id=req.ortho_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return TrueOrthoZBufferResponse(
+        ortho_id=req.ortho_id,
+        dsm_id=req.dsm_id,
+        total_pixels=calc_res["total_pixels"],
+        visible_pixels=calc_res["visible_pixels"],
+        occluded_pixels=calc_res["occluded_pixels"],
+        occlusion_percentage=calc_res["occlusion_percentage"],
+        building_lean_pixels=calc_res["building_lean_pixels"],
+        shadow_pixels=calc_res["shadow_pixels"],
+        blind_hole_pixels=calc_res["blind_hole_pixels"],
+        max_building_lean_displacement_m=calc_res["max_building_lean_displacement_m"],
+        max_shadow_length_m=calc_res["max_shadow_length_m"],
+        quality_tier=calc_res["quality_tier"],
+        true_ortho_ready=calc_res["true_ortho_ready"],
+        tile_url_template=tile_url,
+        processed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/ortho/true-orthorectification/{ortho_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/ortho/true-orthorectification/{z}/{x}/{y}.png")
+def get_true_ortho_zbuffer_tile(
+    z: int,
+    x: int,
+    y: int,
+    ortho_id: Optional[str] = "ortho_tsf_survey_01",
+    colormap: Optional[str] = "magma",
+    rescale: Optional[str] = "0.0,255.0"
+):
+    png_bytes = tile_service.render_true_ortho_zbuffer_tile(
+        ortho_id=ortho_id or "ortho_tsf_survey_01",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "magma",
+        rescale=rescale or "0.0,255.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-TrueOrtho-v2.5"}
+    )
+
+
+@router.get("/tiles/ortho/true-orthorectification/{ortho_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/ortho/true-orthorectification/{z}/{x}/{y}.png")
+def get_analysis_true_ortho_zbuffer_tile(
+    z: int,
+    x: int,
+    y: int,
+    ortho_id: Optional[str] = "ortho_tsf_survey_01",
+    colormap: Optional[str] = "magma",
+    rescale: Optional[str] = "0.0,255.0"
+):
+    return get_true_ortho_zbuffer_tile(z=z, x=x, y=y, ortho_id=ortho_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# MULTIRESOLUTION SEAMLINE GRAPH-CUT ENERGY MINIMIZATION CONTRACTS (CYCLE v2.5.8 / T-109)
+# ============================================================================
+
+@mosaic_router.post("/graphcut-seamlines", response_model=GraphCutSeamlineResponse)
+@mosaic_router.post("/graphcut_seamlines", response_model=GraphCutSeamlineResponse, include_in_schema=False)
+@router.post("/mosaic/graphcut-seamlines", response_model=GraphCutSeamlineResponse)
+@router.post("/mosaic/graphcut_seamlines", response_model=GraphCutSeamlineResponse, include_in_schema=False)
+@router.post("/graphcut-seamlines", response_model=GraphCutSeamlineResponse, include_in_schema=False)
+def optimize_graphcut_seamlines(req: GraphCutSeamlineRequest):
+    """Calculates graph-cut energy minimization, Dijkstra boundary routing, and feathered spline blending."""
+    calc_res = calculate_graphcut_seamline_optimization(
+        granule_count=len(req.granule_ids) if req.granule_ids else 2,
+        weight_color=req.weight_color,
+        weight_gradient=req.weight_gradient,
+        weight_elevation=req.weight_elevation,
+        cost_function=req.cost_function,
+        blend_method=req.blend_method,
+        feather_buffer_px=req.feather_buffer_px
+    )
+    tile_url = build_graphcut_seamline_tile_url(
+        mosaic_id=req.mosaic_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return GraphCutSeamlineResponse(
+        mosaic_id=req.mosaic_id,
+        granule_count=calc_res["granule_count"],
+        cost_function_used=req.cost_function,
+        blend_method_used=req.blend_method,
+        total_seamline_nodes=calc_res["total_seamline_nodes"],
+        total_seamline_length_m=calc_res["total_seamline_length_m"],
+        mean_transition_energy=calc_res["mean_transition_energy"],
+        radiometric_tier=calc_res["radiometric_tier"],
+        obstacle_crossings_avoided=calc_res["obstacle_crossings_avoided"],
+        seam_segments=calc_res["seam_segments"],
+        tile_url_template=tile_url,
+        processed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/mosaic/graphcut-seamlines/{mosaic_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/mosaic/graphcut-seamlines/{z}/{x}/{y}.png")
+def get_graphcut_seamline_tile(
+    z: int,
+    x: int,
+    y: int,
+    mosaic_id: Optional[str] = "mosaic_tsf_survey_01",
+    colormap: Optional[str] = "viridis",
+    rescale: Optional[str] = "0.0,255.0"
+):
+    png_bytes = tile_service.render_graphcut_seamline_tile(
+        mosaic_id=mosaic_id or "mosaic_tsf_survey_01",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "viridis",
+        rescale=rescale or "0.0,255.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-GraphCut-v2.5"}
+    )
+
+
+@router.get("/tiles/mosaic/graphcut-seamlines/{mosaic_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/mosaic/graphcut-seamlines/{z}/{x}/{y}.png")
+def get_analysis_graphcut_seamline_tile(
+    z: int,
+    x: int,
+    y: int,
+    mosaic_id: Optional[str] = "mosaic_tsf_survey_01",
+    colormap: Optional[str] = "viridis",
+    rescale: Optional[str] = "0.0,255.0"
+):
+    return get_graphcut_seamline_tile(z=z, x=x, y=y, mosaic_id=mosaic_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# BRDF ROSS-THICK LI-SPARSE KERNEL NORMALIZATION CONTRACTS (CYCLE v2.5.8 / T-109)
+# ============================================================================
+
+@preprocessing_router.post("/brdf-nbar", response_model=BRDFNBARResponse)
+@preprocessing_router.post("/brdf_nbar", response_model=BRDFNBARResponse, include_in_schema=False)
+@router.post("/preprocessing/brdf-nbar", response_model=BRDFNBARResponse)
+@router.post("/preprocessing/brdf_nbar", response_model=BRDFNBARResponse, include_in_schema=False)
+@router.post("/brdf-nbar", response_model=BRDFNBARResponse, include_in_schema=False)
+def normalize_brdf_nbar(req: BRDFNBARRequest):
+    """Normalizes observed BOA reflectance to Nadir BRDF-Adjusted Reflectance (NBAR)."""
+    calc_res = calculate_brdf_nbar_correction(
+        observed_reflectance=req.observed_reflectance,
+        solar_zenith_deg=req.solar_zenith_deg,
+        view_zenith_deg=req.view_zenith_deg,
+        relative_azimuth_deg=req.relative_azimuth_deg,
+        target_solar_zenith_deg=req.target_solar_zenith_deg,
+        band=req.band
+    )
+    tile_url = build_brdf_nbar_tile_url(
+        collection=req.collection.value if hasattr(req.collection, "value") else str(req.collection),
+        item_id=req.item_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return BRDFNBARResponse(
+        collection=req.collection,
+        item_id=req.item_id,
+        band=req.band,
+        observed_reflectance=calc_res["observed_reflectance"],
+        nbar_reflectance=calc_res["nbar_reflectance"],
+        brdf_correction_factor=calc_res["brdf_correction_factor"],
+        k_vol_observed=calc_res["k_vol_observed"],
+        k_geo_observed=calc_res["k_geo_observed"],
+        k_vol_target=calc_res["k_vol_target"],
+        k_geo_target=calc_res["k_geo_target"],
+        normalization_tier=calc_res["normalization_tier"],
+        hotspot_effect_detected=calc_res["hotspot_effect_detected"],
+        tile_url_template=tile_url,
+        processed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/preprocessing/brdf-nbar/{collection}/{item_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/preprocessing/brdf-nbar/{item_id}/{z}/{x}/{y}.png")
+def get_brdf_nbar_tile(
+    z: int,
+    x: int,
+    y: int,
+    collection: Optional[str] = "sentinel-2-l2a",
+    item_id: Optional[str] = "S2A_MSIL2A_20260910",
+    colormap: Optional[str] = "spectral",
+    rescale: Optional[str] = "0.0,0.6"
+):
+    png_bytes = tile_service.render_brdf_nbar_tile(
+        collection=collection or "sentinel-2-l2a",
+        item_id=item_id or "S2A_MSIL2A_20260910",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "spectral",
+        rescale=rescale or "0.0,0.6"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-BRDF-NBAR-v2.5"}
+    )
+
+
+@router.get("/tiles/preprocessing/brdf-nbar/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/preprocessing/brdf-nbar/{item_id}/{z}/{x}/{y}.png")
+def get_analysis_brdf_nbar_tile(
+    z: int,
+    x: int,
+    y: int,
+    collection: Optional[str] = "sentinel-2-l2a",
+    item_id: Optional[str] = "S2A_MSIL2A_20260910",
+    colormap: Optional[str] = "spectral",
+    rescale: Optional[str] = "0.0,0.6"
+):
+    return get_brdf_nbar_tile(z=z, x=x, y=y, collection=collection, item_id=item_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# SMALL BASELINE SUBSET (SBAS) MULTI-TEMPORAL INSAR CONTRACTS (CYCLE v2.5.9 / T-115)
+# ============================================================================
+
+@sar_router.post("/sbas-stack", response_model=SBASStackResponse)
+@sar_router.post("/sbas_stack", response_model=SBASStackResponse, include_in_schema=False)
+@router.post("/sar/sbas-stack", response_model=SBASStackResponse)
+@router.post("/sar/sbas_stack", response_model=SBASStackResponse, include_in_schema=False)
+@router.post("/sbas-stack", response_model=SBASStackResponse, include_in_schema=False)
+@router.post("/sbas_stack", response_model=SBASStackResponse, include_in_schema=False)
+def process_sbas_stack(req: SBASStackRequest):
+    """Calculates SBAS multi-temporal baseline graph filtering, SVD matrix inversion, and time-series deformation."""
+    calc_res = calculate_sbas_network_inversion(
+        stack_id=req.stack_id,
+        master_scene_id=req.master_scene_id,
+        acquisition_dates=req.acquisition_dates,
+        candidate_pairs=req.candidate_pairs,
+        max_perp_baseline_m=req.max_perp_baseline_m,
+        max_temporal_baseline_days=req.max_temporal_baseline_days,
+        coherence_threshold=req.coherence_threshold,
+        inversion_method=req.inversion_method,
+        wavelength_m=req.wavelength_m,
+        incidence_angle_deg=req.incidence_angle_deg
+    )
+    tile_url = build_sbas_tile_url(
+        stack_id=req.stack_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return SBASStackResponse(
+        stack_id=req.stack_id,
+        master_scene_id=req.master_scene_id,
+        inversion_method=req.inversion_method.value if hasattr(req.inversion_method, "value") else str(req.inversion_method),
+        num_acquisitions=calc_res["num_acquisitions"],
+        num_candidate_pairs=calc_res["num_candidate_pairs"],
+        num_accepted_pairs=calc_res["num_accepted_pairs"],
+        num_rejected_pairs=calc_res["num_rejected_pairs"],
+        network_connectivity_rank=calc_res["network_connectivity_rank"],
+        is_network_connected=calc_res["is_network_connected"],
+        mean_coherence=calc_res["mean_coherence"],
+        mean_velocity_mm_yr=calc_res["mean_velocity_mm_yr"],
+        max_subsidence_mm_yr=calc_res["max_subsidence_mm_yr"],
+        max_uplift_mm_yr=calc_res["max_uplift_mm_yr"],
+        deformation_tier=calc_res["deformation_tier"],
+        tier_metadata=calc_res.get("tier_metadata"),
+        time_series_epochs=calc_res["time_series_epochs"],
+        interferogram_pairs=calc_res["interferogram_pairs"],
+        tile_url_template=tile_url,
+        processed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/sar/sbas/{stack_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/sar/sbas/{z}/{x}/{y}.png")
+def get_sbas_tile(
+    z: int,
+    x: int,
+    y: int,
+    stack_id: Optional[str] = "SBAS_TSF_2026_STACK",
+    colormap: Optional[str] = "seismic_r",
+    rescale: Optional[str] = "-25.0,15.0"
+):
+    png_bytes = tile_service.render_sbas_tile(
+        stack_id=stack_id or "SBAS_TSF_2026_STACK",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "seismic_r",
+        rescale=rescale or "-25.0,15.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-SBAS-InSAR-v2.5"}
+    )
+
+
+@router.get("/tiles/sar/sbas/{stack_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/sar/sbas/{z}/{x}/{y}.png")
+def get_analysis_sbas_tile(
+    z: int,
+    x: int,
+    y: int,
+    stack_id: Optional[str] = "SBAS_TSF_2026_STACK",
+    colormap: Optional[str] = "seismic_r",
+    rescale: Optional[str] = "-25.0,15.0"
+):
+    return get_sbas_tile(z=z, x=x, y=y, stack_id=stack_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# TOPOGRAPHIC ILLUMINATION MINNAERT & C-CORRECTION CONTRACTS (CYCLE v2.5.9 / T-115)
+# ============================================================================
+
+@preprocessing_router.post("/topographic-minnaert", response_model=TopographicMinnaertResponse)
+@preprocessing_router.post("/topographic_minnaert", response_model=TopographicMinnaertResponse, include_in_schema=False)
+@router.post("/preprocessing/topographic-minnaert", response_model=TopographicMinnaertResponse)
+@router.post("/preprocessing/topographic_minnaert", response_model=TopographicMinnaertResponse, include_in_schema=False)
+@router.post("/topographic-minnaert", response_model=TopographicMinnaertResponse, include_in_schema=False)
+@router.post("/topographic_minnaert", response_model=TopographicMinnaertResponse, include_in_schema=False)
+def correct_topographic_minnaert(req: TopographicMinnaertRequest):
+    """Calculates topographic solar illumination normalization across spectral bands."""
+    calc_res = calculate_topographic_radiometric_correction(
+        collection=req.collection,
+        item_id=req.item_id,
+        dem_id=req.dem_id,
+        method=req.method.value if hasattr(req.method, "value") else str(req.method),
+        solar_zenith_deg=req.solar_zenith_deg,
+        solar_azimuth_deg=req.solar_azimuth_deg,
+        slope_deg=req.slope_deg,
+        aspect_deg=req.aspect_deg,
+        minnaert_k=req.minnaert_k,
+        c_parameter=req.c_parameter,
+        bands=req.bands,
+        observed_reflectances=req.observed_reflectances
+    )
+    tile_url = build_topographic_minnaert_tile_url(
+        collection=req.collection,
+        item_id=req.item_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return TopographicMinnaertResponse(
+        collection=req.collection,
+        item_id=req.item_id,
+        dem_id=req.dem_id,
+        method=req.method.value if hasattr(req.method, "value") else str(req.method),
+        solar_zenith_deg=calc_res["solar_zenith_deg"],
+        solar_azimuth_deg=calc_res["solar_azimuth_deg"],
+        slope_deg=calc_res["slope_deg"],
+        aspect_deg=calc_res["aspect_deg"],
+        local_incidence_angle_deg=calc_res["local_incidence_angle_deg"],
+        cos_i=calc_res["cos_i"],
+        illumination_tier=calc_res["illumination_tier"],
+        tier_metadata=calc_res.get("tier_metadata"),
+        band_corrections=calc_res["band_corrections"],
+        mean_correction_factor=calc_res["mean_correction_factor"],
+        is_shadowed=calc_res["is_shadowed"],
+        tile_url_template=tile_url,
+        normalized_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/preprocessing/topographic-minnaert/{collection}/{item_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/preprocessing/topographic-minnaert/{item_id}/{z}/{x}/{y}.png")
+def get_topographic_minnaert_tile(
+    z: int,
+    x: int,
+    y: int,
+    collection: Optional[str] = "sentinel-2-l2a",
+    item_id: Optional[str] = "S2A_MSIL2A_20260815T183921",
+    colormap: Optional[str] = "spectral",
+    rescale: Optional[str] = "0.0,0.5"
+):
+    png_bytes = tile_service.render_topographic_minnaert_tile(
+        collection=collection or "sentinel-2-l2a",
+        item_id=item_id or "S2A_MSIL2A_20260815T183921",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "spectral",
+        rescale=rescale or "0.0,0.5"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Topographic-Minnaert-v2.5"}
+    )
+
+
+@router.get("/tiles/preprocessing/topographic-minnaert/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/preprocessing/topographic-minnaert/{item_id}/{z}/{x}/{y}.png")
+def get_analysis_topographic_minnaert_tile(
+    z: int,
+    x: int,
+    y: int,
+    collection: Optional[str] = "sentinel-2-l2a",
+    item_id: Optional[str] = "S2A_MSIL2A_20260815T183921",
+    colormap: Optional[str] = "spectral",
+    rescale: Optional[str] = "0.0,0.5"
+):
+    return get_topographic_minnaert_tile(z=z, x=x, y=y, collection=collection, item_id=item_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# AUTOMATED SUB-PIXEL TIE-POINT RPC ALIGNMENT CONTRACTS (CYCLE v2.5.9 / T-115)
+# ============================================================================
+
+@ortho_router.post("/tie-point-rpc", response_model=RPCTiePointResponse)
+@ortho_router.post("/tie_point_rpc", response_model=RPCTiePointResponse, include_in_schema=False)
+@router.post("/ortho/tie-point-rpc", response_model=RPCTiePointResponse)
+@router.post("/ortho/tie_point_rpc", response_model=RPCTiePointResponse, include_in_schema=False)
+@router.post("/tie-point-rpc", response_model=RPCTiePointResponse, include_in_schema=False)
+@router.post("/tie_point_rpc", response_model=RPCTiePointResponse, include_in_schema=False)
+def refine_tie_point_rpc(req: RPCTiePointRequest):
+    """Calculates sub-pixel tie-point feature matching, RANSAC consensus, and RPC affine bias refinement."""
+    calc_res = calculate_rpc_tie_point_alignment(
+        image_id=req.image_id,
+        reference_ortho_id=req.reference_ortho_id,
+        dem_id=req.dem_id,
+        adjustment_model=req.adjustment_model.value if hasattr(req.adjustment_model, "value") else str(req.adjustment_model),
+        min_correlation_threshold=req.min_correlation_threshold,
+        ransac_threshold_px=req.ransac_threshold_px,
+        requested_tie_points=req.requested_tie_points,
+        ground_sampling_distance_m=req.ground_sampling_distance_m
+    )
+    tile_url = build_tie_point_rpc_tile_url(
+        image_id=req.image_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+
+    return RPCTiePointResponse(
+        image_id=req.image_id,
+        reference_ortho_id=req.reference_ortho_id,
+        adjustment_model=calc_res["adjustment_model"],
+        total_candidate_points=calc_res["total_candidate_points"],
+        inlier_tie_points=calc_res["inlier_tie_points"],
+        outlier_points=calc_res["outlier_points"],
+        shift_col_px=calc_res["shift_col_px"],
+        shift_row_px=calc_res["shift_row_px"],
+        scale_col=calc_res["scale_col"],
+        scale_row=calc_res["scale_row"],
+        rotation_deg=calc_res["rotation_deg"],
+        rmse_prior_px=calc_res["rmse_prior_px"],
+        rmse_posterior_px=calc_res["rmse_posterior_px"],
+        rmse_posterior_meters=calc_res["rmse_posterior_meters"],
+        geometric_accuracy_tier=calc_res["geometric_accuracy_tier"],
+        tier_metadata=calc_res.get("tier_metadata"),
+        tie_points_sample=calc_res["tie_points_sample"],
+        tile_url_template=tile_url,
+        aligned_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/ortho/tie-point-rpc/{image_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/ortho/tie-point-rpc/{z}/{x}/{y}.png")
+def get_tie_point_rpc_tile(
+    z: int,
+    x: int,
+    y: int,
+    image_id: Optional[str] = "WV03_20260905_EXP01",
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,3.0"
+):
+    png_bytes = tile_service.render_tie_point_rpc_tile(
+        image_id=image_id or "WV03_20260905_EXP01",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "turbo",
+        rescale=rescale or "0.0,3.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-RPC-Alignment-v2.5"}
+    )
+
+
+@router.get("/tiles/ortho/tie-point-rpc/{image_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/ortho/tie-point-rpc/{z}/{x}/{y}.png")
+def get_analysis_tie_point_rpc_tile(
+    z: int,
+    x: int,
+    y: int,
+    image_id: Optional[str] = "WV03_20260905_EXP01",
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,3.0"
+):
+    return get_tie_point_rpc_tile(z=z, x=x, y=y, image_id=image_id, colormap=colormap, rescale=rescale)
+
 
 
 

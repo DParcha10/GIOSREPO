@@ -497,7 +497,34 @@ from app.models.schemas import (
     RPCTiePointResponse,
     classify_rpc_accuracy_tier,
     calculate_rpc_tie_point_alignment,
-    build_tie_point_rpc_tile_url
+    build_tie_point_rpc_tile_url,
+    ODMTaskStatus,
+    ODMProcessingStage,
+    ODM_STAGE_METADATA,
+    ODMTaskOutputArtifacts,
+    ODMTaskRequest,
+    ODMTaskResponse,
+    calculate_odm_stage_progress,
+    QualityMosaicMethod,
+    QualityMosaicTier,
+    QUALITY_MOSAIC_TIER_METADATA,
+    SceneContribution,
+    QualityMosaicRequest,
+    QualityMosaicResponse,
+    classify_quality_mosaic_tier,
+    calculate_quality_mosaic_pixel_selection,
+    build_quality_mosaic_tile_url,
+    HazardSeverityTier,
+    HazardAlertType,
+    AlertDeliveryChannel,
+    AlertDeliveryStatus,
+    HAZARD_SEVERITY_TIER_METADATA,
+    HAZARD_ALERT_TYPE_METADATA,
+    HazardAlertSubscriptionRequest,
+    HazardAlertEvent,
+    HazardAlertDispatchResponse,
+    classify_hazard_severity_tier,
+    dispatch_simulated_hazard_alert
 )
 from app.config import settings
 
@@ -5485,6 +5512,250 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(API_ROUTE_CONTRACTS["analysis_tie_point_rpc"], "/api/v1/ortho/tie-point-rpc")
         self.assertEqual(API_ROUTE_CONTRACTS["analysis_tie_point_rpc_short"], "/ortho/tie-point-rpc")
         self.assertEqual(API_ROUTE_CONTRACTS["tiles_tie_point_rpc"], "/api/v1/tiles/ortho/tie-point-rpc/{image_id}/{z}/{x}/{y}.png")
+
+    def test_nodeodm_drone_photogrammetry_contracts_and_lifecycle(self):
+        """Verify NodeODM asynchronous drone photogrammetry queue models, stage progress, and tile URLs."""
+        # 1. Enums & Metadata
+        self.assertEqual(ODMTaskStatus.QUEUED.value, "queued")
+        self.assertEqual(ODMTaskStatus.RUNNING.value, "running")
+        self.assertEqual(ODMTaskStatus.COMPLETED.value, "completed")
+        self.assertEqual(ODMTaskStatus.FAILED.value, "failed")
+        self.assertEqual(ODMTaskStatus.CANCELLED.value, "cancelled")
+
+        self.assertEqual(ODMProcessingStage.STRUCTURE_FROM_MOTION.value, "structure_from_motion")
+        self.assertEqual(ODMProcessingStage.MVS_DENSE_POINT_CLOUD.value, "mvs_dense_point_cloud")
+        self.assertEqual(ODMProcessingStage.DEM_SURFACE_EXTRACTION.value, "dem_surface_extraction")
+        self.assertEqual(ODMProcessingStage.ORTHOPHOTO_MOSAICING.value, "orthophoto_mosaicing")
+        self.assertEqual(ODMProcessingStage.COG_EXPORT_AND_INDEXING.value, "cog_export_and_indexing")
+
+        self.assertIn("structure_from_motion", ODM_STAGE_METADATA)
+        self.assertEqual(ODM_STAGE_METADATA["structure_from_motion"]["progress_range"], [15.0, 45.0])
+
+        # 2. Stage Progress Calculation Routine
+        progress_res = calculate_odm_stage_progress(
+            stage=ODMProcessingStage.STRUCTURE_FROM_MOTION,
+            elapsed_seconds=180.0,
+            image_count=150,
+            gsd_target_cm=2.8
+        )
+        self.assertEqual(progress_res["task_id"], "ODM_TASK_20261001_001")
+        self.assertEqual(progress_res["current_stage"], "structure_from_motion")
+        self.assertGreaterEqual(progress_res["progress_percent"], 15.0)
+        self.assertLessEqual(progress_res["progress_percent"], 45.0)
+        self.assertGreater(progress_res["estimated_remaining_seconds"], 0.0)
+        self.assertGreater(progress_res["reconstructed_points"], 0)
+        self.assertAlmostEqual(progress_res["gsd_achieved_cm"], 2.86, places=2)
+
+        completed_res = calculate_odm_stage_progress(
+            stage="completed",
+            elapsed_seconds=420.0,
+            image_count=120
+        )
+        self.assertEqual(completed_res["status"], "completed")
+        self.assertEqual(completed_res["progress_percent"], 100.0)
+        self.assertEqual(completed_res["estimated_remaining_seconds"], 0.0)
+        self.assertIsNotNone(completed_res["artifacts"])
+        self.assertIn("orthophoto_asset_url", completed_res["artifacts"])
+
+        # 3. Pydantic Request Validation with Aliases
+        req = ODMTaskRequest(
+            taskId="ODM_TASK_EMBANKMENT_01",
+            projectName="Crest Embankment High-Res Ortho",
+            imageCount=180,
+            cameraModel="DJI_FC6310R_8.8_5472x3648",
+            gsdTargetCm=2.0,
+            featureQuality="high",
+            demResolutionCm=4.0,
+            meshOctreeDepth=11,
+            useGpu=True,
+            radiometricCalibration="camera+sun",
+            webhookCallbackUrl="https://alerts.gios-monitoring.internal/webhook"
+        )
+        self.assertEqual(req.task_id, "ODM_TASK_EMBANKMENT_01")
+        self.assertEqual(req.image_count, 180)
+        self.assertEqual(req.gsd_target_cm, 2.0)
+        self.assertTrue(req.use_gpu)
+
+        # 4. Pydantic Response Validation
+        artifacts = ODMTaskOutputArtifacts(**completed_res["artifacts"])
+        resp = ODMTaskResponse(
+            task_id=req.task_id,
+            project_name=req.project_name,
+            status=ODMTaskStatus.COMPLETED,
+            current_stage=ODMProcessingStage.COMPLETED,
+            stage_label="Processing Completed",
+            progress_percent=100.0,
+            elapsed_seconds=385.0,
+            estimated_remaining_seconds=0.0,
+            image_count=req.image_count,
+            reconstructed_points=completed_res["reconstructed_points"],
+            gsd_achieved_cm=2.04,
+            rmse_reprojection_px=0.42,
+            artifacts=artifacts,
+            tile_url_template="/api/v1/tiles/drone/odm/ODM_TASK_EMBANKMENT_01/{z}/{x}/{y}.png",
+            created_at="2026-10-01T12:00:00Z",
+            updated_at="2026-10-01T12:06:25Z"
+        )
+        self.assertEqual(resp.status, ODMTaskStatus.COMPLETED)
+        self.assertEqual(resp.artifacts.orthophoto_asset_url, "/static/drone_outputs/ODM_TASK_20261001_001/orthophoto.tif")
+
+        # 5. Route contracts verification
+        self.assertIn("drone_odm_tasks", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["drone_odm_tasks"], "/api/v1/drone/odm-tasks")
+        self.assertEqual(API_ROUTE_CONTRACTS["drone_odm_tasks_short"], "/drone/odm-tasks")
+        self.assertEqual(API_ROUTE_CONTRACTS["drone_odm_task_detail"], "/api/v1/drone/odm-tasks/{task_id}")
+        self.assertEqual(API_ROUTE_CONTRACTS["drone_odm_task_detail_short"], "/drone/odm-tasks/{task_id}")
+
+    def test_quality_mosaic_contracts_and_pixel_selection(self):
+        """Verify multi-temporal quality mosaic pixel selection, cloud-free tiers, and tile URLs."""
+        # 1. Enums & Tiers
+        self.assertEqual(QualityMosaicMethod.MAX_NDVI.value, "max_ndvi")
+        self.assertEqual(QualityMosaicMethod.MIN_CLOUD_PROBABILITY.value, "min_cloud_probability")
+        self.assertEqual(QualityMosaicTier.PRISTINE_CLOUD_FREE.value, "pristine_cloud_free")
+        self.assertEqual(QualityMosaicTier.HIGH_FIDELITY_MOSAIC.value, "high_fidelity_mosaic")
+
+        # 2. Classification
+        self.assertEqual(classify_quality_mosaic_tier(98.5), QualityMosaicTier.PRISTINE_CLOUD_FREE)
+        self.assertEqual(classify_quality_mosaic_tier(89.0), QualityMosaicTier.HIGH_FIDELITY_MOSAIC)
+        self.assertEqual(classify_quality_mosaic_tier(78.0), QualityMosaicTier.MODERATE_OBSCURED)
+        self.assertEqual(classify_quality_mosaic_tier(55.0), QualityMosaicTier.SUBOPTIMAL_COMPOSITE)
+
+        # 3. Calculation routine
+        res = calculate_quality_mosaic_pixel_selection(
+            mosaic_id="QUALITY_MOSAIC_2026_Q3",
+            collection="sentinel-2-l2a",
+            method="max_ndvi",
+            scene_ids=["S2A_MSIL2A_20260701", "S2B_MSIL2A_20260716", "S2A_MSIL2A_20260805", "S2B_MSIL2A_20260820"],
+            cloud_threshold_percent=20.0
+        )
+        self.assertEqual(res["mosaic_id"], "QUALITY_MOSAIC_2026_Q3")
+        self.assertEqual(res["method"], "max_ndvi")
+        self.assertEqual(res["total_input_scenes"], 4)
+        self.assertEqual(res["valid_scenes_used"], 3)  # 20260820 has 24.8% cloud, filtered out by 20.0% cutoff
+        self.assertGreater(res["cloud_free_coverage_percent"], 90.0)
+        self.assertIn("quality_tier", res)
+        self.assertEqual(len(res["scene_contributions"]), 3)
+
+        # 4. Tile URL Builder
+        tile_url = build_quality_mosaic_tile_url("QUALITY_MOSAIC_2026_Q3", 12, 1024, 2048)
+        self.assertEqual(tile_url, "/api/v1/tiles/mosaic/quality/QUALITY_MOSAIC_2026_Q3/12/1024/2048.png")
+
+        # 5. Pydantic Request & Response with Aliases
+        req = QualityMosaicRequest(
+            mosaicId="MOSAIC_TAILINGS_2026",
+            collection="sentinel-2-l2a",
+            sceneIds=["S2A_MSIL2A_20260701", "S2B_MSIL2A_20260716"],
+            dateRange=["2026-07-01", "2026-07-31"],
+            cloudThresholdPercent=15.0,
+            targetBands=["B02", "B03", "B04", "B08"],
+            maskShadows=True,
+            maskSnow=True
+        )
+        self.assertEqual(req.mosaic_id, "MOSAIC_TAILINGS_2026")
+        self.assertEqual(req.cloud_threshold_percent, 15.0)
+
+        contributions = [SceneContribution(**sc) for sc in res["scene_contributions"]]
+        resp = QualityMosaicResponse(
+            mosaic_id=req.mosaic_id,
+            collection=req.collection,
+            method="max_ndvi",
+            total_input_scenes=res["total_input_scenes"],
+            valid_scenes_used=res["valid_scenes_used"],
+            total_pixels_processed=res["total_pixels_processed"],
+            cloud_free_coverage_percent=res["cloud_free_coverage_percent"],
+            mean_quality_score=res["mean_quality_score"],
+            quality_tier=res["quality_tier"],
+            tier_metadata=res["tier_metadata"],
+            scene_contributions=contributions,
+            bands=res["bands"],
+            tile_url_template="/api/v1/tiles/mosaic/quality/{mosaic_id}/{z}/{x}/{y}.png",
+            composed_at="2026-10-01T12:00:00Z"
+        )
+        self.assertEqual(resp.mosaic_id, "MOSAIC_TAILINGS_2026")
+        self.assertGreaterEqual(resp.cloud_free_coverage_percent, 90.0)
+
+        # 6. Route contracts verification
+        self.assertIn("mosaic_quality", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["mosaic_quality"], "/api/v1/mosaic/quality-mosaic")
+        self.assertEqual(API_ROUTE_CONTRACTS["mosaic_quality_short"], "/mosaic/quality-mosaic")
+        self.assertEqual(API_ROUTE_CONTRACTS["tiles_mosaic_quality"], "/api/v1/tiles/mosaic/quality/{mosaic_id}/{z}/{x}/{y}.png")
+
+    def test_multi_hazard_early_warning_contracts_and_dispatch(self):
+        """Verify multi-hazard early warning alert tiers, subscriptions, and dispatch pipelines."""
+        # 1. Enums & Tiers
+        self.assertEqual(HazardSeverityTier.NORMAL.value, "normal")
+        self.assertEqual(HazardSeverityTier.ADVISORY.value, "advisory")
+        self.assertEqual(HazardSeverityTier.WATCH.value, "watch")
+        self.assertEqual(HazardSeverityTier.WARNING.value, "warning")
+        self.assertEqual(HazardSeverityTier.EMERGENCY.value, "emergency")
+
+        self.assertEqual(HazardAlertType.TAILINGS_CREST_DEFORMATION.value, "tailings_crest_deformation")
+        self.assertEqual(HazardAlertType.EMBANKMENT_SEEPAGE_SATURATION.value, "embankment_seepage_saturation")
+        self.assertEqual(AlertDeliveryChannel.WEBHOOK.value, "webhook")
+        self.assertEqual(AlertDeliveryChannel.SSE_STREAM.value, "sse_stream")
+        self.assertEqual(AlertDeliveryStatus.DELIVERED.value, "delivered")
+
+        # 2. Classification
+        self.assertEqual(classify_hazard_severity_tier(0.5, rate_of_change=0.0), HazardSeverityTier.NORMAL)
+        self.assertEqual(classify_hazard_severity_tier(1.5, rate_of_change=0.0), HazardSeverityTier.ADVISORY)
+        self.assertEqual(classify_hazard_severity_tier(2.2, rate_of_change=0.0), HazardSeverityTier.WATCH)
+        self.assertEqual(classify_hazard_severity_tier(2.6, rate_of_change=0.0), HazardSeverityTier.WARNING)
+        self.assertEqual(classify_hazard_severity_tier(3.8, rate_of_change=0.0), HazardSeverityTier.EMERGENCY)
+        # Critical asset threshold multiplier check (0.85 * 3.5 = 2.975 -> 3.0 triggers emergency)
+        self.assertEqual(classify_hazard_severity_tier(3.0, asset_criticality="critical"), HazardSeverityTier.EMERGENCY)
+
+        # 3. Simulated Dispatch
+        disp = dispatch_simulated_hazard_alert(
+            alert_type="tailings_crest_deformation",
+            z_score=3.2,
+            asset_id="TAILINGS_DAM_01",
+            channel="webhook"
+        )
+        self.assertEqual(disp["delivery_status"], "delivered")
+        self.assertEqual(disp["channel"], "webhook")
+        self.assertIn("event", disp)
+        self.assertEqual(disp["event"]["asset_id"], "TAILINGS_DAM_01")
+        self.assertEqual(disp["event"]["severity_tier"], "warning")
+        self.assertGreater(disp["event"]["measured_value"], disp["event"]["threshold_value"])
+
+        # 4. Pydantic Subscription Request with Aliases
+        sub_req = HazardAlertSubscriptionRequest(
+            subscriptionId="SUB_GEOTECH_001",
+            recipientName="Mining Geotechnical Ops",
+            channel=AlertDeliveryChannel.WEBHOOK,
+            endpointUrl="https://alerts.mining-site.com/v1/webhook",
+            monitoredAssetIds=["TAILINGS_DAM_01", "CREST_BERM_04"],
+            alertTypes=[HazardAlertType.TAILINGS_CREST_DEFORMATION, HazardAlertType.EMBANKMENT_SEEPAGE_SATURATION],
+            minimumSeverity=HazardSeverityTier.WARNING,
+            cooldownMinutes=30
+        )
+        self.assertEqual(sub_req.subscription_id, "SUB_GEOTECH_001")
+        self.assertEqual(sub_req.cooldown_minutes, 30)
+
+        # 5. Pydantic Event & Dispatch Response
+        event_obj = HazardAlertEvent(**disp["event"])
+        self.assertEqual(event_obj.asset_id, "TAILINGS_DAM_01")
+
+        disp_resp = HazardAlertDispatchResponse(
+            dispatch_id=disp["dispatch_id"],
+            event_id=disp["event_id"],
+            recipient_count=disp["recipient_count"],
+            channel=disp["channel"],
+            delivery_status=AlertDeliveryStatus.DELIVERED,
+            latency_ms=disp["latency_ms"],
+            dispatched_at="2026-10-01T12:00:00Z",
+            event=event_obj
+        )
+        self.assertEqual(disp_resp.delivery_status, AlertDeliveryStatus.DELIVERED)
+
+        # 6. Route contracts verification
+        self.assertIn("alerts_subscriptions", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["alerts_subscriptions"], "/api/v1/alerts/subscriptions")
+        self.assertEqual(API_ROUTE_CONTRACTS["alerts_subscriptions_short"], "/alerts/subscriptions")
+        self.assertIn("alerts_stream", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["alerts_stream"], "/api/v1/alerts/stream")
+        self.assertIn("alerts_dispatch", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["alerts_dispatch"], "/api/v1/alerts/dispatch")
 
 if __name__ == "__main__":
     unittest.main()

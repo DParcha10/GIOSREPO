@@ -1282,6 +1282,134 @@ class TileService:
             rescale=rescale or "0.0,25.0"
         )
 
+    def render_true_ortho_zbuffer_tile(
+        self,
+        ortho_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "magma",
+        rescale: Optional[str] = "0.0,255.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for True Ortho Z-buffer building lean & shadow occlusion."""
+        return self.render_tile(
+            collection="true_ortho_zbuffer",
+            item_id=ortho_id or "ortho_tsf_survey_01",
+            z=z,
+            x=x,
+            y=y,
+            index="true_ortho_zbuffer",
+            colormap=colormap or "magma",
+            rescale=rescale or "0.0,255.0"
+        )
+
+    def render_graphcut_seamline_tile(
+        self,
+        mosaic_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "viridis",
+        rescale: Optional[str] = "0.0,255.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for multiresolution graph-cut seamline blended mosaics."""
+        return self.render_tile(
+            collection="graphcut_seamlines",
+            item_id=mosaic_id or "mosaic_tsf_survey_01",
+            z=z,
+            x=x,
+            y=y,
+            index="graphcut_seamlines",
+            colormap=colormap or "viridis",
+            rescale=rescale or "0.0,255.0"
+        )
+
+    def render_brdf_nbar_tile(
+        self,
+        collection: str = "sentinel-2-l2a",
+        item_id: str = "S2A_MSIL2A_20260910",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "spectral",
+        rescale: Optional[str] = "0.0,0.6"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Nadir BRDF-Adjusted Reflectance (NBAR)."""
+        return self.render_tile(
+            collection="brdf_nbar",
+            item_id=item_id or "S2A_MSIL2A_20260910",
+            z=z,
+            x=x,
+            y=y,
+            index="brdf_nbar",
+            colormap=colormap or "spectral",
+            rescale=rescale or "0.0,0.6"
+        )
+
+    def render_sbas_tile(
+        self,
+        stack_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "seismic_r",
+        rescale: Optional[str] = "-25.0,15.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for SBAS multi-temporal InSAR deformation velocity (mm/yr)."""
+        return self.render_tile(
+            collection="sbas",
+            item_id=stack_id or "SBAS_TSF_2026_STACK",
+            z=z,
+            x=x,
+            y=y,
+            index="sbas",
+            colormap=colormap or "seismic_r",
+            rescale=rescale or "-25.0,15.0"
+        )
+
+    def render_topographic_minnaert_tile(
+        self,
+        collection: str = "sentinel-2-l2a",
+        item_id: str = "S2A_MSIL2A_20260815T183921",
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "spectral",
+        rescale: Optional[str] = "0.0,0.5"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Topographic Minnaert / C-correction normalized reflectance."""
+        return self.render_tile(
+            collection="topographic_minnaert",
+            item_id=item_id or "S2A_MSIL2A_20260815T183921",
+            z=z,
+            x=x,
+            y=y,
+            index="topographic_minnaert",
+            colormap=colormap or "spectral",
+            rescale=rescale or "0.0,0.5"
+        )
+
+    def render_tie_point_rpc_tile(
+        self,
+        image_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "turbo",
+        rescale: Optional[str] = "0.0,3.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for sub-pixel tie-point RPC alignment residual heatmap."""
+        return self.render_tile(
+            collection="tie_point_rpc",
+            item_id=image_id or "WV03_20260905_EXP01",
+            z=z,
+            x=x,
+            y=y,
+            index="tie_point_rpc",
+            colormap=colormap or "turbo",
+            rescale=rescale or "0.0,3.0"
+        )
+
 tile_service = TileService()
 
 

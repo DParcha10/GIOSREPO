@@ -197,6 +197,8 @@ import BiophysicalHazardsModal from '../components/BiophysicalHazardsModal';
 import GeotechnicalHazardsModal from '../components/GeotechnicalHazardsModal';
 import EnvironmentalDiagnosticsModal from '../components/EnvironmentalDiagnosticsModal';
 import DirectGeoreferencingModal from '../components/DirectGeoreferencingModal';
+import TrueOrthoStudioModal from '../components/TrueOrthoStudioModal';
+import SbasTopographicModal from '../components/SbasTopographicModal';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -282,7 +284,13 @@ import {
   APS_FILTER_MODES,
   PS_INSAR_STABILITY_TIERS,
   calculatePsInsarStackDisplacement,
-  buildPsInsarTileUrl
+  buildPsInsarTileUrl,
+  buildTrueOrthoZBufferTileUrl,
+  buildGraphCutSeamlineTileUrl,
+  buildBrdfNbarTileUrl,
+  buildSbasTileUrl,
+  buildTopographicMinnaertTileUrl,
+  buildTiePointRpcTileUrl
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -1034,6 +1042,47 @@ export default function MapExplorer() {
   const [psScattererPins, setPsScattererPins] = useState([]);
   const [_selectedPsScatterer, setSelectedPsScatterer] = useState(null);
   const [loadingPsInsar, setLoadingPsInsar] = useState(false);
+
+  // T-108 & T-110 True Orthorectification Z-Buffer & Seamline Graph-Cut States
+  const [trueOrthoModalOpen, setTrueOrthoModalOpen] = useState(false);
+  const [trueOrthoInitialTab, setTrueOrthoInitialTab] = useState('true_ortho_zbuffer');
+  const [showTrueOrthoZBufferLayer, setShowTrueOrthoZBufferLayer] = useState(false);
+  const [trueOrthoZBufferUrl, setTrueOrthoZBufferUrl] = useState(null);
+  const [trueOrthoZBufferOpacity, setTrueOrthoZBufferOpacity] = useState(0.85);
+  const [trueOrthoId, setTrueOrthoId] = useState('TRUE_ORTHO_SAN_LUIS_01');
+
+  const [showSeamlinesLayer, setShowSeamlinesLayer] = useState(false);
+  const [seamlineLayerUrl, setSeamlineLayerUrl] = useState(null);
+  const [seamlineOpacity, setSeamlineOpacity] = useState(0.85);
+  const [seamlineMosaicId, setSeamlineMosaicId] = useState('MOSAIC_REGIONAL_SEAM_01');
+  const [seamlineSegments, setSeamlineSegments] = useState([]);
+
+  const [showBrdfNbarLayer, setShowBrdfNbarLayer] = useState(false);
+  const [brdfNbarLayerUrl, setBrdfNbarLayerUrl] = useState(null);
+  const [brdfOpacity, setBrdfOpacity] = useState(0.85);
+  const [brdfCollection, setBrdfCollection] = useState('landsat-c2-l2');
+  const [brdfItemId, setBrdfItemId] = useState('LC09_L2SP_043034_20260718_02_T1');
+
+  // T-114 & T-116 SBAS InSAR, Topographic Minnaert & RPC Tie-Point States
+  const [sbasModalOpen, setSbasModalOpen] = useState(false);
+  const [sbasInitialTab, setSbasInitialTab] = useState('sbas_insar');
+  const [showSbasLayer, setShowSbasLayer] = useState(false);
+  const [sbasLayerUrl, setSbasLayerUrl] = useState(null);
+  const [sbasOpacity, setSbasOpacity] = useState(0.85);
+  const [sbasStackId, setSbasStackId] = useState('SBAS_TSF_2026_STACK');
+
+  const [showTopographicMinnaertLayer, setShowTopographicMinnaertLayer] = useState(false);
+  const [topoMinnaertLayerUrl, setTopoMinnaertLayerUrl] = useState(null);
+  const [topoOpacity, setTopoOpacity] = useState(0.85);
+  const [topoCollection, setTopoCollection] = useState('sentinel-2-l2a');
+  const [topoMinnaertItemId, setTopoMinnaertItemId] = useState('S2A_MSIL2A_20260815T183921');
+
+  const [showRpcLayer, setShowRpcLayer] = useState(false);
+  const [rpcLayerUrl, setRpcLayerUrl] = useState(null);
+  const [rpcOpacity, setRpcOpacity] = useState(0.85);
+  const [rpcImageId, setRpcImageId] = useState('WV03_20260905_EXP01');
+  const [rpcTiePointPins, setRpcTiePointPins] = useState([]);
+  const [showRpcTiePointsLayer, setShowRpcTiePointsLayer] = useState(false);
 
   // T-53 Embankment Transect Cross-Section State
   const [drawingTransect, setDrawingTransect] = useState(false);
@@ -2804,7 +2853,7 @@ export default function MapExplorer() {
 
   // T-74/T-76/T-79/T-81/T-88/T-98/T-104: Tile Layer Applier for Modals & Analytical Views
   const handleApplyTileLayer = (urlOrConfig, options = {}) => {
-    const url = typeof urlOrConfig === 'string' ? urlOrConfig : urlOrConfig?.urlTemplate;
+    const url = typeof urlOrConfig === 'string' ? urlOrConfig : (urlOrConfig?.urlTemplate || urlOrConfig?.tileUrl);
     const type = options.layerType || urlOrConfig?.layerType || urlOrConfig?.type;
     const op = options.opacity || urlOrConfig?.opacity;
 
@@ -2896,6 +2945,30 @@ export default function MapExplorer() {
       setPsInsarLayerUrl(url);
       setShowPsInsarLayer(true);
       if (op) setPsInsarOpacity(op);
+    } else if (type === 'true_ortho_zbuffer' || (url && url.includes('true-orthorectification')) || (urlOrConfig?.id && urlOrConfig.id.startsWith('true_ortho_'))) {
+      setTrueOrthoZBufferUrl(url);
+      setShowTrueOrthoZBufferLayer(true);
+      if (op) setTrueOrthoZBufferOpacity(op);
+    } else if (type === 'seamline_graphcut' || (url && url.includes('graphcut-seamlines')) || (urlOrConfig?.id && urlOrConfig.id.startsWith('seamline_'))) {
+      setSeamlineLayerUrl(url);
+      setShowSeamlinesLayer(true);
+      if (op) setSeamlineOpacity(op);
+    } else if (type === 'brdf_nbar' || (url && url.includes('brdf-nbar')) || (urlOrConfig?.id && urlOrConfig.id.startsWith('brdf_'))) {
+      setBrdfNbarLayerUrl(url);
+      setShowBrdfNbarLayer(true);
+      if (op) setBrdfOpacity(op);
+    } else if (type === 'sbas_insar' || type === 'sbas' || (url && url.includes('sar/sbas')) || (urlOrConfig?.id && urlOrConfig.id.startsWith('sbas_'))) {
+      setSbasLayerUrl(url);
+      setShowSbasLayer(true);
+      if (op) setSbasOpacity(op);
+    } else if (type === 'topographic_minnaert' || (url && url.includes('topographic-minnaert')) || (urlOrConfig?.id && urlOrConfig.id.startsWith('topo_'))) {
+      setTopoMinnaertLayerUrl(url);
+      setShowTopographicMinnaertLayer(true);
+      if (op) setTopoOpacity(op);
+    } else if (type === 'tie_point_rpc' || (url && url.includes('tie-point-rpc')) || (urlOrConfig?.id && urlOrConfig.id.startsWith('rpc_'))) {
+      setRpcLayerUrl(url);
+      setShowRpcLayer(true);
+      if (op) setRpcOpacity(op);
     }
   };
 
@@ -4616,6 +4689,139 @@ export default function MapExplorer() {
               </CircleMarker>
             ))}
 
+            {/* T-108/T-110: True Orthorectification Z-Buffer Dynamic Tile Layer */}
+            {showTrueOrthoZBufferLayer && !curtainActive && (
+              <TileLayer 
+                key={`true-ortho-${trueOrthoId}-${trueOrthoZBufferOpacity}`}
+                url={trueOrthoZBufferUrl || buildTrueOrthoZBufferTileUrl(trueOrthoId, '{z}', '{x}', '{y}')}
+                opacity={trueOrthoZBufferOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-108/T-110: Multiresolution Seamline Graph-Cut Dynamic Tile Layer */}
+            {showSeamlinesLayer && !curtainActive && (
+              <TileLayer 
+                key={`seamline-${seamlineMosaicId}-${seamlineOpacity}`}
+                url={seamlineLayerUrl || buildGraphCutSeamlineTileUrl(seamlineMosaicId, '{z}', '{x}', '{y}')}
+                opacity={seamlineOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-108/T-110: Seamline Vector Cutline Polylines */}
+            {showSeamlinesLayer && seamlineSegments.map((seg, idx) => (
+              <Polyline
+                key={`seamline-seg-${seg.segment_id || idx}`}
+                positions={seg.path_coordinates || seg.coordinates || seg}
+                pathOptions={{
+                  color: '#38bdf8',
+                  weight: 3,
+                  dashArray: '4, 4',
+                  opacity: 0.95
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="flex items-center gap-1 text-sky-400 font-bold">
+                      <Scissors className="w-3.5 h-3.5" />
+                      <span>SEAMLINE CUTLINE #{seg.segment_id || idx + 1}</span>
+                    </div>
+                    {seg.length_m != null && <div>Length: <span className="font-bold text-white">{seg.length_m} m</span></div>}
+                    {seg.mean_gradient_cost != null && <div>Gradient Cost: <span className="text-amber-300">{seg.mean_gradient_cost}</span></div>}
+                    {seg.mean_color_delta != null && <div>Color Delta: <span className="text-emerald-400">{seg.mean_color_delta}</span></div>}
+                  </div>
+                </Popup>
+              </Polyline>
+            ))}
+
+            {/* T-108/T-110: BRDF Ross-Thick Li-Sparse Kernel Normalization Tile Layer */}
+            {showBrdfNbarLayer && !curtainActive && (
+              <TileLayer 
+                key={`brdf-nbar-${brdfCollection}-${brdfItemId}-${brdfOpacity}`}
+                url={brdfNbarLayerUrl || buildBrdfNbarTileUrl(brdfCollection, brdfItemId, '{z}', '{x}', '{y}')}
+                opacity={brdfOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-114/T-116: SBAS Multi-Temporal InSAR Network Inversion Tile Layer */}
+            {showSbasLayer && !curtainActive && (
+              <TileLayer 
+                key={`sbas-insar-${sbasStackId}-${sbasOpacity}`}
+                url={sbasLayerUrl || buildSbasTileUrl(sbasStackId, '{z}', '{x}', '{y}')}
+                opacity={sbasOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-114/T-116: Topographic Illumination Solar Minnaert / C-Correction Tile Layer */}
+            {showTopographicMinnaertLayer && !curtainActive && (
+              <TileLayer 
+                key={`topo-minnaert-${topoCollection}-${topoMinnaertItemId}-${topoOpacity}`}
+                url={topoMinnaertLayerUrl || buildTopographicMinnaertTileUrl(topoCollection, topoMinnaertItemId, '{z}', '{x}', '{y}')}
+                opacity={topoOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-114/T-116: Automated Sub-Pixel Tie-Point RPC Alignment Tile Layer */}
+            {showRpcLayer && !curtainActive && (
+              <TileLayer 
+                key={`rpc-alignment-${rpcImageId}-${rpcOpacity}`}
+                url={rpcLayerUrl || buildTiePointRpcTileUrl(rpcImageId, '{z}', '{x}', '{y}')}
+                opacity={rpcOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-114/T-116: Automated Sub-Pixel Tie-Point Pins */}
+            {(showRpcTiePointsLayer || showRpcLayer) && rpcTiePointPins.map((tp, idx) => {
+              const baseLat = 37.0585;
+              const baseLon = -121.0745;
+              const lat = tp.lat ?? (baseLat + ((tp.image_row_px || 0) - 2000) * 0.000005);
+              const lon = tp.lon ?? tp.lng ?? (baseLon + ((tp.image_col_px || 0) - 2000) * 0.000005);
+              const isInlier = tp.inlier !== false && tp.status !== 'outlier';
+              return (
+                <CircleMarker
+                  key={`rpc-tp-${tp.point_id || idx}`}
+                  center={[lat, lon]}
+                  radius={isInlier ? 5 : 4}
+                  pathOptions={{
+                    color: isInlier ? '#10b981' : '#f43f5e',
+                    fillColor: isInlier ? '#34d399' : '#fb7185',
+                    fillOpacity: 0.85,
+                    weight: 1.5
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="flex items-center gap-1 font-bold" style={{ color: isInlier ? '#34d399' : '#fb7185' }}>
+                        <Crosshair className="w-3.5 h-3.5" />
+                        <span>{tp.point_id || `TP #${idx + 1}`}</span>
+                      </div>
+                      <div>Status: <span className={isInlier ? 'text-emerald-400 font-bold uppercase' : 'text-rose-400 font-bold uppercase'}>{isInlier ? 'Inlier' : 'Outlier'}</span></div>
+                      {tp.residual_px != null && <div>Residual: <span className="font-bold text-white">{typeof tp.residual_px === 'number' ? tp.residual_px.toFixed(3) : tp.residual_px} px</span></div>}
+                      {tp.correlation_score != null && <div>NCC: <span className="text-amber-300">{typeof tp.correlation_score === 'number' ? tp.correlation_score.toFixed(3) : tp.correlation_score}</span></div>}
+                      <div className="text-[10px] text-gray-400">Image ({tp.image_col_px}, {tp.image_row_px})</div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
             {/* T-86/T-88: Active Fire Thermal Hotspot Pins */}
             {activeHotspotPins.map((spot, idx) => (
               <CircleMarker
@@ -5984,6 +6190,36 @@ export default function MapExplorer() {
                 <span>Georef & InSAR Studio</span>
               </button>
 
+              {/* T-108/T-110 True Ortho & Seamline Graph-Cut Studio Shortcut */}
+              <button
+                onClick={() => {
+                  setTrueOrthoInitialTab('true_ortho_zbuffer');
+                  setTrueOrthoModalOpen(true);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-amber-300 hover:text-white hover:bg-amber-500/20 border border-amber-500/30 ${
+                  trueOrthoModalOpen ? 'bg-amber-600 text-white shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
+                }`}
+                title="True Ortho Studio: Z-Buffer Occlusion Ray-Tracing, Multiresolution Seamline Graph-Cut & BRDF Normalization"
+              >
+                <Box className="w-3.5 h-3.5 text-amber-400" />
+                <span>True Ortho Studio</span>
+              </button>
+
+              {/* T-114/T-116 SBAS InSAR & Topographic Minnaert Studio Shortcut */}
+              <button
+                onClick={() => {
+                  setSbasInitialTab('sbas_insar');
+                  setSbasModalOpen(true);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-sky-300 hover:text-white hover:bg-sky-500/20 border border-sky-500/30 ${
+                  sbasModalOpen ? 'bg-sky-600 text-white shadow-[0_0_12px_rgba(56,189,248,0.6)]' : ''
+                }`}
+                title="SBAS & Topo Studio: Small Baseline Subset InSAR, Topographic Solar Minnaert & RPC Tie-Point Alignment"
+              >
+                <Radar className="w-3.5 h-3.5 text-sky-400" />
+                <span>SBAS & Topo Studio</span>
+              </button>
+
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
               <button
                 onClick={() => {
@@ -6988,6 +7224,66 @@ export default function MapExplorer() {
                         <Radar className="w-3.5 h-3.5 text-rose-400" />
                         PS-InSAR Stacking {showPsInsarLayer && '(Streaming)'}
                       </button>
+                      <button
+                        onClick={() => {
+                          setAnalyticsSubTab('true_ortho_zbuffer');
+                          setTrueOrthoInitialTab('true_ortho_zbuffer');
+                        }}
+                        className={`px-3 py-1 rounded transition-all flex items-center gap-1.5 ${analyticsSubTab === 'true_ortho_zbuffer' ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        <Box className="w-3.5 h-3.5 text-amber-400" />
+                        True Ortho Z-Buffer {showTrueOrthoZBufferLayer && '(Streaming)'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAnalyticsSubTab('seamline_graphcut');
+                          setTrueOrthoInitialTab('seamline_graphcut');
+                        }}
+                        className={`px-3 py-1 rounded transition-all flex items-center gap-1.5 ${analyticsSubTab === 'seamline_graphcut' ? 'bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        <Scissors className="w-3.5 h-3.5 text-sky-400" />
+                        Seamlines Graph-Cut {showSeamlinesLayer && '(Streaming)'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAnalyticsSubTab('brdf_nbar');
+                          setTrueOrthoInitialTab('brdf_nbar');
+                        }}
+                        className={`px-3 py-1 rounded transition-all flex items-center gap-1.5 ${analyticsSubTab === 'brdf_nbar' ? 'bg-yellow-500/20 text-yellow-300 font-bold border border-yellow-500/30' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        <Sun className="w-3.5 h-3.5 text-yellow-400" />
+                        BRDF NBAR {showBrdfNbarLayer && '(Streaming)'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAnalyticsSubTab('sbas_insar');
+                          setSbasInitialTab('sbas_insar');
+                        }}
+                        className={`px-3 py-1 rounded transition-all flex items-center gap-1.5 ${analyticsSubTab === 'sbas_insar' ? 'bg-indigo-500/20 text-indigo-300 font-bold border border-indigo-500/30' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        <Radar className="w-3.5 h-3.5 text-indigo-400" />
+                        SBAS InSAR {showSbasLayer && '(Streaming)'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAnalyticsSubTab('topographic_minnaert');
+                          setSbasInitialTab('topographic_minnaert');
+                        }}
+                        className={`px-3 py-1 rounded transition-all flex items-center gap-1.5 ${analyticsSubTab === 'topographic_minnaert' ? 'bg-teal-500/20 text-teal-300 font-bold border border-teal-500/30' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        <Mountain className="w-3.5 h-3.5 text-teal-400" />
+                        Topographic Minnaert {showTopographicMinnaertLayer && '(Streaming)'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAnalyticsSubTab('tie_point_rpc');
+                          setSbasInitialTab('tie_point_rpc');
+                        }}
+                        className={`px-3 py-1 rounded transition-all flex items-center gap-1.5 ${analyticsSubTab === 'tie_point_rpc' ? 'bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30' : 'text-gray-400 hover:text-white'}`}
+                      >
+                        <Crosshair className="w-3.5 h-3.5 text-purple-400" />
+                        RPC Tie-Points {showRpcLayer && '(Streaming)'}
+                      </button>
                     </div>
                   </div>
 
@@ -7567,6 +7863,156 @@ export default function MapExplorer() {
                         >
                           <Radar className="w-3 h-3" />
                           <span>InSAR Studio</span>
+                        </button>
+                      </>
+                    )}
+                    {analyticsSubTab === 'true_ortho_zbuffer' && (
+                      <>
+                        <button
+                          onClick={() => setShowTrueOrthoZBufferLayer(prev => !prev)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 transition-all ${
+                            showTrueOrthoZBufferLayer ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                          }`}
+                          title="Toggle Live True Ortho Z-Buffer Tiles on Map"
+                        >
+                          {showTrueOrthoZBufferLayer ? <Eye className="w-3 h-3 text-amber-400" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{showTrueOrthoZBufferLayer ? 'Hide True Ortho' : 'Show True Ortho'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setTrueOrthoInitialTab('true_ortho_zbuffer');
+                            setTrueOrthoModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shadow"
+                          title="Open Full True Ortho Ray-Tracing Studio"
+                        >
+                          <Box className="w-3 h-3" />
+                          <span>True Ortho Studio</span>
+                        </button>
+                      </>
+                    )}
+                    {analyticsSubTab === 'seamline_graphcut' && (
+                      <>
+                        <button
+                          onClick={() => setShowSeamlinesLayer(prev => !prev)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 transition-all ${
+                            showSeamlinesLayer ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                          }`}
+                          title="Toggle Live Seamlines Graph-Cut Tiles on Map"
+                        >
+                          {showSeamlinesLayer ? <Eye className="w-3 h-3 text-sky-400" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{showSeamlinesLayer ? 'Hide Seamlines' : 'Show Seamlines'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setTrueOrthoInitialTab('seamline_graphcut');
+                            setTrueOrthoModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shadow"
+                          title="Open Full Seamline Graph-Cut Studio"
+                        >
+                          <Scissors className="w-3 h-3" />
+                          <span>Seamline Studio</span>
+                        </button>
+                      </>
+                    )}
+                    {analyticsSubTab === 'brdf_nbar' && (
+                      <>
+                        <button
+                          onClick={() => setShowBrdfNbarLayer(prev => !prev)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 transition-all ${
+                            showBrdfNbarLayer ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                          }`}
+                          title="Toggle Live BRDF NBAR Tiles on Map"
+                        >
+                          {showBrdfNbarLayer ? <Eye className="w-3 h-3 text-yellow-400" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{showBrdfNbarLayer ? 'Hide BRDF' : 'Show BRDF'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setTrueOrthoInitialTab('brdf_nbar');
+                            setTrueOrthoModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shadow"
+                          title="Open Full BRDF Normalization Workbench"
+                        >
+                          <Sun className="w-3 h-3" />
+                          <span>BRDF Studio</span>
+                        </button>
+                      </>
+                    )}
+                    {analyticsSubTab === 'sbas_insar' && (
+                      <>
+                        <button
+                          onClick={() => setShowSbasLayer(prev => !prev)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 transition-all ${
+                            showSbasLayer ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                          }`}
+                          title="Toggle Live SBAS InSAR Tiles on Map"
+                        >
+                          {showSbasLayer ? <Eye className="w-3 h-3 text-indigo-400" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{showSbasLayer ? 'Hide SBAS' : 'Show SBAS'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSbasInitialTab('sbas_insar');
+                            setSbasModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shadow"
+                          title="Open Full SBAS InSAR Studio"
+                        >
+                          <Radar className="w-3 h-3" />
+                          <span>SBAS Studio</span>
+                        </button>
+                      </>
+                    )}
+                    {analyticsSubTab === 'topographic_minnaert' && (
+                      <>
+                        <button
+                          onClick={() => setShowTopographicMinnaertLayer(prev => !prev)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 transition-all ${
+                            showTopographicMinnaertLayer ? 'bg-teal-500/20 text-teal-300 border border-teal-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                          }`}
+                          title="Toggle Live Topographic Minnaert Tiles on Map"
+                        >
+                          {showTopographicMinnaertLayer ? <Eye className="w-3 h-3 text-teal-400" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{showTopographicMinnaertLayer ? 'Hide Topo' : 'Show Topo'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSbasInitialTab('topographic_minnaert');
+                            setSbasModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded bg-teal-600 hover:bg-teal-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shadow"
+                          title="Open Full Topographic Minnaert Studio"
+                        >
+                          <Mountain className="w-3 h-3" />
+                          <span>Topo Studio</span>
+                        </button>
+                      </>
+                    )}
+                    {analyticsSubTab === 'tie_point_rpc' && (
+                      <>
+                        <button
+                          onClick={() => setShowRpcLayer(prev => !prev)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 transition-all ${
+                            showRpcLayer ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                          }`}
+                          title="Toggle Live RPC Alignment Tiles on Map"
+                        >
+                          {showRpcLayer ? <Eye className="w-3 h-3 text-purple-400" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{showRpcLayer ? 'Hide RPC' : 'Show RPC'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSbasInitialTab('tie_point_rpc');
+                            setSbasModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shadow"
+                          title="Open Full Sub-Pixel RPC Alignment Studio"
+                        >
+                          <Crosshair className="w-3 h-3" />
+                          <span>RPC Studio</span>
                         </button>
                       </>
                     )}
@@ -16230,6 +16676,741 @@ export default function MapExplorer() {
                   </div>
                 )}
 
+                {/* T-108/T-110: True Orthorectification Z-Buffer Occlusion Ray-Tracing Subtab Panel */}
+                {analyticsSubTab === 'true_ortho_zbuffer' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Left: Configuration & Controls */}
+                      <div className="space-y-3 p-3 bg-black/40 border border-slate-800 rounded-xl">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                          <div className="flex items-center gap-2">
+                            <Box className="w-4 h-4 text-amber-400" />
+                            <span className="text-xs font-bold text-white uppercase font-mono">True Ortho Z-Buffer Ray-Tracing</span>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            Cycle v2.5.8 (T-110)
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-[10px] text-gray-400 font-mono block">True Ortho Dataset ID</label>
+                            <input
+                              type="text"
+                              value={trueOrthoId}
+                              onChange={(e) => setTrueOrthoId(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                            />
+                          </div>
+                          <div className="p-2.5 bg-slate-900/60 rounded-lg border border-slate-800/80 text-[11px] text-slate-300 space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Occlusion Mode:</span>
+                              <span className="font-mono text-amber-300">Z-Buffer Ray-Casting</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Relief Inversion:</span>
+                              <span className="font-mono text-emerald-400">Strict Dual-Pass DSM</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Ghost Pixel Inpaint:</span>
+                              <span className="font-mono text-sky-400">Multi-View Triangulation</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setTrueOrthoInitialTab('true_ortho_zbuffer');
+                            setTrueOrthoModalOpen(true);
+                          }}
+                          className="w-full py-2 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
+                        >
+                          <Box className="w-3.5 h-3.5" />
+                          <span>Open True Ortho Occlusion Studio</span>
+                        </button>
+                      </div>
+
+                      {/* Right: Layer Streaming & Tile Actions */}
+                      <div className="lg:col-span-2 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">DSM Resolution</span>
+                            <span className="text-base font-bold font-mono text-white">0.05 m/px</span>
+                            <span className="text-[9px] text-gray-500 block">LiDAR / Drone DSM</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Ray Angle</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">14.2° Off-Nadir</span>
+                            <span className="text-[9px] text-gray-500 block">Perspective Vector</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Building Lean</span>
+                            <span className="text-base font-bold font-mono text-sky-400">0.00 px (Corrected)</span>
+                            <span className="text-[9px] text-gray-500 block">Zero Tilted Facades</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Occlusion Quality</span>
+                            <span className="text-base font-bold font-mono text-amber-400">Full Parity</span>
+                            <span className="text-[9px] text-gray-500 block">Survey-Grade True Ortho</span>
+                          </div>
+                        </div>
+
+                        {/* Tile Overlay Toggle */}
+                        <div className="p-3 bg-amber-950/30 border border-amber-500/30 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Box className="w-4 h-4 text-amber-400" />
+                            <div>
+                              <span className="font-bold text-white block text-xs">True Ortho Z-Buffer Dynamic Tile Layer</span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {trueOrthoZBufferUrl || buildTrueOrthoZBufferTileUrl(trueOrthoId, '{z}', '{x}', '{y}')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{Math.round(trueOrthoZBufferOpacity * 100)}%</span>
+                              <input
+                                type="range"
+                                min="0.1"
+                                max="1.0"
+                                step="0.05"
+                                value={trueOrthoZBufferOpacity}
+                                onChange={(e) => setTrueOrthoZBufferOpacity(parseFloat(e.target.value))}
+                                className="w-16 h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
+                                title="Layer Opacity"
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowTrueOrthoZBufferLayer(prev => !prev)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                showTrueOrthoZBufferLayer ? 'bg-amber-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {showTrueOrthoZBufferLayer ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              {showTrueOrthoZBufferLayer ? 'Hide on Map' : 'Stream to Map'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* T-108/T-110: Multiresolution Seamline Graph-Cut Subtab Panel */}
+                {analyticsSubTab === 'seamline_graphcut' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Left: Configuration & Controls */}
+                      <div className="space-y-3 p-3 bg-black/40 border border-slate-800 rounded-xl">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                          <div className="flex items-center gap-2">
+                            <Scissors className="w-4 h-4 text-sky-400" />
+                            <span className="text-xs font-bold text-white uppercase font-mono">Seamline Graph-Cut Minimization</span>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                            Cycle v2.5.8 (T-110)
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-[10px] text-gray-400 font-mono block">Mosaic ID</label>
+                            <input
+                              type="text"
+                              value={seamlineMosaicId}
+                              onChange={(e) => setSeamlineMosaicId(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-xs font-mono text-white focus:outline-none focus:border-sky-500"
+                            />
+                          </div>
+                          <div className="p-2.5 bg-slate-900/60 rounded-lg border border-slate-800/80 text-[11px] text-slate-300 space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Energy Metric:</span>
+                              <span className="font-mono text-sky-300">Kwatra Color + Gradient</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Pyramid Blending:</span>
+                              <span className="font-mono text-emerald-400">Burt-Adelson Multiband</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Obstacle Avoidance:</span>
+                              <span className="font-mono text-amber-400">Elevation Penalized</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setTrueOrthoInitialTab('seamline_graphcut');
+                            setTrueOrthoModalOpen(true);
+                          }}
+                          className="w-full py-2 px-3 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
+                        >
+                          <Scissors className="w-3.5 h-3.5" />
+                          <span>Open Seamline Graph-Cut Studio</span>
+                        </button>
+                      </div>
+
+                      {/* Right: Layer Streaming & Tile Actions */}
+                      <div className="lg:col-span-2 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Cut Energy</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">&lt; 0.04</span>
+                            <span className="text-[9px] text-gray-500 block">Seamless Transition</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Feather Buffer</span>
+                            <span className="text-base font-bold font-mono text-white">25 px</span>
+                            <span className="text-[9px] text-gray-500 block">Gaussian Sigmoid</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Cutlines Count</span>
+                            <span className="text-base font-bold font-mono text-sky-400">{seamlineSegments.length || 3} Segments</span>
+                            <span className="text-[9px] text-gray-500 block">Optimal Boundaries</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Blend Tier</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">Radiometric Continuity</span>
+                            <span className="text-[9px] text-gray-500 block">Zero Seam Artefacts</span>
+                          </div>
+                        </div>
+
+                        {/* Tile Overlay Toggle */}
+                        <div className="p-3 bg-sky-950/30 border border-sky-500/30 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Scissors className="w-4 h-4 text-sky-400" />
+                            <div>
+                              <span className="font-bold text-white block text-xs">Seamline Graph-Cut Dynamic Tile Layer</span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {seamlineLayerUrl || buildGraphCutSeamlineTileUrl(seamlineMosaicId, '{z}', '{x}', '{y}')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{Math.round(seamlineOpacity * 100)}%</span>
+                              <input
+                                type="range"
+                                min="0.1"
+                                max="1.0"
+                                step="0.05"
+                                value={seamlineOpacity}
+                                onChange={(e) => setSeamlineOpacity(parseFloat(e.target.value))}
+                                className="w-16 h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-sky-500"
+                                title="Layer Opacity"
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowSeamlinesLayer(prev => !prev)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                showSeamlinesLayer ? 'bg-sky-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {showSeamlinesLayer ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              {showSeamlinesLayer ? 'Hide on Map' : 'Stream to Map'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* T-108/T-110: BRDF Ross-Thick Li-Sparse Kernel Normalization Subtab Panel */}
+                {analyticsSubTab === 'brdf_nbar' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Left: Configuration & Controls */}
+                      <div className="space-y-3 p-3 bg-black/40 border border-slate-800 rounded-xl">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                          <div className="flex items-center gap-2">
+                            <Sun className="w-4 h-4 text-yellow-400" />
+                            <span className="text-xs font-bold text-white uppercase font-mono">BRDF Ross-Li NBAR Normalization</span>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
+                            Cycle v2.5.8 (T-110)
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-[10px] text-gray-400 font-mono block">Collection</label>
+                            <input
+                              type="text"
+                              value={brdfCollection}
+                              onChange={(e) => setBrdfCollection(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-xs font-mono text-white focus:outline-none focus:border-yellow-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-gray-400 font-mono block">Granule Item ID</label>
+                            <input
+                              type="text"
+                              value={brdfItemId}
+                              onChange={(e) => setBrdfItemId(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-xs font-mono text-white focus:outline-none focus:border-yellow-500"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setTrueOrthoInitialTab('brdf_nbar');
+                            setTrueOrthoModalOpen(true);
+                          }}
+                          className="w-full py-2 px-3 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
+                        >
+                          <Sun className="w-3.5 h-3.5" />
+                          <span>Open BRDF NBAR Workbench</span>
+                        </button>
+                      </div>
+
+                      {/* Right: Layer Streaming & Tile Actions */}
+                      <div className="lg:col-span-2 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Kernel Model</span>
+                            <span className="text-base font-bold font-mono text-white">Ross-Li HLS</span>
+                            <span className="text-[9px] text-gray-500 block">Reciprocal Semi-Empirical</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Target Solar Zenith</span>
+                            <span className="text-base font-bold font-mono text-amber-400">45.0° (Nadir)</span>
+                            <span className="text-[9px] text-gray-500 block">Standard Illumination</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">c_BRDF Factor</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">0.985 Parity</span>
+                            <span className="text-[9px] text-gray-500 block">Anisotropy Compensated</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Hotspot Artifacts</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">Eliminated</span>
+                            <span className="text-[9px] text-gray-500 block">HLS Harmonized</span>
+                          </div>
+                        </div>
+
+                        {/* Tile Overlay Toggle */}
+                        <div className="p-3 bg-yellow-950/30 border border-yellow-500/30 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Sun className="w-4 h-4 text-yellow-400" />
+                            <div>
+                              <span className="font-bold text-white block text-xs">BRDF NBAR Dynamic Tile Layer</span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {brdfNbarLayerUrl || buildBrdfNbarTileUrl(brdfCollection, brdfItemId, '{z}', '{x}', '{y}')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{Math.round(brdfOpacity * 100)}%</span>
+                              <input
+                                type="range"
+                                min="0.1"
+                                max="1.0"
+                                step="0.05"
+                                value={brdfOpacity}
+                                onChange={(e) => setBrdfOpacity(parseFloat(e.target.value))}
+                                className="w-16 h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-yellow-500"
+                                title="Layer Opacity"
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowBrdfNbarLayer(prev => !prev)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                showBrdfNbarLayer ? 'bg-yellow-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {showBrdfNbarLayer ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              {showBrdfNbarLayer ? 'Hide on Map' : 'Stream to Map'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* T-114/T-116: SBAS Multi-Temporal InSAR Subtab Panel */}
+                {analyticsSubTab === 'sbas_insar' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Left: Configuration & Controls */}
+                      <div className="space-y-3 p-3 bg-black/40 border border-slate-800 rounded-xl">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                          <div className="flex items-center gap-2">
+                            <Radar className="w-4 h-4 text-indigo-400" />
+                            <span className="text-xs font-bold text-white uppercase font-mono">SBAS Multi-Temporal InSAR</span>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            Cycle v2.5.9 (T-116)
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-[10px] text-gray-400 font-mono block">SBAS Interferogram Stack ID</label>
+                            <input
+                              type="text"
+                              value={sbasStackId}
+                              onChange={(e) => setSbasStackId(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          <div className="p-2.5 bg-slate-900/60 rounded-lg border border-slate-800/80 text-[11px] text-slate-300 space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Inversion Method:</span>
+                              <span className="font-mono text-indigo-300">SVD Linear Least Squares</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Atmospheric Filtering:</span>
+                              <span className="font-mono text-emerald-400">Spatiotemporal (APS)</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Displacement Domain:</span>
+                              <span className="font-mono text-rose-400">Line-of-Sight (LOS)</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setSbasInitialTab('sbas_insar');
+                            setSbasModalOpen(true);
+                          }}
+                          className="w-full py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
+                        >
+                          <Radar className="w-3.5 h-3.5" />
+                          <span>Open SBAS Multi-Temporal Studio</span>
+                        </button>
+                      </div>
+
+                      {/* Right: Layer Streaming & Tile Actions */}
+                      <div className="lg:col-span-2 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Epoch Count</span>
+                            <span className="text-base font-bold font-mono text-white">8 Time-Steps</span>
+                            <span className="text-[9px] text-gray-500 block">Multi-Baseline Mesh</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Mean Coherence</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">0.82 γ</span>
+                            <span className="text-[9px] text-gray-500 block">High Phase Quality</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Max Velocity</span>
+                            <span className="text-base font-bold font-mono text-rose-400">-14.2 mm/yr</span>
+                            <span className="text-[9px] text-gray-500 block">Subsidence Vector</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Stability Tier</span>
+                            <span className="text-base font-bold font-mono text-amber-400">Moderate Subsidence</span>
+                            <span className="text-[9px] text-gray-500 block">Displacement Gated</span>
+                          </div>
+                        </div>
+
+                        {/* Tile Overlay Toggle */}
+                        <div className="p-3 bg-indigo-950/30 border border-indigo-500/30 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Radar className="w-4 h-4 text-indigo-400" />
+                            <div>
+                              <span className="font-bold text-white block text-xs">SBAS InSAR Cumulative Displacement Tile Layer</span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {sbasLayerUrl || buildSbasTileUrl(sbasStackId, '{z}', '{x}', '{y}')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{Math.round(sbasOpacity * 100)}%</span>
+                              <input
+                                type="range"
+                                min="0.1"
+                                max="1.0"
+                                step="0.05"
+                                value={sbasOpacity}
+                                onChange={(e) => setSbasOpacity(parseFloat(e.target.value))}
+                                className="w-16 h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                                title="Layer Opacity"
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowSbasLayer(prev => !prev)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                showSbasLayer ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {showSbasLayer ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              {showSbasLayer ? 'Hide on Map' : 'Stream to Map'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* T-114/T-116: Topographic Illumination Minnaert Subtab Panel */}
+                {analyticsSubTab === 'topographic_minnaert' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Left: Configuration & Controls */}
+                      <div className="space-y-3 p-3 bg-black/40 border border-slate-800 rounded-xl">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                          <div className="flex items-center gap-2">
+                            <Mountain className="w-4 h-4 text-teal-400" />
+                            <span className="text-xs font-bold text-white uppercase font-mono">Topographic Solar Minnaert</span>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                            Cycle v2.5.9 (T-116)
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-[10px] text-gray-400 font-mono block">Collection</label>
+                            <input
+                              type="text"
+                              value={topoCollection}
+                              onChange={(e) => setTopoCollection(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-xs font-mono text-white focus:outline-none focus:border-teal-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-gray-400 font-mono block">Granule Scene ID</label>
+                            <input
+                              type="text"
+                              value={topoMinnaertItemId}
+                              onChange={(e) => setTopoMinnaertItemId(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-xs font-mono text-white focus:outline-none focus:border-teal-500"
+                            />
+                          </div>
+                          <div className="p-2.5 bg-slate-900/60 rounded-lg border border-slate-800/80 text-[11px] text-slate-300 space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Minnaert Exponent k:</span>
+                              <span className="font-mono text-teal-300">0.72 (Empirical)</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Slope & Aspect:</span>
+                              <span className="font-mono text-emerald-400">COP-DEM GLO-30 Ground</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Illumination Cosine (cos i):</span>
+                              <span className="font-mono text-amber-300">0.78 Optimal Direct</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setSbasInitialTab('topographic_minnaert');
+                            setSbasModalOpen(true);
+                          }}
+                          className="w-full py-2 px-3 rounded-lg bg-teal-600 hover:bg-teal-500 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
+                        >
+                          <Mountain className="w-3.5 h-3.5" />
+                          <span>Open Topographic Minnaert Studio</span>
+                        </button>
+                      </div>
+
+                      {/* Right: Layer Streaming & Tile Actions */}
+                      <div className="lg:col-span-2 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Correction Model</span>
+                            <span className="text-base font-bold font-mono text-white">Minnaert / Teillet C</span>
+                            <span className="text-[9px] text-gray-500 block">Non-Lambertian</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Mean Factor</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">1.082x</span>
+                            <span className="text-[9px] text-gray-500 block">Slope Attenuation Fixed</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Shadow Rejection</span>
+                            <span className="text-base font-bold font-mono text-sky-400">cos i &gt; 0.05</span>
+                            <span className="text-[9px] text-gray-500 block">Cast Shadows Masked</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Illumination Tier</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">Optimal Direct</span>
+                            <span className="text-[9px] text-gray-500 block">Parity Corrected</span>
+                          </div>
+                        </div>
+
+                        {/* Tile Overlay Toggle */}
+                        <div className="p-3 bg-teal-950/30 border border-teal-500/30 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Mountain className="w-4 h-4 text-teal-400" />
+                            <div>
+                              <span className="font-bold text-white block text-xs">Topographic Minnaert Dynamic Tile Layer</span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {topoMinnaertLayerUrl || buildTopographicMinnaertTileUrl(topoCollection, topoMinnaertItemId, '{z}', '{x}', '{y}')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{Math.round(topoOpacity * 100)}%</span>
+                              <input
+                                type="range"
+                                min="0.1"
+                                max="1.0"
+                                step="0.05"
+                                value={topoOpacity}
+                                onChange={(e) => setTopoOpacity(parseFloat(e.target.value))}
+                                className="w-16 h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-teal-500"
+                                title="Layer Opacity"
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowTopographicMinnaertLayer(prev => !prev)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                showTopographicMinnaertLayer ? 'bg-teal-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {showTopographicMinnaertLayer ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              {showTopographicMinnaertLayer ? 'Hide on Map' : 'Stream to Map'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* T-114/T-116: Automated Sub-Pixel RPC Alignment Subtab Panel */}
+                {analyticsSubTab === 'tie_point_rpc' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Left: Configuration & Controls */}
+                      <div className="space-y-3 p-3 bg-black/40 border border-slate-800 rounded-xl">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                          <div className="flex items-center gap-2">
+                            <Crosshair className="w-4 h-4 text-purple-400" />
+                            <span className="text-xs font-bold text-white uppercase font-mono">Automated RPC Tie-Point Alignment</span>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            Cycle v2.5.9 (T-116)
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-[10px] text-gray-400 font-mono block">Satellite Image ID</label>
+                            <input
+                              type="text"
+                              value={rpcImageId}
+                              onChange={(e) => setRpcImageId(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-xs font-mono text-white focus:outline-none focus:border-purple-500"
+                            />
+                          </div>
+                          <div className="p-2.5 bg-slate-900/60 rounded-lg border border-slate-800/80 text-[11px] text-slate-300 space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Adjustment Model:</span>
+                              <span className="font-mono text-purple-300">6-Parameter Affine RPC Bias</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">RANSAC Threshold:</span>
+                              <span className="font-mono text-emerald-400">0.85 px Inlier Tolerance</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Correlation Metric:</span>
+                              <span className="font-mono text-sky-400">Sub-Pixel Normalized Cross-Correlation</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setSbasInitialTab('tie_point_rpc');
+                            setSbasModalOpen(true);
+                          }}
+                          className="w-full py-2 px-3 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow"
+                        >
+                          <Crosshair className="w-3.5 h-3.5" />
+                          <span>Open RPC Alignment Studio</span>
+                        </button>
+                      </div>
+
+                      {/* Right: Layer Streaming & Tile Actions */}
+                      <div className="lg:col-span-2 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Posterior RMSE</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">0.385 px</span>
+                            <span className="text-[9px] text-gray-500 block">Sub-Pixel Survey Grade</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Inlier Ratio</span>
+                            <span className="text-base font-bold font-mono text-white">92.5%</span>
+                            <span className="text-[9px] text-gray-500 block">RANSAC Screened</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Ground Error</span>
+                            <span className="text-base font-bold font-mono text-sky-400">0.19 m</span>
+                            <span className="text-[9px] text-gray-500 block">Geometric Absolute</span>
+                          </div>
+                          <div className="p-3 bg-black/50 border border-slate-800 rounded-xl">
+                            <span className="text-[10px] text-gray-400 block uppercase font-mono">Accuracy Tier</span>
+                            <span className="text-base font-bold font-mono text-emerald-400">Sub-Pixel Grade</span>
+                            <span className="text-[9px] text-gray-500 block">RMSE &lt; 0.50 px</span>
+                          </div>
+                        </div>
+
+                        {/* Tile Overlay Toggle */}
+                        <div className="p-3 bg-purple-950/30 border border-purple-500/30 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Crosshair className="w-4 h-4 text-purple-400" />
+                            <div>
+                              <span className="font-bold text-white block text-xs">Automated RPC Tie-Point Dynamic Tile Layer</span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {rpcLayerUrl || buildTiePointRpcTileUrl(rpcImageId, '{z}', '{x}', '{y}')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 mr-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{Math.round(rpcOpacity * 100)}%</span>
+                              <input
+                                type="range"
+                                min="0.1"
+                                max="1.0"
+                                step="0.05"
+                                value={rpcOpacity}
+                                onChange={(e) => setRpcOpacity(parseFloat(e.target.value))}
+                                className="w-16 h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                                title="Layer Opacity"
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowRpcLayer(prev => !prev)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                showRpcLayer ? 'bg-purple-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {showRpcLayer ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                              {showRpcLayer ? 'Hide on Map' : 'Stream to Map'}
+                            </button>
+                            {rpcTiePointPins.length > 0 && (
+                              <button
+                                onClick={() => setShowRpcTiePointsLayer(prev => !prev)}
+                                className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                  showRpcTiePointsLayer ? 'bg-purple-700 text-white' : 'bg-slate-800 text-purple-300 hover:text-white'
+                                }`}
+                              >
+                                <Crosshair className="w-3.5 h-3.5" />
+                                <span>{showRpcTiePointsLayer ? 'Hide Pins' : 'Plot Pins'}</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
               </div>
             )}
           </div>
@@ -16474,6 +17655,30 @@ export default function MapExplorer() {
         onApplyPsPoints={(points) => {
           setPsScattererPins(points);
           setShowPsInsarLayer(true);
+        }}
+      />
+
+      {/* T-108/T-110: True Orthorectification, Seamline Graph-Cut & BRDF NBAR Studio Modal */}
+      <TrueOrthoStudioModal
+        isOpen={trueOrthoModalOpen}
+        onClose={() => setTrueOrthoModalOpen(false)}
+        initialTab={trueOrthoInitialTab}
+        onApplyTileLayer={handleApplyTileLayer}
+        onApplySeamlines={(segments) => {
+          setSeamlineSegments(segments);
+          setShowSeamlinesLayer(true);
+        }}
+      />
+
+      {/* T-114/T-116: SBAS Multi-Temporal InSAR, Topographic Minnaert & RPC Tie-Point Modal */}
+      <SbasTopographicModal
+        isOpen={sbasModalOpen}
+        onClose={() => setSbasModalOpen(false)}
+        initialTab={sbasInitialTab}
+        onApplyTileLayer={handleApplyTileLayer}
+        onApplyTiePoints={(points) => {
+          setRpcTiePointPins(points);
+          setShowRpcTiePointsLayer(true);
         }}
       />
 

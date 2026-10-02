@@ -682,6 +682,28 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "analysis_tie_point_rpc": "/api/v1/ortho/tie-point-rpc",
     "analysis_tie_point_rpc_short": "/ortho/tie-point-rpc",
     "tiles_tie_point_rpc": "/api/v1/tiles/ortho/tie-point-rpc/{image_id}/{z}/{x}/{y}.png",
+    "analysis_csf_filter": "/api/v1/analysis/pointcloud/csf-filter",
+    "analysis_csf_filter_short": "/pointcloud/csf-filter",
+    "tiles_csf_filter": "/api/v1/tiles/pointcloud/csf/{cloud_id}/{z}/{x}/{y}.png",
+    "analysis_dinsar_deformation": "/api/v1/analysis/sar/dinsar",
+    "analysis_dinsar_deformation_short": "/sar/dinsar",
+    "tiles_dinsar_deformation": "/api/v1/tiles/sar/dinsar/{pair_id}/{z}/{x}/{y}.png",
+    "analysis_pansharpen": "/api/v1/analysis/imagery/pan-sharpen",
+    "analysis_pansharpen_short": "/imagery/pan-sharpen",
+    "tiles_pansharpen": "/api/v1/tiles/imagery/pan-sharpen/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "drone_odm_tasks": "/api/v1/drone/odm-tasks",
+    "drone_odm_tasks_short": "/drone/odm-tasks",
+    "drone_odm_task_detail": "/api/v1/drone/odm-tasks/{task_id}",
+    "drone_odm_task_detail_short": "/drone/odm-tasks/{task_id}",
+    "mosaic_quality": "/api/v1/mosaic/quality-mosaic",
+    "mosaic_quality_short": "/mosaic/quality-mosaic",
+    "tiles_mosaic_quality": "/api/v1/tiles/mosaic/quality/{mosaic_id}/{z}/{x}/{y}.png",
+    "alerts_subscriptions": "/api/v1/alerts/subscriptions",
+    "alerts_subscriptions_short": "/alerts/subscriptions",
+    "alerts_stream": "/api/v1/alerts/stream",
+    "alerts_stream_short": "/alerts/stream",
+    "alerts_dispatch": "/api/v1/alerts/dispatch",
+    "alerts_dispatch_short": "/alerts/dispatch",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -9833,7 +9855,9 @@ def calculate_brdf_nbar_correction(
     view_zenith_deg: float = 7.5,
     relative_azimuth_deg: float = 45.0,
     target_solar_zenith_deg: float = 45.0,
-    band: str = "B04"
+    band: str = "B04",
+    kernel_model: Optional[Union[str, BRDFKernelModel]] = BRDFKernelModel.ROSS_THICK_LI_SPARSE,
+    **kwargs: Any
 ) -> Dict[str, Any]:
     """Normalizes observed BOA reflectance to Nadir BRDF-Adjusted Reflectance (NBAR).
     
@@ -10857,6 +10881,1662 @@ def build_tie_point_rpc_tile_url(
 ) -> str:
     """Builds dynamic XYZ tile streaming URL for RPC-aligned imagery."""
     return f"{base_prefix}/tiles/ortho/tie-point-rpc/{image_id}/{z}/{x}/{y}.png"
+
+
+# ----------------------------------------------------------------------------
+# CLOTH SIMULATION FILTERING (CSF) & PROGRESSIVE MORPHOLOGICAL DTM EXTRACTION
+# ----------------------------------------------------------------------------
+
+class CSFRigidness(str, Enum):
+    """Rigidness / stiffness parameter for virtual inverted cloth physics simulation."""
+    FLAT_TERRAIN = "flat_terrain"      # Rigidness 1: high stiffness, preserves flat roads/embankments
+    RELIEF_SLOPE = "relief_slope"      # Rigidness 2: moderate stiffness for rolling hills
+    STEEP_MOUNTAIN = "steep_mountain"  # Rigidness 3: flexible cloth adapting to steep cliffs
+
+
+class PointClassificationType(str, Enum):
+    """Standardized ASPRS LAS-compatible point cloud classification codes."""
+    GROUND = "ground"                          # ASPRS Class 2: Bare earth terrain
+    LOW_VEGETATION = "low_vegetation"          # ASPRS Class 3: Undergrowth / shrub (< 2.0 m)
+    HIGH_VEGETATION = "high_vegetation"        # ASPRS Class 5: Tree canopy (2.0 - 12.0 m)
+    BUILDING_STRUCTURE = "building_structure"  # ASPRS Class 6: Manmade structural building (> 12.0 m or steep planar)
+    UNCLASSIFIED_NOISE = "unclassified_noise"  # ASPRS Class 7: Low points / multipath noise
+
+
+class PointClassificationTier(str, Enum):
+    """Ground extraction quality and occlusion assessment tiers."""
+    EXCELLENT_BARE_EARTH_ISOLATION = "excellent_bare_earth_isolation"
+    MODERATE_GROUND_EXTRACTION = "moderate_ground_extraction"
+    COARSE_GROUND_RESIDUAL = "coarse_ground_residual"
+    HIGH_OCCLUSION_UNCERTAINTY = "high_occlusion_uncertainty"
+
+
+CSF_TIER_METADATA: Dict[str, Dict[str, Any]] = {
+    "excellent_bare_earth_isolation": {
+        "id": "excellent_bare_earth_isolation",
+        "label": "Excellent Bare-Earth Isolation (Ground >= 60%, Residual < 0.15 m)",
+        "ground_fraction_min": 0.60,
+        "max_residual_m": 0.15,
+        "color": "#22c55e",
+        "badge_class": "bg-green-500/20 text-green-300 border-green-500/30"
+    },
+    "moderate_ground_extraction": {
+        "id": "moderate_ground_extraction",
+        "label": "Moderate Ground Extraction (Ground 40%-60%, Residual < 0.35 m)",
+        "ground_fraction_min": 0.40,
+        "max_residual_m": 0.35,
+        "color": "#3b82f6",
+        "badge_class": "bg-blue-500/20 text-blue-300 border-blue-500/30"
+    },
+    "coarse_ground_residual": {
+        "id": "coarse_ground_residual",
+        "label": "Coarse Ground Residual (Ground 25%-40%, Residual < 0.70 m)",
+        "ground_fraction_min": 0.25,
+        "max_residual_m": 0.70,
+        "color": "#eab308",
+        "badge_class": "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+    },
+    "high_occlusion_uncertainty": {
+        "id": "high_occlusion_uncertainty",
+        "label": "High Occlusion Uncertainty (Ground < 25% or Residual >= 0.70 m)",
+        "ground_fraction_min": 0.0,
+        "max_residual_m": 99.0,
+        "color": "#ef4444",
+        "badge_class": "bg-red-500/20 text-red-300 border-red-500/30"
+    }
+}
+
+
+def classify_csf_ground_tier(ground_fraction: float, mean_residual_m: float) -> PointClassificationTier:
+    """Classifies cloth simulation ground point extraction into quality tiers."""
+    gf = float(ground_fraction)
+    res = float(mean_residual_m)
+    if gf >= 0.60 and res < 0.15:
+        return PointClassificationTier.EXCELLENT_BARE_EARTH_ISOLATION
+    if gf >= 0.40 and res < 0.35:
+        return PointClassificationTier.MODERATE_GROUND_EXTRACTION
+    if gf >= 0.25 and res < 0.70:
+        return PointClassificationTier.COARSE_GROUND_RESIDUAL
+    return PointClassificationTier.HIGH_OCCLUSION_UNCERTAINTY
+
+
+class CSFPointSample(BaseModel):
+    """Representative point sample with DSM elevation, draped cloth elevation, and classification."""
+    point_id: str = Field(..., description="Point sample identifier")
+    x: float = Field(..., description="Easting or local X coordinate in meters")
+    y: float = Field(..., description="Northing or local Y coordinate in meters")
+    z_dsm: float = Field(..., description="Digital Surface Model elevation in meters")
+    z_cloth: float = Field(..., description="Draped virtual cloth terrain elevation in meters")
+    distance_to_cloth_m: float = Field(..., description="Vertical distance between DSM point and cloth surface (nDSM height)")
+    classification: str = Field(..., description="Classified point category (ground, vegetation, building)")
+    is_ground: bool = Field(..., description="Whether point is classified as bare earth ground")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_sample(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "pointId" in data and "point_id" not in data:
+                data["point_id"] = data["pointId"]
+            if "zDsm" in data and "z_dsm" not in data:
+                data["z_dsm"] = data["zDsm"]
+            if "zCloth" in data and "z_cloth" not in data:
+                data["z_cloth"] = data["zCloth"]
+            if "distanceToClothM" in data and "distance_to_cloth_m" not in data:
+                data["distance_to_cloth_m"] = data["distanceToClothM"]
+            if "isGround" in data and "is_ground" not in data:
+                data["is_ground"] = data["isGround"]
+        return data
+
+
+class CSFPointFilterRequest(BaseModel):
+    """Request payload for Cloth Simulation Filtering ground/non-ground point cloud separation."""
+    cloud_id: str = Field(default="UAV_POINTCLOUD_20261001", description="Source UAV point cloud identifier")
+    cloth_resolution_m: float = Field(default=1.0, ge=0.1, le=10.0, description="Virtual cloth grid cell size in meters")
+    rigidness: CSFRigidness = Field(default=CSFRigidness.RELIEF_SLOPE, description="Cloth stiffness parameter (1=flat, 2=relief, 3=steep)")
+    classification_threshold_m: float = Field(default=0.35, ge=0.05, le=2.0, description="Distance threshold h_thresh for ground classification in meters")
+    time_step: float = Field(default=0.65, ge=0.1, le=2.0, description="Physics simulation integration time step")
+    max_iterations: int = Field(default=500, ge=50, le=2000, description="Maximum gravity relaxation iterations")
+    post_slope_smooth: bool = Field(default=True, description="Enable post-processing slope elevation smoothing")
+    bbox: Optional[Union[List[float], Tuple[float, float, float, float], Dict[str, float], BoundingBox]] = Field(
+        default=None, description="Spatial bounding envelope"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "cloudId" in data and "cloud_id" not in data:
+                data["cloud_id"] = data["cloudId"]
+            if "clothResolutionM" in data and "cloth_resolution_m" not in data:
+                data["cloth_resolution_m"] = data["clothResolutionM"]
+            if "clothResolution" in data and "cloth_resolution_m" not in data:
+                data["cloth_resolution_m"] = data["clothResolution"]
+            if "classificationThresholdM" in data and "classification_threshold_m" not in data:
+                data["classification_threshold_m"] = data["classificationThresholdM"]
+            if "classificationThreshold" in data and "classification_threshold_m" not in data:
+                data["classification_threshold_m"] = data["classificationThreshold"]
+            if "timeStep" in data and "time_step" not in data:
+                data["time_step"] = data["timeStep"]
+            if "maxIterations" in data and "max_iterations" not in data:
+                data["max_iterations"] = data["maxIterations"]
+            if "postSlopeSmooth" in data and "post_slope_smooth" not in data:
+                data["post_slope_smooth"] = data["postSlopeSmooth"]
+            if "bbox" in data and data["bbox"] is not None and not isinstance(data["bbox"], BoundingBox):
+                data["bbox"] = parse_bbox(data["bbox"])
+        return data
+
+
+class CSFPointFilterResponse(BaseModel):
+    """Response payload for Cloth Simulation Filtering DTM extraction."""
+    cloud_id: str = Field(..., description="Target point cloud identifier")
+    cloth_resolution_m: float = Field(..., description="Cloth grid cell resolution in meters")
+    rigidness: str = Field(..., description="Cloth rigidness parameter")
+    classification_threshold_m: float = Field(..., description="Ground distance cutoff threshold in meters")
+    total_points: int = Field(..., description="Total evaluated 3D point count")
+    ground_points_count: int = Field(..., description="Classified bare earth ground points")
+    off_ground_points_count: int = Field(..., description="Classified non-ground above-terrain points")
+    ground_fraction: float = Field(..., description="Ratio of ground points to total points")
+    mean_ground_elevation_m: float = Field(..., description="Average bare-earth terrain elevation in meters")
+    mean_canopy_height_m: float = Field(..., description="Average vegetation canopy height (nDSM) in meters")
+    max_structure_height_m: float = Field(..., description="Maximum building/structure height (nDSM) in meters")
+    mean_residual_m: float = Field(..., description="Average residual distance between ground points and cloth in meters")
+    classification_tier: str = Field(..., description="Ground isolation classification tier")
+    tier_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Styling badge and color metadata")
+    sample_points: List[CSFPointSample] = Field(..., description="Sample points illustrating classification and cloth displacement")
+    tile_url_template: str = Field(..., description="Dynamic XYZ DTM/CSF tile streaming URL template")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def calculate_cloth_simulation_filter(
+    cloud_id: str = "UAV_POINTCLOUD_20261001",
+    cloth_resolution_m: float = 1.0,
+    rigidness: Union[str, CSFRigidness] = CSFRigidness.RELIEF_SLOPE,
+    classification_threshold_m: float = 0.35,
+    time_step: float = 0.65,
+    max_iterations: int = 500,
+    post_slope_smooth: bool = True,
+    sample_count: int = 120
+) -> Dict[str, Any]:
+    """Calculates Cloth Simulation Filtering (CSF) ground classification and bare earth DTM extraction.
+    
+    References:
+        - Zhang, W. et al. (2016): An easy-to-use airborne LiDAR data filtering method based on cloth simulation.
+          Remote Sensing, 8(6), 501.
+    """
+    rig_str = rigidness.value if isinstance(rigidness, CSFRigidness) else str(rigidness).lower()
+    res_m = max(0.1, float(cloth_resolution_m))
+    thresh_m = max(0.05, float(classification_threshold_m))
+    n_pts = max(24, int(sample_count))
+
+    # Rigidness damping factor: flat terrain cloth stretches stiffly (lower sag), mountain cloth conforms more tightly
+    if rig_str == "flat_terrain":
+        stiffness_factor = 0.05
+    elif rig_str == "steep_mountain":
+        stiffness_factor = 0.22
+    else:  # relief_slope
+        stiffness_factor = 0.12
+
+    points: List[Dict[str, Any]] = []
+    ground_count = 0
+    off_ground_count = 0
+    ground_elevs: List[float] = []
+    canopy_heights: List[float] = []
+    structure_heights: List[float] = []
+    ground_residuals: List[float] = []
+
+    grid_side = int(math.ceil(math.sqrt(n_pts)))
+    pt_idx = 0
+
+    for r in range(grid_side):
+        for c in range(grid_side):
+            if pt_idx >= n_pts:
+                break
+            pt_idx += 1
+
+            x = round(c * (100.0 / max(1, grid_side - 1)), 2)
+            y = round(r * (100.0 / max(1, grid_side - 1)), 2)
+
+            # Underlying synthetic terrain (sloping undulating bare ground)
+            z_ground_true = 320.0 + 0.08 * x - 0.04 * y + 3.2 * math.sin(x / 18.0) * math.cos(y / 24.0)
+
+            # Determine point feature type: 65% ground, 15% low veg, 12% high veg, 8% building
+            mod = pt_idx % 100
+            if mod < 65:
+                # Bare earth ground
+                feature_height = (math.sin(pt_idx * 2.1) * 0.06)
+                cls_type = PointClassificationType.GROUND
+            elif mod < 80:
+                # Low vegetation / shrub (0.4 to 1.8 m)
+                feature_height = 0.45 + (pt_idx % 14) * 0.09
+                cls_type = PointClassificationType.LOW_VEGETATION
+            elif mod < 92:
+                # High vegetation / tree canopy (2.5 to 10.0 m)
+                feature_height = 2.5 + (pt_idx % 12) * 0.62
+                cls_type = PointClassificationType.HIGH_VEGETATION
+            else:
+                # Building / manmade structure (8.0 to 18.0 m)
+                feature_height = 8.5 + (pt_idx % 10) * 0.95
+                cls_type = PointClassificationType.BUILDING_STRUCTURE
+
+            z_dsm = round(z_ground_true + feature_height, 3)
+
+            # Draped virtual cloth elevation:
+            # For ground points, cloth settles within small tolerance of ground.
+            # For elevated objects, cloth bridges over without sagging completely, adhering near ground.
+            cloth_tension_delta = stiffness_factor * math.sin(x * 0.1) * 0.15
+            z_cloth = round(z_ground_true + cloth_tension_delta, 3)
+
+            dist_to_cloth = max(0.0, round(z_dsm - z_cloth, 3))
+            is_ground = dist_to_cloth <= thresh_m
+
+            if is_ground:
+                ground_count += 1
+                ground_elevs.append(z_dsm)
+                ground_residuals.append(dist_to_cloth)
+                assigned_cls = PointClassificationType.GROUND
+            else:
+                off_ground_count += 1
+                if dist_to_cloth <= 2.0:
+                    assigned_cls = PointClassificationType.LOW_VEGETATION
+                    canopy_heights.append(dist_to_cloth)
+                elif dist_to_cloth <= 12.0:
+                    assigned_cls = PointClassificationType.HIGH_VEGETATION
+                    canopy_heights.append(dist_to_cloth)
+                else:
+                    assigned_cls = PointClassificationType.BUILDING_STRUCTURE
+                    structure_heights.append(dist_to_cloth)
+
+            points.append({
+                "point_id": f"PT_{pt_idx:04d}",
+                "x": x,
+                "y": y,
+                "z_dsm": z_dsm,
+                "z_cloth": z_cloth,
+                "distance_to_cloth_m": dist_to_cloth,
+                "classification": assigned_cls.value,
+                "is_ground": is_ground
+            })
+
+    total_pts = len(points)
+    gf = round(ground_count / max(1, total_pts), 3)
+    mean_ground_z = round(sum(ground_elevs) / max(1, len(ground_elevs)), 2)
+    mean_canopy = round(sum(canopy_heights) / max(1, len(canopy_heights)), 2) if canopy_heights else 1.85
+    max_struct = round(max(structure_heights), 2) if structure_heights else 14.5
+    mean_res = round(sum(ground_residuals) / max(1, len(ground_residuals)), 3) if ground_residuals else 0.085
+
+    tier = classify_csf_ground_tier(gf, mean_res)
+
+    return {
+        "cloud_id": cloud_id,
+        "cloth_resolution_m": res_m,
+        "rigidness": rig_str,
+        "classification_threshold_m": thresh_m,
+        "total_points": total_pts,
+        "ground_points_count": ground_count,
+        "off_ground_points_count": off_ground_count,
+        "ground_fraction": gf,
+        "mean_ground_elevation_m": mean_ground_z,
+        "mean_canopy_height_m": mean_canopy,
+        "max_structure_height_m": max_struct,
+        "mean_residual_m": mean_res,
+        "classification_tier": tier.value,
+        "tier_metadata": CSF_TIER_METADATA.get(tier.value),
+        "sample_points": points[:20],
+        "tile_url_template": f"/api/v1/tiles/pointcloud/csf/{cloud_id}/{{z}}/{{x}}/{{y}}.png"
+    }
+
+
+def build_csf_point_filter_tile_url(
+    cloud_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for CSF-filtered DTM/classified points."""
+    return f"{base_prefix}/tiles/pointcloud/csf/{cloud_id}/{z}/{x}/{y}.png"
+
+
+# ----------------------------------------------------------------------------
+# TWO-PASS DIFFERENTIAL INSAR (DINSAR) & GOLDSTEIN FILTERING
+# ----------------------------------------------------------------------------
+
+class DInSARPhaseMethod(str, Enum):
+    """Interferometric phase processing and topographic decoupling methodology."""
+    TWO_PASS_EXTERNAL_DEM = "two_pass_external_dem"      # External DEM (Copernicus 30m / drone DSM) simulates phi_topo
+    THREE_PASS_INTERFEROMETRIC = "three_pass_interferometric" # Uses 3 acquisitions to decouple topography
+    FOUR_PASS_RESIDUAL = "four_pass_residual"            # Multi-temporal baseline subtraction
+
+
+class DInSARDeformationTier(str, Enum):
+    """Line-of-sight surface deformation severity tiers."""
+    RAPID_COSEISMIC_DEFORMATION = "rapid_coseismic_deformation"      # |d_LOS| >= 50 mm (severe fault slip/sinkhole)
+    MODERATE_SUBSIDENCE_OR_SLOPE = "moderate_subsidence_or_slope"    # 15.0 <= |d_LOS| < 50.0 mm (embankment/mine slope)
+    MINOR_CREEP_DEFORMATION = "minor_creep_deformation"              # 4.0 <= |d_LOS| < 15.0 mm (gradual settlement)
+    STABLE_PHASE_COHERENCE = "stable_phase_coherence"                # |d_LOS| < 4.0 mm (millimetric stability)
+
+
+DINSAR_TIER_METADATA: Dict[str, Dict[str, Any]] = {
+    "rapid_coseismic_deformation": {
+        "id": "rapid_coseismic_deformation",
+        "label": "Rapid Coseismic Deformation (|d_LOS| >= 50 mm)",
+        "min_disp_mm": 50.0,
+        "color": "#ef4444",
+        "badge_class": "bg-red-500/20 text-red-300 border-red-500/30"
+    },
+    "moderate_subsidence_or_slope": {
+        "id": "moderate_subsidence_or_slope",
+        "label": "Moderate Subsidence / Slope Movement (15 <= |d_LOS| < 50 mm)",
+        "min_disp_mm": 15.0,
+        "max_disp_mm": 50.0,
+        "color": "#f97316",
+        "badge_class": "bg-orange-500/20 text-orange-300 border-orange-500/30"
+    },
+    "minor_creep_deformation": {
+        "id": "minor_creep_deformation",
+        "label": "Minor Creep Deformation (4 <= |d_LOS| < 15 mm)",
+        "min_disp_mm": 4.0,
+        "max_disp_mm": 15.0,
+        "color": "#eab308",
+        "badge_class": "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+    },
+    "stable_phase_coherence": {
+        "id": "stable_phase_coherence",
+        "label": "Stable Phase Coherence (|d_LOS| < 4 mm)",
+        "max_disp_mm": 4.0,
+        "color": "#22c55e",
+        "badge_class": "bg-green-500/20 text-green-300 border-green-500/30"
+    }
+}
+
+
+def classify_dinsar_deformation_tier(max_abs_disp_mm: float) -> DInSARDeformationTier:
+    """Classifies maximum absolute line-of-sight displacement into hazard tiers."""
+    val = abs(float(max_abs_disp_mm))
+    if val >= 50.0:
+        return DInSARDeformationTier.RAPID_COSEISMIC_DEFORMATION
+    if val >= 15.0:
+        return DInSARDeformationTier.MODERATE_SUBSIDENCE_OR_SLOPE
+    if val >= 4.0:
+        return DInSARDeformationTier.MINOR_CREEP_DEFORMATION
+    return DInSARDeformationTier.STABLE_PHASE_COHERENCE
+
+
+class DInSARFringeSample(BaseModel):
+    """Representative interferometric phase fringe sample."""
+    sample_id: str = Field(..., description="Fringe sample point identifier")
+    lat: float = Field(..., description="WGS84 latitude coordinate")
+    lon: float = Field(..., description="WGS84 longitude coordinate")
+    raw_interferometric_phase_rad: float = Field(..., description="Raw wrapped interferometric phase phi_int in radians")
+    synthetic_topographic_phase_rad: float = Field(..., description="Simulated topographic phase phi_topo from DEM in radians")
+    differential_phase_rad: float = Field(..., description="Differential phase Delta phi_diff = W{phi_int - phi_topo} in radians")
+    goldstein_filtered_phase_rad: float = Field(..., description="Goldstein power-spectrum filtered differential phase in radians")
+    los_displacement_mm: float = Field(..., description="Derived line-of-sight surface displacement in millimeters")
+    coherence: float = Field(..., ge=0.0, le=1.0, description="Interferometric spatial coherence gamma")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_sample(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "sampleId" in data and "sample_id" not in data:
+                data["sample_id"] = data["sampleId"]
+            if "rawInterferometricPhaseRad" in data and "raw_interferometric_phase_rad" not in data:
+                data["raw_interferometric_phase_rad"] = data["rawInterferometricPhaseRad"]
+            if "syntheticTopographicPhaseRad" in data and "synthetic_topographic_phase_rad" not in data:
+                data["synthetic_topographic_phase_rad"] = data["syntheticTopographicPhaseRad"]
+            if "differentialPhaseRad" in data and "differential_phase_rad" not in data:
+                data["differential_phase_rad"] = data["differentialPhaseRad"]
+            if "goldsteinFilteredPhaseRad" in data and "goldstein_filtered_phase_rad" not in data:
+                data["goldstein_filtered_phase_rad"] = data["goldsteinFilteredPhaseRad"]
+            if "losDisplacementMm" in data and "los_displacement_mm" not in data:
+                data["los_displacement_mm"] = data["losDisplacementMm"]
+        return data
+
+
+class DInSARAnalysisRequest(BaseModel):
+    """Request payload for two-pass DInSAR topographic phase removal and Goldstein filtering."""
+    master_id: str = Field(default="S1A_IW_SLC__1SDV_20260901", description="Master SAR acquisition identifier")
+    slave_id: str = Field(default="S1A_IW_SLC__1SDV_20260913", description="Slave SAR acquisition identifier")
+    dem_id: str = Field(default="cop-dem-glo-30", description="Digital Elevation Model identifier")
+    method: DInSARPhaseMethod = Field(default=DInSARPhaseMethod.TWO_PASS_EXTERNAL_DEM, description="DInSAR processing method")
+    perpendicular_baseline_m: float = Field(default=78.4, ge=-500.0, le=500.0, description="Perpendicular baseline B_perp in meters")
+    temporal_baseline_days: int = Field(default=12, ge=1, le=365, description="Temporal baseline B_T in days")
+    radar_wavelength_m: float = Field(default=0.0554657, gt=0.01, le=0.5, description="SAR sensor radar carrier wavelength (C-band ~0.0555 m)")
+    incidence_angle_deg: float = Field(default=39.2, ge=15.0, le=60.0, description="Radar look / incidence angle theta_0 in degrees")
+    goldstein_alpha: float = Field(default=0.65, ge=0.0, le=1.0, description="Goldstein non-linear power-spectrum filter parameter alpha")
+    coherence_threshold: float = Field(default=0.35, ge=0.1, le=0.95, description="Interferometric coherence mask cutoff")
+    bbox: Optional[Union[List[float], Tuple[float, float, float, float], Dict[str, float], BoundingBox]] = Field(
+        default=None, description="Spatial bounding envelope"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "masterId" in data and "master_id" not in data:
+                data["master_id"] = data["masterId"]
+            if "slaveId" in data and "slave_id" not in data:
+                data["slave_id"] = data["slaveId"]
+            if "demId" in data and "dem_id" not in data:
+                data["dem_id"] = data["demId"]
+            if "perpendicularBaselineM" in data and "perpendicular_baseline_m" not in data:
+                data["perpendicular_baseline_m"] = data["perpendicularBaselineM"]
+            if "perpendicularBaseline" in data and "perpendicular_baseline_m" not in data:
+                data["perpendicular_baseline_m"] = data["perpendicularBaseline"]
+            if "temporalBaselineDays" in data and "temporal_baseline_days" not in data:
+                data["temporal_baseline_days"] = data["temporalBaselineDays"]
+            if "temporalBaseline" in data and "temporal_baseline_days" not in data:
+                data["temporal_baseline_days"] = data["temporalBaseline"]
+            if "radarWavelengthM" in data and "radar_wavelength_m" not in data:
+                data["radar_wavelength_m"] = data["radarWavelengthM"]
+            if "radarWavelength" in data and "radar_wavelength_m" not in data:
+                data["radar_wavelength_m"] = data["radarWavelength"]
+            if "incidenceAngleDeg" in data and "incidence_angle_deg" not in data:
+                data["incidence_angle_deg"] = data["incidenceAngleDeg"]
+            if "incidenceAngle" in data and "incidence_angle_deg" not in data:
+                data["incidence_angle_deg"] = data["incidenceAngle"]
+            if "goldsteinAlpha" in data and "goldstein_alpha" not in data:
+                data["goldstein_alpha"] = data["goldsteinAlpha"]
+            if "coherenceThreshold" in data and "coherence_threshold" not in data:
+                data["coherence_threshold"] = data["coherenceThreshold"]
+            if "bbox" in data and data["bbox"] is not None and not isinstance(data["bbox"], BoundingBox):
+                data["bbox"] = parse_bbox(data["bbox"])
+        return data
+
+
+class DInSARAnalysisResponse(BaseModel):
+    """Response payload for two-pass DInSAR analysis and Goldstein interferogram filtering."""
+    pair_id: str = Field(..., description="Interferometric pair identifier")
+    master_id: str = Field(..., description="Master scene identifier")
+    slave_id: str = Field(..., description="Slave scene identifier")
+    dem_id: str = Field(..., description="Digital Elevation Model identifier")
+    method: str = Field(..., description="Applied DInSAR phase method")
+    perpendicular_baseline_m: float = Field(..., description="Perpendicular baseline B_perp in meters")
+    temporal_baseline_days: int = Field(..., description="Temporal baseline in days")
+    mean_coherence: float = Field(..., description="Spatial average interferometric coherence gamma")
+    mean_los_displacement_mm: float = Field(..., description="Mean line-of-sight ground displacement in millimeters")
+    max_los_displacement_mm: float = Field(..., description="Peak positive LOS displacement in millimeters")
+    min_los_displacement_mm: float = Field(..., description="Peak negative LOS subsidence in millimeters")
+    deformation_tier: str = Field(..., description="Deformation hazard tier")
+    tier_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Styling badge and color metadata")
+    goldstein_alpha_applied: float = Field(..., description="Applied Goldstein filtering strength parameter")
+    phase_std_dev_rad: float = Field(..., description="Post-filtering phase standard deviation in radians")
+    fringe_samples: List[DInSARFringeSample] = Field(..., description="Representative differential fringe samples")
+    tile_url_template: str = Field(..., description="Dynamic XYZ DInSAR differential phase tile streaming URL template")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def calculate_dinsar_deformation(
+    master_id: str = "S1A_IW_SLC__1SDV_20260901",
+    slave_id: str = "S1A_IW_SLC__1SDV_20260913",
+    dem_id: str = "cop-dem-glo-30",
+    method: Union[str, DInSARPhaseMethod] = DInSARPhaseMethod.TWO_PASS_EXTERNAL_DEM,
+    perpendicular_baseline_m: float = 78.4,
+    temporal_baseline_days: int = 12,
+    radar_wavelength_m: float = 0.0554657,
+    incidence_angle_deg: float = 39.2,
+    goldstein_alpha: float = 0.65,
+    coherence_threshold: float = 0.35,
+    sample_count: int = 64
+) -> Dict[str, Any]:
+    """Calculates two-pass DInSAR topographic phase removal, Goldstein filtering, and LOS deformation.
+    
+    References:
+        - Massonnet, D., & Feigl, K. L. (1998): Radar interferometry and its application to changes in the Earth's surface.
+          Reviews of Geophysics, 36(4), 441-500.
+        - Goldstein, R. M., & Werner, C. L. (1998): Radar interferogram filtering for geophysical applications.
+          Geophysical Research Letters, 25(15), 2883-2886.
+    """
+    m_str = method.value if isinstance(method, DInSARPhaseMethod) else str(method).lower()
+    b_perp = float(perpendicular_baseline_m)
+    wavelength = max(0.01, float(radar_wavelength_m))
+    theta_rad = math.radians(float(incidence_angle_deg))
+    alpha = max(0.0, min(1.0, float(goldstein_alpha)))
+    coh_thresh = max(0.1, min(0.95, float(coherence_threshold)))
+    n_samples = max(16, int(sample_count))
+
+    pair_id = f"DINSAR_{master_id[-8:]}_{slave_id[-8:]}"
+
+    # Slant range approximation for Sentinel-1 (meters)
+    slant_range_r = 850000.0
+    sin_theta = max(0.1, math.sin(theta_rad))
+
+    # Topographic phase constant: k_topo = (4 * pi / lambda) * (B_perp / (R * sin(theta)))
+    k_topo = (4.0 * math.pi / wavelength) * (b_perp / (slant_range_r * sin_theta))
+
+    base_lat = 36.9540
+    base_lon = -121.0830
+
+    samples: List[Dict[str, Any]] = []
+    displacements: List[float] = []
+    coherences: List[float] = []
+    phase_residuals: List[float] = []
+
+    grid_side = int(math.ceil(math.sqrt(n_samples)))
+    idx = 0
+
+    for r in range(grid_side):
+        for c in range(grid_side):
+            if idx >= n_samples:
+                break
+            idx += 1
+
+            lat = round(base_lat + r * 0.0035, 5)
+            lon = round(base_lon + c * 0.0035, 5)
+
+            # Simulated DEM elevation at sample (meters)
+            dem_elevation = 280.0 + 12.0 * math.sin(r * 0.8) + 8.0 * math.cos(c * 0.6)
+
+            # True deformation: localized subsidence cone centered near center of grid
+            dist_center = math.sqrt((r - grid_side / 2.0) ** 2 + (c - grid_side / 2.0) ** 2)
+            true_disp_mm = -28.5 * math.exp(-0.5 * (dist_center / 2.5) ** 2) + 1.2 * math.sin(idx * 0.5)
+
+            # Deformation phase: phi_def = (4 * pi / lambda) * (d_LOS / 1000)
+            phi_def = (4.0 * math.pi / wavelength) * (true_disp_mm / 1000.0)
+
+            # Topographic phase component
+            phi_topo = k_topo * dem_elevation
+
+            # Noise and coherence
+            coherence = round(max(0.15, min(0.98, 0.88 - 0.04 * dist_center + 0.05 * math.sin(idx * 1.3))), 3)
+            phase_noise = (1.0 - coherence) * (math.cos(idx * 2.7) * 0.85)
+
+            # Total wrapped interferometric phase phi_int
+            total_unwrapped = phi_topo + phi_def + phase_noise
+            phi_int = math.atan2(math.sin(total_unwrapped), math.cos(total_unwrapped))
+
+            # Differential phase Delta phi_diff = W{phi_int - phi_topo}
+            diff_raw = phi_int - phi_topo
+            phi_diff = math.atan2(math.sin(diff_raw), math.cos(diff_raw))
+
+            # Goldstein filtering: non-linear power-spectrum attenuation of noise
+            # Noise reduced by (1.0 - 0.45 * alpha)
+            filtered_noise = phase_noise * (1.0 - 0.45 * alpha)
+            phi_filtered_raw = phi_def + filtered_noise
+            phi_goldstein = math.atan2(math.sin(phi_filtered_raw), math.cos(phi_filtered_raw))
+
+            # Converted LOS displacement from filtered phase: d_LOS = phi * (lambda / 4pi) * 1000
+            derived_disp_mm = round((phi_goldstein * wavelength / (4.0 * math.pi)) * 1000.0, 2)
+
+            displacements.append(derived_disp_mm)
+            coherences.append(coherence)
+            phase_residuals.append(abs(phi_goldstein - phi_def))
+
+            samples.append({
+                "sample_id": f"FRINGE_{idx:03d}",
+                "lat": lat,
+                "lon": lon,
+                "raw_interferometric_phase_rad": round(phi_int, 4),
+                "synthetic_topographic_phase_rad": round(phi_topo, 4),
+                "differential_phase_rad": round(phi_diff, 4),
+                "goldstein_filtered_phase_rad": round(phi_goldstein, 4),
+                "los_displacement_mm": derived_disp_mm,
+                "coherence": coherence
+            })
+
+    mean_coh = round(sum(coherences) / max(1, len(coherences)), 3)
+    mean_disp = round(sum(displacements) / max(1, len(displacements)), 2)
+    max_disp = round(max(displacements), 2)
+    min_disp = round(min(displacements), 2)
+    phase_std = round(math.sqrt(sum(p ** 2 for p in phase_residuals) / max(1, len(phase_residuals))), 4)
+
+    worst_abs = max(abs(max_disp), abs(min_disp))
+    tier = classify_dinsar_deformation_tier(worst_abs)
+
+    return {
+        "pair_id": pair_id,
+        "master_id": master_id,
+        "slave_id": slave_id,
+        "dem_id": dem_id,
+        "method": m_str,
+        "perpendicular_baseline_m": round(b_perp, 2),
+        "temporal_baseline_days": int(temporal_baseline_days),
+        "mean_coherence": mean_coh,
+        "mean_los_displacement_mm": mean_disp,
+        "max_los_displacement_mm": max_disp,
+        "min_los_displacement_mm": min_disp,
+        "deformation_tier": tier.value,
+        "tier_metadata": DINSAR_TIER_METADATA.get(tier.value),
+        "goldstein_alpha_applied": round(alpha, 2),
+        "phase_std_dev_rad": phase_std,
+        "fringe_samples": samples[:16],
+        "tile_url_template": f"/api/v1/tiles/sar/dinsar/{pair_id}/{{z}}/{{x}}/{{y}}.png"
+    }
+
+
+def build_dinsar_tile_url(
+    pair_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for DInSAR differential interferogram."""
+    return f"{base_prefix}/tiles/sar/dinsar/{pair_id}/{z}/{x}/{y}.png"
+
+
+# ----------------------------------------------------------------------------
+# PANCHROMATIC SPECTRAL SHARPENING (PAN-SHARPENING) VIA HPF & GRAM-SCHMIDT
+# ----------------------------------------------------------------------------
+
+class PanSharpenMethod(str, Enum):
+    """Panchromatic spectral fusion and spatial enhancement algorithm."""
+    GRAM_SCHMIDT = "gram_schmidt"            # Laben & Brower (2000) Gram-Schmidt orthogonalization
+    HIGH_PASS_FILTER = "high_pass_filter"    # Chavez et al. (1991) High-Pass Filter edge injection
+    BROVEY_TRANSFORM = "brovey_transform"    # Normalized color ratio intensity replacement
+    IHS_TRANSFORM = "ihs_transform"          # Intensity-Hue-Saturation component substitution
+
+
+class SpectralFidelityTier(str, Enum):
+    """Spectral radiometric preservation and synthesis fidelity tiers."""
+    PRISTINE_SPECTRAL_PRESERVATION = "pristine_spectral_preservation"  # SAM < 2.5 deg, ERGAS < 2.0
+    EXCELLENT_FIDELITY = "excellent_fidelity"                          # 2.5 <= SAM < 4.5 deg, ERGAS < 3.5
+    ACCEPTABLE_BLENDING = "acceptable_blending"                        # 4.5 <= SAM < 7.0 deg, ERGAS < 5.5
+    HIGH_COLOR_DISTORTION = "high_color_distortion"                    # SAM >= 7.0 deg or ERGAS >= 5.5
+
+
+PANSHARPEN_TIER_METADATA: Dict[str, Dict[str, Any]] = {
+    "pristine_spectral_preservation": {
+        "id": "pristine_spectral_preservation",
+        "label": "Pristine Spectral Preservation (SAM < 2.5 deg, ERGAS < 2.0)",
+        "max_sam_deg": 2.5,
+        "max_ergas": 2.0,
+        "color": "#22c55e",
+        "badge_class": "bg-green-500/20 text-green-300 border-green-500/30"
+    },
+    "excellent_fidelity": {
+        "id": "excellent_fidelity",
+        "label": "Excellent Fidelity (2.5 <= SAM < 4.5 deg, ERGAS < 3.5)",
+        "max_sam_deg": 4.5,
+        "max_ergas": 3.5,
+        "color": "#3b82f6",
+        "badge_class": "bg-blue-500/20 text-blue-300 border-blue-500/30"
+    },
+    "acceptable_blending": {
+        "id": "acceptable_blending",
+        "label": "Acceptable Blending (4.5 <= SAM < 7.0 deg, ERGAS < 5.5)",
+        "max_sam_deg": 7.0,
+        "max_ergas": 5.5,
+        "color": "#eab308",
+        "badge_class": "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+    },
+    "high_color_distortion": {
+        "id": "high_color_distortion",
+        "label": "High Color Distortion (SAM >= 7.0 deg or ERGAS >= 5.5)",
+        "max_sam_deg": 90.0,
+        "max_ergas": 99.0,
+        "color": "#ef4444",
+        "badge_class": "bg-red-500/20 text-red-300 border-red-500/30"
+    }
+}
+
+
+def classify_spectral_fidelity_tier(sam_deg: float, ergas: float) -> SpectralFidelityTier:
+    """Classifies spectral angle mapper and ERGAS index into fidelity tiers."""
+    s = float(sam_deg)
+    e = float(ergas)
+    if s < 2.5 and e < 2.0:
+        return SpectralFidelityTier.PRISTINE_SPECTRAL_PRESERVATION
+    if s < 4.5 and e < 3.5:
+        return SpectralFidelityTier.EXCELLENT_FIDELITY
+    if s < 7.0 and e < 5.5:
+        return SpectralFidelityTier.ACCEPTABLE_BLENDING
+    return SpectralFidelityTier.HIGH_COLOR_DISTORTION
+
+
+class PanSharpenBandDetail(BaseModel):
+    """Detailed spectral band metrics before and after panchromatic sharpening."""
+    band: str = Field(..., description="Spectral band name (e.g. B02, B03, B04, B05)")
+    low_res_reflectance: float = Field(..., description="Original low-resolution multispectral reflectance")
+    sharpened_reflectance: float = Field(..., description="High-resolution sharpened fused reflectance")
+    high_pass_delta: float = Field(..., description="Injected high-frequency spatial edge increment")
+    band_weight: float = Field(..., description="Simulated panchromatic synthesis weight")
+    correlation_with_pan: float = Field(..., description="Pearson correlation coefficient with panchromatic band")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_detail(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "lowResReflectance" in data and "low_res_reflectance" not in data:
+                data["low_res_reflectance"] = data["lowResReflectance"]
+            if "sharpenedReflectance" in data and "sharpened_reflectance" not in data:
+                data["sharpened_reflectance"] = data["sharpenedReflectance"]
+            if "highPassDelta" in data and "high_pass_delta" not in data:
+                data["high_pass_delta"] = data["highPassDelta"]
+            if "bandWeight" in data and "band_weight" not in data:
+                data["band_weight"] = data["bandWeight"]
+            if "correlationWithPan" in data and "correlation_with_pan" not in data:
+                data["correlation_with_pan"] = data["correlationWithPan"]
+        return data
+
+
+class PanSharpenRequest(BaseModel):
+    """Request payload for panchromatic spectral sharpening."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.LANDSAT_C2_L2, description="Target sensor collection")
+    item_id: str = Field(default="LC09_L2SP_042034_20260915", description="Target scene identifier")
+    pan_band: str = Field(default="B08", description="High-resolution panchromatic band (e.g. B08 15m)")
+    ms_bands: List[str] = Field(default_factory=lambda: ["B02", "B03", "B04", "B05"], description="Multispectral bands to sharpen")
+    method: PanSharpenMethod = Field(default=PanSharpenMethod.GRAM_SCHMIDT, description="Pan-sharpening fusion algorithm")
+    sensor_pan_gsd_m: float = Field(default=15.0, gt=0.1, le=60.0, description="Panchromatic sensor GSD in meters")
+    sensor_ms_gsd_m: float = Field(default=30.0, gt=0.1, le=120.0, description="Multispectral sensor GSD in meters")
+    high_pass_kernel_size: int = Field(default=5, ge=3, le=9, description="Spatial high-pass convolution kernel dimension")
+    observed_pan_reflectance: float = Field(default=0.245, ge=0.0, le=1.0, description="Observed panchromatic reflectance")
+    observed_ms_reflectances: Optional[Dict[str, float]] = Field(default=None, description="Observed multispectral band reflectances")
+    bbox: Optional[Union[List[float], Tuple[float, float, float, float], Dict[str, float], BoundingBox]] = Field(
+        default=None, description="Spatial bounding envelope"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "itemId" in data and "item_id" not in data:
+                data["item_id"] = data["itemId"]
+            if "panBand" in data and "pan_band" not in data:
+                data["pan_band"] = data["panBand"]
+            if "msBands" in data and "ms_bands" not in data:
+                data["ms_bands"] = data["msBands"]
+            if "sensorPanGsdM" in data and "sensor_pan_gsd_m" not in data:
+                data["sensor_pan_gsd_m"] = data["sensorPanGsdM"]
+            if "sensorMsGsdM" in data and "sensor_ms_gsd_m" not in data:
+                data["sensor_ms_gsd_m"] = data["sensorMsGsdM"]
+            if "highPassKernelSize" in data and "high_pass_kernel_size" not in data:
+                data["high_pass_kernel_size"] = data["highPassKernelSize"]
+            if "observedPanReflectance" in data and "observed_pan_reflectance" not in data:
+                data["observed_pan_reflectance"] = data["observedPanReflectance"]
+            if "observedMsReflectances" in data and "observed_ms_reflectances" not in data:
+                data["observed_ms_reflectances"] = data["observedMsReflectances"]
+            if "bbox" in data and data["bbox"] is not None and not isinstance(data["bbox"], BoundingBox):
+                data["bbox"] = parse_bbox(data["bbox"])
+        return data
+
+
+class PanSharpenResponse(BaseModel):
+    """Response payload for panchromatic spectral sharpening."""
+    collection: str = Field(..., description="Satellite sensor collection")
+    item_id: str = Field(..., description="Scene identifier")
+    pan_band: str = Field(..., description="Panchromatic band")
+    method: str = Field(..., description="Applied pan-sharpening fusion algorithm")
+    spatial_resolution_boost: float = Field(..., description="Spatial resolution boost multiplier (ms_gsd / pan_gsd)")
+    pan_gsd_m: float = Field(..., description="Panchromatic ground sampling distance in meters")
+    ms_gsd_m: float = Field(..., description="Original multispectral ground sampling distance in meters")
+    simulated_pan_reflectance: float = Field(..., description="Simulated panchromatic reflectance from multispectral weighted sum")
+    spectral_angle_mapper_deg: float = Field(..., description="Spectral Angle Mapper (SAM) distortion metric in degrees")
+    ergas_index: float = Field(..., description="Dimensionless relative global synthesis error (ERGAS)")
+    fidelity_tier: str = Field(..., description="Radiometric preservation fidelity tier")
+    tier_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Styling badge and color metadata")
+    bands: Dict[str, PanSharpenBandDetail] = Field(..., description="Per-band sharpening results and edge injection deltas")
+    tile_url_template: str = Field(..., description="Dynamic XYZ sharpened tile streaming URL template")
+    sharpened_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def calculate_pansharpen_fusion(
+    collection: str = "landsat-c2-l2",
+    item_id: str = "LC09_L2SP_042034_20260915",
+    pan_band: str = "B08",
+    ms_bands: Optional[List[str]] = None,
+    method: Union[str, PanSharpenMethod] = PanSharpenMethod.GRAM_SCHMIDT,
+    sensor_pan_gsd_m: float = 15.0,
+    sensor_ms_gsd_m: float = 30.0,
+    high_pass_kernel_size: int = 5,
+    observed_pan_reflectance: float = 0.245,
+    observed_ms_reflectances: Optional[Dict[str, float]] = None
+) -> Dict[str, Any]:
+    """Calculates panchromatic spectral sharpening using Gram-Schmidt or High-Pass Filter edge injection.
+    
+    References:
+        - Chavez, P. S. et al. (1991): Comparison of three different methods to merge multiresolution and multispectral data.
+          Photogrammetric Engineering & Remote Sensing, 57(3), 295-303.
+        - Laben, C. A., & Brower, B. V. (2000): Process for enhancing the spatial resolution of multispectral imagery using pan-sharpening.
+          US Patent 6,011,875.
+    """
+    m_str = method.value if isinstance(method, PanSharpenMethod) else str(method).lower()
+    pan_gsd = max(0.1, float(sensor_pan_gsd_m))
+    ms_gsd = max(0.1, float(sensor_ms_gsd_m))
+    boost = round(ms_gsd / pan_gsd, 2)
+    pan_obs = max(0.0, min(1.0, float(observed_pan_reflectance)))
+
+    target_bands = ms_bands or ["B02", "B03", "B04", "B05"]
+    default_refl = {"B02": 0.095, "B03": 0.138, "B04": 0.168, "B05": 0.310, "B06": 0.220, "B07": 0.145}
+    # Spectral response weights for simulated panchromatic band (Landsat 8/9 OLI Pan covers ~0.50-0.68 um: blue, green, red)
+    band_weights_map = {"B02": 0.15, "B03": 0.35, "B04": 0.40, "B05": 0.10, "B06": 0.00, "B07": 0.00}
+
+    # Normalize weights for selected bands
+    raw_weights = [band_weights_map.get(b, 1.0 / max(1, len(target_bands))) for b in target_bands]
+    w_sum = sum(raw_weights) or 1.0
+    norm_weights = [w / w_sum for w in raw_weights]
+
+    ms_vals: Dict[str, float] = {}
+    sim_pan = 0.0
+    for i, b in enumerate(target_bands):
+        val = (observed_ms_reflectances or {}).get(b, default_refl.get(b, 0.15))
+        clamped = max(0.0, min(1.0, float(val)))
+        ms_vals[b] = clamped
+        sim_pan += norm_weights[i] * clamped
+
+    sim_pan = round(sim_pan, 4)
+    pan_diff = pan_obs - sim_pan
+
+    band_results: Dict[str, Dict[str, Any]] = {}
+    low_vec: List[float] = []
+    sharp_vec: List[float] = []
+    squared_rel_errors: List[float] = []
+
+    for i, b in enumerate(target_bands):
+        orig = ms_vals[b]
+        w = norm_weights[i]
+
+        if m_str == "gram_schmidt":
+            # Gram-Schmidt gain g_i = cov(MS_i, P_sim) / var(P_sim)
+            # Simulated gain aligns with band covariance
+            gain = 0.88 + 0.24 * w
+            sharp = orig + gain * pan_diff
+            hpf_delta = gain * pan_diff
+            corr = 0.94 - 0.02 * i
+        elif m_str == "high_pass_filter":
+            # HPF injects spatial high-pass component
+            gain = 0.75 + 0.18 * w
+            sharp = orig + gain * pan_diff
+            hpf_delta = gain * pan_diff
+            corr = 0.91 - 0.02 * i
+        elif m_str == "brovey_transform":
+            ratio = pan_obs / max(0.01, sim_pan)
+            sharp = orig * ratio
+            hpf_delta = sharp - orig
+            corr = 0.88 - 0.03 * i
+        else:  # ihs_transform
+            sharp = orig + pan_diff
+            hpf_delta = pan_diff
+            corr = 0.86 - 0.03 * i
+
+        sharp_clamped = round(max(0.0, min(1.0, sharp)), 4)
+        band_results[b] = {
+            "band": b,
+            "low_res_reflectance": round(orig, 4),
+            "sharpened_reflectance": sharp_clamped,
+            "high_pass_delta": round(hpf_delta, 4),
+            "band_weight": round(w, 3),
+            "correlation_with_pan": round(corr, 3)
+        }
+
+        low_vec.append(orig)
+        sharp_vec.append(sharp_clamped)
+        squared_rel_errors.append(((sharp_clamped - orig) / max(0.01, orig)) ** 2)
+
+    # Calculate Spectral Angle Mapper (SAM) in degrees:
+    # SAM = arccos( (low . sharp) / (||low|| * ||sharp||) ) * 180 / pi
+    dot_prod = sum(l * s for l, s in zip(low_vec, sharp_vec))
+    norm_low = math.sqrt(sum(l * l for l in low_vec))
+    norm_sharp = math.sqrt(sum(s * s for s in sharp_vec))
+    cos_sam = max(-1.0, min(1.0, dot_prod / max(1e-6, norm_low * norm_sharp)))
+    sam_deg = round(math.degrees(math.acos(cos_sam)), 2)
+
+    # Calculate ERGAS (relative dimensionless global error in synthesis):
+    # ERGAS = 100 * (pan_gsd / ms_gsd) * sqrt( (1 / N) * sum( (sharp - orig)^2 / orig^2 ) )
+    mean_rel_sq_err = sum(squared_rel_errors) / max(1, len(squared_rel_errors))
+    ergas = round(100.0 * (pan_gsd / ms_gsd) * math.sqrt(mean_rel_sq_err), 2)
+
+    tier = classify_spectral_fidelity_tier(sam_deg, ergas)
+
+    return {
+        "collection": collection,
+        "item_id": item_id,
+        "pan_band": pan_band,
+        "method": m_str,
+        "spatial_resolution_boost": boost,
+        "pan_gsd_m": pan_gsd,
+        "ms_gsd_m": ms_gsd,
+        "simulated_pan_reflectance": sim_pan,
+        "spectral_angle_mapper_deg": sam_deg,
+        "ergas_index": ergas,
+        "fidelity_tier": tier.value,
+        "tier_metadata": PANSHARPEN_TIER_METADATA.get(tier.value),
+        "bands": band_results,
+        "tile_url_template": f"/api/v1/tiles/imagery/pan-sharpen/{collection}/{item_id}/{{z}}/{{x}}/{{y}}.png"
+    }
+
+
+def build_pansharpen_tile_url(
+    collection: str,
+    item_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for pan-sharpened multispectral imagery."""
+    return f"{base_prefix}/tiles/imagery/pan-sharpen/{collection}/{item_id}/{z}/{x}/{y}.png"
+
+
+# ============================================================================
+# CYCLE v2.5.10: NODEODM PHOTOGRAMMETRY, QUALITY MOSAICS & MULTI-HAZARD ALERTS
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 1. Asynchronous NodeODM Drone Photogrammetry Worker Queue
+# ----------------------------------------------------------------------------
+
+class ODMTaskStatus(str, Enum):
+    """Lifecycle state of an asynchronous OpenDroneMap photogrammetry reconstruction task."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ODMProcessingStage(str, Enum):
+    """Granular algorithmic stages of the OpenDroneMap / OpenSfM pipeline."""
+    QUEUED = "queued"
+    DATASET_INITIALIZATION = "dataset_initialization"
+    STRUCTURE_FROM_MOTION = "structure_from_motion"
+    MVS_DENSE_POINT_CLOUD = "mvs_dense_point_cloud"
+    DEM_SURFACE_EXTRACTION = "dem_surface_extraction"
+    ORTHOPHOTO_MOSAICING = "orthophoto_mosaicing"
+    COG_EXPORT_AND_INDEXING = "cog_export_and_indexing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+ODM_STAGE_METADATA: Dict[str, Dict[str, Any]] = {
+    "queued": {
+        "id": "queued",
+        "label": "Queued in Worker Pool",
+        "progress_range": [0.0, 5.0],
+        "description": "Task staged in Celery/Redis queue awaiting available photogrammetry worker allocation.",
+        "badge_color": "#94a3b8"
+    },
+    "dataset_initialization": {
+        "id": "dataset_initialization",
+        "label": "Dataset & EXIF Extraction",
+        "progress_range": [5.0, 15.0],
+        "description": "Validating EXIF metadata, GPS geotags, and optical camera focal length / sensor intrinsics.",
+        "badge_color": "#38bdf8"
+    },
+    "structure_from_motion": {
+        "id": "structure_from_motion",
+        "label": "Structure from Motion (SfM)",
+        "progress_range": [15.0, 45.0],
+        "description": "OpenSfM feature detection, keypoint matching, and sparse bundle adjustment optimization.",
+        "badge_color": "#818cf8"
+    },
+    "mvs_dense_point_cloud": {
+        "id": "mvs_dense_point_cloud",
+        "label": "Dense Multi-View Stereo (MVS)",
+        "progress_range": [45.0, 70.0],
+        "description": "OpenMVS patch-match multi-view stereo densification and 3D point cloud generation.",
+        "badge_color": "#a855f7"
+    },
+    "dem_surface_extraction": {
+        "id": "dem_surface_extraction",
+        "label": "DEM & CSF Ground Filtering",
+        "progress_range": [70.0, 85.0],
+        "description": "Cloth Simulation Filter (CSF) ground classification, 2.5D DSM and DTM rasterization.",
+        "badge_color": "#ec4899"
+    },
+    "orthophoto_mosaicing": {
+        "id": "orthophoto_mosaicing",
+        "label": "True Orthomosaic Generation",
+        "progress_range": [85.0, 95.0],
+        "description": "Multiresolution seamline graph-cut optimization, color balancing, and orthorectification.",
+        "badge_color": "#14b8a6"
+    },
+    "cog_export_and_indexing": {
+        "id": "cog_export_and_indexing",
+        "label": "Cloud-Optimized GeoTIFF Export",
+        "progress_range": [95.0, 100.0],
+        "description": "Generating internal pyramidal tile overviews and registering STAC asset metadata.",
+        "badge_color": "#22c55e"
+    },
+    "completed": {
+        "id": "completed",
+        "label": "Processing Completed",
+        "progress_range": [100.0, 100.0],
+        "description": "All deliverables rendered and tile endpoints online.",
+        "badge_color": "#10b981"
+    },
+    "failed": {
+        "id": "failed",
+        "label": "Task Execution Failed",
+        "progress_range": [0.0, 0.0],
+        "description": "Pipeline aborted due to exception or invalid inputs.",
+        "badge_color": "#ef4444"
+    }
+}
+
+
+class ODMTaskOutputArtifacts(BaseModel):
+    """Deliverables generated by NodeODM photogrammetry processing."""
+    orthophoto_asset_url: Optional[str] = Field(default=None, description="URL for high-resolution Cloud-Optimized GeoTIFF orthophoto")
+    dtm_asset_url: Optional[str] = Field(default=None, description="URL for bare-earth Digital Terrain Model GeoTIFF")
+    dsm_asset_url: Optional[str] = Field(default=None, description="URL for Digital Surface Model GeoTIFF")
+    point_cloud_asset_url: Optional[str] = Field(default=None, description="URL for densified LAZ point cloud")
+    report_pdf_url: Optional[str] = Field(default=None, description="URL for photogrammetric quality control PDF report")
+
+
+class ODMTaskRequest(BaseModel):
+    """Request payload for dispatching an asynchronous NodeODM drone photogrammetry mission."""
+    task_id: Optional[str] = Field(default="ODM_TASK_20261001_001", description="Unique photogrammetry task identifier")
+    project_name: str = Field(default="Embankment_Drone_Survey_2026", description="Mission or project name")
+    image_count: int = Field(default=120, ge=3, le=5000, description="Total raw drone aerial photos staged for reconstruction")
+    camera_model: str = Field(default="DJI_FC6310R_8.8_5472x3648", description="UAV camera and lens model")
+    gsd_target_cm: float = Field(default=2.5, ge=0.5, le=50.0, description="Target Ground Sampling Distance in centimeters/pixel")
+    feature_quality: str = Field(default="high", description="OpenSfM keypoint extraction density (ultra, high, medium, low)")
+    dem_resolution_cm: float = Field(default=5.0, ge=1.0, le=100.0, description="DEM spatial resolution in centimeters/pixel")
+    mesh_octree_depth: int = Field(default=10, ge=6, le=14, description="OpenMVS Poisson surface reconstruction octree depth")
+    use_gpu: bool = Field(default=True, description="Enable CUDA GPU acceleration for dense matching")
+    dsm: bool = Field(default=True, description="Generate Digital Surface Model")
+    dtm: bool = Field(default=True, description="Generate bare-earth Digital Terrain Model using CSF filtering")
+    orthophoto: bool = Field(default=True, description="Generate orthorectified mosaic")
+    radiometric_calibration: str = Field(default="camera+sun", description="Radiometric calibration mode (none, camera, camera+sun)")
+    webhook_callback_url: Optional[str] = Field(default=None, description="Optional webhook URL to receive progress events")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapping = {
+                "taskId": "task_id",
+                "projectName": "project_name",
+                "imageCount": "image_count",
+                "cameraModel": "camera_model",
+                "gsdTargetCm": "gsd_target_cm",
+                "featureQuality": "feature_quality",
+                "demResolutionCm": "dem_resolution_cm",
+                "meshOctreeDepth": "mesh_octree_depth",
+                "useGpu": "use_gpu",
+                "radiometricCalibration": "radiometric_calibration",
+                "webhookCallbackUrl": "webhook_callback_url",
+            }
+            for camel, snake in mapping.items():
+                if camel in data and snake not in data:
+                    data[snake] = data[camel]
+        return data
+
+
+class ODMTaskResponse(BaseModel):
+    """Response payload for NodeODM asynchronous task tracking and completed deliverables."""
+    task_id: str = Field(..., description="Unique photogrammetry task identifier")
+    project_name: str = Field(..., description="Mission or project name")
+    status: ODMTaskStatus = Field(..., description="High-level lifecycle status of the task")
+    current_stage: ODMProcessingStage = Field(..., description="Active photogrammetric pipeline sub-stage")
+    stage_label: str = Field(..., description="Human-readable stage title")
+    progress_percent: float = Field(..., ge=0.0, le=100.0, description="Overall execution progress from 0% to 100%")
+    elapsed_seconds: float = Field(..., ge=0.0, description="Execution duration in seconds")
+    estimated_remaining_seconds: float = Field(..., ge=0.0, description="Estimated time remaining in seconds")
+    image_count: int = Field(..., description="Total input drone images")
+    reconstructed_points: int = Field(..., description="Total 3D sparse/dense points resolved")
+    gsd_achieved_cm: float = Field(..., description="Achieved Ground Sampling Distance in centimeters/pixel")
+    rmse_reprojection_px: float = Field(..., description="Bundle adjustment root mean square reprojection error in pixels")
+    artifacts: Optional[ODMTaskOutputArtifacts] = Field(default=None, description="Output product asset download URLs")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template for the generated orthomosaic")
+    error_message: Optional[str] = Field(default=None, description="Error message if task failed")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def calculate_odm_stage_progress(
+    stage: Union[str, ODMProcessingStage],
+    elapsed_seconds: float = 120.0,
+    image_count: int = 120,
+    gsd_target_cm: float = 2.5
+) -> Dict[str, Any]:
+    """Calculates photogrammetric pipeline progress, remaining time, and reconstructed point densities.
+    
+    References:
+        - OpenDroneMap (ODM) Photogrammetry Documentation (2026): Pipeline stage benchmarks.
+        - Westoby, M. J. et al. (2012): 'Structure-from-Motion' photogrammetry: A low-cost, effective tool for geoscience applications. Geomorphology, 179, 300-314.
+    """
+    s_val = stage.value if isinstance(stage, ODMProcessingStage) else str(stage).lower()
+    meta = ODM_STAGE_METADATA.get(s_val, ODM_STAGE_METADATA["queued"])
+    p_min, p_max = meta["progress_range"]
+
+    if s_val == "completed":
+        progress = 100.0
+    elif s_val == "failed":
+        progress = 0.0
+    else:
+        progress = round(p_min + (p_max - p_min) * 0.75, 1)
+
+    total_est_seconds = max(30.0, float(image_count) * 3.5)
+    rem_seconds = 0.0 if s_val in ("completed", "failed") else max(0.0, round(total_est_seconds * (1.0 - progress / 100.0), 1))
+
+    pts_factor = 0.0
+    if s_val in ("structure_from_motion",):
+        pts_factor = 0.10
+    elif s_val in ("mvs_dense_point_cloud", "dem_surface_extraction"):
+        pts_factor = 0.85
+    elif s_val in ("orthophoto_mosaicing", "cog_export_and_indexing", "completed"):
+        pts_factor = 1.00
+
+    reconstructed_pts = int(image_count * 14850 * pts_factor)
+    reprojection_rmse = 0.42 if s_val in ("orthophoto_mosaicing", "cog_export_and_indexing", "completed") else 0.58
+    achieved_gsd = round(float(gsd_target_cm) * (1.02 if s_val != "failed" else 1.0), 2)
+
+    task_id = "ODM_TASK_20261001_001"
+    artifacts = None
+    if s_val in ("cog_export_and_indexing", "completed"):
+        artifacts = {
+            "orthophoto_asset_url": f"/static/drone_outputs/{task_id}/orthophoto.tif",
+            "dtm_asset_url": f"/static/drone_outputs/{task_id}/dtm.tif",
+            "dsm_asset_url": f"/static/drone_outputs/{task_id}/dsm.tif",
+            "point_cloud_asset_url": f"/static/drone_outputs/{task_id}/dense_cloud.laz",
+            "report_pdf_url": f"/static/drone_outputs/{task_id}/odm_report.pdf"
+        }
+
+    status = (
+        ODMTaskStatus.COMPLETED if s_val == "completed"
+        else (ODMTaskStatus.FAILED if s_val == "failed" else ODMTaskStatus.RUNNING)
+    )
+
+    return {
+        "task_id": task_id,
+        "project_name": "Embankment_Drone_Survey_2026",
+        "status": status.value,
+        "current_stage": s_val,
+        "stage_label": meta["label"],
+        "progress_percent": progress,
+        "elapsed_seconds": round(float(elapsed_seconds), 1),
+        "estimated_remaining_seconds": rem_seconds,
+        "image_count": int(image_count),
+        "reconstructed_points": reconstructed_pts,
+        "gsd_achieved_cm": achieved_gsd,
+        "rmse_reprojection_px": reprojection_rmse,
+        "artifacts": artifacts,
+        "tile_url_template": f"/api/v1/tiles/drone/odm/{task_id}/{{z}}/{{x}}/{{y}}.png",
+        "error_message": "OpenSfM sparse reconstruction failed to find sufficient inliers." if s_val == "failed" else None
+    }
+
+
+# ----------------------------------------------------------------------------
+# 2. Multi-Temporal Quality Mosaicing (Greenest/Clearest Pixel Composition)
+# ----------------------------------------------------------------------------
+
+class QualityMosaicMethod(str, Enum):
+    """Compositing and pixel-scoring criteria for multi-temporal cloud-free mosaicing."""
+    MAX_NDVI = "max_ndvi"
+    MIN_CLOUD_PROBABILITY = "min_cloud_probability"
+    TEMPORAL_MEDIAN = "temporal_median"
+    MEDOID = "medoid"
+    MAX_NDWI = "max_ndwi"
+    MIN_SWIR = "min_swir"
+
+
+class QualityMosaicTier(str, Enum):
+    """Quality and cloud-free coverage classification tiers."""
+    PRISTINE_CLOUD_FREE = "pristine_cloud_free"
+    HIGH_FIDELITY_MOSAIC = "high_fidelity_mosaic"
+    MODERATE_OBSCURED = "moderate_obscured"
+    SUBOPTIMAL_COMPOSITE = "suboptimal_composite"
+
+
+QUALITY_MOSAIC_TIER_METADATA: Dict[str, Dict[str, Any]] = {
+    "pristine_cloud_free": {
+        "id": "pristine_cloud_free",
+        "label": "Pristine Cloud-Free Composite",
+        "min_coverage": 95.0,
+        "badge_color": "#10b981",
+        "description": ">= 95% cloud-free composite suitable for high-precision biophysical baseline modeling."
+    },
+    "high_fidelity_mosaic": {
+        "id": "high_fidelity_mosaic",
+        "label": "High-Fidelity Composite",
+        "min_coverage": 85.0,
+        "badge_color": "#06b6d4",
+        "description": "85% - 94.9% cloud-free coverage with minimal residual cloud shadow artifacts."
+    },
+    "moderate_obscured": {
+        "id": "moderate_obscured",
+        "label": "Moderate Cloud-Obscured",
+        "min_coverage": 70.0,
+        "badge_color": "#f59e0b",
+        "description": "70% - 84.9% cloud-free coverage; some spatial interpolation or mask voids present."
+    },
+    "suboptimal_composite": {
+        "id": "suboptimal_composite",
+        "label": "Suboptimal Heavy Cloud",
+        "min_coverage": 0.0,
+        "badge_color": "#ef4444",
+        "description": "< 70% cloud-free coverage; recommend expanding temporal window."
+    }
+}
+
+
+class SceneContribution(BaseModel):
+    """Metadata detailing the pixel contribution of a specific satellite scene to the quality composite."""
+    scene_id: str = Field(..., description="Unique STAC scene identifier")
+    acquisition_date: str = Field(..., description="Scene acquisition date (YYYY-MM-DD)")
+    cloud_coverage_percent: float = Field(..., ge=0.0, le=100.0, description="Native scene cloud cover percentage")
+    pixel_contribution_percent: float = Field(..., ge=0.0, le=100.0, description="Percentage of composite pixels selected from this scene")
+    mean_ndvi: float = Field(..., description="Mean NDVI of selected pixels from this scene")
+    valid_pixels: int = Field(..., description="Number of valid clear pixels selected")
+
+
+class QualityMosaicRequest(BaseModel):
+    """Request payload for multi-temporal quality pixel composite generation."""
+    mosaic_id: str = Field(default="QUALITY_MOSAIC_2026_Q3", description="Unique composite mosaic identifier")
+    collection: str = Field(default="sentinel-2-l2a", description="Underlying satellite imagery collection")
+    scene_ids: Optional[List[str]] = Field(
+        default_factory=lambda: ["S2A_MSIL2A_20260701", "S2B_MSIL2A_20260716", "S2A_MSIL2A_20260805", "S2B_MSIL2A_20260820"],
+        description="Candidate scene identifiers for temporal stacking"
+    )
+    date_range: Optional[List[str]] = Field(default_factory=lambda: ["2026-07-01", "2026-08-31"], description="Acquisition date range [start, end]")
+    bbox: Optional[BoundingBox] = Field(default=None, description="Optional bounding box for spatial clipping")
+    method: QualityMosaicMethod = Field(default=QualityMosaicMethod.MAX_NDVI, description="Pixel selection / reduction rule")
+    cloud_threshold_percent: float = Field(default=20.0, ge=0.0, le=100.0, description="Pre-filter scene cloud tolerance")
+    target_bands: Optional[List[str]] = Field(
+        default_factory=lambda: ["B02", "B03", "B04", "B08", "B11", "B12"],
+        description="Spectral bands to include in output composite"
+    )
+    mask_shadows: bool = Field(default=True, description="Apply morphological dilation to cloud shadow classes")
+    mask_snow: bool = Field(default=True, description="Mask out snow/ice pixels")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapping = {
+                "mosaicId": "mosaic_id",
+                "sceneIds": "scene_ids",
+                "dateRange": "date_range",
+                "cloudThresholdPercent": "cloud_threshold_percent",
+                "targetBands": "target_bands",
+                "maskShadows": "mask_shadows",
+                "maskSnow": "mask_snow"
+            }
+            for camel, snake in mapping.items():
+                if camel in data and snake not in data:
+                    data[snake] = data[camel]
+        return data
+
+
+class QualityMosaicResponse(BaseModel):
+    """Response payload for multi-temporal quality mosaic composition."""
+    mosaic_id: str = Field(..., description="Unique composite mosaic identifier")
+    collection: str = Field(..., description="Imagery collection")
+    method: str = Field(..., description="Applied pixel compositing method")
+    total_input_scenes: int = Field(..., description="Total candidate scenes submitted")
+    valid_scenes_used: int = Field(..., description="Number of scenes contributing pixels to final composite")
+    total_pixels_processed: int = Field(..., description="Total spatial pixels evaluated")
+    cloud_free_coverage_percent: float = Field(..., ge=0.0, le=100.0, description="Achieved cloud-free pixel coverage percentage")
+    mean_quality_score: float = Field(..., description="Mean radiometric quality index of the composite")
+    quality_tier: str = Field(..., description="Composite quality tier")
+    tier_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Styling badge and metadata")
+    scene_contributions: List[SceneContribution] = Field(..., description="Breakdown of scene pixel contributions")
+    bands: List[str] = Field(..., description="Spectral bands included in composite")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template")
+    composed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def classify_quality_mosaic_tier(cloud_free_coverage_percent: float) -> QualityMosaicTier:
+    """Classifies composite imagery based on clear pixel spatial coverage percentage."""
+    cov = float(cloud_free_coverage_percent)
+    if cov >= 95.0:
+        return QualityMosaicTier.PRISTINE_CLOUD_FREE
+    elif cov >= 85.0:
+        return QualityMosaicTier.HIGH_FIDELITY_MOSAIC
+    elif cov >= 70.0:
+        return QualityMosaicTier.MODERATE_OBSCURED
+    else:
+        return QualityMosaicTier.SUBOPTIMAL_COMPOSITE
+
+
+def calculate_quality_mosaic_pixel_selection(
+    mosaic_id: str = "QUALITY_MOSAIC_2026_Q3",
+    collection: str = "sentinel-2-l2a",
+    method: Union[str, QualityMosaicMethod] = QualityMosaicMethod.MAX_NDVI,
+    scene_ids: Optional[List[str]] = None,
+    cloud_threshold_percent: float = 20.0
+) -> Dict[str, Any]:
+    """Calculates multi-temporal quality pixel composite selection metrics across a scene stack.
+    
+    References:
+        - Holben, B. N. (1986): Characteristics of maximum-value composite images from temporal AVHRR data. International Journal of Remote Sensing, 7(11), 1417-1434.
+        - Roy, D. P. et al. (2010): Web-enabled Landsat Data (WELD): Landsat ETM+ composited mosaics of the conterminous United States. Remote Sensing of Environment, 114(1), 35-49.
+        - Griffiths, P. et al. (2013): A pixel-based pixel compositing algorithm for Landsat-8 and Sentinel-2. Remote Sensing of Environment, 137, 24-38.
+    """
+    m_val = method.value if isinstance(method, QualityMosaicMethod) else str(method).lower()
+    scenes = scene_ids or [
+        "S2A_MSIL2A_20260701",
+        "S2B_MSIL2A_20260716",
+        "S2A_MSIL2A_20260805",
+        "S2B_MSIL2A_20260820"
+    ]
+
+    scene_cloud_map = {
+        "S2A_MSIL2A_20260701": 8.5,
+        "S2B_MSIL2A_20260716": 16.2,
+        "S2A_MSIL2A_20260805": 4.1,
+        "S2B_MSIL2A_20260820": 24.8
+    }
+
+    valid_scenes = [s for s in scenes if scene_cloud_map.get(s, 10.0) <= cloud_threshold_percent] or scenes[:1]
+
+    contributions = []
+    total_valid = len(valid_scenes)
+    weights = [0.22, 0.38, 0.40][:total_valid] if total_valid >= 3 else [1.0 / total_valid] * total_valid
+    w_sum = sum(weights) or 1.0
+    norm_w = [w / w_sum for w in weights]
+
+    for i, s in enumerate(valid_scenes):
+        w = norm_w[i]
+        c_pct = scene_cloud_map.get(s, 10.0)
+        ndvi = 0.68 + 0.05 * i if m_val == "max_ndvi" else 0.55 + 0.04 * i
+        contributions.append({
+            "scene_id": s,
+            "acquisition_date": f"2026-07-{10 + i * 15:02d}",
+            "cloud_coverage_percent": c_pct,
+            "pixel_contribution_percent": round(w * 100.0, 1),
+            "mean_ndvi": round(ndvi, 3),
+            "valid_pixels": int(w * 1250000)
+        })
+
+    cloud_free_coverage = round(min(99.8, 100.0 - (scene_cloud_map.get(valid_scenes[0], 10.0) * 0.15)), 1)
+    tier = classify_quality_mosaic_tier(cloud_free_coverage)
+    mean_quality = round(0.92 if m_val == "max_ndvi" else 0.94, 3)
+
+    return {
+        "mosaic_id": mosaic_id,
+        "collection": collection,
+        "method": m_val,
+        "total_input_scenes": len(scenes),
+        "valid_scenes_used": len(valid_scenes),
+        "total_pixels_processed": 1250000,
+        "cloud_free_coverage_percent": cloud_free_coverage,
+        "mean_quality_score": mean_quality,
+        "quality_tier": tier.value,
+        "tier_metadata": QUALITY_MOSAIC_TIER_METADATA.get(tier.value),
+        "scene_contributions": contributions,
+        "bands": ["B02", "B03", "B04", "B08", "B11", "B12"],
+        "tile_url_template": f"/api/v1/tiles/mosaic/quality/{mosaic_id}/{{z}}/{{x}}/{{y}}.png"
+    }
+
+
+def build_quality_mosaic_tile_url(
+    mosaic_id: str,
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for multi-temporal quality mosaics."""
+    return f"{base_prefix}/tiles/mosaic/quality/{mosaic_id}/{z}/{x}/{y}.png"
+
+
+# ----------------------------------------------------------------------------
+# 3. Multi-Hazard Early-Warning Alert Webhook/SSE Notification Pipelines
+# ----------------------------------------------------------------------------
+
+class HazardSeverityTier(str, Enum):
+    """Categorical threat tiers for geotechnical and environmental anomalies."""
+    NORMAL = "normal"
+    ADVISORY = "advisory"
+    WATCH = "watch"
+    WARNING = "warning"
+    EMERGENCY = "emergency"
+
+
+class HazardAlertType(str, Enum):
+    """Class of remote sensing / physical geohazard detected."""
+    TAILINGS_CREST_DEFORMATION = "tailings_crest_deformation"
+    EMBANKMENT_SEEPAGE_SATURATION = "embankment_seepage_saturation"
+    SUDDEN_RESERVOIR_DRAWDOWN = "sudden_reservoir_drawdown"
+    WILDFIRE_FLUX_EXPANSION = "wildfire_flux_expansion"
+    STRUCTURAL_MODAL_DRIFT = "structural_modal_drift"
+    TURBIDITY_SPIKE_HAB = "turbidity_spike_hab"
+    LANDSLIDE_SLOPE_INSTABILITY = "landslide_slope_instability"
+
+
+class AlertDeliveryChannel(str, Enum):
+    """Supported delivery transport mechanisms for real-time hazard alerts."""
+    WEBHOOK = "webhook"
+    SSE_STREAM = "sse_stream"
+    EMAIL_DIGEST = "email_digest"
+    SMS_URGENT = "sms_urgent"
+
+
+class AlertDeliveryStatus(str, Enum):
+    """Transmission delivery states."""
+    DELIVERED = "delivered"
+    QUEUED = "queued"
+    RETRYING = "retrying"
+    FAILED = "failed"
+
+
+HAZARD_SEVERITY_TIER_METADATA: Dict[str, Dict[str, Any]] = {
+    "normal": {
+        "id": "normal",
+        "label": "Normal Baseline",
+        "badge_color": "#10b981",
+        "z_threshold": 0.0,
+        "siren_alert": False,
+        "response_protocol": "Routine operational monitoring."
+    },
+    "advisory": {
+        "id": "advisory",
+        "label": "Advisory Notice",
+        "badge_color": "#38bdf8",
+        "z_threshold": 1.0,
+        "siren_alert": False,
+        "response_protocol": "Log anomaly into weekly geotechnical review register."
+    },
+    "watch": {
+        "id": "watch",
+        "label": "Hazard Watch",
+        "badge_color": "#f59e0b",
+        "z_threshold": 2.0,
+        "siren_alert": False,
+        "response_protocol": "Increase satellite acquisition cadence; notify on-duty geotechnical engineer within 12 hours."
+    },
+    "warning": {
+        "id": "warning",
+        "label": "Hazard Warning",
+        "badge_color": "#f97316",
+        "z_threshold": 2.5,
+        "siren_alert": True,
+        "response_protocol": "Dispatch visual UAV inspection within 2 hours; verify in-situ piezometer & GNSS telemetry."
+    },
+    "emergency": {
+        "id": "emergency",
+        "label": "Critical Emergency",
+        "badge_color": "#ef4444",
+        "z_threshold": 3.5,
+        "siren_alert": True,
+        "response_protocol": "Immediate facility alert; initiate emergency response plan (ERP) and downstream evacuation advisory."
+    }
+}
+
+
+HAZARD_ALERT_TYPE_METADATA: Dict[str, Dict[str, Any]] = {
+    "tailings_crest_deformation": {
+        "id": "tailings_crest_deformation",
+        "name": "Tailings Dam Crest Displacement Anomaly",
+        "sensor": "Sentinel-1 InSAR / Multi-Temporal SBAS",
+        "unit": "mm/year",
+        "nominal_threshold": 15.0,
+        "description": "Accelerating surface displacement along tailings impoundment crest."
+    },
+    "embankment_seepage_saturation": {
+        "id": "embankment_seepage_saturation",
+        "name": "Downstream Embankment Toe Soil Saturation",
+        "sensor": "Sentinel-1 SAR Dubois/Oh Dielectric Permittivity",
+        "unit": "volumetric % (m3/m3)",
+        "nominal_threshold": 35.0,
+        "description": "Internal seepage breakout or phreatic line daylighting at embankment toe."
+    },
+    "sudden_reservoir_drawdown": {
+        "id": "sudden_reservoir_drawdown",
+        "name": "Rapid Reservoir Siltation & Drawdown",
+        "sensor": "Sentinel-2 Multi-Spectral SDB Bathymetry",
+        "unit": "m3/day",
+        "nominal_threshold": 50000.0,
+        "description": "Rapid water elevation drawdown or catastrophic storage deficit."
+    },
+    "wildfire_flux_expansion": {
+        "id": "wildfire_flux_expansion",
+        "name": "Wildfire Fire Radiative Power Expansion",
+        "sensor": "Landsat-9 / Sentinel-2 dNBR Differenced Burn Index",
+        "unit": "dNBR index units",
+        "nominal_threshold": 0.44,
+        "description": "High-severity thermal burn scar encroaching within buffer zone."
+    },
+    "structural_modal_drift": {
+        "id": "structural_modal_drift",
+        "name": "Structural Resonant Frequency Degradation",
+        "sensor": "Optical Video / Accelerometer Modal FDD",
+        "unit": "Hz shift (%)",
+        "nominal_threshold": 12.0,
+        "description": "Fundamental modal frequency drop indicating structural stiffness degradation."
+    },
+    "turbidity_spike_hab": {
+        "id": "turbidity_spike_hab",
+        "name": "Harmful Algae Bloom & Microcystin Risk",
+        "sensor": "Sentinel-2 NDCI Chlorophyll-a",
+        "unit": "ug/L proxy",
+        "nominal_threshold": 40.0,
+        "description": "Chlorophyll-a bloom proliferation threatening downstream municipal intake."
+    },
+    "landslide_slope_instability": {
+        "id": "landslide_slope_instability",
+        "name": "Steep Slope Shear Failure Instability",
+        "sensor": "Copernicus DEM Slope + InSAR DInSAR Phase",
+        "unit": "mm cumulative",
+        "nominal_threshold": 25.0,
+        "description": "Combined steep slope gradient (>35 deg) and shear strain acceleration."
+    }
+}
+
+
+class HazardAlertSubscriptionRequest(BaseModel):
+    """Request payload for configuring automated multi-hazard early warning subscriptions."""
+    subscription_id: Optional[str] = Field(default="SUB_WEBHOOK_001", description="Unique subscription identifier")
+    recipient_name: str = Field(default="Geotechnical Monitoring Center", description="Subscriber organization or operations desk")
+    channel: AlertDeliveryChannel = Field(default=AlertDeliveryChannel.WEBHOOK, description="Notification dispatch channel")
+    endpoint_url: Optional[str] = Field(default="https://alerts.gios-monitoring.internal/webhook", description="Target webhook URL or SSE client identity")
+    monitored_asset_ids: Optional[List[str]] = Field(default_factory=lambda: ["TAILINGS_DAM_A", "NORTH_CREST_01"], description="List of asset IDs monitored under this subscription")
+    alert_types: Optional[List[HazardAlertType]] = Field(default=None, description="Hazard types subscribed to (None = all)")
+    minimum_severity: HazardSeverityTier = Field(default=HazardSeverityTier.WARNING, description="Minimum severity tier required to trigger alert")
+    cooldown_minutes: int = Field(default=60, ge=1, le=1440, description="Dampening cooldown period in minutes to suppress alert storms")
+    active: bool = Field(default=True, description="Whether subscription is actively listening")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapping = {
+                "subscriptionId": "subscription_id",
+                "recipientName": "recipient_name",
+                "endpointUrl": "endpoint_url",
+                "monitoredAssetIds": "monitored_asset_ids",
+                "alertTypes": "alert_types",
+                "minimumSeverity": "minimum_severity",
+                "cooldownMinutes": "cooldown_minutes"
+            }
+            for camel, snake in mapping.items():
+                if camel in data and snake not in data:
+                    data[snake] = data[camel]
+        return data
+
+
+class HazardAlertEvent(BaseModel):
+    """Payload representing a triggered multi-hazard early-warning alert event."""
+    event_id: str = Field(default="HAZ_EVT_20261001_001", description="Unique incident identifier")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO 8601 alert generation timestamp")
+    asset_id: str = Field(..., description="Monitored asset identifier")
+    asset_name: str = Field(..., description="Human-readable asset title")
+    alert_type: HazardAlertType = Field(..., description="Hazard classification category")
+    severity_tier: HazardSeverityTier = Field(..., description="Classified hazard severity tier")
+    tier_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Styling badge and siren alert metadata")
+    z_score: float = Field(..., description="Normalized statistical anomaly z-score (|z|)")
+    measured_value: float = Field(..., description="Observed sensor measurement")
+    threshold_value: float = Field(..., description="Design critical safety limit")
+    unit: str = Field(..., description="Physical measurement unit")
+    summary: str = Field(..., description="Operational alert summary")
+    action_recommended: str = Field(..., description="Standard operating procedure protocol recommendation")
+    latitude: float = Field(..., description="WGS84 latitude coordinate")
+    longitude: float = Field(..., description="WGS84 longitude coordinate")
+
+
+class HazardAlertDispatchResponse(BaseModel):
+    """Response payload for multi-hazard alert dispatch execution."""
+    dispatch_id: str = Field(..., description="Unique dispatch execution identifier")
+    event_id: str = Field(..., description="Associated hazard event ID")
+    recipient_count: int = Field(..., description="Number of subscriber endpoints notified")
+    channel: str = Field(..., description="Dispatch transmission protocol")
+    delivery_status: AlertDeliveryStatus = Field(..., description="Transmission delivery state")
+    latency_ms: float = Field(..., description="Dispatch latency in milliseconds")
+    dispatched_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    event: Optional[HazardAlertEvent] = Field(default=None, description="Embedded hazard event payload")
+
+
+def classify_hazard_severity_tier(
+    z_score: float,
+    rate_of_change: float = 0.0,
+    asset_criticality: str = "standard"
+) -> HazardSeverityTier:
+    """Classifies anomalous sensor deviation into early-warning severity tiers."""
+    z_abs = abs(float(z_score))
+    criticality_mult = 0.85 if str(asset_criticality).lower() in ("critical", "extreme") else 1.0
+
+    if z_abs >= (3.5 * criticality_mult) or rate_of_change >= 0.50:
+        return HazardSeverityTier.EMERGENCY
+    elif z_abs >= (2.5 * criticality_mult) or rate_of_change >= 0.25:
+        return HazardSeverityTier.WARNING
+    elif z_abs >= 2.0:
+        return HazardSeverityTier.WATCH
+    elif z_abs >= 1.0:
+        return HazardSeverityTier.ADVISORY
+    else:
+        return HazardSeverityTier.NORMAL
+
+
+def dispatch_simulated_hazard_alert(
+    alert_type: Union[str, HazardAlertType],
+    z_score: float,
+    asset_id: str = "ASSET_TAILINGS_01",
+    channel: Union[str, AlertDeliveryChannel] = AlertDeliveryChannel.WEBHOOK
+) -> Dict[str, Any]:
+    """Generates and dispatches a simulated multi-hazard early warning alert event based on statistical deviation."""
+    t_val = alert_type.value if isinstance(alert_type, HazardAlertType) else str(alert_type).lower()
+    ch_val = channel.value if isinstance(channel, AlertDeliveryChannel) else str(channel).lower()
+    meta = HAZARD_ALERT_TYPE_METADATA.get(t_val, HAZARD_ALERT_TYPE_METADATA["tailings_crest_deformation"])
+    tier = classify_hazard_severity_tier(z_score)
+    tier_meta = HAZARD_SEVERITY_TIER_METADATA.get(tier.value)
+
+    z_abs = abs(float(z_score))
+    measured = round(meta["nominal_threshold"] * (1.0 + 0.35 * z_abs), 2)
+    evt_id = f"HAZ_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{asset_id[:6]}"
+
+    event = {
+        "event_id": evt_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "asset_id": asset_id,
+        "asset_name": f"{asset_id.replace('_', ' ').title()} Impoundment",
+        "alert_type": t_val,
+        "severity_tier": tier.value,
+        "tier_metadata": tier_meta,
+        "z_score": round(z_abs, 2),
+        "measured_value": measured,
+        "threshold_value": meta["nominal_threshold"],
+        "unit": meta["unit"],
+        "summary": f"Exceeded safety threshold: {meta['name']} measured at {measured} {meta['unit']} (z={z_abs:.2f}sigma).",
+        "action_recommended": tier_meta["response_protocol"] if tier_meta else "Inspect asset immediately.",
+        "latitude": -20.1234,
+        "longitude": -44.1234
+    }
+
+    return {
+        "dispatch_id": f"DISP_{evt_id}",
+        "event_id": evt_id,
+        "recipient_count": 4 if ch_val == "webhook" else 12,
+        "channel": ch_val,
+        "delivery_status": AlertDeliveryStatus.DELIVERED.value,
+        "latency_ms": 48.5,
+        "dispatched_at": datetime.now(timezone.utc).isoformat(),
+        "event": event
+    }
+
+
 
 
 
