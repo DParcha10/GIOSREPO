@@ -20,7 +20,8 @@ import {
   calculateRpcTiePointAlignment,
   calculateOdmStageProgress,
   calculateQualityMosaicPixelSelection,
-  dispatchSimulatedHazardAlert
+  dispatchSimulatedHazardAlert,
+  calculateDamBreakHydrodynamicSimulation
 } from '../config/constants.js';
 
 export {
@@ -293,6 +294,7 @@ export {
   ODM_PROCESSING_STAGES,
   ODM_STAGE_CONFIGS,
   calculateOdmStageProgress,
+  buildOdmTileUrl,
   QUALITY_MOSAIC_METHODS,
   QUALITY_MOSAIC_TIERS,
   QUALITY_MOSAIC_TIER_CONFIGS,
@@ -306,7 +308,24 @@ export {
   HAZARD_SEVERITY_TIER_CONFIGS,
   HAZARD_ALERT_TYPE_CONFIGS,
   classifyHazardSeverityTier,
-  dispatchSimulatedHazardAlert
+  dispatchSimulatedHazardAlert,
+  BREACH_MECHANISMS,
+  RHEOLOGY_MODELS,
+  HAZARD_INTENSITY_TIERS,
+  HAZARD_INTENSITY_TIER_CONFIGS,
+  EVACUATION_URGENCY_TIERS,
+  EVACUATION_URGENCY_TIER_CONFIGS,
+  INFRASTRUCTURE_EXPOSURE_TYPES,
+  INFRASTRUCTURE_EXPOSURE_CONFIGS,
+  BREACH_MECHANISM_CONFIGS,
+  calculateDamBreachPeakDischarge,
+  classifyHazardIntensityTier,
+  classifyEvacuationUrgency,
+  calculateDownstreamWaveAttenuation,
+  calculateInfrastructureVulnerabilityScore,
+  calculateDamBreakHydrodynamicSimulation,
+  buildDamBreakTileUrl,
+  buildDamBreakTileUrlTemplate
 } from '../config/constants.js';
 
 /**
@@ -2109,9 +2128,27 @@ const demoAdapter = async (config) => {
         data = calculateRpcTiePointAlignment(parsed);
       }
       else if (url.includes('/api/v1/drone/odm-tasks') || url.includes('/drone/odm-tasks')) {
-        let parsed = {};
-        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
-        data = calculateOdmStageProgress(parsed.stage || 'dataset_initialization', 120.0, parsed.image_count || parsed.imageCount || 120, parsed.gsd_target_cm || parsed.gsdTargetCm || 2.5);
+        if (config.method === 'get') {
+          const parts = url.split('?')[0].split('/');
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && lastPart !== 'odm-tasks') {
+            data = calculateOdmStageProgress('orthophoto_mosaicing', 180.0, 120, 2.5);
+            data.task_id = lastPart;
+          } else {
+            const task1 = calculateOdmStageProgress('orthophoto_mosaicing', 180.0, 120, 2.5);
+            const task2 = calculateOdmStageProgress('completed', 420.0, 150, 2.0);
+            task2.task_id = 'ODM_TASK_20261001_002';
+            task2.project_name = 'Spillway_Drone_Inspection_2026';
+            data = {
+              total_count: 2,
+              tasks: [task1, task2]
+            };
+          }
+        } else {
+          let parsed = {};
+          try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+          data = calculateOdmStageProgress(parsed.stage || 'dataset_initialization', 120.0, parsed.image_count || parsed.imageCount || 120, parsed.gsd_target_cm || parsed.gsdTargetCm || 2.5);
+        }
       }
       else if (url.includes('/api/v1/mosaic/quality-mosaic') || url.includes('/mosaic/quality-mosaic')) {
         let parsed = {};
@@ -2119,20 +2156,70 @@ const demoAdapter = async (config) => {
         data = calculateQualityMosaicPixelSelection(parsed);
       }
       else if (url.includes('/api/v1/alerts/subscriptions') || url.includes('/alerts/subscriptions')) {
-        let parsed = {};
-        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
-        data = {
-          subscription_id: parsed.subscription_id || parsed.subscriptionId || 'SUB_WEBHOOK_001',
-          recipient_name: parsed.recipient_name || parsed.recipientName || 'Geotechnical Monitoring Center',
-          channel: parsed.channel || 'webhook',
-          status: 'active',
-          created_at: new Date().toISOString()
-        };
+        if (config.method === 'get') {
+          data = [
+            {
+              subscription_id: 'SUB_WEBHOOK_001',
+              recipient_name: 'Geotechnical Monitoring Center',
+              channel: 'webhook',
+              status: 'active',
+              hazard_types: ['tailings_crest_deformation', 'embankment_seepage_saturation'],
+              created_at: new Date().toISOString()
+            },
+            {
+              subscription_id: 'SUB_SSE_002',
+              recipient_name: 'Dam Safety Control Room',
+              channel: 'sse_stream',
+              status: 'active',
+              hazard_types: ['sudden_reservoir_drawdown', 'landslide_slope_instability'],
+              created_at: new Date().toISOString()
+            }
+          ];
+        } else {
+          let parsed = {};
+          try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+          data = {
+            subscription_id: parsed.subscription_id || parsed.subscriptionId || 'SUB_WEBHOOK_001',
+            recipient_name: parsed.recipient_name || parsed.recipientName || 'Geotechnical Monitoring Center',
+            channel: parsed.channel || 'webhook',
+            status: 'active',
+            created_at: new Date().toISOString()
+          };
+        }
       }
       else if (url.includes('/api/v1/alerts/dispatch') || url.includes('/alerts/dispatch')) {
         let parsed = {};
         try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
         data = dispatchSimulatedHazardAlert(parsed);
+      }
+      else if (url.includes('/api/v1/analysis/geotechnical/dam-break-hydrodynamics') || url.includes('/geotechnical/dam-break-hydrodynamics')) {
+        let parsed = {};
+        try { parsed = config.data ? JSON.parse(config.data) : {}; } catch { parsed = {}; }
+        data = calculateDamBreakHydrodynamicSimulation(parsed);
+      }
+      else if (url.includes('/evacuation-corridors')) {
+        data = [
+          {
+            corridor_id: 'EVAC_NORTH_RIDGE',
+            name: 'North Ridge High-Ground Evacuation Spine',
+            assembly_point: 'Muster Station Echo (El. 785m)',
+            safe_elevation_m: 785.0,
+            buffer_distance_m: 150.0,
+            estimated_evacuation_time_min: 18.0,
+            route_status: 'open',
+            coordinates: [[-44.1184, -20.1184], [-44.1114, -20.1054], [-44.1034, -20.0954]]
+          },
+          {
+            corridor_id: 'EVAC_SOUTH_PLATEAU',
+            name: 'South Valley Plateau Highway Egress',
+            assembly_point: 'Civil Defense Center Bravo (El. 740m)',
+            safe_elevation_m: 740.0,
+            buffer_distance_m: 200.0,
+            estimated_evacuation_time_min: 25.0,
+            route_status: 'open',
+            coordinates: [[-44.1314, -20.1434], [-44.1384, -20.1684], [-44.1454, -20.1934]]
+          }
+        ];
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -4993,6 +5080,16 @@ export const getOdmTaskStatus = async (taskId) => {
 };
 
 /**
+ * Lists all registered NodeODM photogrammetry tasks.
+ * 
+ * @returns {Promise<{total_count: number, tasks: ODMTaskResponse[]}>} List of recorded tasks
+ */
+export const listOdmTasks = async () => {
+  const response = await giosApi.get('/api/v1/drone/odm-tasks');
+  return response.data;
+};
+
+/**
  * @typedef {Object} QualityMosaicRequest
  * @property {string} [mosaic_id='QUALITY_MOSAIC_2026_Q3'] - Unique composite mosaic identifier
  * @property {string} [collection='sentinel-2-l2a'] - Underlying satellite imagery collection
@@ -5101,6 +5198,16 @@ export const subscribeHazardAlerts = async (params) => {
 };
 
 /**
+ * Lists all active multi-hazard early warning alert subscriptions.
+ * 
+ * @returns {Promise<Array<Object>>} List of registered alert subscriptions
+ */
+export const listHazardAlertSubscriptions = async () => {
+  const response = await giosApi.get('/api/v1/alerts/subscriptions');
+  return response.data;
+};
+
+/**
  * Manually dispatches or simulates a multi-hazard early warning alert across configured delivery channels.
  * 
  * @param {Object} params - Alert dispatch parameters
@@ -5111,7 +5218,149 @@ export const dispatchHazardAlert = async (params) => {
   return response.data;
 };
 
+/**
+ * Returns the SSE streaming URL for multi-hazard real-time alerts.
+ * 
+ * @returns {string} Fully qualified or relative EventSource URL
+ */
+export const getHazardAlertStreamUrl = () => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/alerts/stream`;
+};
+
+/**
+ * @typedef {Object} DamBreachParameters
+ * @property {number} [dam_height_m=45.0] - Structural dam embankment height in meters
+ * @property {number} [reservoir_volume_m3=12500000.0] - Stored reservoir impoundment water/slurry volume in m3
+ * @property {number} [breach_width_m=65.0] - Average breach channel top width in meters
+ * @property {number} [breach_depth_m=35.0] - Final breach bottom incision depth in meters
+ * @property {number} [breach_formation_time_hr=1.5] - Time of breach development in hours
+ * @property {number} [peak_discharge_m3s] - Peak breach discharge Qp in m3/s
+ * @property {'overtopping'|'piping_internal_erosion'|'slope_instability_slide'|'foundation_liquefaction'|'instantaneous_collapse'} [breach_mechanism='overtopping'] - Initiating failure mechanism
+ * @property {'newtonian_water'|'bingham_plastic_slurry'|'herschel_bulkley_tailings'|'dilatant_granular'} [rheology_model='herschel_bulkley_tailings'] - Slurry rheology model
+ * @property {number} [manning_n_roughness=0.040] - Manning floodplain hydraulic roughness coefficient
+ * @property {number} [slurry_yield_stress_pa=45.0] - Slurry yield stress in Pascals
+ * @property {number} [slurry_density_kg_m3=1450.0] - Slurry bulk density in kg/m3
+ */
+
+/**
+ * @typedef {Object} DownstreamReceptor
+ * @property {string} receptor_id - Unique infrastructure asset identifier
+ * @property {string} name - Asset title or community name
+ * @property {string} exposure_type - Infrastructure vulnerability category
+ * @property {number} distance_downstream_km - Thalweg distance downstream from dam in km
+ * @property {number} elevation_m - Ground elevation at receptor in meters
+ * @property {number} [population_at_risk=0] - Estimated resident population exposed
+ * @property {number} latitude - WGS84 latitude coordinate
+ * @property {number} longitude - WGS84 longitude coordinate
+ * @property {number} [arrival_time_min] - Hydrodynamic flood wave front arrival time in minutes
+ * @property {number} [peak_depth_m] - Maximum inundation depth at receptor in meters
+ * @property {number} [peak_velocity_ms] - Peak flow velocity at receptor in m/s
+ * @property {number} [hazard_intensity_product] - Hazard product v * h in m2/s
+ * @property {string} [hazard_tier] - Classified hazard severity tier
+ * @property {number} [vulnerability_score] - Asset structural fragility damage ratio (0.0 - 1.0)
+ * @property {string} [evacuation_urgency] - Classified evacuation urgency tier
+ */
+
+/**
+ * @typedef {Object} InundationTimeSlice
+ * @property {number} timestep_minutes - Elapsed simulation time in minutes
+ * @property {number} inundation_area_ha - Flooded footprint area in hectares
+ * @property {number} max_depth_m - Maximum flood depth across simulation grid in meters
+ * @property {number} mean_depth_m - Spatially averaged inundation depth in meters
+ * @property {number} max_velocity_ms - Maximum flow velocity in m/s
+ * @property {number} wave_front_distance_km - Leading wave front position downstream in km
+ * @property {number} slurry_volume_released_m3 - Cumulative slurry volume discharged in m3
+ */
+
+/**
+ * @typedef {Object} EvacuationCorridor
+ * @property {string} corridor_id - Unique evacuation route identifier
+ * @property {string} name - Designated emergency evacuation corridor name
+ * @property {assembly_point} assembly_point - High-ground safe haven name
+ * @property {number} safe_elevation_m - Minimum safe terrain elevation in meters
+ * @property {number} [buffer_distance_m=150.0] - Lateral safety standoff buffer in meters
+ * @property {number} estimated_evacuation_time_min - Estimated egress transit time in minutes
+ * @property {string} [route_status='open'] - Route viability ('open', 'threatened_by_flood', 'impassable')
+ * @property {Array<Array<number>>} coordinates - GeoJSON line coordinates [[lon, lat], ...]
+ */
+
+/**
+ * @typedef {Object} DamBreakHydrodynamicRequest
+ * @property {string} [simulation_id='SIM_DAM_BREAK_001'] - Simulation run identifier
+ * @property {string} [dam_id='TAILINGS_DAM_A'] - Monitored dam asset ID
+ * @property {string} [dam_name='North Tailings Impoundment'] - Human-readable dam asset name
+ * @property {number[]} [dam_coordinates=[-44.1234, -20.1234]] - WGS84 [longitude, latitude] of dam breach axis
+ * @property {DamBreachParameters} [breach_params] - Geotechnical and hydraulic breach configuration
+ * @property {number} [simulation_duration_hours=6.0] - Hydrodynamic modeling duration in hours
+ * @property {number} [timestep_interval_min=15.0] - Reporting interval in minutes
+ * @property {number} [dem_resolution_m=10.0] - DEM spatial resolution in meters
+ * @property {DownstreamReceptor[]} [receptors] - Downstream receptors to evaluate
+ * @property {boolean} [generate_evacuation_corridors=true] - Whether to generate evacuation corridors
+ * @property {boolean} [include_time_slices=true] - Whether to generate progressive time slices
+ */
+
+/**
+ * @typedef {Object} DamBreakHydrodynamicResponse
+ * @property {string} simulation_id - Simulation execution ID
+ * @property {string} dam_id - Dam asset ID
+ * @property {string} dam_name - Dam asset name
+ * @property {string} status - Simulation execution status
+ * @property {number} peak_breach_discharge_m3s - Peak breach hydrograph discharge in m3/s
+ * @property {number} total_volume_discharged_m3 - Total slurry volume discharged in m3
+ * @property {number} max_inundation_area_ha - Flooded surface area in hectares
+ * @property {number} max_flood_depth_m - Peak flood depth across floodplain in meters
+ * @property {number} max_flow_velocity_ms - Peak flow velocity in m/s
+ * @property {number} max_hazard_product_m2s - Maximum hazard product v * h in m2/s
+ * @property {string} overall_hazard_tier - Maximum classified floodplain hazard tier
+ * @property {Object} [tier_metadata] - Styling badge and hazard impact metadata
+ * @property {number} time_to_peak_hours - Time to peak discharge in hours
+ * @property {number} total_receptors_impacted - Inundated receptor count
+ * @property {number} total_population_at_risk - Exposed population in hazard zone
+ * @property {DownstreamReceptor[]} receptors - Downstream receptors with wave arrival times
+ * @property {InundationTimeSlice[]} time_slices - Progressive flood wave time slices
+ * @property {EvacuationCorridor[]} evacuation_corridors - Emergency evacuation corridors
+ * @property {Object} [inundation_boundary_geojson] - GeoJSON polygon geometry of maximum inundation
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} simulated_at - ISO 8601 timestamp
+ */
+
+/**
+ * Simulates 2D shallow water tailings dam breach hydrodynamics, flood wave progression, and downstream receptor exposure.
+ * 
+ * @param {DamBreakHydrodynamicRequest} params - Dam-break hydrodynamic simulation parameters
+ * @returns {Promise<DamBreakHydrodynamicResponse>} Simulation results, wave arrival times, and evacuation corridors
+ */
+export const simulateDamBreakHydrodynamics = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/dam-break-hydrodynamics', params);
+  return response.data;
+};
+
+/**
+ * Fetches designated emergency evacuation corridors and safe assembly points for a dam break simulation.
+ * 
+ * @param {string} simId - Dam-break simulation identifier
+ * @returns {Promise<EvacuationCorridor[]>} List of evacuation corridors with muster zone coordinates
+ */
+export const fetchDamBreakEvacuationCorridors = async (simId) => {
+  const response = await giosApi.get(`/api/v1/analysis/geotechnical/dam-break/${simId}/evacuation-corridors`);
+  return response.data;
+};
+
+/**
+ * Constructs a dynamic XYZ tile streaming URL template for dam-break inundation depth or hazard product.
+ * 
+ * @param {string} simId - Simulation execution identifier
+ * @param {string} [metric='hazard_product'] - Inundation metric ('hazard_product' | 'depth' | 'velocity')
+ * @returns {string} Tile URL template
+ */
+export const getDamBreakTileUrlTemplate = (simId, metric = 'hazard_product') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/geotechnical/dam-break/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
 export default giosApi;
+
 
 
 

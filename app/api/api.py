@@ -3,6 +3,7 @@ from app.api.routes import data, analysis, timeseries, integration, events, dron
 
 api_router = APIRouter()
 api_router.include_router(events.router)
+api_router.include_router(events.alerts_router)
 api_router.include_router(data.router)
 api_router.include_router(analysis.router)
 api_router.include_router(analysis.tiles_router)

@@ -366,6 +366,29 @@ class TestGIOSApi(unittest.TestCase):
             # water_temp_c should be populated from baseline (28.0)
             self.assertEqual(res_partial["water_temp_c"], 28.0)
 
+        # 1b. Test malformed non-numeric readings ("Ice", "Eqp") and empty lists
+        service_malformed = DataIntegrationService()
+        mock_resp_malformed = MagicMock()
+        mock_resp_malformed.status_code = 200
+        mock_resp_malformed.json.return_value = {
+            "value": {
+                "timeSeries": [
+                    {
+                        "variable": {"variableCode": []},
+                        "values": [{"value": []}]
+                    },
+                    {
+                        "variable": {"variableCode": [{"value": "00060"}]},
+                        "values": [{"value": [{"value": "Ice"}]}]
+                    }
+                ]
+            }
+        }
+        with patch("httpx.AsyncClient.get", return_value=mock_resp_malformed):
+            res_malformed = asyncio.run(service_malformed.get_usgs_station("09486000"))
+            self.assertEqual(res_malformed["site_id"], "09486000")
+            self.assertEqual(res_malformed["discharge_cfs"], 12.0)
+
         # 2. Test complete upstream outage / HTTP 503 fallback
         service_outage = DataIntegrationService()
         mock_resp_503 = MagicMock()
@@ -1870,6 +1893,123 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(res_tile.status_code, 200)
         self.assertEqual(res_tile.headers.get("content-type"), "image/png")
         self.assertGreater(len(res_tile.content), 100)
+
+    def test_nodeodm_drone_photogrammetry_and_tiles_api(self):
+        """Test POST /api/v1/drone/odm-tasks, GET detail, listing, and dynamic XYZ orthophoto tiles."""
+        payload = {
+            "taskId": "ODM_TEST_20261001_999",
+            "projectName": "Tailings Crest High-Res Survey",
+            "imageCount": 80,
+            "cameraModel": "DJI-ZENMUSE-P1-35MM",
+            "gsdTargetCm": 1.5,
+            "featureQuality": "high",
+            "demResolutionCm": 5.0,
+            "meshOctreeDepth": 11,
+            "useGpu": True,
+            "radiometricCalibration": "camera_plus_sun"
+        }
+        res_post = self.client.post("/api/v1/drone/odm-tasks", json=payload)
+        self.assertEqual(res_post.status_code, 200)
+        data = res_post.json()
+        self.assertEqual(data["task_id"], "ODM_TEST_20261001_999")
+        self.assertIn("status", data)
+        self.assertIn("current_stage", data)
+        self.assertIn("progress_percent", data)
+        self.assertIn("tile_url_template", data)
+
+        # GET detail
+        res_get = self.client.get("/api/v1/drone/odm-tasks/ODM_TEST_20261001_999")
+        self.assertEqual(res_get.status_code, 200)
+        detail = res_get.json()
+        self.assertEqual(detail["task_id"], "ODM_TEST_20261001_999")
+
+        # GET listing
+        res_list = self.client.get("/api/v1/drone/odm-tasks")
+        self.assertEqual(res_list.status_code, 200)
+        list_data = res_list.json()
+        self.assertIn("tasks", list_data)
+        self.assertIsInstance(list_data["tasks"], list)
+
+        # Dynamic XYZ orthophoto tile
+        res_tile = self.client.get("/api/v1/tiles/drone/odm/ODM_TEST_20261001_999/18/12345/67890.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_quality_mosaic_and_tiles_api(self):
+        """Test POST /api/v1/mosaic/quality-mosaic, route aliases, and dynamic quality mosaic tiles."""
+        payload = {
+            "mosaicId": "QUALITY_MOSAIC_TEST_Q3",
+            "collection": "sentinel-2-l2a",
+            "method": "max_ndvi",
+            "sceneIds": ["S2A_MSIL2A_20260715", "S2B_MSIL2A_20260805", "S2A_MSIL2A_20260825"],
+            "dateRange": ["2026-07-01", "2026-08-31"],
+            "cloudThresholdPercent": 20.0,
+            "targetBands": ["B02", "B03", "B04", "B08", "B11", "B12"],
+            "maskShadows": True,
+            "maskSnow": True
+        }
+        res_post = self.client.post("/api/v1/mosaic/quality-mosaic", json=payload)
+        self.assertEqual(res_post.status_code, 200)
+        data = res_post.json()
+        self.assertEqual(data["mosaic_id"], "QUALITY_MOSAIC_TEST_Q3")
+        self.assertIn("quality_tier", data)
+        self.assertIn("total_input_scenes", data)
+        self.assertIn("valid_scenes_used", data)
+        self.assertIn("cloud_free_coverage_percent", data)
+        self.assertIn("scene_contributions", data)
+        self.assertIn("tile_url_template", data)
+
+        # Alias route
+        res_alias = self.client.post("/api/v1/analysis/mosaic/quality-mosaic", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # Dynamic Quality Mosaic tile
+        res_tile = self.client.get("/api/v1/tiles/mosaic/quality-mosaic/QUALITY_MOSAIC_TEST_Q3/10/163/395.png")
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+        self.assertGreater(len(res_tile.content), 100)
+
+    def test_hazard_alert_subscriptions_and_dispatch_api(self):
+        """Test POST/GET /api/v1/alerts/subscriptions and POST /api/v1/alerts/dispatch."""
+        sub_payload = {
+            "recipientName": "Geotechnical Risk Operations Center",
+            "channel": "webhook",
+            "targetEndpoint": "https://alerts.gios.local/webhook",
+            "subscribedAlertTypes": ["tailings_crest_deformation", "embankment_seepage_saturation"],
+            "minSeverityTier": "warning",
+            "cooldownMinutes": 15
+        }
+        res_sub = self.client.post("/api/v1/alerts/subscriptions", json=sub_payload)
+        self.assertEqual(res_sub.status_code, 200)
+        sub_data = res_sub.json()
+        self.assertIn("subscription_id", sub_data)
+        self.assertEqual(sub_data["recipient_name"], "Geotechnical Risk Operations Center")
+
+        # GET subscriptions
+        res_list = self.client.get("/api/v1/alerts/subscriptions")
+        self.assertEqual(res_list.status_code, 200)
+        self.assertIsInstance(res_list.json(), list)
+        self.assertTrue(any(s.get("recipient_name") == "Geotechnical Risk Operations Center" for s in res_list.json()))
+
+        # Dispatch alert
+        dispatch_payload = {
+            "alertId": "HAZ_ALERT_TEST_001",
+            "alertType": "tailings_crest_deformation",
+            "severity": "critical",
+            "zScore": 3.85,
+            "assetId": "ASSET_TAILINGS_CREST_04",
+            "title": "Severe Tailings Crest Lateral Displacement",
+            "message": "Persistent outward displacement delta exceeding 25mm/yr with accelerating trend.",
+            "channel": "webhook"
+        }
+        res_dispatch = self.client.post("/api/v1/alerts/dispatch", json=dispatch_payload)
+        self.assertEqual(res_dispatch.status_code, 200)
+        disp_data = res_dispatch.json()
+        self.assertIn("dispatch_id", disp_data)
+        self.assertIn("delivery_status", disp_data)
+        self.assertIn("event", disp_data)
+        self.assertEqual(disp_data["event"]["severity_tier"], "emergency")
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,6 @@ from app.database import engine, Base, seed_default_users
 from app.api.routes import auth, iot
 from app.services import reporting
 from app.api.routes import spatial, drone, wildfire
-from app.models.schemas import HealthResponse
 
 # Initialize DB tables
 Base.metadata.create_all(bind=engine)
@@ -64,10 +63,6 @@ async def data_anomaly_daemon():
             
             # Progress active simulated drone missions
             drone_service.simulate_missions()
-            
-            # Periodic garbage collection to maintain lean memory footprint
-            import gc
-            gc.collect()
             
             await asyncio.sleep(60) # Run every 60 seconds
         except asyncio.CancelledError:
@@ -124,10 +119,18 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(iot.router, prefix="/api/v1")
 app.include_router(reporting.router, prefix="/api/v1")
 app.include_router(spatial.router, prefix="/api/v1")
+app.include_router(drone.router, prefix="/api/v1")
+app.include_router(wildfire.router, prefix="/api/v1")
+app.include_router(api_router)  # Unversioned for direct frontend ease
+app.include_router(auth.router)
+app.include_router(iot.router)
+app.include_router(reporting.router)
+app.include_router(spatial.router)
+app.include_router(drone.router)
+app.include_router(wildfire.router)
 
-
-@app.get("/health", response_model=HealthResponse, tags=["System"])
-@limiter.limit("120/minute")
+@app.get("/health", tags=["System"])
+@limiter.limit("10/minute")
 def health_check(request: Request):
     return {
         "status": "healthy",

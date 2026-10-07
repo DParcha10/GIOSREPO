@@ -114,7 +114,16 @@ DEFAULT_INDEX_RANGES = {
     "topographic_minnaert": (0.0, 0.5),
     "minnaert": (0.0, 0.5),
     "tie_point_rpc": (0.0, 3.0),
-    "rpc_alignment": (0.0, 3.0)
+    "rpc_alignment": (0.0, 3.0),
+    "quality_mosaic": (0.0, 1.0),
+    "drone_odm": (0.0, 255.0),
+    "dam_break": (0.0, 30.0),
+    "hazard_product": (0.0, 30.0),
+    "flood_depth": (0.0, 15.0),
+    "dam_depth": (0.0, 15.0),
+    "flow_velocity": (0.0, 10.0),
+    "dam_velocity": (0.0, 10.0),
+    "arrival_time": (0.0, 180.0)
 }
 
 class TileService:
@@ -204,8 +213,12 @@ class TileService:
     ) -> bytes:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
-        idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
-        idx_clean = idx_enum.value.lower()
+        raw_idx = str(index.value if hasattr(index, "value") else index).lower().strip() if index else "rgb"
+        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
+            idx_clean = raw_idx
+        else:
+            idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
+            idx_clean = idx_enum.value.lower()
         cmap_enum = validate_colormap(colormap, default=TileColormap.SPECTRAL)
         cmap_clean = cmap_enum.value.lower()
 
@@ -470,6 +483,35 @@ class TileService:
                 grid_c = np.sin(xx * 60.0) ** 2
                 grid_r = np.cos(yy * 60.0) ** 2
                 val = np.clip(0.15 + base_variation * 0.45 + (grid_c > 0.85).astype(np.float32) * (grid_r > 0.85).astype(np.float32) * 1.8, 0.0, 3.5)
+            elif col_clean in {"quality_mosaic", "mosaic_quality", "quality"} or idx_clean in {"quality_mosaic", "max_ndvi", "clearest_pixel"}:
+                # Multi-temporal greenest/clearest pixel composite
+                val = np.clip(0.65 + base_variation * 0.30 - (np.sin(xx * 25.0) ** 2 * np.cos(yy * 25.0) ** 2) * 0.1, 0.0, 1.0)
+            elif col_clean in {"drone_odm", "odm_task", "odm_tasks", "drone"} or idx_clean in {"drone_odm", "odm", "orthophoto_mosaic"}:
+                # NodeODM reconstructed drone orthophoto mosaic
+                val = np.clip(128.0 + base_variation * 110.0 + np.sin(xx * 50.0) * 15.0, 0.0, 255.0)
+            elif col_clean in {"dam_break", "dam-break", "dam_breach_hydrodynamic"} or idx_clean in {"dam_break", "hazard_product", "flood_depth", "dam_depth", "flow_velocity", "dam_velocity", "arrival_time", "depth", "velocity"}:
+                # 2D shallow water dam-break hydrodynamic flow field
+                u_d = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_d = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+                centerline_v = 0.50 + 0.18 * np.sin(u_d * math.pi * 2.5) + 0.06 * np.cos(u_d * math.pi * 5.0)
+                d_center = np.abs(v_d - centerline_v)
+                half_width = 0.14 + 0.12 * u_d
+                eta = d_center / (half_width + 1e-6)
+                in_corridor = eta <= 1.0
+                cross_profile = np.clip(1.0 - eta**2, 0.0, 1.0)
+                attenuation = np.exp(-0.6 * u_d)
+                depth_grid = 14.5 * attenuation * cross_profile * (0.85 + 0.15 * base_variation)
+                velocity_grid = 9.2 * np.exp(-0.4 * u_d) * np.sqrt(cross_profile) * (0.90 + 0.10 * base_variation)
+
+                if idx_clean in {"depth", "flood_depth", "dam_depth", "h"}:
+                    val = np.where(in_corridor, np.clip(depth_grid, 0.0, 35.0), 0.0)
+                elif idx_clean in {"velocity", "flow_velocity", "dam_velocity", "speed", "v"}:
+                    val = np.where(in_corridor, np.clip(velocity_grid, 0.0, 20.0), 0.0)
+                elif idx_clean in {"arrival_time", "time", "t_arrival"}:
+                    val = np.where(in_corridor, np.clip(5.0 + 35.0 * (u_d**0.85) + base_variation * 2.0, 0.0, 180.0), 0.0)
+                else:
+                    # Default hazard product v * h (m^2/s)
+                    val = np.where(in_corridor, np.clip(depth_grid * velocity_grid, 0.0, 50.0), 0.0)
             else:
                 val = base_variation
 
@@ -544,6 +586,15 @@ class TileService:
                 rgba[:, :, 3] = 240
             elif col_clean in {"tie_point_rpc", "tie-point-rpc"} or idx_clean in {"tie_point_rpc", "rpc_residual"}:
                 rgba[:, :, 3] = 245
+            elif col_clean in {"quality_mosaic", "mosaic_quality"} or idx_clean in {"quality_mosaic"}:
+                rgba[:, :, 3] = 255
+            elif col_clean in {"drone_odm", "odm_task"} or idx_clean in {"drone_odm"}:
+                rgba[:, :, 3] = 255
+            elif col_clean in {"dam_break", "dam-break", "dam_breach_hydrodynamic"} or idx_clean in {"dam_break", "hazard_product", "flood_depth", "dam_depth", "flow_velocity", "dam_velocity", "arrival_time", "depth", "velocity"}:
+                flood_extent = val > 0.05
+                rgba[~flood_extent, 3] = 0
+                rgba[flood_extent & (val < 1.0), 3] = 170
+                rgba[flood_extent & (val >= 1.0), 3] = 225
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
@@ -1408,6 +1459,107 @@ class TileService:
             index="tie_point_rpc",
             colormap=colormap or "turbo",
             rescale=rescale or "0.0,3.0"
+        )
+
+    def render_quality_mosaic_tile(
+        self,
+        mosaic_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "spectral",
+        rescale: Optional[str] = "0.0,1.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for multi-temporal greenest/clearest quality pixel composite."""
+        return self.render_tile(
+            collection="quality_mosaic",
+            item_id=mosaic_id or "QUALITY_MOSAIC_2026_Q3",
+            z=z,
+            x=x,
+            y=y,
+            index="quality_mosaic",
+            colormap=colormap or "spectral",
+            rescale=rescale or "0.0,1.0"
+        )
+
+    def render_drone_odm_tile(
+        self,
+        task_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        colormap: Optional[str] = "viridis",
+        rescale: Optional[str] = "0.0,255.0"
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for NodeODM reconstructed drone orthophoto deliverables."""
+        return self.render_tile(
+            collection="drone_odm",
+            item_id=task_id or "ODM_TASK_20261001_001",
+            z=z,
+            x=x,
+            y=y,
+            index="drone_odm",
+            colormap=colormap or "viridis",
+            rescale=rescale or "0.0,255.0"
+        )
+
+    def render_dam_break_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "hazard_product",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for 2D shallow water dam-break hydrodynamic simulation."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "hazard_product"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"depth", "flood_depth", "dam_depth", "h"}:
+                chosen_cmap = "blues"
+            elif metric_clean in {"velocity", "flow_velocity", "dam_velocity", "speed", "v"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"arrival_time", "time", "t_arrival"}:
+                chosen_cmap = "viridis"
+            else:
+                chosen_cmap = "turbo"
+        else:
+            chosen_cmap = colormap
+
+        if not rescale:
+            if metric_clean in {"depth", "flood_depth", "dam_depth", "h"}:
+                chosen_rescale = "0.0,15.0"
+            elif metric_clean in {"velocity", "flow_velocity", "dam_velocity", "speed", "v"}:
+                chosen_rescale = "0.0,10.0"
+            elif metric_clean in {"arrival_time", "time", "t_arrival"}:
+                chosen_rescale = "0.0,120.0"
+            else:
+                chosen_rescale = "0.0,30.0"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="dam_break",
+            item_id=sim_id or "SIM_DAM_BREAK_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
         )
 
 tile_service = TileService()

@@ -356,7 +356,30 @@ from app.models.schemas import (
     RPCTiePointRequest,
     RPCTiePointResponse,
     calculate_rpc_tie_point_alignment,
-    build_tie_point_rpc_tile_url
+    build_tie_point_rpc_tile_url,
+    QualityMosaicMethod,
+    QualityMosaicTier,
+    QUALITY_MOSAIC_TIER_METADATA,
+    SceneContribution,
+    QualityMosaicRequest,
+    QualityMosaicResponse,
+    classify_quality_mosaic_tier,
+    calculate_quality_mosaic_pixel_selection,
+    build_quality_mosaic_tile_url,
+    BreachMechanism,
+    RheologyModel,
+    HazardIntensityTier,
+    EvacuationUrgencyTier,
+    InfrastructureExposureType,
+    DamBreachParameters,
+    DownstreamReceptor,
+    InundationTimeSlice,
+    EvacuationCorridor,
+    DamBreakHydrodynamicRequest,
+    DamBreakHydrodynamicResponse,
+    calculate_dam_break_hydrodynamic_simulation,
+    build_dam_break_tile_url,
+    build_dam_break_tile_url_template
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -372,6 +395,7 @@ ortho_router = APIRouter(prefix="/ortho", tags=["Orthorectification"])
 mosaic_router = APIRouter(prefix="/mosaic", tags=["Mosaic & Seamlines"])
 preprocessing_router = APIRouter(prefix="/preprocessing", tags=["Preprocessing & Radiometry"])
 sar_router = APIRouter(prefix="/sar", tags=["SAR Analytics"])
+geotechnical_router = APIRouter(prefix="/geotechnical", tags=["Geotechnical & Dam Safety"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -5928,6 +5952,130 @@ def get_analysis_tie_point_rpc_tile(
     rescale: Optional[str] = "0.0,3.0"
 ):
     return get_tie_point_rpc_tile(z=z, x=x, y=y, image_id=image_id, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# T-121: MULTI-TEMPORAL QUALITY MOSAICING COMPOSITOR & TILE STREAMING
+# ============================================================================
+
+@mosaic_router.post("/quality-mosaic", response_model=QualityMosaicResponse)
+@mosaic_router.post("/quality_mosaic", response_model=QualityMosaicResponse, include_in_schema=False)
+@mosaic_router.post("/quality", response_model=QualityMosaicResponse, include_in_schema=False)
+def generate_quality_mosaic(req: QualityMosaicRequest):
+    """Calculates multi-temporal greenest/clearest pixel compositing across satellite scenes."""
+    method_str = req.method.value if hasattr(req.method, "value") else str(req.method)
+    calc_res = calculate_quality_mosaic_pixel_selection(
+        mosaic_id=req.mosaic_id,
+        collection=req.collection,
+        method=method_str,
+        scene_ids=req.scene_ids,
+        cloud_threshold_percent=req.cloud_threshold_percent
+    )
+    tile_url = build_quality_mosaic_tile_url(
+        mosaic_id=req.mosaic_id,
+        z="{z}",
+        x="{x}",
+        y="{y}"
+    )
+    gc.collect()
+    return QualityMosaicResponse(
+        mosaic_id=calc_res["mosaic_id"],
+        collection=calc_res["collection"],
+        method=calc_res["method"],
+        total_input_scenes=calc_res["total_input_scenes"],
+        valid_scenes_used=calc_res["valid_scenes_used"],
+        total_pixels_processed=calc_res["total_pixels_processed"],
+        cloud_free_coverage_percent=calc_res["cloud_free_coverage_percent"],
+        mean_quality_score=calc_res["mean_quality_score"],
+        quality_tier=calc_res["quality_tier"],
+        tier_metadata=calc_res["tier_metadata"],
+        scene_contributions=[SceneContribution(**sc) for sc in calc_res["scene_contributions"]],
+        bands=calc_res["bands"],
+        tile_url_template=tile_url,
+        composed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@router.post("/mosaic/quality-mosaic", response_model=QualityMosaicResponse, include_in_schema=False)
+@router.post("/mosaic/quality_mosaic", response_model=QualityMosaicResponse, include_in_schema=False)
+@router.post("/mosaic/quality", response_model=QualityMosaicResponse, include_in_schema=False)
+def generate_analysis_quality_mosaic(req: QualityMosaicRequest):
+    return generate_quality_mosaic(req)
+
+
+@tiles_router.get("/mosaic/quality/{mosaic_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/mosaic/quality-mosaic/{mosaic_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/mosaic/quality/{z}/{x}/{y}.png")
+def get_quality_mosaic_tile(
+    z: int,
+    x: int,
+    y: int,
+    mosaic_id: Optional[str] = "QUALITY_MOSAIC_2026_Q3",
+    colormap: Optional[str] = "spectral",
+    rescale: Optional[str] = "0.0,1.0"
+):
+    """Dynamic XYZ tile streaming for multi-temporal quality mosaics."""
+    png_bytes = tile_service.render_quality_mosaic_tile(
+        mosaic_id=mosaic_id or "QUALITY_MOSAIC_2026_Q3",
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap or "spectral",
+        rescale=rescale or "0.0,1.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Quality-Mosaic-v2.5"}
+    )
+
+
+@router.get("/tiles/mosaic/quality/{mosaic_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/mosaic/quality-mosaic/{mosaic_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/mosaic/quality/{z}/{x}/{y}.png")
+def get_analysis_quality_mosaic_tile(
+    z: int,
+    x: int,
+    y: int,
+    mosaic_id: Optional[str] = "QUALITY_MOSAIC_2026_Q3",
+    colormap: Optional[str] = "spectral",
+    rescale: Optional[str] = "0.0,1.0"
+):
+    return get_quality_mosaic_tile(z=z, x=x, y=y, mosaic_id=mosaic_id, colormap=colormap, rescale=rescale)
+
+
+@tiles_router.get("/drone/odm/{task_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/drone/odm/{z}/{x}/{y}.png")
+def get_drone_odm_tile_alias(
+    z: int,
+    x: int,
+    y: int,
+    task_id: Optional[str] = "ODM_TASK_20261001_001"
+):
+    """Dynamic XYZ tile streaming alias for NodeODM drone orthophoto mosaics."""
+    png_bytes = tile_service.render_drone_odm_tile(
+        task_id=task_id or "ODM_TASK_20261001_001",
+        z=z,
+        x=x,
+        y=y
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-NodeODM-v2.5"}
+    )
+
+
+@router.get("/tiles/drone/odm/{task_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/drone/odm/{z}/{x}/{y}.png")
+def get_analysis_drone_odm_tile(
+    z: int,
+    x: int,
+    y: int,
+    task_id: Optional[str] = "ODM_TASK_20261001_001"
+):
+    return get_drone_odm_tile_alias(z=z, x=x, y=y, task_id=task_id)
+
 
 
 

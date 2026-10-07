@@ -893,6 +893,8 @@ export const API_ENDPOINTS = {
   DRONE_ODM_TASKS_SHORT: '/drone/odm-tasks',
   DRONE_ODM_TASK_DETAIL: (taskId) => `/api/v1/drone/odm-tasks/${taskId}`,
   DRONE_ODM_TASK_DETAIL_SHORT: (taskId) => `/drone/odm-tasks/${taskId}`,
+  TILES_DRONE_ODM: (taskId, z, x, y) => `/api/v1/tiles/drone/odm/${taskId}/${z}/${x}/${y}.png`,
+  TILES_DRONE_ODM_SHORT: (taskId, z, x, y) => `/drone/odm/${taskId}/tiles/${z}/${x}/${y}.png`,
   MOSAIC_QUALITY: '/api/v1/mosaic/quality-mosaic',
   MOSAIC_QUALITY_SHORT: '/mosaic/quality-mosaic',
   TILES_MOSAIC_QUALITY: (mosaicId, z, x, y) => `/api/v1/tiles/mosaic/quality/${mosaicId}/${z}/${x}/${y}.png`,
@@ -901,7 +903,21 @@ export const API_ENDPOINTS = {
   ALERTS_STREAM: '/api/v1/alerts/stream',
   ALERTS_STREAM_SHORT: '/alerts/stream',
   ALERTS_DISPATCH: '/api/v1/alerts/dispatch',
-  ALERTS_DISPATCH_SHORT: '/alerts/dispatch'
+  ALERTS_DISPATCH_SHORT: '/alerts/dispatch',
+  ANALYSIS_DAM_BREAK_HYDRODYNAMICS: '/api/v1/analysis/geotechnical/dam-break-hydrodynamics',
+  ANALYSIS_DAM_BREAK_HYDRODYNAMICS_SHORT: '/geotechnical/dam-break-hydrodynamics',
+  TILES_DAM_BREAK: (simId, z, x, y) => `/api/v1/tiles/geotechnical/dam-break/${simId}/${z}/${x}/${y}.png`,
+  TILES_DAM_BREAK_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/dam-break/${simId}/${metric}/${z}/${x}/${y}.png`,
+  DAM_BREAK_EVACUATION_CORRIDORS: (simId) => `/api/v1/analysis/geotechnical/dam-break/${simId}/evacuation-corridors`,
+  DAM_BREAK_EVACUATION_CORRIDORS_SHORT: (simId) => `/geotechnical/dam-break/${simId}/evacuation-corridors`,
+  ANALYSIS_PHREATIC_SEEPAGE: '/api/v1/analysis/geotechnical/phreatic-seepage',
+  ANALYSIS_PHREATIC_SEEPAGE_SHORT: '/geotechnical/phreatic-seepage',
+  ANALYSIS_SWRC_INVERSION: '/api/v1/analysis/geotechnical/swrc-inversion',
+  ANALYSIS_SWRC_INVERSION_SHORT: '/geotechnical/swrc-inversion',
+  GEOTECHNICAL_PIEZOMETERS: (damId) => `/api/v1/analysis/geotechnical/piezometers/${damId}`,
+  GEOTECHNICAL_PIEZOMETERS_SHORT: (damId) => `/geotechnical/piezometers/${damId}`,
+  TILES_PHREATIC_SEEPAGE: (simId, z, x, y) => `/api/v1/tiles/geotechnical/phreatic-seepage/${simId}/${z}/${x}/${y}.png`,
+  TILES_PHREATIC_SEEPAGE_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/phreatic-seepage/${simId}/${metric}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1042,8 +1058,25 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'DRONE_ODM_TASK_DETAIL':
       case 'DRONE_ODM_TASK_DETAIL_SHORT':
         return endpoint(params.taskId || params.task_id || 'task_01');
+      case 'TILES_DRONE_ODM':
+      case 'TILES_DRONE_ODM_SHORT':
+        return endpoint(params.taskId || params.task_id || 'task_01', params.z, params.x, params.y);
       case 'TILES_MOSAIC_QUALITY':
         return endpoint(params.mosaicId || params.mosaic_id || 'mosaic_01', params.z, params.x, params.y);
+      case 'TILES_DAM_BREAK':
+        return endpoint(params.simId || params.sim_id || 'SIM_DAM_BREAK_001', params.z, params.x, params.y);
+      case 'TILES_DAM_BREAK_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_DAM_BREAK_001', params.metric || 'hazard_product', params.z, params.x, params.y);
+      case 'DAM_BREAK_EVACUATION_CORRIDORS':
+      case 'DAM_BREAK_EVACUATION_CORRIDORS_SHORT':
+        return endpoint(params.simId || params.sim_id || 'SIM_DAM_BREAK_001');
+      case 'GEOTECHNICAL_PIEZOMETERS':
+      case 'GEOTECHNICAL_PIEZOMETERS_SHORT':
+        return endpoint(params.damId || params.dam_id || 'TAILINGS_DAM_A');
+      case 'TILES_PHREATIC_SEEPAGE':
+        return endpoint(params.simId || params.sim_id || 'SIM_SEEPAGE_001', params.z, params.x, params.y);
+      case 'TILES_PHREATIC_SEEPAGE_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_SEEPAGE_001', params.metric || 'saturation', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -7730,6 +7763,11 @@ export const calculateOdmStageProgress = (stage, elapsedSeconds = 120.0, imageCo
   };
 };
 
+export const buildOdmTileUrl = (taskId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  return `${basePrefix}/tiles/drone/odm/${taskId}/${z}/${x}/${y}.png`;
+};
+
 // ----------------------------------------------------------------------------
 // 2. Multi-Temporal Quality Mosaicing (Greenest/Clearest Pixel Composition)
 // ----------------------------------------------------------------------------
@@ -8059,6 +8097,554 @@ export const dispatchSimulatedHazardAlert = (options = {}) => {
     event
   };
 };
+
+// ============================================================================
+// Task T-126: Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamic Simulation Contracts
+// ============================================================================
+
+export const BREACH_MECHANISMS = {
+  OVERTOPPING: 'overtopping',
+  PIPING_INTERNAL_EROSION: 'piping_internal_erosion',
+  SLOPE_INSTABILITY_SLIDE: 'slope_instability_slide',
+  FOUNDATION_LIQUEFACTION: 'foundation_liquefaction',
+  INSTANTANEOUS_COLLAPSE: 'instantaneous_collapse'
+};
+
+export const RHEOLOGY_MODELS = {
+  NEWTONIAN_WATER: 'newtonian_water',
+  BINGHAM_PLASTIC_SLURRY: 'bingham_plastic_slurry',
+  HERSCHEL_BULKLEY_TAILINGS: 'herschel_bulkley_tailings',
+  DILATANT_GRANULAR: 'dilatant_granular'
+};
+
+export const HAZARD_INTENSITY_TIERS = {
+  LOW_HAZARD: 'low_hazard',
+  MEDIUM_HAZARD: 'medium_hazard',
+  HIGH_HAZARD: 'high_hazard',
+  EXTREME_CATASTROPHIC: 'extreme_catastrophic'
+};
+
+export const HAZARD_INTENSITY_TIER_CONFIGS = {
+  low_hazard: {
+    id: 'low_hazard',
+    name: 'Low Hazard (Wading Safe)',
+    min_product: 0.0,
+    max_product: 0.5,
+    color: '#10B981',
+    badge_class: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    structural_impact: 'Negligible structural damage; shallow backwater inundation.',
+    life_safety_risk: 'Low risk; accessible by foot evacuation.'
+  },
+  medium_hazard: {
+    id: 'medium_hazard',
+    name: 'Medium Hazard (Vehicle Floating)',
+    min_product: 0.5,
+    max_product: 1.5,
+    color: '#F59E0B',
+    badge_class: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    structural_impact: 'Non-structural wall damage; sedimental deposition and inundation.',
+    life_safety_risk: 'Dangerous to adults and children; light vehicles floating.'
+  },
+  high_hazard: {
+    id: 'high_hazard',
+    name: 'High Hazard (Structural Damage)',
+    min_product: 1.5,
+    max_product: 2.5,
+    color: '#EF4444',
+    badge_class: 'bg-red-500/20 text-red-300 border border-red-500/40',
+    structural_impact: 'Severe masonry structural failure; bridge abutment undermining.',
+    life_safety_risk: 'High mortality hazard; heavy vehicle swept away.'
+  },
+  extreme_catastrophic: {
+    id: 'extreme_catastrophic',
+    name: 'Extreme / Catastrophic Hazard',
+    min_product: 2.5,
+    max_product: null,
+    color: '#7F1D1D',
+    badge_class: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    structural_impact: 'Total structural destruction; reinforced concrete failure; massive scour.',
+    life_safety_risk: 'Catastrophic life safety threat; zero foot or vehicle survival.'
+  }
+};
+
+export const EVACUATION_URGENCY_TIERS = {
+  IMMEDIATE_LIFE_SAFETY: 'immediate_life_safety',
+  HIGH_PRIORITY_EVACUATION: 'high_priority_evacuation',
+  PRECAUTIONARY_STAGED: 'precautionary_staged',
+  MONITORED_SAFE_HAVEN: 'monitored_safe_haven'
+};
+
+export const EVACUATION_URGENCY_TIER_CONFIGS = {
+  immediate_life_safety: {
+    id: 'immediate_life_safety',
+    name: 'Immediate Life Safety (<15m)',
+    max_arrival_time_min: 15.0,
+    color: '#DC2626',
+    badge_class: 'bg-red-600/30 text-red-200 border border-red-500 animate-pulse',
+    action_protocol: 'Sound high-level emergency sirens immediately. Direct emergency vertical/horizontal ascent to designated high-ground muster points.'
+  },
+  high_priority_evacuation: {
+    id: 'high_priority_evacuation',
+    name: 'High Priority Evacuation (15-60m)',
+    max_arrival_time_min: 60.0,
+    color: '#EA580C',
+    badge_class: 'bg-orange-500/20 text-orange-300 border border-orange-500/40',
+    action_protocol: 'Activate emergency transport corridors. Evacuate schools, residential settlements, and critical operations personnel.'
+  },
+  precautionary_staged: {
+    id: 'precautionary_staged',
+    name: 'Precautionary Staged (1-3h)',
+    max_arrival_time_min: 180.0,
+    color: '#F59E0B',
+    badge_class: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    action_protocol: 'Deploy traffic management along evacuation arterials. Stage emergency equipment and clear floodways.'
+  },
+  monitored_safe_haven: {
+    id: 'monitored_safe_haven',
+    name: 'Monitored Safe Haven (>3h)',
+    max_arrival_time_min: null,
+    color: '#3B82F6',
+    badge_class: 'bg-blue-500/20 text-blue-300 border border-blue-500/40',
+    action_protocol: 'Monitor hydrodynamic slurry front progression via satellite/drone telemetry. Maintain communications with civil defense.'
+  }
+};
+
+export const INFRASTRUCTURE_EXPOSURE_TYPES = {
+  RESIDENTIAL_SETTLEMENT: 'residential_settlement',
+  INDUSTRIAL_PLANT: 'industrial_plant',
+  MINE_PROCESSING_FACILITY: 'mine_processing_facility',
+  BRIDGE_CROSSING: 'bridge_crossing',
+  POWER_SUBSTATION: 'power_substation',
+  HOSPITAL_OR_SCHOOL: 'hospital_or_school',
+  WATER_TREATMENT_PLANT: 'water_treatment_plant',
+  AGRICULTURAL_LAND: 'agricultural_land'
+};
+
+export const INFRASTRUCTURE_EXPOSURE_CONFIGS = {
+  residential_settlement: {
+    id: 'residential_settlement',
+    name: 'Residential Settlement',
+    base_vulnerability: 0.85,
+    criticality_factor: 1.5,
+    description: 'Populated communities and housing structures highly vulnerable to hydrodynamic thrust.'
+  },
+  industrial_plant: {
+    id: 'industrial_plant',
+    name: 'Industrial Processing Plant',
+    base_vulnerability: 0.65,
+    criticality_factor: 1.2,
+    description: 'Manufacturing plants, heavy equipment yards, and chemical storage.'
+  },
+  mine_processing_facility: {
+    id: 'mine_processing_facility',
+    name: 'Mine Extraction & Beneficiation Plant',
+    base_vulnerability: 0.70,
+    criticality_factor: 1.3,
+    description: 'Crushers, mills, flotation cells, and electrical switchgear.'
+  },
+  bridge_crossing: {
+    id: 'bridge_crossing',
+    name: 'Thalweg Road / Rail Bridge Crossing',
+    base_vulnerability: 0.75,
+    criticality_factor: 1.4,
+    description: 'Span bridges vulnerable to deck hydrodynamic uplift and abutment scour.'
+  },
+  power_substation: {
+    id: 'power_substation',
+    name: 'High-Voltage Power Substation',
+    base_vulnerability: 0.90,
+    criticality_factor: 1.6,
+    description: 'Electrical grid distribution node; submergence induces regional blackout.'
+  },
+  hospital_or_school: {
+    id: 'hospital_or_school',
+    name: 'Critical Community Care Facility (Hospital/School)',
+    base_vulnerability: 0.95,
+    criticality_factor: 2.0,
+    description: 'Sensitive public health and educational facilities requiring maximum evacuation lead time.'
+  },
+  water_treatment_plant: {
+    id: 'water_treatment_plant',
+    name: 'Municipal Water Intake & Treatment',
+    base_vulnerability: 0.80,
+    criticality_factor: 1.5,
+    description: 'Drinking water supply at risk of catastrophic tailings sediment contamination.'
+  },
+  agricultural_land: {
+    id: 'agricultural_land',
+    name: 'Agricultural & Grazing Floodplain',
+    base_vulnerability: 0.40,
+    criticality_factor: 0.8,
+    description: 'Farmland and crop acreage exposed to sediment deposition and siltation.'
+  }
+};
+
+export const BREACH_MECHANISM_CONFIGS = {
+  overtopping: {
+    name: 'Hydraulic Crest Overtopping',
+    peak_discharge_multiplier: 1.00,
+    default_formation_time_hr: 1.5,
+    description: 'Erosion initiates at lowest crest point and cuts downward trapezoidal notch.'
+  },
+  piping_internal_erosion: {
+    name: 'Internal Seepage Piping',
+    peak_discharge_multiplier: 0.90,
+    default_formation_time_hr: 2.0,
+    description: 'Subsurface conduit expands progressively until crest collapses into void.'
+  },
+  slope_instability_slide: {
+    name: 'Deep Rotational Slope Failure',
+    peak_discharge_multiplier: 1.05,
+    default_formation_time_hr: 1.0,
+    description: 'Sudden shear failure of downstream shell causing rapid loss of freeboard.'
+  },
+  foundation_liquefaction: {
+    name: 'Static / Cyclic Foundation Liquefaction',
+    peak_discharge_multiplier: 1.15,
+    default_formation_time_hr: 0.75,
+    description: 'Contractive upstream tailings foundation collapses rapidly under shear strain.'
+  },
+  instantaneous_collapse: {
+    name: 'Catastrophic Instantaneous Collapse',
+    peak_discharge_multiplier: 1.25,
+    default_formation_time_hr: 0.25,
+    description: 'Immediate dam-break release modeled as instant dam removal (Ritter solution).'
+  }
+};
+
+export const calculateDamBreachPeakDischarge = (
+  damHeightM = 45.0,
+  reservoirVolumeM3 = 12500000.0,
+  breachMechanism = 'overtopping'
+) => {
+  const bKey = String(breachMechanism || 'overtopping').toLowerCase();
+  const meta = BREACH_MECHANISM_CONFIGS[bKey] || BREACH_MECHANISM_CONFIGS.overtopping;
+  const multiplier = meta.peak_discharge_multiplier;
+
+  const h = Math.max(1.0, Number(damHeightM));
+  const v = Math.max(100.0, Number(reservoirVolumeM3));
+
+  // Froehlich (2008): Qp = 0.607 * (V_w)^0.295 * (h_w)^1.24
+  const qp = 0.607 * Math.pow(v, 0.295) * Math.pow(h, 1.24) * multiplier;
+  return Number(qp.toFixed(2));
+};
+
+export const classifyHazardIntensityTier = (velocityMs, depthM) => {
+  const v = Math.abs(Number(velocityMs));
+  const h = Math.max(0.0, Number(depthM));
+  const product = v * h;
+
+  if (product >= 2.5 || h >= 3.0) {
+    return HAZARD_INTENSITY_TIER_CONFIGS.extreme_catastrophic;
+  }
+  if (product >= 1.5) {
+    return HAZARD_INTENSITY_TIER_CONFIGS.high_hazard;
+  }
+  if (product >= 0.5) {
+    return HAZARD_INTENSITY_TIER_CONFIGS.medium_hazard;
+  }
+  return HAZARD_INTENSITY_TIER_CONFIGS.low_hazard;
+};
+
+export const classifyEvacuationUrgency = (arrivalTimeMin) => {
+  const t = Number(arrivalTimeMin);
+  if (t <= 15.0) {
+    return EVACUATION_URGENCY_TIER_CONFIGS.immediate_life_safety;
+  }
+  if (t <= 60.0) {
+    return EVACUATION_URGENCY_TIER_CONFIGS.high_priority_evacuation;
+  }
+  if (t <= 180.0) {
+    return EVACUATION_URGENCY_TIER_CONFIGS.precautionary_staged;
+  }
+  return EVACUATION_URGENCY_TIER_CONFIGS.monitored_safe_haven;
+};
+
+export const calculateDownstreamWaveAttenuation = (
+  distanceKm = 2.0,
+  peakDischargeM3s = 5000.0,
+  manningN = 0.040,
+  valleySlope = 0.015,
+  slurryYieldStressPa = 45.0
+) => {
+  const x = Math.max(0.05, Number(distanceKm));
+  const q0 = Math.max(10.0, Number(peakDischargeM3s));
+  const n = Math.max(0.010, Math.min(0.200, Number(manningN)));
+  const s0 = Math.max(0.001, Number(valleySlope));
+  const tau0 = Math.max(0.0, Number(slurryYieldStressPa));
+
+  const qx = q0 * Math.exp(-0.042 * Math.pow(x, 0.82));
+  const b = 80.0 + 16.0 * x;
+  let hx = Math.pow((qx * n) / (b * Math.sqrt(s0)), 0.6);
+  hx = Math.max(0.15, hx);
+
+  const rheologyFactor = Math.max(0.55, 1.0 - (tau0 / 500.0));
+  const vx = Math.max(0.5, (qx / (b * hx)) * rheologyFactor);
+  const celerity = Math.sqrt(9.81 * hx) + vx;
+
+  const travelTimeSec = (x * 1000.0) / (0.75 * celerity);
+  const arrivalTimeMin = travelTimeSec / 60.0;
+  const vh = vx * hx;
+
+  return {
+    distance_km: Number(x.toFixed(2)),
+    discharge_m3s: Number(qx.toFixed(2)),
+    depth_m: Number(hx.toFixed(2)),
+    velocity_ms: Number(vx.toFixed(2)),
+    arrival_time_min: Number(arrivalTimeMin.toFixed(1)),
+    hazard_product_m2s: Number(vh.toFixed(2))
+  };
+};
+
+export const calculateInfrastructureVulnerabilityScore = (
+  exposureType = 'residential_settlement',
+  depthM = 1.0,
+  velocityMs = 1.0
+) => {
+  const expStr = String(exposureType || 'residential_settlement').toLowerCase();
+  const meta = INFRASTRUCTURE_EXPOSURE_CONFIGS[expStr] || INFRASTRUCTURE_EXPOSURE_CONFIGS.residential_settlement;
+  const base = meta.base_vulnerability;
+
+  const h = Math.max(0.0, Number(depthM));
+  const v = Math.abs(Number(velocityMs));
+  const vh = v * h;
+
+  const depthRatio = Math.min(h / 3.0, 1.0);
+  const velocityRatio = Math.min(v / 4.0, 1.0);
+  const productRatio = Math.min(vh / 2.5, 1.0);
+
+  const score = base * (0.35 * depthRatio + 0.25 * velocityRatio + 0.40 * productRatio);
+  return Number(Math.min(1.0, Math.max(0.0, score)).toFixed(3));
+};
+
+export const calculateDamBreakHydrodynamicSimulation = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `SIM_DAM_BREAK_${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`;
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const damName = options.dam_name || options.damName || 'North Tailings Impoundment';
+  const damCoords = options.dam_coordinates || options.damCoordinates || [-44.1234, -20.1234];
+
+  const bp = options.breach_params || options.breachParams || {};
+  const damHeight = Number(bp.dam_height_m ?? bp.damHeightM ?? 45.0);
+  const resVol = Number(bp.reservoir_volume_m3 ?? bp.reservoirVolumeM3 ?? 12500000.0);
+  const bMech = bp.breach_mechanism || bp.breachMechanism || 'overtopping';
+  const manningN = Number(bp.manning_n_roughness ?? bp.manningNRoughness ?? 0.040);
+  const tau0 = Number(bp.slurry_yield_stress_pa ?? bp.slurryYieldStressPa ?? 45.0);
+
+  let qp = bp.peak_discharge_m3s ?? bp.peakDischargeM3s;
+  if (qp === undefined || qp === null) {
+    qp = calculateDamBreachPeakDischarge(damHeight, resVol, bMech);
+  } else {
+    qp = Number(qp);
+  }
+
+  const durationHr = Number(options.simulation_duration_hours ?? options.simulationDurationHours ?? 6.0);
+  const intervalMin = Number(options.timestep_interval_min ?? options.timestepIntervalMin ?? 15.0);
+
+  const totalMinutes = Math.floor(durationHr * 60);
+  const timeSlices = [];
+  let currentTime = intervalMin;
+  let maxAreaHa = 0.0;
+  let maxReachDepth = 0.0;
+  let maxReachVel = 0.0;
+
+  while (currentTime <= totalMinutes) {
+    const waveDist = Math.min(30.0, Number((3.5 * Math.pow(currentTime / 15.0, 0.82)).toFixed(2)));
+    const volRel = Math.min(resVol, Number((resVol * (1.0 - Math.exp(-1.8 * (currentTime / 60.0)))).toFixed(2)));
+    const areaHa = Number((18.5 * Math.pow(waveDist, 1.15)).toFixed(1));
+    const maxD = Number(Math.max(0.5, 14.5 * Math.exp(-0.06 * waveDist)).toFixed(2));
+    const meanD = Number((maxD * 0.42).toFixed(2));
+    const maxV = Number(Math.max(0.6, 9.2 * Math.exp(-0.05 * waveDist)).toFixed(2));
+
+    if (areaHa > maxAreaHa) maxAreaHa = areaHa;
+    if (maxD > maxReachDepth) maxReachDepth = maxD;
+    if (maxV > maxReachVel) maxReachVel = maxV;
+
+    timeSlices.push({
+      timestep_minutes: currentTime,
+      inundation_area_ha: areaHa,
+      max_depth_m: maxD,
+      mean_depth_m: meanD,
+      max_velocity_ms: maxV,
+      wave_front_distance_km: waveDist,
+      slurry_volume_released_m3: volRel
+    });
+    currentTime += intervalMin;
+  }
+
+  const rawReceptors = options.receptors || [
+    {
+      receptor_id: 'REC_MINE_01',
+      name: 'Tailings Beneficiation Plant & Maintenance Yard',
+      exposure_type: 'mine_processing_facility',
+      distance_downstream_km: 1.2,
+      elevation_m: 712.0,
+      population_at_risk: 45,
+      latitude: damCoords[1] - 0.010,
+      longitude: damCoords[0] + 0.008
+    },
+    {
+      receptor_id: 'REC_SETTLEMENT_02',
+      name: 'Vila Esperança Downstream Community',
+      exposure_type: 'residential_settlement',
+      distance_downstream_km: 4.8,
+      elevation_m: 685.0,
+      population_at_risk: 320,
+      latitude: damCoords[1] - 0.038,
+      longitude: damCoords[0] + 0.025
+    },
+    {
+      receptor_id: 'REC_BRIDGE_03',
+      name: 'Rio Ferro Regional Highway Bridge',
+      exposure_type: 'bridge_crossing',
+      distance_downstream_km: 8.5,
+      elevation_m: 660.0,
+      population_at_risk: 15,
+      latitude: damCoords[1] - 0.065,
+      longitude: damCoords[0] + 0.045
+    },
+    {
+      receptor_id: 'REC_SUBSTATION_04',
+      name: 'Valley Primary 230kV Power Substation',
+      exposure_type: 'power_substation',
+      distance_downstream_km: 14.2,
+      elevation_m: 632.0,
+      population_at_risk: 8,
+      latitude: damCoords[1] - 0.110,
+      longitude: damCoords[0] + 0.075
+    }
+  ];
+
+  let totalPopAtRisk = 0;
+  let impactedCount = 0;
+  let maxVhOverall = 0.0;
+  const receptorsList = [];
+
+  for (const r of rawReceptors) {
+    const distKm = Number(r.distance_downstream_km ?? r.distanceDownstreamKm ?? 2.0);
+    const pop = Number(r.population_at_risk ?? r.populationAtRisk ?? 0);
+    const expType = r.exposure_type || r.exposureType || 'residential_settlement';
+
+    const attn = calculateDownstreamWaveAttenuation(distKm, qp, manningN, 0.015, tau0);
+    const depthM = attn.depth_m;
+    const velMs = attn.velocity_ms;
+    const arrMin = attn.arrival_time_min;
+    const vhProd = attn.hazard_product_m2s;
+
+    const hTier = classifyHazardIntensityTier(velMs, depthM);
+    const urgTier = classifyEvacuationUrgency(arrMin);
+    const vuln = calculateInfrastructureVulnerabilityScore(expType, depthM, velMs);
+
+    if (vhProd > maxVhOverall) maxVhOverall = vhProd;
+    if (depthM > 0.2) {
+      impactedCount += 1;
+      totalPopAtRisk += pop;
+    }
+
+    receptorsList.push({
+      ...r,
+      arrival_time_min: arrMin,
+      peak_depth_m: depthM,
+      peak_velocity_ms: velMs,
+      hazard_intensity_product: vhProd,
+      hazard_tier: hTier.id,
+      vulnerability_score: vuln,
+      evacuation_urgency: urgTier.id
+    });
+  }
+
+  const evacCorridors = [
+    {
+      corridor_id: 'EVAC_NORTH_RIDGE',
+      name: 'North Ridge High-Ground Evacuation Spine',
+      assembly_point: 'Muster Station Echo (El. 785m)',
+      safe_elevation_m: 785.0,
+      buffer_distance_m: 150.0,
+      estimated_evacuation_time_min: 18.0,
+      route_status: 'open',
+      coordinates: [
+        [damCoords[0] + 0.005, damCoords[1] + 0.005],
+        [damCoords[0] + 0.012, damCoords[1] + 0.018],
+        [damCoords[0] + 0.020, damCoords[1] + 0.028]
+      ]
+    },
+    {
+      corridor_id: 'EVAC_SOUTH_PLATEAU',
+      name: 'South Valley Plateau Highway Egress',
+      assembly_point: 'Civil Defense Center Bravo (El. 740m)',
+      safe_elevation_m: 740.0,
+      buffer_distance_m: 200.0,
+      estimated_evacuation_time_min: 25.0,
+      route_status: 'open',
+      coordinates: [
+        [damCoords[0] - 0.008, damCoords[1] - 0.020],
+        [damCoords[0] - 0.015, damCoords[1] - 0.045],
+        [damCoords[0] - 0.022, damCoords[1] - 0.070]
+      ]
+    }
+  ];
+
+  const overallTier = classifyHazardIntensityTier(maxReachVel, maxReachDepth);
+
+  const inundationGeojson = {
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[
+        [damCoords[0] - 0.005, damCoords[1] + 0.002],
+        [damCoords[0] + 0.015, damCoords[1] - 0.025],
+        [damCoords[0] + 0.045, damCoords[1] - 0.075],
+        [damCoords[0] + 0.080, damCoords[1] - 0.125],
+        [damCoords[0] + 0.072, damCoords[1] - 0.130],
+        [damCoords[0] + 0.035, damCoords[1] - 0.080],
+        [damCoords[0] + 0.005, damCoords[1] - 0.030],
+        [damCoords[0] - 0.008, damCoords[1] - 0.005],
+        [damCoords[0] - 0.005, damCoords[1] + 0.002]
+      ]]
+    },
+    properties: {
+      simulation_id: simId,
+      dam_id: damId,
+      max_inundation_area_ha: maxAreaHa,
+      peak_discharge_m3s: qp,
+      hazard_tier: overallTier.id
+    }
+  };
+
+  const tileTemplate = `/api/v1/tiles/geotechnical/dam-break/${simId}/hazard_product/{z}/{x}/{y}.png`;
+
+  return {
+    simulation_id: simId,
+    dam_id: damId,
+    dam_name: damName,
+    status: 'completed',
+    peak_breach_discharge_m3s: qp,
+    total_volume_discharged_m3: Number(resVol.toFixed(2)),
+    max_inundation_area_ha: maxAreaHa,
+    max_flood_depth_m: maxReachDepth,
+    max_flow_velocity_ms: maxReachVel,
+    max_hazard_product_m2s: Number((maxReachVel * maxReachDepth).toFixed(2)),
+    overall_hazard_tier: overallTier.id,
+    tier_metadata: overallTier,
+    time_to_peak_hours: 1.25,
+    total_receptors_impacted: impactedCount,
+    total_population_at_risk: totalPopAtRisk,
+    receptors: receptorsList,
+    time_slices: timeSlices,
+    evacuation_corridors: evacCorridors,
+    inundation_boundary_geojson: inundationGeojson,
+    tile_url_template: tileTemplate,
+    simulated_at: new Date().toISOString()
+  };
+};
+
+export const buildDamBreakTileUrl = (simId, metric = 'hazard_product', z = 12, x = 2048, y = 1024) => {
+  return `/api/v1/tiles/geotechnical/dam-break/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildDamBreakTileUrlTemplate = (simId, metric = 'hazard_product') => {
+  return `/api/v1/tiles/geotechnical/dam-break/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
 
 
 

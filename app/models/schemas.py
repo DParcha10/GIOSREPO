@@ -704,6 +704,20 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "alerts_stream_short": "/alerts/stream",
     "alerts_dispatch": "/api/v1/alerts/dispatch",
     "alerts_dispatch_short": "/alerts/dispatch",
+    "analysis_dam_break_hydrodynamics": "/api/v1/analysis/geotechnical/dam-break-hydrodynamics",
+    "analysis_dam_break_hydrodynamics_short": "/geotechnical/dam-break-hydrodynamics",
+    "tiles_dam_break": "/api/v1/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png",
+    "tiles_dam_break_metric": "/api/v1/tiles/geotechnical/dam-break/{sim_id}/{metric}/{z}/{x}/{y}.png",
+    "dam_break_evacuation_corridors": "/api/v1/analysis/geotechnical/dam-break/{sim_id}/evacuation-corridors",
+    "dam_break_evacuation_corridors_short": "/geotechnical/dam-break/{sim_id}/evacuation-corridors",
+    "analysis_phreatic_seepage": "/api/v1/analysis/geotechnical/phreatic-seepage",
+    "analysis_phreatic_seepage_short": "/geotechnical/phreatic-seepage",
+    "analysis_swrc_inversion": "/api/v1/analysis/geotechnical/swrc-inversion",
+    "analysis_swrc_inversion_short": "/geotechnical/swrc-inversion",
+    "geotechnical_piezometers": "/api/v1/analysis/geotechnical/piezometers/{dam_id}",
+    "geotechnical_piezometers_short": "/geotechnical/piezometers/{dam_id}",
+    "tiles_phreatic_seepage": "/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png",
+    "tiles_phreatic_seepage_metric": "/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{metric}/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -12214,7 +12228,10 @@ def calculate_quality_mosaic_pixel_selection(
 
     contributions = []
     total_valid = len(valid_scenes)
-    weights = [0.22, 0.38, 0.40][:total_valid] if total_valid >= 3 else [1.0 / total_valid] * total_valid
+    if total_valid == 3:
+        weights = [0.22, 0.38, 0.40]
+    else:
+        weights = [1.0 / total_valid] * total_valid
     w_sum = sum(weights) or 1.0
     norm_w = [w / w_sum for w in weights]
 
@@ -12535,6 +12552,1485 @@ def dispatch_simulated_hazard_alert(
         "dispatched_at": datetime.now(timezone.utc).isoformat(),
         "event": event
     }
+
+
+# ============================================================================
+# Task T-126: Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamic Simulation Contracts
+# ============================================================================
+
+class BreachMechanism(str, Enum):
+    """Initiating failure mechanism for geotechnical tailings dam breach."""
+    OVERTOPPING = "overtopping"
+    PIPING_INTERNAL_EROSION = "piping_internal_erosion"
+    SLOPE_INSTABILITY_SLIDE = "slope_instability_slide"
+    FOUNDATION_LIQUEFACTION = "foundation_liquefaction"
+    INSTANTANEOUS_COLLAPSE = "instantaneous_collapse"
+
+
+class RheologyModel(str, Enum):
+    """Rheological constitutive model for impounded fluid/tailings slurry."""
+    NEWTONIAN_WATER = "newtonian_water"
+    BINGHAM_PLASTIC_SLURRY = "bingham_plastic_slurry"
+    HERSCHEL_BULKLEY_TAILINGS = "herschel_bulkley_tailings"
+    DILATANT_GRANULAR = "dilatant_granular"
+
+
+class HazardIntensityTier(str, Enum):
+    """Downstream flood and slurry wave hazard classification based on velocity-depth cross-product (v * h)."""
+    LOW_HAZARD = "low_hazard"              # v * h < 0.5 m^2/s (shallow backwater, wading safe)
+    MEDIUM_HAZARD = "medium_hazard"        # 0.5 <= v * h < 1.5 m^2/s (dangerous to adults, light vehicle floating)
+    HIGH_HAZARD = "high_hazard"            # 1.5 <= v * h < 2.5 m^2/s (structural damage, heavy vehicles swept)
+    EXTREME_CATASTROPHIC = "extreme_catastrophic"  # v * h >= 2.5 m^2/s or h >= 3.0 m (structural collapse, catastrophic scour)
+
+
+class EvacuationUrgencyTier(str, Enum):
+    """Downstream life-safety evacuation urgency tier based on wave front arrival time."""
+    IMMEDIATE_LIFE_SAFETY = "immediate_life_safety"      # t_arrival <= 15 min
+    HIGH_PRIORITY_EVACUATION = "high_priority_evacuation"  # 15 < t_arrival <= 60 min
+    PRECAUTIONARY_STAGED = "precautionary_staged"        # 60 < t_arrival <= 180 min
+    MONITORED_SAFE_HAVEN = "monitored_safe_haven"        # t_arrival > 180 min
+
+
+class InfrastructureExposureType(str, Enum):
+    """Category of downstream infrastructure receptor asset at risk."""
+    RESIDENTIAL_SETTLEMENT = "residential_settlement"
+    INDUSTRIAL_PLANT = "industrial_plant"
+    MINE_PROCESSING_FACILITY = "mine_processing_facility"
+    BRIDGE_CROSSING = "bridge_crossing"
+    POWER_SUBSTATION = "power_substation"
+    HOSPITAL_OR_SCHOOL = "hospital_or_school"
+    WATER_TREATMENT_PLANT = "water_treatment_plant"
+    AGRICULTURAL_LAND = "agricultural_land"
+
+
+HAZARD_INTENSITY_TIER_METADATA: Dict[str, Dict[str, Any]] = {
+    "low_hazard": {
+        "id": "low_hazard",
+        "name": "Low Hazard (Wading Safe)",
+        "min_product": 0.0,
+        "max_product": 0.5,
+        "color": "#10B981",
+        "badge_class": "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40",
+        "structural_impact": "Negligible structural damage; shallow backwater inundation.",
+        "life_safety_risk": "Low risk; accessible by foot evacuation."
+    },
+    "medium_hazard": {
+        "id": "medium_hazard",
+        "name": "Medium Hazard (Vehicle Floating)",
+        "min_product": 0.5,
+        "max_product": 1.5,
+        "color": "#F59E0B",
+        "badge_class": "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+        "structural_impact": "Non-structural wall damage; sedimental deposition and inundation.",
+        "life_safety_risk": "Dangerous to adults and children; light vehicles floating."
+    },
+    "high_hazard": {
+        "id": "high_hazard",
+        "name": "High Hazard (Structural Damage)",
+        "min_product": 1.5,
+        "max_product": 2.5,
+        "color": "#EF4444",
+        "badge_class": "bg-red-500/20 text-red-300 border border-red-500/40",
+        "structural_impact": "Severe masonry structural failure; bridge abutment undermining.",
+        "life_safety_risk": "High mortality hazard; heavy vehicle swept away."
+    },
+    "extreme_catastrophic": {
+        "id": "extreme_catastrophic",
+        "name": "Extreme / Catastrophic Hazard",
+        "min_product": 2.5,
+        "max_product": None,
+        "color": "#7F1D1D",
+        "badge_class": "bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse",
+        "structural_impact": "Total structural destruction; reinforced concrete failure; massive scour.",
+        "life_safety_risk": "Catastrophic life safety threat; zero foot or vehicle survival."
+    }
+}
+
+EVACUATION_URGENCY_TIER_METADATA: Dict[str, Dict[str, Any]] = {
+    "immediate_life_safety": {
+        "id": "immediate_life_safety",
+        "name": "Immediate Life Safety (<15m)",
+        "max_arrival_time_min": 15.0,
+        "color": "#DC2626",
+        "badge_class": "bg-red-600/30 text-red-200 border border-red-500 animate-pulse",
+        "action_protocol": "Sound high-level emergency sirens immediately. Direct emergency vertical/horizontal ascent to designated high-ground muster points."
+    },
+    "high_priority_evacuation": {
+        "id": "high_priority_evacuation",
+        "name": "High Priority Evacuation (15-60m)",
+        "max_arrival_time_min": 60.0,
+        "color": "#EA580C",
+        "badge_class": "bg-orange-500/20 text-orange-300 border border-orange-500/40",
+        "action_protocol": "Activate emergency transport corridors. Evacuate schools, residential settlements, and critical operations personnel."
+    },
+    "precautionary_staged": {
+        "id": "precautionary_staged",
+        "name": "Precautionary Staged (1-3h)",
+        "max_arrival_time_min": 180.0,
+        "color": "#F59E0B",
+        "badge_class": "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+        "action_protocol": "Deploy traffic management along evacuation arterials. Stage emergency equipment and clear floodways."
+    },
+    "monitored_safe_haven": {
+        "id": "monitored_safe_haven",
+        "name": "Monitored Safe Haven (>3h)",
+        "max_arrival_time_min": None,
+        "color": "#3B82F6",
+        "badge_class": "bg-blue-500/20 text-blue-300 border border-blue-500/40",
+        "action_protocol": "Monitor hydrodynamic slurry front progression via satellite/drone telemetry. Maintain communications with civil defense."
+    }
+}
+
+INFRASTRUCTURE_EXPOSURE_METADATA: Dict[str, Dict[str, Any]] = {
+    "residential_settlement": {
+        "id": "residential_settlement",
+        "name": "Residential Settlement",
+        "base_vulnerability": 0.85,
+        "criticality_factor": 1.5,
+        "description": "Populated communities and housing structures highly vulnerable to hydrodynamic thrust."
+    },
+    "industrial_plant": {
+        "id": "industrial_plant",
+        "name": "Industrial Processing Plant",
+        "base_vulnerability": 0.65,
+        "criticality_factor": 1.2,
+        "description": "Manufacturing plants, heavy equipment yards, and chemical storage."
+    },
+    "mine_processing_facility": {
+        "id": "mine_processing_facility",
+        "name": "Mine Extraction & Beneficiation Plant",
+        "base_vulnerability": 0.70,
+        "criticality_factor": 1.3,
+        "description": "Crushers, mills, flotation cells, and electrical switchgear."
+    },
+    "bridge_crossing": {
+        "id": "bridge_crossing",
+        "name": "Thalweg Road / Rail Bridge Crossing",
+        "base_vulnerability": 0.75,
+        "criticality_factor": 1.4,
+        "description": "Span bridges vulnerable to deck hydrodynamic uplift and abutment scour."
+    },
+    "power_substation": {
+        "id": "power_substation",
+        "name": "High-Voltage Power Substation",
+        "base_vulnerability": 0.90,
+        "criticality_factor": 1.6,
+        "description": "Electrical grid distribution node; submergence induces regional blackout."
+    },
+    "hospital_or_school": {
+        "id": "hospital_or_school",
+        "name": "Critical Community Care Facility (Hospital/School)",
+        "base_vulnerability": 0.95,
+        "criticality_factor": 2.0,
+        "description": "Sensitive public health and educational facilities requiring maximum evacuation lead time."
+    },
+    "water_treatment_plant": {
+        "id": "water_treatment_plant",
+        "name": "Municipal Water Intake & Treatment",
+        "base_vulnerability": 0.80,
+        "criticality_factor": 1.5,
+        "description": "Drinking water supply at risk of catastrophic tailings sediment contamination."
+    },
+    "agricultural_land": {
+        "id": "agricultural_land",
+        "name": "Agricultural & Grazing Floodplain",
+        "base_vulnerability": 0.40,
+        "criticality_factor": 0.8,
+        "description": "Farmland and crop acreage exposed to sediment deposition and siltation."
+    }
+}
+
+BREACH_MECHANISM_METADATA: Dict[str, Dict[str, Any]] = {
+    "overtopping": {
+        "name": "Hydraulic Crest Overtopping",
+        "peak_discharge_multiplier": 1.00,
+        "default_formation_time_hr": 1.5,
+        "description": "Erosion initiates at lowest crest point and cuts downward trapezoidal notch."
+    },
+    "piping_internal_erosion": {
+        "name": "Internal Seepage Piping",
+        "peak_discharge_multiplier": 0.90,
+        "default_formation_time_hr": 2.0,
+        "description": "Subsurface conduit expands progressively until crest collapses into void."
+    },
+    "slope_instability_slide": {
+        "name": "Deep Rotational Slope Failure",
+        "peak_discharge_multiplier": 1.05,
+        "default_formation_time_hr": 1.0,
+        "description": "Sudden shear failure of downstream shell causing rapid loss of freeboard."
+    },
+    "foundation_liquefaction": {
+        "name": "Static / Cyclic Foundation Liquefaction",
+        "peak_discharge_multiplier": 1.15,
+        "default_formation_time_hr": 0.75,
+        "description": "Contractive upstream tailings foundation collapses rapidly under shear strain."
+    },
+    "instantaneous_collapse": {
+        "name": "Catastrophic Instantaneous Collapse",
+        "peak_discharge_multiplier": 1.25,
+        "default_formation_time_hr": 0.25,
+        "description": "Immediate dam-break release modeled as instant dam removal (Ritter solution)."
+    }
+}
+
+
+class DamBreachParameters(BaseModel):
+    """Geotechnical and hydraulic parameters defining dam breach failure characteristics."""
+    dam_height_m: float = Field(default=45.0, ge=1.0, le=300.0, description="Structural dam embankment height in meters")
+    reservoir_volume_m3: float = Field(default=12500000.0, ge=1000.0, description="Stored reservoir impoundment water/slurry volume in m^3")
+    breach_width_m: float = Field(default=65.0, ge=1.0, description="Average breach channel top width in meters")
+    breach_depth_m: float = Field(default=35.0, ge=1.0, description="Final breach bottom incision depth in meters")
+    breach_formation_time_hr: float = Field(default=1.5, ge=0.01, le=24.0, description="Time of breach development in hours")
+    peak_discharge_m3s: Optional[float] = Field(default=None, description="Peak breach discharge Qp (m^3/s); auto-computed via Froehlich formula if omitted")
+    breach_mechanism: BreachMechanism = Field(default=BreachMechanism.OVERTOPPING, description="Initiating failure mechanism")
+    rheology_model: RheologyModel = Field(default=RheologyModel.HERSCHEL_BULKLEY_TAILINGS, description="Fluid slurry rheology model")
+    manning_n_roughness: float = Field(default=0.040, ge=0.010, le=0.200, description="Manning floodplain hydraulic roughness coefficient")
+    slurry_yield_stress_pa: float = Field(default=45.0, ge=0.0, description="Slurry yield stress in Pascals")
+    slurry_density_kg_m3: float = Field(default=1450.0, ge=1000.0, le=2400.0, description="Slurry bulk mixture density in kg/m^3")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapping = {
+                "damHeightM": "dam_height_m",
+                "reservoirVolumeM3": "reservoir_volume_m3",
+                "breachWidthM": "breach_width_m",
+                "breachDepthM": "breach_depth_m",
+                "breachFormationTimeHr": "breach_formation_time_hr",
+                "peakDischargeM3s": "peak_discharge_m3s",
+                "breachMechanism": "breach_mechanism",
+                "rheologyModel": "rheology_model",
+                "manningNRoughness": "manning_n_roughness",
+                "slurryYieldStressPa": "slurry_yield_stress_pa",
+                "slurryDensityKgM3": "slurry_density_kg_m3"
+            }
+            for camel, snake in mapping.items():
+                if camel in data and snake not in data:
+                    data[snake] = data[camel]
+        return data
+
+
+class DownstreamReceptor(BaseModel):
+    """Downstream infrastructure asset or community receptor exposed to dam-break flood wave."""
+    receptor_id: str = Field(..., description="Unique infrastructure asset identifier")
+    name: str = Field(..., description="Asset title or community name")
+    exposure_type: InfrastructureExposureType = Field(default=InfrastructureExposureType.RESIDENTIAL_SETTLEMENT, description="Infrastructure vulnerability category")
+    distance_downstream_km: float = Field(..., ge=0.0, description="Thalweg distance downstream from dam in kilometers")
+    elevation_m: float = Field(..., description="Ground elevation at receptor location in meters")
+    population_at_risk: int = Field(default=0, ge=0, description="Estimated resident population exposed")
+    latitude: float = Field(..., description="WGS84 latitude coordinate")
+    longitude: float = Field(..., description="WGS84 longitude coordinate")
+    arrival_time_min: Optional[float] = Field(default=None, description="Hydrodynamic flood wave front arrival time in minutes")
+    peak_depth_m: Optional[float] = Field(default=None, description="Maximum inundation depth at receptor in meters")
+    peak_velocity_ms: Optional[float] = Field(default=None, description="Peak flow velocity at receptor in m/s")
+    hazard_intensity_product: Optional[float] = Field(default=None, description="Hazard product v * h in m^2/s")
+    hazard_tier: Optional[HazardIntensityTier] = Field(default=None, description="Classified hazard severity tier")
+    vulnerability_score: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Asset structural fragility damage ratio (0.0 - 1.0)")
+    evacuation_urgency: Optional[EvacuationUrgencyTier] = Field(default=None, description="Classified evacuation urgency tier")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapping = {
+                "receptorId": "receptor_id",
+                "exposureType": "exposure_type",
+                "distanceDownstreamKm": "distance_downstream_km",
+                "elevationM": "elevation_m",
+                "populationAtRisk": "population_at_risk",
+                "arrivalTimeMin": "arrival_time_min",
+                "peakDepthM": "peak_depth_m",
+                "peakVelocityMs": "peak_velocity_ms",
+                "hazardIntensityProduct": "hazard_intensity_product",
+                "hazardTier": "hazard_tier",
+                "vulnerabilityScore": "vulnerability_score",
+                "evacuationUrgency": "evacuation_urgency"
+            }
+            for camel, snake in mapping.items():
+                if camel in data and snake not in data:
+                    data[snake] = data[camel]
+        return data
+
+
+class InundationTimeSlice(BaseModel):
+    """Progressive temporal snapshot of the expanding flood and slurry inundation envelope."""
+    timestep_minutes: float = Field(..., ge=0.0, description="Elapsed simulation time in minutes")
+    inundation_area_ha: float = Field(..., ge=0.0, description="Flooded footprint area in hectares")
+    max_depth_m: float = Field(..., ge=0.0, description="Maximum flood depth across simulation grid in meters")
+    mean_depth_m: float = Field(..., ge=0.0, description="Spatially averaged inundation depth in meters")
+    max_velocity_ms: float = Field(..., ge=0.0, description="Maximum flow velocity in m/s")
+    wave_front_distance_km: float = Field(..., ge=0.0, description="Leading wave front position downstream in km")
+    slurry_volume_released_m3: float = Field(..., ge=0.0, description="Cumulative slurry volume discharged through breach in m^3")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapping = {
+                "timestepMinutes": "timestep_minutes",
+                "inundationAreaHa": "inundation_area_ha",
+                "maxDepthM": "max_depth_m",
+                "meanDepthM": "mean_depth_m",
+                "maxVelocityMs": "max_velocity_ms",
+                "waveFrontDistanceKm": "wave_front_distance_km",
+                "slurryVolumeReleasedM3": "slurry_volume_released_m3"
+            }
+            for camel, snake in mapping.items():
+                if camel in data and snake not in data:
+                    data[snake] = data[camel]
+        return data
+
+
+class EvacuationCorridor(BaseModel):
+    """Designated emergency egress route and safe assembly haven buffer."""
+    corridor_id: str = Field(..., description="Unique evacuation route identifier")
+    name: str = Field(..., description="Designated emergency evacuation corridor name")
+    assembly_point: str = Field(..., description="High-ground safe haven name")
+    safe_elevation_m: float = Field(..., description="Minimum safe terrain elevation in meters")
+    buffer_distance_m: float = Field(default=150.0, description="Lateral safety standoff buffer from flood fringe in meters")
+    estimated_evacuation_time_min: float = Field(..., ge=0.0, description="Estimated egress transit time in minutes")
+    route_status: str = Field(default="open", description="Route viability: 'open', 'threatened_by_flood', 'impassable'")
+    coordinates: List[List[float]] = Field(..., description="GeoJSON line coordinates array [[lon, lat], ...]")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapping = {
+                "corridorId": "corridor_id",
+                "assemblyPoint": "assembly_point",
+                "safeElevationM": "safe_elevation_m",
+                "bufferDistanceM": "buffer_distance_m",
+                "estimatedEvacuationTimeMin": "estimated_evacuation_time_min",
+                "routeStatus": "route_status"
+            }
+            for camel, snake in mapping.items():
+                if camel in data and snake not in data:
+                    data[snake] = data[camel]
+        return data
+
+
+class DamBreakHydrodynamicRequest(BaseModel):
+    """Request payload for 2D shallow water dam-break hydrodynamic simulation."""
+    simulation_id: Optional[str] = Field(default="SIM_DAM_BREAK_001", description="Unique simulation run identifier")
+    dam_id: str = Field(default="TAILINGS_DAM_A", description="Identifier of monitored dam asset")
+    dam_name: str = Field(default="North Tailings Impoundment", description="Human-readable dam asset name")
+    dam_coordinates: List[float] = Field(default_factory=lambda: [-44.1234, -20.1234], description="WGS84 [longitude, latitude] of dam breach axis")
+    breach_params: DamBreachParameters = Field(default_factory=DamBreachParameters, description="Breach configuration")
+    simulation_duration_hours: float = Field(default=6.0, ge=0.5, le=48.0, description="Hydrodynamic simulation duration in hours")
+    timestep_interval_min: float = Field(default=15.0, ge=1.0, le=120.0, description="Time slice reporting interval in minutes")
+    dem_resolution_m: float = Field(default=10.0, ge=1.0, le=90.0, description="Underlying DEM spatial resolution in meters")
+    receptors: Optional[List[DownstreamReceptor]] = Field(default=None, description="Downstream infrastructure receptors to evaluate")
+    generate_evacuation_corridors: bool = Field(default=True, description="Whether to compute emergency evacuation corridors")
+    include_time_slices: bool = Field(default=True, description="Whether to compute progressive time slice footprints")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapping = {
+                "simulationId": "simulation_id",
+                "damId": "dam_id",
+                "damName": "dam_name",
+                "damCoordinates": "dam_coordinates",
+                "breachParams": "breach_params",
+                "simulationDurationHours": "simulation_duration_hours",
+                "timestepIntervalMin": "timestep_interval_min",
+                "demResolutionM": "dem_resolution_m",
+                "generateEvacuationCorridors": "generate_evacuation_corridors",
+                "includeTimeSlices": "include_time_slices"
+            }
+            for camel, snake in mapping.items():
+                if camel in data and snake not in data:
+                    data[snake] = data[camel]
+        return data
+
+
+class DamBreakHydrodynamicResponse(BaseModel):
+    """Response payload containing dam breach hydrodynamics, time slices, receptors, and evacuation plans."""
+    simulation_id: str = Field(..., description="Unique simulation execution identifier")
+    dam_id: str = Field(..., description="Monitored dam asset ID")
+    dam_name: str = Field(..., description="Dam asset name")
+    status: str = Field(default="completed", description="Simulation execution status")
+    peak_breach_discharge_m3s: float = Field(..., description="Peak breach hydrograph discharge in m^3/s")
+    total_volume_discharged_m3: float = Field(..., description="Total slurry volume evacuated through breach in m^3")
+    max_inundation_area_ha: float = Field(..., description="Maximum flooded surface area in hectares")
+    max_flood_depth_m: float = Field(..., description="Peak flood depth across floodplain in meters")
+    max_flow_velocity_ms: float = Field(..., description="Peak flow velocity in m/s")
+    max_hazard_product_m2s: float = Field(..., description="Maximum hazard product v * h in m^2/s")
+    overall_hazard_tier: HazardIntensityTier = Field(..., description="Maximum classified floodplain hazard tier")
+    tier_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Styling badge and hazard impact metadata")
+    time_to_peak_hours: float = Field(..., description="Time to peak discharge in hours")
+    total_receptors_impacted: int = Field(default=0, description="Number of downstream receptors inundated")
+    total_population_at_risk: int = Field(default=0, description="Total exposed population in hazard zone")
+    receptors: List[DownstreamReceptor] = Field(default_factory=list, description="Downstream receptors with individual wave arrival times and hazard scores")
+    time_slices: List[InundationTimeSlice] = Field(default_factory=list, description="Progressive flood wave time slices")
+    evacuation_corridors: List[EvacuationCorridor] = Field(default_factory=list, description="Emergency evacuation corridors")
+    inundation_boundary_geojson: Optional[Dict[str, Any]] = Field(default=None, description="GeoJSON polygon geometry of maximum inundation envelope")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template for inundation raster visualization")
+    simulated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def calculate_dam_breach_peak_discharge(
+    dam_height_m: float,
+    reservoir_volume_m3: float,
+    breach_mechanism: Union[str, BreachMechanism] = BreachMechanism.OVERTOPPING
+) -> float:
+    """Computes peak breach discharge Qp (m^3/s) using Froehlich (2008) empirical regression with failure mode weighting."""
+    mech_str = breach_mechanism.value if isinstance(breach_mechanism, BreachMechanism) else str(breach_mechanism).lower().replace("-", "_")
+    meta = BREACH_MECHANISM_METADATA.get(mech_str, BREACH_MECHANISM_METADATA["overtopping"])
+    multiplier = meta["peak_discharge_multiplier"]
+
+    h = max(1.0, float(dam_height_m))
+    v = max(100.0, float(reservoir_volume_m3))
+
+    # Froehlich (2008): Qp = 0.607 * (V_w)^0.295 * (h_w)^1.24
+    qp = 0.607 * (v ** 0.295) * (h ** 1.24) * multiplier
+    return round(qp, 2)
+
+
+def classify_hazard_intensity_tier(velocity_ms: float, depth_m: float) -> HazardIntensityTier:
+    """Classifies flood/slurry wave hazard severity using the velocity-depth cross-product (v * h)."""
+    v = abs(float(velocity_ms))
+    h = max(0.0, float(depth_m))
+    product = v * h
+
+    if product >= 2.5 or h >= 3.0:
+        return HazardIntensityTier.EXTREME_CATASTROPHIC
+    elif product >= 1.5:
+        return HazardIntensityTier.HIGH_HAZARD
+    elif product >= 0.5:
+        return HazardIntensityTier.MEDIUM_HAZARD
+    else:
+        return HazardIntensityTier.LOW_HAZARD
+
+
+def classify_evacuation_urgency(arrival_time_min: float) -> EvacuationUrgencyTier:
+    """Classifies downstream evacuation urgency based on flood wave front travel time."""
+    t = float(arrival_time_min)
+    if t <= 15.0:
+        return EvacuationUrgencyTier.IMMEDIATE_LIFE_SAFETY
+    elif t <= 60.0:
+        return EvacuationUrgencyTier.HIGH_PRIORITY_EVACUATION
+    elif t <= 180.0:
+        return EvacuationUrgencyTier.PRECAUTIONARY_STAGED
+    else:
+        return EvacuationUrgencyTier.MONITORED_SAFE_HAVEN
+
+
+def calculate_downstream_wave_attenuation(
+    distance_km: float,
+    peak_discharge_m3s: float,
+    manning_n: float = 0.040,
+    valley_slope: float = 0.015,
+    slurry_yield_stress_pa: float = 45.0
+) -> Dict[str, float]:
+    """Computes hydrodynamic attenuation of peak discharge, depth, velocity, and arrival time along downstream reach."""
+    x = max(0.05, float(distance_km))
+    q0 = max(10.0, float(peak_discharge_m3s))
+    n = max(0.010, min(0.200, float(manning_n)))
+    s0 = max(0.001, float(valley_slope))
+    tau0 = max(0.0, float(slurry_yield_stress_pa))
+
+    # Discharge attenuation along thalweg
+    qx = q0 * math.exp(-0.042 * (x ** 0.82))
+
+    # Downstream expanding valley width (m)
+    b = 80.0 + 16.0 * x
+
+    # Normal hydraulic depth via Manning equation: h = (Q * n / (B * S0^0.5))^0.6
+    hx = ((qx * n) / (b * math.sqrt(s0))) ** 0.6
+    hx = max(0.15, hx)
+
+    # Slurry rheology resistance factor
+    rheology_factor = max(0.55, 1.0 - (tau0 / 500.0))
+    vx = max(0.5, (qx / (b * hx)) * rheology_factor)
+
+    # Wave celerity c = sqrt(g * h) + v
+    celerity = math.sqrt(9.81 * hx) + vx
+
+    # Wave travel time to receptor station (minutes)
+    travel_time_sec = (x * 1000.0) / (0.75 * celerity)
+    arrival_time_min = travel_time_sec / 60.0
+
+    vh = vx * hx
+
+    return {
+        "distance_km": round(x, 2),
+        "discharge_m3s": round(qx, 2),
+        "depth_m": round(hx, 2),
+        "velocity_ms": round(vx, 2),
+        "arrival_time_min": round(arrival_time_min, 1),
+        "hazard_product_m2s": round(vh, 2)
+    }
+
+
+def calculate_infrastructure_vulnerability_score(
+    exposure_type: Union[str, InfrastructureExposureType],
+    depth_m: float,
+    velocity_ms: float
+) -> float:
+    """Calculates asset structural vulnerability damage ratio (0.0 - 1.0) based on hydrodynamic forces and fragility curves."""
+    exp_str = exposure_type.value if isinstance(exposure_type, InfrastructureExposureType) else str(exposure_type).lower().replace("-", "_")
+    meta = INFRASTRUCTURE_EXPOSURE_METADATA.get(exp_str, INFRASTRUCTURE_EXPOSURE_METADATA["residential_settlement"])
+    base = meta["base_vulnerability"]
+
+    h = max(0.0, float(depth_m))
+    v = abs(float(velocity_ms))
+    vh = v * h
+
+    depth_ratio = min(h / 3.0, 1.0)
+    velocity_ratio = min(v / 4.0, 1.0)
+    product_ratio = min(vh / 2.5, 1.0)
+
+    score = base * (0.35 * depth_ratio + 0.25 * velocity_ratio + 0.40 * product_ratio)
+    return round(min(1.0, max(0.0, score)), 3)
+
+
+def calculate_dam_break_hydrodynamic_simulation(
+    request_or_dict: Union[DamBreakHydrodynamicRequest, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Generates complete 2D dam-break hydrodynamic simulation outputs, time slices, receptors, and evacuation plans."""
+    if isinstance(request_or_dict, DamBreakHydrodynamicRequest):
+        req_data = request_or_dict.model_dump()
+    elif isinstance(request_or_dict, dict):
+        req_data = request_or_dict.copy()
+    else:
+        req_data = {}
+
+    sim_id = req_data.get("simulation_id") or req_data.get("simulationId") or f"SIM_DAM_BREAK_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    dam_id = req_data.get("dam_id") or req_data.get("damId") or "TAILINGS_DAM_A"
+    dam_name = req_data.get("dam_name") or req_data.get("damName") or "North Tailings Impoundment"
+    dam_coords_raw = req_data.get("dam_coordinates") or req_data.get("damCoordinates")
+    if isinstance(dam_coords_raw, (list, tuple)) and len(dam_coords_raw) >= 2:
+        try:
+            dam_coords = [float(dam_coords_raw[0]), float(dam_coords_raw[1])]
+        except (ValueError, TypeError):
+            dam_coords = [-44.1234, -20.1234]
+    else:
+        dam_coords = [-44.1234, -20.1234]
+
+    bp = req_data.get("breach_params") or req_data.get("breachParams") or {}
+    dam_height_raw = bp.get("dam_height_m") if bp.get("dam_height_m") is not None else bp.get("damHeightM")
+    dam_height = float(dam_height_raw if dam_height_raw is not None else 45.0)
+
+    res_vol_raw = bp.get("reservoir_volume_m3") if bp.get("reservoir_volume_m3") is not None else bp.get("reservoirVolumeM3")
+    res_vol = float(res_vol_raw if res_vol_raw is not None else 12500000.0)
+
+    b_mech = bp.get("breach_mechanism") or bp.get("breachMechanism") or "overtopping"
+
+    manning_n_raw = bp.get("manning_n_roughness") if bp.get("manning_n_roughness") is not None else bp.get("manningNRoughness")
+    manning_n = float(manning_n_raw if manning_n_raw is not None else 0.040)
+
+    tau0_raw = bp.get("slurry_yield_stress_pa") if bp.get("slurry_yield_stress_pa") is not None else bp.get("slurryYieldStressPa")
+    tau0 = float(tau0_raw if tau0_raw is not None else 45.0)
+
+    qp = bp.get("peak_discharge_m3s") or bp.get("peakDischargeM3s")
+    if qp is None:
+        qp = calculate_dam_breach_peak_discharge(dam_height, res_vol, b_mech)
+    else:
+        qp = float(qp)
+
+    duration_hr_raw = req_data.get("simulation_duration_hours") if req_data.get("simulation_duration_hours") is not None else req_data.get("simulationDurationHours")
+    duration_hr = max(0.1, float(duration_hr_raw if duration_hr_raw is not None else 6.0))
+
+    interval_min_raw = req_data.get("timestep_interval_min") if req_data.get("timestep_interval_min") is not None else req_data.get("timestepIntervalMin")
+    interval_min = max(1.0, float(interval_min_raw if interval_min_raw is not None else 15.0))
+
+    # 1. Progressive time slices
+    total_minutes = max(1, int(duration_hr * 60))
+    time_slices: List[Dict[str, Any]] = []
+    current_time = interval_min
+    max_area_ha = 0.0
+    max_reach_depth = 0.0
+    max_reach_vel = 0.0
+
+    while current_time <= total_minutes:
+        wave_dist = min(30.0, round(3.5 * (current_time / 15.0) ** 0.82, 2))
+        vol_rel = min(res_vol, round(res_vol * (1.0 - math.exp(-1.8 * (current_time / 60.0))), 2))
+        area_ha = round(18.5 * (wave_dist ** 1.15), 1)
+        max_d = round(max(0.5, 14.5 * math.exp(-0.06 * wave_dist)), 2)
+        mean_d = round(max_d * 0.42, 2)
+        max_v = round(max(0.6, 9.2 * math.exp(-0.05 * wave_dist)), 2)
+
+        if area_ha > max_area_ha:
+            max_area_ha = area_ha
+        if max_d > max_reach_depth:
+            max_reach_depth = max_d
+        if max_v > max_reach_vel:
+            max_reach_vel = max_v
+
+        time_slices.append({
+            "timestep_minutes": float(current_time),
+            "inundation_area_ha": area_ha,
+            "max_depth_m": max_d,
+            "mean_depth_m": mean_d,
+            "max_velocity_ms": max_v,
+            "wave_front_distance_km": wave_dist,
+            "slurry_volume_released_m3": vol_rel
+        })
+        current_time += interval_min
+
+    if not time_slices:
+        wave_dist = min(30.0, round(3.5 * (total_minutes / 15.0) ** 0.82, 2))
+        vol_rel = min(res_vol, round(res_vol * (1.0 - math.exp(-1.8 * (total_minutes / 60.0))), 2))
+        area_ha = round(18.5 * (wave_dist ** 1.15), 1)
+        max_d = round(max(0.5, 14.5 * math.exp(-0.06 * wave_dist)), 2)
+        mean_d = round(max_d * 0.42, 2)
+        max_v = round(max(0.6, 9.2 * math.exp(-0.05 * wave_dist)), 2)
+        time_slices.append({
+            "timestep_minutes": float(total_minutes),
+            "inundation_area_ha": area_ha,
+            "max_depth_m": max_d,
+            "mean_depth_m": mean_d,
+            "max_velocity_ms": max_v,
+            "wave_front_distance_km": wave_dist,
+            "slurry_volume_released_m3": vol_rel
+        })
+        max_area_ha = area_ha
+        max_reach_depth = max_d
+        max_reach_vel = max_v
+
+    # 2. Downstream receptors
+    raw_receptors = req_data.get("receptors")
+    receptors_list: List[Dict[str, Any]] = []
+
+    if not raw_receptors:
+        raw_receptors = [
+            {
+                "receptor_id": "REC_MINE_01",
+                "name": "Tailings Beneficiation Plant & Maintenance Yard",
+                "exposure_type": "mine_processing_facility",
+                "distance_downstream_km": 1.2,
+                "elevation_m": 712.0,
+                "population_at_risk": 45,
+                "latitude": dam_coords[1] - 0.010,
+                "longitude": dam_coords[0] + 0.008
+            },
+            {
+                "receptor_id": "REC_SETTLEMENT_02",
+                "name": "Vila Esperança Downstream Community",
+                "exposure_type": "residential_settlement",
+                "distance_downstream_km": 4.8,
+                "elevation_m": 685.0,
+                "population_at_risk": 320,
+                "latitude": dam_coords[1] - 0.038,
+                "longitude": dam_coords[0] + 0.025
+            },
+            {
+                "receptor_id": "REC_BRIDGE_03",
+                "name": "Rio Ferro Regional Highway Bridge",
+                "exposure_type": "bridge_crossing",
+                "distance_downstream_km": 8.5,
+                "elevation_m": 660.0,
+                "population_at_risk": 15,
+                "latitude": dam_coords[1] - 0.065,
+                "longitude": dam_coords[0] + 0.045
+            },
+            {
+                "receptor_id": "REC_SUBSTATION_04",
+                "name": "Valley Primary 230kV Power Substation",
+                "exposure_type": "power_substation",
+                "distance_downstream_km": 14.2,
+                "elevation_m": 632.0,
+                "population_at_risk": 8,
+                "latitude": dam_coords[1] - 0.110,
+                "longitude": dam_coords[0] + 0.075
+            }
+        ]
+
+    total_pop_at_risk = 0
+    impacted_count = 0
+    max_vh_overall = 0.0
+
+    for r in raw_receptors:
+        rec_dict = dict(r) if isinstance(r, dict) else (r.model_dump() if hasattr(r, "model_dump") else {})
+        dist_km_raw = rec_dict.get("distance_downstream_km") if rec_dict.get("distance_downstream_km") is not None else rec_dict.get("distanceDownstreamKm")
+        dist_km = float(dist_km_raw if dist_km_raw is not None else 2.0)
+
+        pop_raw = rec_dict.get("population_at_risk") if rec_dict.get("population_at_risk") is not None else rec_dict.get("populationAtRisk")
+        pop = int(pop_raw if pop_raw is not None else 0)
+
+        exp_type = rec_dict.get("exposure_type") or rec_dict.get("exposureType") or "residential_settlement"
+
+        attn = calculate_downstream_wave_attenuation(dist_km, qp, manning_n, 0.015, tau0)
+        depth_m = attn["depth_m"]
+        vel_ms = attn["velocity_ms"]
+        arr_min = attn["arrival_time_min"]
+        vh_prod = attn["hazard_product_m2s"]
+
+        h_tier = classify_hazard_intensity_tier(vel_ms, depth_m)
+        urg_tier = classify_evacuation_urgency(arr_min)
+        vuln = calculate_infrastructure_vulnerability_score(exp_type, depth_m, vel_ms)
+
+        if vh_prod > max_vh_overall:
+            max_vh_overall = vh_prod
+        if depth_m > 0.2:
+            impacted_count += 1
+            total_pop_at_risk += pop
+
+        rec_dict.update({
+            "arrival_time_min": arr_min,
+            "peak_depth_m": depth_m,
+            "peak_velocity_ms": vel_ms,
+            "hazard_intensity_product": vh_prod,
+            "hazard_tier": h_tier.value,
+            "vulnerability_score": vuln,
+            "evacuation_urgency": urg_tier.value
+        })
+        receptors_list.append(rec_dict)
+
+    # 3. Evacuation corridors
+    evac_corridors = [
+        {
+            "corridor_id": "EVAC_NORTH_RIDGE",
+            "name": "North Ridge High-Ground Evacuation Spine",
+            "assembly_point": "Muster Station Echo (El. 785m)",
+            "safe_elevation_m": 785.0,
+            "buffer_distance_m": 150.0,
+            "estimated_evacuation_time_min": 18.0,
+            "route_status": "open",
+            "coordinates": [
+                [dam_coords[0] + 0.005, dam_coords[1] + 0.005],
+                [dam_coords[0] + 0.012, dam_coords[1] + 0.018],
+                [dam_coords[0] + 0.020, dam_coords[1] + 0.028]
+            ]
+        },
+        {
+            "corridor_id": "EVAC_SOUTH_PLATEAU",
+            "name": "South Valley Plateau Highway Egress",
+            "assembly_point": "Civil Defense Center Bravo (El. 740m)",
+            "safe_elevation_m": 740.0,
+            "buffer_distance_m": 200.0,
+            "estimated_evacuation_time_min": 25.0,
+            "route_status": "open",
+            "coordinates": [
+                [dam_coords[0] - 0.008, dam_coords[1] - 0.020],
+                [dam_coords[0] - 0.015, dam_coords[1] - 0.045],
+                [dam_coords[0] - 0.022, dam_coords[1] - 0.070]
+            ]
+        }
+    ]
+
+    overall_tier = classify_hazard_intensity_tier(max_reach_vel, max_reach_depth)
+    tier_meta = HAZARD_INTENSITY_TIER_METADATA.get(overall_tier.value)
+
+    # 4. GeoJSON boundary
+    inundation_geojson = {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [dam_coords[0] - 0.005, dam_coords[1] + 0.002],
+                [dam_coords[0] + 0.015, dam_coords[1] - 0.025],
+                [dam_coords[0] + 0.045, dam_coords[1] - 0.075],
+                [dam_coords[0] + 0.080, dam_coords[1] - 0.125],
+                [dam_coords[0] + 0.072, dam_coords[1] - 0.130],
+                [dam_coords[0] + 0.035, dam_coords[1] - 0.080],
+                [dam_coords[0] + 0.005, dam_coords[1] - 0.030],
+                [dam_coords[0] - 0.008, dam_coords[1] - 0.005],
+                [dam_coords[0] - 0.005, dam_coords[1] + 0.002]
+            ]]
+        },
+        "properties": {
+            "simulation_id": sim_id,
+            "dam_id": dam_id,
+            "max_inundation_area_ha": max_area_ha,
+            "peak_discharge_m3s": qp,
+            "hazard_tier": overall_tier.value
+        }
+    }
+
+    tile_template = f"/api/v1/tiles/geotechnical/dam-break/{sim_id}/hazard_product/{{z}}/{{x}}/{{y}}.png"
+
+    return {
+        "simulation_id": sim_id,
+        "dam_id": dam_id,
+        "dam_name": dam_name,
+        "status": "completed",
+        "peak_breach_discharge_m3s": qp,
+        "total_volume_discharged_m3": round(res_vol, 2),
+        "max_inundation_area_ha": max_area_ha,
+        "max_flood_depth_m": max_reach_depth,
+        "max_flow_velocity_ms": max_reach_vel,
+        "max_hazard_product_m2s": round(max_reach_vel * max_reach_depth, 2),
+        "overall_hazard_tier": overall_tier.value,
+        "tier_metadata": tier_meta,
+        "time_to_peak_hours": 1.25,
+        "total_receptors_impacted": impacted_count,
+        "total_population_at_risk": total_pop_at_risk,
+        "receptors": receptors_list,
+        "time_slices": time_slices,
+        "evacuation_corridors": evac_corridors,
+        "inundation_boundary_geojson": inundation_geojson,
+        "tile_url_template": tile_template,
+        "simulated_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+def build_dam_break_tile_url(
+    sim_id: str,
+    metric: str = "hazard_product",
+    z: int = 12,
+    x: int = 2048,
+    y: int = 1024
+) -> str:
+    """Constructs dynamic XYZ tile streaming URL for dam-break inundation raster layer."""
+    return f"/api/v1/tiles/geotechnical/dam-break/{sim_id}/{metric}/{z}/{x}/{y}.png"
+
+
+def build_dam_break_tile_url_template(
+    sim_id: str,
+    metric: str = "hazard_product"
+) -> str:
+    """Constructs dynamic XYZ tile URL template with Leaflet/MapLibre placeholders."""
+    return f"/api/v1/tiles/geotechnical/dam-break/{sim_id}/{metric}/{{z}}/{{x}}/{{y}}.png"
+
+
+# ============================================================================
+# Task T-132: Geotechnical Embankment Phreatic Surface Seepage Inversion,
+# Van Genuchten Soil Moisture Retention & In-Situ Piezometer Fusion Contracts
+# ============================================================================
+
+class SoilTextureType(str, Enum):
+    """Predominant geotechnical embankment and tailings material texture classifications."""
+    SILT_TAILINGS = "silt_tailings"
+    CLAY_CORE = "clay_core"
+    SANDY_SHELL = "sandy_shell"
+    GRAVEL_DRAIN = "gravel_drain"
+    WEATHERED_BEDROCK = "weathered_bedrock"
+
+
+class SeepageHazardTier(str, Enum):
+    """Operational hazard tiers for embankment internal seepage and piping stability."""
+    SAFE_STABLE = "safe_stable"
+    MONITORED_SEEPAGE = "monitored_seepage"
+    ELEVATED_RISK = "elevated_risk"
+    CRITICAL_PIPING_HAZARD = "critical_piping_hazard"
+
+
+class PiezometerType(str, Enum):
+    """Instrumentation sensor types for in-situ pore water pressure and hydraulic head monitoring."""
+    VIBRATING_WIRE = "vibrating_wire"
+    STANDPIPE_CASAGRANDE = "standpipe_casagrande"
+    PNEUMATIC = "pneumatic"
+    FIBER_OPTIC_FBG = "fiber_optic_fbg"
+
+
+class PiezometerAnomalyStatus(str, Enum):
+    """Piezometric convergence status comparing measured head against numerical seepage models."""
+    NORMAL_CONVERGENCE = "normal_convergence"
+    ELEVATED_PRESSURE = "elevated_pressure"
+    EXCESS_PORE_PRESSURE = "excess_pore_pressure"
+    SENSOR_FAULT_DRIFT = "sensor_fault_drift"
+
+
+SOIL_TEXTURE_METADATA: Dict[str, Dict[str, Any]] = {
+    "silt_tailings": {
+        "id": "silt_tailings",
+        "name": "Hydraulically Deposited Tailings Silt",
+        "theta_s": 0.42,
+        "theta_r": 0.06,
+        "alpha_1_kpa": 0.015,
+        "n_param": 1.80,
+        "ksat_m_s": 1.2e-6,
+        "dry_density_kg_m3": 1550.0,
+        "specific_gravity_gs": 2.75,
+        "porosity_n": 0.436,
+        "description": "Mine tailings beach material characterized by intermediate compressibility and capillary retention."
+    },
+    "clay_core": {
+        "id": "clay_core",
+        "name": "Compacted Low-Permeability Clay Core",
+        "theta_s": 0.48,
+        "theta_r": 0.10,
+        "alpha_1_kpa": 0.008,
+        "n_param": 1.30,
+        "ksat_m_s": 5.0e-9,
+        "dry_density_kg_m3": 1750.0,
+        "specific_gravity_gs": 2.70,
+        "porosity_n": 0.352,
+        "description": "Engineered clay core barrier providing low saturated hydraulic conductivity and high air-entry suction."
+    },
+    "sandy_shell": {
+        "id": "sandy_shell",
+        "name": "Compacted Granular Sandy Shell",
+        "theta_s": 0.38,
+        "theta_r": 0.04,
+        "alpha_1_kpa": 0.035,
+        "n_param": 2.50,
+        "ksat_m_s": 4.5e-5,
+        "dry_density_kg_m3": 1850.0,
+        "specific_gravity_gs": 2.65,
+        "porosity_n": 0.302,
+        "description": "Downstream structural rockfill/sand supporting embankment shear resistance."
+    },
+    "gravel_drain": {
+        "id": "gravel_drain",
+        "name": "Internal Chimney & Toe Filter Gravel",
+        "theta_s": 0.32,
+        "theta_r": 0.02,
+        "alpha_1_kpa": 0.080,
+        "n_param": 3.20,
+        "ksat_m_s": 1.0e-3,
+        "dry_density_kg_m3": 1950.0,
+        "specific_gravity_gs": 2.68,
+        "porosity_n": 0.272,
+        "description": "Free-draining aggregate filter layer designed to suppress phreatic elevation and prevent migration of fines."
+    },
+    "weathered_bedrock": {
+        "id": "weathered_bedrock",
+        "name": "Fractured Weathered Bedrock Foundation",
+        "theta_s": 0.25,
+        "theta_r": 0.03,
+        "alpha_1_kpa": 0.020,
+        "n_param": 2.10,
+        "ksat_m_s": 8.0e-7,
+        "dry_density_kg_m3": 2200.0,
+        "specific_gravity_gs": 2.72,
+        "porosity_n": 0.191,
+        "description": "Geological stratum underlying embankment with localized joint conductivity."
+    }
+}
+
+
+SEEPAGE_HAZARD_TIER_METADATA: Dict[str, Dict[str, Any]] = {
+    "safe_stable": {
+        "id": "safe_stable",
+        "name": "Safe / Stable Seepage Regime",
+        "min_fs": 2.5,
+        "max_fs": None,
+        "color": "#10B981",
+        "badge_class": "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40",
+        "piping_risk": "Negligible risk of piping; phreatic line fully suppressed beneath internal filter.",
+        "mitigation_action": "Routine surveillance and weekly piezometer telemetry logging."
+    },
+    "monitored_seepage": {
+        "id": "monitored_seepage",
+        "name": "Monitored Seepage (Moderate Exit Gradient)",
+        "min_fs": 1.8,
+        "max_fs": 2.5,
+        "color": "#F59E0B",
+        "badge_class": "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+        "piping_risk": "Low to moderate piping risk; localized wetting front detected on downstream shell.",
+        "mitigation_action": "Increase piezometer sampling cadence to 6-hour intervals; inspect toe drain outflow."
+    },
+    "elevated_risk": {
+        "id": "elevated_risk",
+        "name": "Elevated Seepage Risk (Daylighting Phreatic Line)",
+        "min_fs": 1.2,
+        "max_fs": 1.8,
+        "color": "#EF4444",
+        "badge_class": "bg-red-500/20 text-red-300 border border-red-500/40",
+        "piping_risk": "High internal erosion risk; seepage daylighting on downstream slope face.",
+        "mitigation_action": "Place inverted filter berm at seepage breakout point; initiate stage-1 drawdown."
+    },
+    "critical_piping_hazard": {
+        "id": "critical_piping_hazard",
+        "name": "Critical Piping / Sand Boiling Hazard",
+        "min_fs": 0.0,
+        "max_fs": 1.2,
+        "color": "#7F1D1D",
+        "badge_class": "bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse",
+        "piping_risk": "Critical failure imminent; exit hydraulic gradient exceeds critical heave threshold.",
+        "mitigation_action": "Sound site emergency evacuation siren; activate maximum emergency spillway drawdown."
+    }
+}
+
+
+PIEZOMETER_ANOMALY_METADATA: Dict[str, Dict[str, Any]] = {
+    "normal_convergence": {
+        "id": "normal_convergence",
+        "name": "Normal Convergence (Consistent with Model)",
+        "residual_head_threshold_m": 0.5,
+        "color": "#10B981",
+        "badge_class": "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40",
+        "action_protocol": "Accept model calibration; pore water pressure matches steady-state flow net."
+    },
+    "elevated_pressure": {
+        "id": "elevated_pressure",
+        "name": "Elevated Pore Pressure (Moderate Residual)",
+        "residual_head_threshold_m": 1.5,
+        "color": "#F59E0B",
+        "badge_class": "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+        "action_protocol": "Flag piezometer cluster; cross-reference with rainfall accumulation and pool rising rate."
+    },
+    "excess_pore_pressure": {
+        "id": "excess_pore_pressure",
+        "name": "Excess Pore Water Pressure (Critical Head)",
+        "residual_head_threshold_m": 3.0,
+        "color": "#DC2626",
+        "badge_class": "bg-red-600/30 text-red-200 border border-red-500 animate-pulse",
+        "action_protocol": "Trigger geotechnical alarm; verify slope stability factor of safety under elevated pore pressures."
+    },
+    "sensor_fault_drift": {
+        "id": "sensor_fault_drift",
+        "name": "Sensor Fault / Calibration Drift",
+        "residual_head_threshold_m": None,
+        "color": "#6B7280",
+        "badge_class": "bg-gray-500/20 text-gray-300 border border-gray-500/40",
+        "action_protocol": "Dispatch technician for zero-frequency check or cable continuity audit."
+    }
+}
+
+
+class VanGenuchtenParameters(BaseModel):
+    """Van Genuchten (1980) Soil Water Retention Curve (SWRC) parameterization."""
+    theta_s: float = Field(0.42, description="Saturated volumetric water content (m3/m3)", validation_alias="thetaS")
+    theta_r: float = Field(0.06, description="Residual volumetric water content (m3/m3)", validation_alias="thetaR")
+    alpha_1_kpa: float = Field(0.015, description="Inverse of air-entry suction (1/kPa)", validation_alias="alpha1Kpa")
+    n_param: float = Field(1.80, description="Pore size distribution parameter (n > 1.0)", validation_alias="nParam")
+    ksat_m_s: float = Field(1.2e-6, description="Saturated hydraulic conductivity (m/s)", validation_alias="ksatMS")
+    soil_texture: Optional[str] = Field("silt_tailings", description="Soil texture class identifier", validation_alias="soilTexture")
+
+    @property
+    def m_param(self) -> float:
+        """Mualem parameter m = 1 - 1/n."""
+        return max(0.01, 1.0 - (1.0 / max(1.01, self.n_param)))
+
+
+class EmbankmentGeometry(BaseModel):
+    """Cross-sectional geometry definition of embankment dam."""
+    crest_elevation_m: float = Field(820.0, description="Dam crest elevation (m)", validation_alias="crestElevationM")
+    crest_width_m: float = Field(12.0, description="Width of dam crest (m)", validation_alias="crestWidthM")
+    base_elevation_m: float = Field(750.0, description="Impervious base / foundation elevation (m)", validation_alias="baseElevationM")
+    upstream_slope_h_v: float = Field(2.5, description="Upstream slope horizontal to vertical ratio", validation_alias="upstreamSlopeHV")
+    downstream_slope_h_v: float = Field(2.0, description="Downstream slope horizontal to vertical ratio", validation_alias="downstreamSlopeHV")
+    embankment_height_m: float = Field(70.0, description="Height of embankment (m)", validation_alias="embankmentHeightM")
+    toe_drain_distance_m: float = Field(40.0, description="Distance from downstream toe to internal filter drain (m)", validation_alias="toeDrainDistanceM")
+
+
+class PiezometerReading(BaseModel):
+    """In-situ piezometer reading and hydraulic head calibration against seepage model."""
+    piezometer_id: str = Field(..., description="Unique sensor identifier", validation_alias="piezometerId")
+    name: str = Field(..., description="Piezometer descriptive label")
+    piezometer_type: str = Field("vibrating_wire", description="Instrumentation type", validation_alias="piezometerType")
+    station_x_m: float = Field(..., description="Cross-section distance from upstream toe (m)", validation_alias="stationXM")
+    tip_elevation_m: float = Field(..., description="Elevation of sensor tip (m)", validation_alias="tipElevationM")
+    pore_water_pressure_kpa: float = Field(..., description="Measured pore water pressure (kPa)", validation_alias="poreWaterPressureKpa")
+    measured_head_m: Optional[float] = Field(None, description="Measured total hydraulic head (m)", validation_alias="measuredHeadM")
+    simulated_head_m: Optional[float] = Field(None, description="Simulated total hydraulic head from seepage model (m)", validation_alias="simulatedHeadM")
+    residual_head_m: Optional[float] = Field(None, description="Head residual (measured - simulated) in meters", validation_alias="residualHeadM")
+    anomaly_status: Optional[str] = Field("normal_convergence", description="Piezometer anomaly tier", validation_alias="anomalyStatus")
+
+
+class PhreaticStation(BaseModel):
+    """Discrete 1D station along embankment cross-section capturing phreatic line and hydraulic states."""
+    station_x_m: float = Field(..., description="Distance from upstream toe along base (m)", validation_alias="stationXM")
+    phreatic_elevation_m: float = Field(..., description="Elevation of phreatic water table (m)", validation_alias="phreaticElevationM")
+    total_head_m: float = Field(..., description="Total hydraulic head elevation (m)", validation_alias="totalHeadM")
+    pore_pressure_kpa: float = Field(..., description="Pore water pressure at base (kPa)", validation_alias="porePressureKpa")
+    exit_gradient: float = Field(0.0, description="Hydraulic exit gradient at station", validation_alias="exitGradient")
+    effective_saturation: float = Field(1.0, description="Effective soil saturation Se (0.0 - 1.0)", validation_alias="effectiveSaturation")
+    matric_suction_kpa: float = Field(0.0, description="Matric suction psi (kPa)", validation_alias="matricSuctionKpa")
+
+
+class PhreaticSeepageRequest(BaseModel):
+    """Request model for steady-state unconfined phreatic line seepage simulation."""
+    simulation_id: Optional[str] = Field(None, description="Unique simulation execution identifier", validation_alias="simulationId")
+    dam_id: str = Field("TAILINGS_DAM_A", description="Monitored dam identifier", validation_alias="damId")
+    dam_name: str = Field("North Tailings Impoundment", description="Dam facility name", validation_alias="damName")
+    reservoir_pool_elevation_m: float = Field(812.0, description="Upstream reservoir pool elevation (m)", validation_alias="reservoirPoolElevationM")
+    tailwater_elevation_m: float = Field(752.0, description="Downstream tailwater / filter elevation (m)", validation_alias="tailwaterElevationM")
+    embankment: Optional[EmbankmentGeometry] = None
+    soil_params: Optional[VanGenuchtenParameters] = Field(None, validation_alias="soilParams")
+    piezometers: Optional[List[PiezometerReading]] = None
+    transect_stations_count: int = Field(50, description="Number of discrete cross-section stations", validation_alias="transectStationsCount")
+
+
+class PhreaticSeepageResponse(BaseModel):
+    """Response model for phreatic seepage simulation and piezometer fusion."""
+    simulation_id: str = Field(..., validation_alias="simulationId")
+    dam_id: str = Field(..., validation_alias="damId")
+    dam_name: str = Field(..., validation_alias="damName")
+    status: str = "completed"
+    reservoir_head_m: float = Field(..., description="Upstream water head above base (m)", validation_alias="reservoirHeadM")
+    tailwater_head_m: float = Field(..., description="Downstream water head above base (m)", validation_alias="tailwaterHeadM")
+    seepage_discharge_m3s_m: float = Field(..., description="Seepage discharge per linear meter of dam crest (m3/s/m)", validation_alias="seepageDischargeM3sM")
+    exit_gradient_max: float = Field(..., description="Maximum hydraulic exit gradient at downstream toe", validation_alias="exitGradientMax")
+    factor_of_safety_piping: float = Field(..., description="Factor of safety against sand boiling and piping", validation_alias="factorOfSafetyPiping")
+    hazard_tier: str = Field(..., description="Seepage hazard classification tier", validation_alias="hazardTier")
+    tier_metadata: Optional[Dict[str, Any]] = Field(None, validation_alias="tierMetadata")
+    phreatic_stations: List[PhreaticStation] = Field(default_factory=list, validation_alias="phreaticStations")
+    piezometer_fusion: List[PiezometerReading] = Field(default_factory=list, validation_alias="piezometerFusion")
+    cross_section_geojson: Optional[Dict[str, Any]] = Field(None, validation_alias="crossSectionGeojson")
+    tile_url_template: str = Field(..., validation_alias="tileUrlTemplate")
+    simulated_at: str = Field(..., validation_alias="simulatedAt")
+
+
+class SWRCPoint(BaseModel):
+    """Single point along Van Genuchten Soil Water Retention Curve."""
+    matric_suction_kpa: float = Field(..., validation_alias="matricSuctionKpa")
+    effective_saturation: float = Field(..., validation_alias="effectiveSaturation")
+    volumetric_water_content: float = Field(..., validation_alias="volumetricWaterContent")
+    relative_conductivity: float = Field(..., validation_alias="relativeConductivity")
+    unsaturated_conductivity_m_s: float = Field(..., validation_alias="unsaturatedConductivityMS")
+
+
+class SWRCInversionRequest(BaseModel):
+    """Request model for Van Genuchten SWRC curve derivation."""
+    soil_texture: Optional[str] = Field("silt_tailings", validation_alias="soilTexture")
+    matric_suction_range_kpa: Optional[List[float]] = Field(None, validation_alias="matricSuctionRangeKpa")
+    van_genuchten: Optional[VanGenuchtenParameters] = Field(None, validation_alias="vanGenuchten")
+
+
+class SWRCInversionResponse(BaseModel):
+    """Response model for Van Genuchten SWRC curve and unsaturated hydraulic conductivities."""
+    soil_texture: str = Field(..., validation_alias="soilTexture")
+    van_genuchten: VanGenuchtenParameters = Field(..., validation_alias="vanGenuchten")
+    air_entry_suction_kpa: float = Field(..., validation_alias="airEntrySuctionKpa")
+    residual_water_content: float = Field(..., validation_alias="residualWaterContent")
+    saturated_water_content: float = Field(..., validation_alias="saturatedWaterContent")
+    curve_points: List[SWRCPoint] = Field(default_factory=list, validation_alias="curvePoints")
+    calculated_at: str = Field(..., validation_alias="calculatedAt")
+
+
+def calculate_van_genuchten_swrc(
+    suction_kpa: float,
+    vg_params: Optional[VanGenuchtenParameters] = None
+) -> Dict[str, float]:
+    """Computes effective saturation, volumetric water content, and unsaturated conductivity for a given matric suction."""
+    params = vg_params or VanGenuchtenParameters()
+    psi = max(0.0, float(suction_kpa))
+    theta_s = params.theta_s
+    theta_r = params.theta_r
+    alpha = max(0.0001, params.alpha_1_kpa)
+    n = max(1.01, params.n_param)
+    m = 1.0 - (1.0 / n)
+    ksat = params.ksat_m_s
+
+    if psi <= 0.0:
+        se = 1.0
+        theta = theta_s
+        kr = 1.0
+    else:
+        # Van Genuchten Se = [1 + (alpha * psi)^n]^(-m)
+        denom = 1.0 + (alpha * psi) ** n
+        se = denom ** (-m)
+        theta = theta_r + (theta_s - theta_r) * se
+        # Mualem relative conductivity: kr = Se^0.5 * [1 - (1 - Se^(1/m))^m]^2
+        se_clamped = min(1.0, max(1e-6, se))
+        term = 1.0 - (se_clamped ** (1.0 / m))
+        if term < 0.0:
+            kr = 1.0
+        else:
+            kr = (se_clamped ** 0.5) * ((1.0 - (term ** m)) ** 2)
+
+    k_unsat = ksat * max(1e-8, kr)
+
+    return {
+        "matric_suction_kpa": round(psi, 3),
+        "effective_saturation": round(se, 4),
+        "volumetric_water_content": round(theta, 4),
+        "relative_conductivity": round(kr, 6),
+        "unsaturated_conductivity_m_s": float(f"{k_unsat:.4e}")
+    }
+
+
+def calculate_swrc_inversion_curve(
+    request_or_dict: Union[SWRCInversionRequest, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Generates continuous SWRC retention curve points across logarithmic suction increments."""
+    if isinstance(request_or_dict, SWRCInversionRequest):
+        req_data = request_or_dict.model_dump()
+    elif isinstance(request_or_dict, dict):
+        req_data = request_or_dict.copy()
+    else:
+        req_data = {}
+
+    texture_raw = req_data.get("soil_texture") or req_data.get("soilTexture") or "silt_tailings"
+    texture_key = str(texture_raw).lower().replace("-", "_")
+    meta = SOIL_TEXTURE_METADATA.get(texture_key, SOIL_TEXTURE_METADATA["silt_tailings"])
+
+    vg_raw = req_data.get("van_genuchten") or req_data.get("vanGenuchten")
+    if isinstance(vg_raw, dict):
+        vg_params = VanGenuchtenParameters(**vg_raw)
+    elif isinstance(vg_raw, VanGenuchtenParameters):
+        vg_params = vg_raw
+    else:
+        vg_params = VanGenuchtenParameters(
+            theta_s=meta["theta_s"],
+            theta_r=meta["theta_r"],
+            alpha_1_kpa=meta["alpha_1_kpa"],
+            n_param=meta["n_param"],
+            ksat_m_s=meta["ksat_m_s"],
+            soil_texture=texture_key
+        )
+
+    suctions = req_data.get("matric_suction_range_kpa") or req_data.get("matricSuctionRangeKpa")
+    if not suctions:
+        suctions = [0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
+
+    curve_points = []
+    for s in suctions:
+        pt = calculate_van_genuchten_swrc(float(s), vg_params)
+        curve_points.append(pt)
+
+    air_entry = round(1.0 / max(0.001, vg_params.alpha_1_kpa), 2)
+
+    return {
+        "soil_texture": texture_key,
+        "van_genuchten": vg_params.model_dump(),
+        "air_entry_suction_kpa": air_entry,
+        "residual_water_content": vg_params.theta_r,
+        "saturated_water_content": vg_params.theta_s,
+        "curve_points": curve_points,
+        "calculated_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+def classify_seepage_hazard_tier(fs_piping: float, exit_gradient: float) -> SeepageHazardTier:
+    """Evaluates Factor of Safety against piping and exit gradient to classify seepage hazard."""
+    fs = float(fs_piping)
+    grad = float(exit_gradient)
+    if fs < 1.2 or grad >= 0.85:
+        return SeepageHazardTier.CRITICAL_PIPING_HAZARD
+    elif fs < 1.8 or grad >= 0.55:
+        return SeepageHazardTier.ELEVATED_RISK
+    elif fs < 2.5 or grad >= 0.35:
+        return SeepageHazardTier.MONITORED_SEEPAGE
+    else:
+        return SeepageHazardTier.SAFE_STABLE
+
+
+def classify_piezometer_anomaly(residual_head_m: float) -> PiezometerAnomalyStatus:
+    """Classifies piezometer residual head relative to model predictions."""
+    res = float(residual_head_m)
+    if res > 1.5:
+        return PiezometerAnomalyStatus.EXCESS_PORE_PRESSURE
+    elif res > 0.5:
+        return PiezometerAnomalyStatus.ELEVATED_PRESSURE
+    elif res < -3.0:
+        return PiezometerAnomalyStatus.SENSOR_FAULT_DRIFT
+    else:
+        return PiezometerAnomalyStatus.NORMAL_CONVERGENCE
+
+
+def calculate_phreatic_surface_seepage(
+    request_or_dict: Union[PhreaticSeepageRequest, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Computes Dupuit-Forchheimer unconfined seepage line, exit gradient, and piezometer calibration."""
+    if isinstance(request_or_dict, PhreaticSeepageRequest):
+        req_data = request_or_dict.model_dump()
+    elif isinstance(request_or_dict, dict):
+        req_data = request_or_dict.copy()
+    else:
+        req_data = {}
+
+    sim_id = req_data.get("simulation_id") or req_data.get("simulationId") or f"SIM_SEEPAGE_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    dam_id = req_data.get("dam_id") or req_data.get("damId") or "TAILINGS_DAM_A"
+    dam_name = req_data.get("dam_name") or req_data.get("damName") or "North Tailings Impoundment"
+
+    # Embankment geometry
+    emb_data = req_data.get("embankment") or {}
+    crest_elev = float(emb_data.get("crest_elevation_m", emb_data.get("crestElevationM", 820.0)))
+    base_elev = float(emb_data.get("base_elevation_m", emb_data.get("baseElevationM", 750.0)))
+    crest_width = float(emb_data.get("crest_width_m", emb_data.get("crestWidthM", 12.0)))
+    up_slope = float(emb_data.get("upstream_slope_h_v", emb_data.get("upstreamSlopeHV", 2.5)))
+    down_slope = float(emb_data.get("downstream_slope_h_v", emb_data.get("downstreamSlopeHV", 2.0)))
+    dam_height = max(5.0, crest_elev - base_elev)
+
+    up_length = up_slope * dam_height
+    down_length = down_slope * dam_height
+    total_base_length = up_length + crest_width + down_length
+
+    # Hydraulic boundary conditions
+    pool_elev = float(req_data.get("reservoir_pool_elevation_m", req_data.get("reservoirPoolElevationM", 812.0)))
+    tail_elev = float(req_data.get("tailwater_elevation_m", req_data.get("tailwaterElevationM", 752.0)))
+
+    h1 = max(1.0, pool_elev - base_elev)
+    h2 = max(0.5, tail_elev - base_elev)
+
+    # Soil parameters
+    soil_data = req_data.get("soil_params") or req_data.get("soilParams") or {}
+    texture = soil_data.get("soil_texture", soil_data.get("soilTexture", "silt_tailings"))
+    meta = SOIL_TEXTURE_METADATA.get(str(texture).lower().replace("-", "_"), SOIL_TEXTURE_METADATA["silt_tailings"])
+
+    ksat = float(soil_data.get("ksat_m_s", soil_data.get("ksatMS", meta["ksat_m_s"])))
+    alpha = float(soil_data.get("alpha_1_kpa", soil_data.get("alpha1Kpa", meta["alpha_1_kpa"])))
+    n_param = float(soil_data.get("n_param", soil_data.get("nParam", meta["n_param"])))
+    vg_params = VanGenuchtenParameters(
+        theta_s=float(soil_data.get("theta_s", soil_data.get("thetaS", meta["theta_s"]))),
+        theta_r=float(soil_data.get("theta_r", soil_data.get("thetaR", meta["theta_r"]))),
+        alpha_1_kpa=alpha,
+        n_param=n_param,
+        ksat_m_s=ksat,
+        soil_texture=texture
+    )
+
+    x_entry = (h1 / dam_height) * up_length
+    x_exit = max(x_entry + 10.0, total_base_length - 40.0)
+    seep_path = max(10.0, x_exit - x_entry)
+
+    q_seep = ksat * (h1 ** 2 - h2 ** 2) / (2.0 * seep_path)
+
+    num_stations = max(10, int(req_data.get("transect_stations_count", req_data.get("transectStationsCount", 50))))
+    dx = total_base_length / (num_stations - 1)
+    phreatic_stations: List[Dict[str, Any]] = []
+
+    max_exit_grad = 0.0
+    for i in range(num_stations):
+        x = i * dx
+        if x <= x_entry:
+            y = h1
+        elif x >= x_exit:
+            y = h2
+        else:
+            frac = (x - x_entry) / seep_path
+            y_sq = max(h2 ** 2, h1 ** 2 - (h1 ** 2 - h2 ** 2) * frac)
+            y = math.sqrt(y_sq)
+
+        phreatic_z = base_elev + y
+        pore_p_kpa = max(0.0, y * 9.81)
+
+        if x_entry < x < x_exit:
+            grad = abs((h1 ** 2 - h2 ** 2) / (2.0 * seep_path * max(0.5, y)))
+        else:
+            grad = 0.0
+
+        if grad > max_exit_grad:
+            max_exit_grad = grad
+
+        phreatic_stations.append({
+            "station_x_m": round(x, 2),
+            "phreatic_elevation_m": round(phreatic_z, 2),
+            "total_head_m": round(phreatic_z, 2),
+            "pore_pressure_kpa": round(pore_p_kpa, 2),
+            "exit_gradient": round(grad, 4),
+            "effective_saturation": 1.0,
+            "matric_suction_kpa": 0.0
+        })
+
+    gs = meta.get("specific_gravity_gs", 2.70)
+    e_void = meta.get("porosity_n", 0.40) / max(0.01, 1.0 - meta.get("porosity_n", 0.40))
+    i_crit = (gs - 1.0) / (1.0 + e_void)
+    fs_piping = round(i_crit / max(0.01, max_exit_grad), 2)
+
+    hazard_tier = classify_seepage_hazard_tier(fs_piping, max_exit_grad)
+    tier_meta = SEEPAGE_HAZARD_TIER_METADATA.get(hazard_tier.value)
+
+    raw_piezos = req_data.get("piezometers") or [
+        {
+            "piezometer_id": "PZ_CREST_01",
+            "name": "Crest Central Vibrating Wire",
+            "piezometer_type": "vibrating_wire",
+            "station_x_m": up_length + (crest_width * 0.5),
+            "tip_elevation_m": base_elev + 15.0,
+            "pore_water_pressure_kpa": max(0.0, (h1 * 0.70 - 15.0) * 9.81)
+        },
+        {
+            "piezometer_id": "PZ_DOWNSTREAM_02",
+            "name": "Downstream Intermediate Shell Piezometer",
+            "piezometer_type": "vibrating_wire",
+            "station_x_m": up_length + crest_width + (down_length * 0.4),
+            "tip_elevation_m": base_elev + 8.0,
+            "pore_water_pressure_kpa": max(0.0, (h1 * 0.45 - 8.0) * 9.81)
+        },
+        {
+            "piezometer_id": "PZ_TOE_DRAIN_03",
+            "name": "Toe Drainage Blanket Verification Well",
+            "piezometer_type": "standpipe_casagrande",
+            "station_x_m": total_base_length - 25.0,
+            "tip_elevation_m": base_elev + 2.0,
+            "pore_water_pressure_kpa": max(0.0, (h2 - 2.0) * 9.81)
+        }
+    ]
+
+    piezo_fusion: List[Dict[str, Any]] = []
+    for p in raw_piezos:
+        p_dict = dict(p) if isinstance(p, dict) else (p.model_dump() if hasattr(p, "model_dump") else {})
+        tip_z = float(p_dict.get("tip_elevation_m", p_dict.get("tipElevationM", base_elev + 10.0)))
+        x_p = float(p_dict.get("station_x_m", p_dict.get("stationXM", total_base_length * 0.5)))
+        p_u = float(p_dict.get("pore_water_pressure_kpa", p_dict.get("poreWaterPressureKpa", 100.0)))
+
+        h_meas = round(tip_z + (p_u / 9.81), 2)
+
+        if x_p <= x_entry:
+            y_sim = h1
+        elif x_p >= x_exit:
+            y_sim = h2
+        else:
+            frac = (x_p - x_entry) / seep_path
+            y_sim = math.sqrt(max(h2 ** 2, h1 ** 2 - (h1 ** 2 - h2 ** 2) * frac))
+        h_sim = round(base_elev + y_sim, 2)
+        residual = round(h_meas - h_sim, 2)
+
+        status = classify_piezometer_anomaly(residual)
+        p_dict.update({
+            "measured_head_m": h_meas,
+            "simulated_head_m": h_sim,
+            "residual_head_m": residual,
+            "anomaly_status": status.value
+        })
+        piezo_fusion.append(p_dict)
+
+    dam_coords = [
+        [0.0, base_elev],
+        [up_length, crest_elev],
+        [up_length + crest_width, crest_elev],
+        [total_base_length, base_elev],
+        [0.0, base_elev]
+    ]
+    phreatic_line_coords = [[st["station_x_m"], st["phreatic_elevation_m"]] for st in phreatic_stations]
+
+    cross_section_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": dam_coords},
+                "properties": {"feature_type": "embankment_shell", "dam_id": dam_id}
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": phreatic_line_coords},
+                "properties": {"feature_type": "phreatic_surface_line", "status": hazard_tier.value}
+            }
+        ]
+    }
+
+    tile_template = f"/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/saturation/{{z}}/{{x}}/{{y}}.png"
+
+    return {
+        "simulation_id": sim_id,
+        "dam_id": dam_id,
+        "dam_name": dam_name,
+        "status": "completed",
+        "reservoir_head_m": round(h1, 2),
+        "tailwater_head_m": round(h2, 2),
+        "seepage_discharge_m3s_m": float(f"{q_seep:.4e}"),
+        "exit_gradient_max": round(max_exit_grad, 4),
+        "factor_of_safety_piping": fs_piping,
+        "hazard_tier": hazard_tier.value,
+        "tier_metadata": tier_meta,
+        "phreatic_stations": phreatic_stations,
+        "piezometer_fusion": piezo_fusion,
+        "cross_section_geojson": cross_section_geojson,
+        "tile_url_template": tile_template,
+        "simulated_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+def build_phreatic_seepage_tile_url(
+    sim_id: str,
+    metric: str = "saturation",
+    z: int = 12,
+    x: int = 2048,
+    y: int = 1024
+) -> str:
+    """Constructs dynamic XYZ tile streaming URL for phreatic seepage raster layer."""
+    return f"/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{metric}/{z}/{x}/{y}.png"
+
+
+def build_phreatic_seepage_tile_url_template(
+    sim_id: str,
+    metric: str = "saturation"
+) -> str:
+    """Constructs dynamic XYZ tile URL template with Leaflet/MapLibre placeholders."""
+    return f"/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{metric}/{{z}}/{{x}}/{{y}}.png"
+
+
 
 
 

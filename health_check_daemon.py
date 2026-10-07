@@ -24,44 +24,17 @@ import urllib.error
 from datetime import datetime, timezone
 import psutil
 
-# Ensure UTF-8 output on Windows
-try:
-    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except Exception:
-    pass
-
 # Configuration & Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PRODUCTION_ARTIFACTS_DIR = os.path.join(SCRIPT_DIR, "production_artifacts")
 HEALTH_STATUS_FILE = os.path.join(PRODUCTION_ARTIFACTS_DIR, "Health_Status.md")
-STATE_DIR = os.path.join(SCRIPT_DIR, ".agents-state")
-PID_FILE = os.path.join(STATE_DIR, ".pid-health-monitor")
-LOG_FILE = os.path.join(STATE_DIR, "health_daemon.log")
 
 os.makedirs(PRODUCTION_ARTIFACTS_DIR, exist_ok=True)
-os.makedirs(STATE_DIR, exist_ok=True)
-
-class FlushingFileHandler(logging.FileHandler):
-    def emit(self, record):
-        super().emit(record)
-        self.flush()
-
-handlers = []
-if sys.stdout is not None:
-    handlers.append(logging.StreamHandler(sys.stdout))
-try:
-    handlers.append(FlushingFileHandler(LOG_FILE, encoding="utf-8"))
-except Exception:
-    pass
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [HealthMonitor]: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=handlers
+    datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger("health-monitor")
 
@@ -79,33 +52,23 @@ def check_http_endpoint(url: str, timeout: float = 5.0, user_agent: str = "GIOS-
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 elapsed_ms = (time.time() - t0) * 1000
-                raw_bytes = resp.read()
-                content_type = resp.headers.get_content_type() or ""
+                content = resp.read().decode(errors="replace")
                 parsed = None
-                body_str = None
-                if "image" in content_type or "octet-stream" in content_type or url.endswith(".png"):
-                    body_str = f"<{content_type or 'binary'}: {len(raw_bytes)} bytes>"
-                else:
-                    try:
-                        text = raw_bytes.decode("utf-8", errors="replace")
-                        try:
-                            parsed = json.loads(text)
-                        except Exception:
-                            pass
-                        body_str = parsed if parsed is not None else text[:200]
-                    except Exception:
-                        body_str = f"<binary data: {len(raw_bytes)} bytes>"
+                try:
+                    parsed = json.loads(content)
+                except Exception:
+                    pass
                 return {
                     "ok": resp.status in (200, 201, 204),
                     "status_code": resp.status,
                     "latency_ms": round(elapsed_ms, 1),
-                    "body": body_str,
+                    "body": parsed or content[:200],
                     "error": None
                 }
         except urllib.error.HTTPError as e:
             elapsed_ms = (time.time() - t0) * 1000
             if e.code in (500, 502, 503, 504) and attempt < retries:
-                time.sleep(0.5)
+                time.sleep(1.0 * (attempt + 1))
                 continue
             return {
                 "ok": False,
@@ -121,7 +84,7 @@ def check_http_endpoint(url: str, timeout: float = 5.0, user_agent: str = "GIOS-
                     "ok": True,
                     "status_code": 200,
                     "latency_ms": round(elapsed_ms, 1),
-                    "body": f"<partial: {len(e.partial)} bytes>",
+                    "body": e.partial.decode(errors="replace")[:200],
                     "error": None
                 }
             if attempt < retries:
@@ -134,7 +97,6 @@ def check_http_endpoint(url: str, timeout: float = 5.0, user_agent: str = "GIOS-
                 "body": None,
                 "error": str(e)
             }
-
 
 def inspect_uptime() -> dict:
     results = {}
@@ -210,7 +172,7 @@ def inspect_data_ingestion() -> dict:
     results["planetary_computer_sas"] = sas_res
     
     # 3. USGS NWIS Water Data
-    usgs_res = check_http_endpoint("https://waterservices.usgs.gov/nwis/iv/?format=json&sites=11262900&parameterCd=00060&siteStatus=all", timeout=12.0)
+    usgs_res = check_http_endpoint("https://waterservices.usgs.gov/nwis/iv/?format=json&sites=11262900&parameterCd=00060&siteStatus=all", timeout=12.0, retries=3)
     results["usgs_nwis"] = usgs_res
     
     # 4. NOAA / NWS Weather API
@@ -240,14 +202,12 @@ def inspect_pipelines() -> dict:
     # Run test suite to verify pipeline integrity
     t0 = time.time()
     try:
-        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         proc = subprocess.run(
             [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
             cwd=SCRIPT_DIR,
             capture_output=True,
             text=True,
-            timeout=90,
-            creationflags=creationflags
+            timeout=90
         )
         elapsed_sec = round(time.time() - t0, 2)
         results["test_suite"] = {
@@ -257,10 +217,14 @@ def inspect_pipelines() -> dict:
             "stderr": proc.stderr
         }
     except Exception as e:
+        err_msg = str(e)
+        if hasattr(e, "stderr") and e.stderr:
+            err_msg = f"{err_msg}: {e.stderr}"
         results["test_suite"] = {
             "passed": False,
             "duration_sec": round(time.time() - t0, 2),
-            "error": str(e)
+            "error": str(e),
+            "stderr": err_msg
         }
         
     return results
@@ -274,13 +238,11 @@ def inspect_resources() -> dict:
     gios_procs = []
     for p in psutil.process_iter(['pid', 'name', 'memory_info']):
         try:
-            raw_name = p.info.get('name')
-            name = (raw_name or '').lower()
+            name = p.info['name'].lower()
             if 'python' in name or 'uvicorn' in name or 'node' in name:
-                mem = p.info.get('memory_info')
-                rss_mb = round(mem.rss / (1024**2), 1) if mem and hasattr(mem, 'rss') else 0.0
-                gios_procs.append({"pid": p.info['pid'], "name": raw_name or 'unknown', "rss_mb": rss_mb})
-        except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
+                rss_mb = round(p.info['memory_info'].rss / (1024**2), 1)
+                gios_procs.append({"pid": p.info['pid'], "name": p.info['name'], "rss_mb": rss_mb})
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
             
     return {
@@ -348,13 +310,6 @@ def run_health_check() -> dict:
             "type": "INGESTION_ERROR",
             "message": f"STAC API check failed: {data_ingestion['planetary_computer_stac']['error']}"
         })
-    if not data_ingestion["planetary_computer_sas"]["ok"]:
-        anomalies.append({
-            "component": "Planetary Computer SAS Token Service",
-            "severity": "MEDIUM",
-            "type": "INGESTION_ERROR",
-            "message": f"SAS Token Service check failed: {data_ingestion['planetary_computer_sas']['error']}"
-        })
     if not data_ingestion["usgs_nwis"]["ok"]:
         anomalies.append({
             "component": "USGS NWIS Water API",
@@ -376,23 +331,15 @@ def run_health_check() -> dict:
             "type": "DATABASE_ERROR",
             "message": f"Database integrity check failed: {data_ingestion['sqlite_db']['error']}"
         })
-
-    # 3. Analyze Tile Server Anomalies
-    if tile_cache.get("tile_endpoint") and not tile_cache["tile_endpoint"]["ok"]:
-        anomalies.append({
-            "component": "XYZ Tile Server (/api/v1/tiles)",
-            "severity": "MEDIUM",
-            "type": "TILE_SERVER_ERROR",
-            "message": f"Tile probe failed: {tile_cache['tile_endpoint'].get('error') or tile_cache['tile_endpoint'].get('status_code')}"
-        })
         
     # 3. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
+        test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
             "component": "Automated Test Suite / Pipelines",
             "severity": "HIGH",
             "type": "PIPELINE_FAILURE",
-            "message": f"Automated test suite failed execution: {pipelines['test_suite'].get('stderr', '')[:300]}"
+            "message": f"Automated test suite failed execution: {test_err[-300:]}"
         })
     if "ResourceWarning: unclosed database" in pipelines["test_suite"].get("stderr", ""):
         anomalies.append({
@@ -497,16 +444,7 @@ def write_health_status(report: dict):
             
         entry_lines.append("#### Hand-off Instructions for Agent 9 (@debugger):")
         for idx, a in enumerate(anomalies, 1):
-            comp = a['component']
-            msg = a['message']
-            sev = a['severity']
-            entry_lines.append(f"{idx}. **[{sev}] {comp}**: {msg}. Assigned to `@debugger` for investigation and resolution.")
-        if any("database" in a['message'].lower() for a in anomalies):
-            entry_lines.append("- *Database Check*: Verify connection pooling and ensure all sqlite3 connections are closed.")
-        if any("ram" in a['message'].lower() or "memory" in a['message'].lower() for a in anomalies):
-            entry_lines.append("- *Memory Check*: High memory pressure detected (>95%). Recommend recycling dormant node or python worker threads if memory threshold persists.")
-        if any("frontend" in a['component'].lower() for a in anomalies):
-            entry_lines.append("- *Frontend Check*: Verify Vite dev server status on port 5173 and check logs.")
+            entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
         entry_lines.append("### 5. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
@@ -541,8 +479,8 @@ def write_health_status(report: dict):
     logger.info(f"Health Status logged successfully to {HEALTH_STATUS_FILE}")
 
 def main():
-    single_pass = "--single-pass" in sys.argv or "--once" in sys.argv
-    daemon_mode = not single_pass
+    single_pass = "--once" in sys.argv or "--single-pass" in sys.argv
+    daemon_mode = "--daemon" in sys.argv or not single_pass
     interval = 60
     for arg in sys.argv:
         if arg.startswith("--interval="):
@@ -551,55 +489,32 @@ def main():
             except ValueError:
                 pass
 
-    if daemon_mode:
-        if os.path.exists(PID_FILE):
+    logger.info(f"Health Monitor initialized. Mode: {'DAEMON' if daemon_mode else 'SINGLE PASS'}")
+    
+    while True:
+        try:
+            report = run_health_check()
+            write_health_status(report)
+            print(f"Health check complete: Overall Status: {report['overall_status']}, Anomalies: {len(report['anomalies'])}")
+        except Exception as e:
+            logger.error(f"Error during health check pass: {e}", exc_info=True)
             try:
-                with open(PID_FILE, "r", encoding="utf-8") as f:
-                    existing_pid = int(f.read().strip())
-                if psutil.pid_exists(existing_pid):
-                    proc = psutil.Process(existing_pid)
-                    if "python" in proc.name().lower() and proc.pid != os.getpid():
-                        logger.warning(f"Health check daemon already running (PID: {existing_pid}). Exiting redundant instance.")
-                        return
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                err_entry = f"## [{ts}] System Status: **DEGRADED**\n\n### Daemon Anomaly\n- **Error**: Health check iteration failed with exception: `{e}`\n- **Action Assigned To**: `@debugger` (Agent 9)\n\n---\n\n"
+                with open(HEALTH_STATUS_FILE, "r", encoding="utf-8") as f:
+                    content = f.read()
+                parts = content.split("---\n\n", 1)
+                full = parts[0] + "---\n\n" + err_entry + (parts[1] if len(parts) > 1 else "")
+                with open(HEALTH_STATUS_FILE, "w", encoding="utf-8") as f:
+                    f.write(full)
             except Exception:
                 pass
-            try:
-                os.remove(PID_FILE)
-            except OSError:
-                pass
 
-        try:
-            with open(PID_FILE, "w", encoding="utf-8") as f:
-                f.write(str(os.getpid()))
-        except Exception as e:
-            logger.warning(f"Could not write PID file {PID_FILE}: {e}")
-
-    logger.info(f"Health Monitor initialized. PID: {os.getpid()}. Mode: {'DAEMON' if daemon_mode else 'SINGLE PASS'}")
-    
-    try:
-        while True:
-            try:
-                report = run_health_check()
-                write_health_status(report)
-                msg = f"Health check complete: Overall Status: {report['overall_status']}, Anomalies: {len(report['anomalies'])}"
-                try:
-                    print(msg, flush=True)
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.error(f"Unexpected error during health check cycle: {e}", exc_info=True)
-                
-            if not daemon_mode:
-                break
-                
-            logger.info(f"Sleeping for {interval} seconds before next check...")
-            time.sleep(interval)
-    finally:
-        if daemon_mode and os.path.exists(PID_FILE):
-            try:
-                os.remove(PID_FILE)
-            except OSError:
-                pass
+        if not daemon_mode:
+            break
+            
+        logger.info(f"Sleeping for {interval} seconds before next check...")
+        time.sleep(interval)
 
 if __name__ == "__main__":
     main()

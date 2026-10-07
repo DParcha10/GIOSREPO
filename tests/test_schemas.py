@@ -524,7 +524,30 @@ from app.models.schemas import (
     HazardAlertEvent,
     HazardAlertDispatchResponse,
     classify_hazard_severity_tier,
-    dispatch_simulated_hazard_alert
+    dispatch_simulated_hazard_alert,
+    BreachMechanism,
+    RheologyModel,
+    HazardIntensityTier,
+    EvacuationUrgencyTier,
+    InfrastructureExposureType,
+    HAZARD_INTENSITY_TIER_METADATA,
+    EVACUATION_URGENCY_TIER_METADATA,
+    INFRASTRUCTURE_EXPOSURE_METADATA,
+    BREACH_MECHANISM_METADATA,
+    DamBreachParameters,
+    DownstreamReceptor,
+    InundationTimeSlice,
+    EvacuationCorridor,
+    DamBreakHydrodynamicRequest,
+    DamBreakHydrodynamicResponse,
+    calculate_dam_breach_peak_discharge,
+    classify_hazard_intensity_tier,
+    classify_evacuation_urgency,
+    calculate_downstream_wave_attenuation,
+    calculate_infrastructure_vulnerability_score,
+    calculate_dam_break_hydrodynamic_simulation,
+    build_dam_break_tile_url,
+    build_dam_break_tile_url_template
 )
 from app.config import settings
 
@@ -5756,6 +5779,357 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(API_ROUTE_CONTRACTS["alerts_stream"], "/api/v1/alerts/stream")
         self.assertIn("alerts_dispatch", API_ROUTE_CONTRACTS)
         self.assertEqual(API_ROUTE_CONTRACTS["alerts_dispatch"], "/api/v1/alerts/dispatch")
+
+    def test_dam_break_hydrodynamics_contracts_and_models(self):
+        """Verify Task T-126 dam break hydrodynamic simulation data models, aliases, and enums."""
+        # 1. Enums validation
+        self.assertEqual(BreachMechanism.OVERTOPPING.value, "overtopping")
+        self.assertEqual(BreachMechanism.PIPING_INTERNAL_EROSION.value, "piping_internal_erosion")
+        self.assertEqual(BreachMechanism.INSTANTANEOUS_COLLAPSE.value, "instantaneous_collapse")
+
+        self.assertEqual(RheologyModel.HERSCHEL_BULKLEY_TAILINGS.value, "herschel_bulkley_tailings")
+        self.assertEqual(RheologyModel.BINGHAM_PLASTIC_SLURRY.value, "bingham_plastic_slurry")
+
+        self.assertEqual(HazardIntensityTier.LOW_HAZARD.value, "low_hazard")
+        self.assertEqual(HazardIntensityTier.MEDIUM_HAZARD.value, "medium_hazard")
+        self.assertEqual(HazardIntensityTier.HIGH_HAZARD.value, "high_hazard")
+        self.assertEqual(HazardIntensityTier.EXTREME_CATASTROPHIC.value, "extreme_catastrophic")
+
+        self.assertEqual(EvacuationUrgencyTier.IMMEDIATE_LIFE_SAFETY.value, "immediate_life_safety")
+        self.assertEqual(EvacuationUrgencyTier.HIGH_PRIORITY_EVACUATION.value, "high_priority_evacuation")
+        self.assertEqual(EvacuationUrgencyTier.PRECAUTIONARY_STAGED.value, "precautionary_staged")
+        self.assertEqual(EvacuationUrgencyTier.MONITORED_SAFE_HAVEN.value, "monitored_safe_haven")
+
+        self.assertEqual(InfrastructureExposureType.RESIDENTIAL_SETTLEMENT.value, "residential_settlement")
+        self.assertEqual(InfrastructureExposureType.BRIDGE_CROSSING.value, "bridge_crossing")
+
+        # 2. Metadata dictionaries validation
+        self.assertIn("extreme_catastrophic", HAZARD_INTENSITY_TIER_METADATA)
+        self.assertIn("immediate_life_safety", EVACUATION_URGENCY_TIER_METADATA)
+        self.assertIn("residential_settlement", INFRASTRUCTURE_EXPOSURE_METADATA)
+        self.assertIn("overtopping", BREACH_MECHANISM_METADATA)
+
+        # 3. DamBreachParameters with camelCase aliases
+        bp = DamBreachParameters(
+            damHeightM=50.0,
+            reservoirVolumeM3=15000000.0,
+            breachWidthM=70.0,
+            breachDepthM=40.0,
+            breachFormationTimeHr=1.2,
+            peakDischargeM3s=9500.0,
+            breachMechanism=BreachMechanism.OVERTOPPING,
+            rheologyModel=RheologyModel.HERSCHEL_BULKLEY_TAILINGS,
+            manningNRoughness=0.045,
+            slurryYieldStressPa=55.0,
+            slurryDensityKgM3=1520.0
+        )
+        self.assertEqual(bp.dam_height_m, 50.0)
+        self.assertEqual(bp.reservoir_volume_m3, 15000000.0)
+        self.assertEqual(bp.breach_width_m, 70.0)
+        self.assertEqual(bp.manning_n_roughness, 0.045)
+        self.assertEqual(bp.slurry_density_kg_m3, 1520.0)
+
+        # 4. DownstreamReceptor with camelCase aliases
+        rec = DownstreamReceptor(
+            receptorId="REC_VILLAGE_01",
+            name="North Valley Community",
+            exposureType=InfrastructureExposureType.RESIDENTIAL_SETTLEMENT,
+            distanceDownstreamKm=3.5,
+            elevationM=680.0,
+            populationAtRisk=450,
+            latitude=-20.145,
+            longitude=-44.110,
+            arrivalTimeMin=22.5,
+            peakDepthM=3.2,
+            peakVelocityMs=2.1,
+            hazardIntensityProduct=6.72,
+            hazardTier=HazardIntensityTier.EXTREME_CATASTROPHIC,
+            vulnerabilityScore=0.92,
+            evacuationUrgency=EvacuationUrgencyTier.HIGH_PRIORITY_EVACUATION
+        )
+        self.assertEqual(rec.receptor_id, "REC_VILLAGE_01")
+        self.assertEqual(rec.distance_downstream_km, 3.5)
+        self.assertEqual(rec.population_at_risk, 450)
+        self.assertEqual(rec.hazard_tier, HazardIntensityTier.EXTREME_CATASTROPHIC)
+
+        # 5. InundationTimeSlice and EvacuationCorridor
+        ts = InundationTimeSlice(
+            timestepMinutes=30.0,
+            inundationAreaHa=120.5,
+            maxDepthM=8.4,
+            meanDepthM=3.5,
+            maxVelocityMs=6.2,
+            waveFrontDistanceKm=7.5,
+            slurryVolumeReleasedM3=8500000.0
+        )
+        self.assertEqual(ts.timestep_minutes, 30.0)
+        self.assertEqual(ts.inundation_area_ha, 120.5)
+
+        corridor = EvacuationCorridor(
+            corridorId="EVAC_RIDGE_01",
+            name="East Ridge Egress Path",
+            assemblyPoint="High Ground Heliport",
+            safeElevationM=810.0,
+            bufferDistanceM=150.0,
+            estimatedEvacuationTimeMin=15.0,
+            routeStatus="open",
+            coordinates=[[-44.12, -20.12], [-44.11, -20.11]]
+        )
+        self.assertEqual(corridor.corridor_id, "EVAC_RIDGE_01")
+        self.assertEqual(corridor.safe_elevation_m, 810.0)
+
+        # 6. Full Request and Response serialization
+        req = DamBreakHydrodynamicRequest(
+            simulationId="SIM_TEST_001",
+            damId="DAM_ALPHA",
+            damName="Tailings Facility Alpha",
+            damCoordinates=[-44.1234, -20.1234],
+            breachParams=bp,
+            simulationDurationHours=4.0,
+            timestepIntervalMin=15.0,
+            demResolutionM=10.0,
+            receptors=[rec],
+            generateEvacuationCorridors=True,
+            includeTimeSlices=True
+        )
+        self.assertEqual(req.simulation_id, "SIM_TEST_001")
+        self.assertEqual(req.simulation_duration_hours, 4.0)
+
+        resp = DamBreakHydrodynamicResponse(
+            simulation_id=req.simulation_id,
+            dam_id=req.dam_id,
+            dam_name=req.dam_name,
+            status="completed",
+            peak_breach_discharge_m3s=9500.0,
+            total_volume_discharged_m3=15000000.0,
+            max_inundation_area_ha=245.0,
+            max_flood_depth_m=12.5,
+            max_flow_velocity_ms=7.8,
+            max_hazard_product_m2s=97.5,
+            overall_hazard_tier=HazardIntensityTier.EXTREME_CATASTROPHIC,
+            time_to_peak_hours=1.2,
+            total_receptors_impacted=1,
+            total_population_at_risk=450,
+            receptors=[rec],
+            time_slices=[ts],
+            evacuation_corridors=[corridor],
+            tile_url_template="/api/v1/tiles/geotechnical/dam-break/SIM_TEST_001/hazard_product/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.status, "completed")
+        self.assertEqual(resp.overall_hazard_tier, HazardIntensityTier.EXTREME_CATASTROPHIC)
+
+    def test_dam_breach_peak_discharge_and_attenuation_math(self):
+        """Verify Froehlich peak discharge, wave attenuation, and infrastructure vulnerability math."""
+        # 1. Froehlich (2008) Peak Discharge
+        qp_overtopping = calculate_dam_breach_peak_discharge(45.0, 12500000.0, BreachMechanism.OVERTOPPING)
+        self.assertGreater(qp_overtopping, 5000.0)
+        self.assertLess(qp_overtopping, 15000.0)
+
+        # Piping should have 0.90 multiplier
+        qp_piping = calculate_dam_breach_peak_discharge(45.0, 12500000.0, BreachMechanism.PIPING_INTERNAL_EROSION)
+        self.assertAlmostEqual(qp_piping / qp_overtopping, 0.90, places=2)
+
+        # Instantaneous collapse should have 1.25 multiplier
+        qp_instant = calculate_dam_breach_peak_discharge(45.0, 12500000.0, BreachMechanism.INSTANTANEOUS_COLLAPSE)
+        self.assertAlmostEqual(qp_instant / qp_overtopping, 1.25, places=2)
+
+        # 2. Downstream Wave Attenuation
+        near_field = calculate_downstream_wave_attenuation(
+            distance_km=1.0,
+            peak_discharge_m3s=8500.0,
+            manning_n=0.040,
+            valley_slope=0.015,
+            slurry_yield_stress_pa=45.0
+        )
+        far_field = calculate_downstream_wave_attenuation(
+            distance_km=10.0,
+            peak_discharge_m3s=8500.0,
+            manning_n=0.040,
+            valley_slope=0.015,
+            slurry_yield_stress_pa=45.0
+        )
+
+        # Discharge must attenuate downstream
+        self.assertGreater(near_field["discharge_m3s"], far_field["discharge_m3s"])
+        # Far field arrival time must be greater than near field
+        self.assertGreater(far_field["arrival_time_min"], near_field["arrival_time_min"])
+        # Near field depth must be greater than far field depth
+        self.assertGreater(near_field["depth_m"], far_field["depth_m"])
+        # Near field hazard product must be greater than far field
+        self.assertGreater(near_field["hazard_product_m2s"], far_field["hazard_product_m2s"])
+
+        # 3. Infrastructure Vulnerability Score
+        vuln_res = calculate_infrastructure_vulnerability_score(
+            exposure_type=InfrastructureExposureType.RESIDENTIAL_SETTLEMENT,
+            depth_m=3.5,
+            velocity_ms=2.5
+        )
+        self.assertGreaterEqual(vuln_res, 0.70)
+        self.assertLessEqual(vuln_res, 1.0)
+
+        vuln_agri = calculate_infrastructure_vulnerability_score(
+            exposure_type=InfrastructureExposureType.AGRICULTURAL_LAND,
+            depth_m=3.5,
+            velocity_ms=2.5
+        )
+        self.assertLess(vuln_agri, vuln_res)
+
+        vuln_shallow = calculate_infrastructure_vulnerability_score(
+            exposure_type=InfrastructureExposureType.RESIDENTIAL_SETTLEMENT,
+            depth_m=0.2,
+            velocity_ms=0.3
+        )
+        self.assertLess(vuln_shallow, 0.20)
+
+    def test_hazard_intensity_and_evacuation_urgency_classification(self):
+        """Verify Australian/USBR v*h thresholding and evacuation urgency tiering."""
+        # Hazard Intensity (v * h):
+        self.assertEqual(classify_hazard_intensity_tier(0.5, 0.4), HazardIntensityTier.LOW_HAZARD)
+        self.assertEqual(classify_hazard_intensity_tier(1.0, 1.0), HazardIntensityTier.MEDIUM_HAZARD)
+        self.assertEqual(classify_hazard_intensity_tier(1.5, 1.2), HazardIntensityTier.HIGH_HAZARD)
+        self.assertEqual(classify_hazard_intensity_tier(2.0, 1.6), HazardIntensityTier.EXTREME_CATASTROPHIC)
+        self.assertEqual(classify_hazard_intensity_tier(0.2, 3.2), HazardIntensityTier.EXTREME_CATASTROPHIC)
+
+        # Evacuation Urgency:
+        self.assertEqual(classify_evacuation_urgency(12.0), EvacuationUrgencyTier.IMMEDIATE_LIFE_SAFETY)
+        self.assertEqual(classify_evacuation_urgency(35.0), EvacuationUrgencyTier.HIGH_PRIORITY_EVACUATION)
+        self.assertEqual(classify_evacuation_urgency(90.0), EvacuationUrgencyTier.PRECAUTIONARY_STAGED)
+        self.assertEqual(classify_evacuation_urgency(210.0), EvacuationUrgencyTier.MONITORED_SAFE_HAVEN)
+
+    def test_dam_break_simulation_engine_and_route_contracts(self):
+        """Verify end-to-end hydrodynamic simulation generator and canonical route contracts."""
+        # 1. calculate_dam_break_hydrodynamic_simulation execution
+        sim_result = calculate_dam_break_hydrodynamic_simulation({
+            "simulation_id": "SIM_VERIFY_2026",
+            "dam_id": "TAILINGS_FACILITY_B",
+            "dam_name": "South Tailings Impoundment",
+            "dam_coordinates": [-44.200, -20.200],
+            "breach_params": {
+                "dam_height_m": 48.0,
+                "reservoir_volume_m3": 14000000.0,
+                "breach_mechanism": "overtopping",
+                "manning_n_roughness": 0.042
+            },
+            "simulation_duration_hours": 3.0,
+            "timestep_interval_min": 15.0
+        })
+
+        self.assertEqual(sim_result["simulation_id"], "SIM_VERIFY_2026")
+        self.assertEqual(sim_result["status"], "completed")
+        self.assertGreater(sim_result["peak_breach_discharge_m3s"], 6000.0)
+        self.assertGreater(sim_result["max_inundation_area_ha"], 50.0)
+        self.assertGreater(sim_result["max_hazard_product_m2s"], 1.0)
+        self.assertIn(sim_result["overall_hazard_tier"], ["high_hazard", "extreme_catastrophic"])
+
+        # Check time slices
+        self.assertEqual(len(sim_result["time_slices"]), 12)
+        self.assertEqual(sim_result["time_slices"][0]["timestep_minutes"], 15.0)
+
+        # Check receptors
+        self.assertGreaterEqual(len(sim_result["receptors"]), 4)
+        for r in sim_result["receptors"]:
+            self.assertIn("arrival_time_min", r)
+            self.assertIn("peak_depth_m", r)
+            self.assertIn("hazard_tier", r)
+            self.assertIn("vulnerability_score", r)
+
+        # Check evacuation corridors
+        self.assertEqual(len(sim_result["evacuation_corridors"]), 2)
+        self.assertEqual(sim_result["evacuation_corridors"][0]["route_status"], "open")
+
+        # Check GeoJSON boundary
+        self.assertEqual(sim_result["inundation_boundary_geojson"]["type"], "Feature")
+        self.assertEqual(sim_result["inundation_boundary_geojson"]["geometry"]["type"], "Polygon")
+
+        # Pydantic validation of response
+        pydantic_resp = DamBreakHydrodynamicResponse(**sim_result)
+        self.assertEqual(pydantic_resp.simulation_id, "SIM_VERIFY_2026")
+
+        # 2. Canonical route contracts in API_ROUTE_CONTRACTS
+        self.assertIn("analysis_dam_break_hydrodynamics", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_dam_break_hydrodynamics"], "/api/v1/analysis/geotechnical/dam-break-hydrodynamics")
+        self.assertEqual(API_ROUTE_CONTRACTS["analysis_dam_break_hydrodynamics_short"], "/geotechnical/dam-break-hydrodynamics")
+
+        self.assertIn("tiles_dam_break", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["tiles_dam_break"], "/api/v1/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png")
+
+        self.assertIn("tiles_dam_break_metric", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["tiles_dam_break_metric"], "/api/v1/tiles/geotechnical/dam-break/{sim_id}/{metric}/{z}/{x}/{y}.png")
+
+        self.assertIn("dam_break_evacuation_corridors", API_ROUTE_CONTRACTS)
+        self.assertEqual(API_ROUTE_CONTRACTS["dam_break_evacuation_corridors"], "/api/v1/analysis/geotechnical/dam-break/{sim_id}/evacuation-corridors")
+        self.assertEqual(API_ROUTE_CONTRACTS["dam_break_evacuation_corridors_short"], "/geotechnical/dam-break/{sim_id}/evacuation-corridors")
+
+        # 3. format_api_route formatting
+        route_eval = format_api_route("tiles_dam_break", sim_id="SIM_VERIFY_2026", z=14, x=4500, y=8200)
+        self.assertEqual(route_eval, "/api/v1/tiles/geotechnical/dam-break/SIM_VERIFY_2026/14/4500/8200.png")
+
+        metric_route = format_api_route("tiles_dam_break_metric", sim_id="SIM_VERIFY_2026", metric="depth", z=12, x=2048, y=1024)
+        self.assertEqual(metric_route, "/api/v1/tiles/geotechnical/dam-break/SIM_VERIFY_2026/depth/12/2048/1024.png")
+
+        evac_route = format_api_route("dam_break_evacuation_corridors", sim_id="SIM_VERIFY_2026")
+        self.assertEqual(evac_route, "/api/v1/analysis/geotechnical/dam-break/SIM_VERIFY_2026/evacuation-corridors")
+
+        # 4. Tile URL Builders
+        tile_url = build_dam_break_tile_url("SIM_001", "hazard_product", 12, 100, 200)
+        self.assertEqual(tile_url, "/api/v1/tiles/geotechnical/dam-break/SIM_001/hazard_product/12/100/200.png")
+
+        tile_template = build_dam_break_tile_url_template("SIM_001", "hazard_product")
+        self.assertEqual(tile_template, "/api/v1/tiles/geotechnical/dam-break/SIM_001/hazard_product/{z}/{x}/{y}.png")
+
+    def test_dam_break_edge_cases_and_zero_preservation(self):
+        """Verify edge case resilience: zero-preservation for yield stress and receptor distance, hyphenated mechanisms, and short duration bounds."""
+        # 1. Hyphenated and mixed-case breach mechanisms
+        qp_overtop = calculate_dam_breach_peak_discharge(45.0, 12500000.0, "OVERTOPPING")
+        self.assertGreater(qp_overtop, 0.0)
+
+        qp_piping = calculate_dam_breach_peak_discharge(45.0, 12500000.0, "piping-internal-erosion")
+        self.assertGreater(qp_piping, 0.0)
+        self.assertAlmostEqual(qp_piping, qp_overtop * 0.90, places=1)
+
+        # 2. Hyphenated infrastructure exposure type
+        vuln_bridge = calculate_infrastructure_vulnerability_score("bridge-crossing", 2.0, 2.5)
+        self.assertGreater(vuln_bridge, 0.0)
+        self.assertLessEqual(vuln_bridge, 1.0)
+
+        # 3. Preservation of 0.0 slurry yield stress (clean water) and receptor at 0.0 km
+        custom_receptor = {
+            "receptor_id": "REC_DAM_TOE",
+            "name": "Dam Toe Monitoring Station",
+            "exposure_type": "mine-processing-facility",
+            "distance_downstream_km": 0.0,
+            "elevation_m": 715.0,
+            "population_at_risk": 0,
+            "latitude": -20.1234,
+            "longitude": -44.1234
+        }
+        custom_copy = dict(custom_receptor)
+
+        sim_edge = calculate_dam_break_hydrodynamic_simulation({
+            "simulation_id": "SIM_EDGE_001",
+            "dam_coordinates": [-44.1234, -20.1234],
+            "breach_params": {
+                "dam_height_m": 45.0,
+                "reservoir_volume_m3": 12500000.0,
+                "slurry_yield_stress_pa": 0.0
+            },
+            "simulation_duration_hours": 0.1,  # Short duration (6 min < 15 min interval)
+            "timestep_interval_min": 15.0,
+            "receptors": [custom_receptor]
+        })
+
+        # Ensure original input dict was not mutated
+        self.assertEqual(custom_receptor["distance_downstream_km"], custom_copy["distance_downstream_km"])
+        self.assertNotIn("arrival_time_min", custom_receptor)
+
+        # Verify time slices are not empty despite short duration
+        self.assertGreaterEqual(len(sim_edge["time_slices"]), 1)
+        self.assertGreater(sim_edge["max_inundation_area_ha"], 0.0)
+
+        # Verify receptor distance was evaluated at near-field (0.05 km) rather than defaulted to 2.0 km
+        rec_out = sim_edge["receptors"][0]
+        self.assertLess(rec_out["arrival_time_min"], 1.0)
+        self.assertEqual(rec_out["evacuation_urgency"], "immediate_life_safety")
 
 if __name__ == "__main__":
     unittest.main()

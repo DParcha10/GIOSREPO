@@ -3,16 +3,30 @@ Monitors telemetry and satellite observations, detects severe anomalies (|z| >= 
 persists alerts to SQLite (gios.db), and dispatches webhook notifications.
 """
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, Union
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.database import SessionLocal
 from app.models.alert import Alert
 from app.services.integration import integration_service
 from app.services.event_service import event_service
 from app.services.jarvis_brain import get_active_provider, JARVIS_SYSTEM_PROMPT
+from app.models.schemas import (
+    HazardSeverityTier,
+    HazardAlertType,
+    AlertDeliveryChannel,
+    AlertDeliveryStatus,
+    HAZARD_SEVERITY_TIER_METADATA,
+    HAZARD_ALERT_TYPE_METADATA,
+    HazardAlertSubscriptionRequest,
+    HazardAlertEvent,
+    HazardAlertDispatchResponse,
+    classify_hazard_severity_tier,
+    dispatch_simulated_hazard_alert
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +43,20 @@ class AlertEngine:
             "09486000": "Silver Bell Mine"
         }
         self.alert_state = {}
+        self.subscriptions: Dict[str, Dict[str, Any]] = {
+            "SUB_WEBHOOK_001": {
+                "subscription_id": "SUB_WEBHOOK_001",
+                "recipient_name": "Geotechnical Monitoring Center",
+                "channel": "webhook",
+                "endpoint_url": "https://alerts.gios-monitoring.internal/webhook",
+                "monitored_asset_ids": ["TAILINGS_DAM_A", "NORTH_CREST_01"],
+                "alert_types": ["tailings_crest_deformation", "embankment_seepage_saturation"],
+                "minimum_severity": "warning",
+                "cooldown_minutes": 60,
+                "active": True,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+        }
 
     def start(self):
         """Starts background watchdog schedulers."""
@@ -230,5 +258,72 @@ class AlertEngine:
             })
         except Exception as e:
             logger.error("Failed to generate proactive alert: %s", e)
+
+    def subscribe(self, req: Union[HazardAlertSubscriptionRequest, Dict[str, Any]]) -> Dict[str, Any]:
+        """Registers a multi-hazard early warning notification subscription."""
+        data = req.dict() if hasattr(req, "dict") else dict(req)
+        sid = data.get("subscription_id") or f"SUB_{uuid.uuid4().hex[:8].upper()}"
+        data["subscription_id"] = sid
+        data["created_at"] = data.get("created_at") or datetime.now(timezone.utc).isoformat()
+        self.subscriptions[sid] = data
+        logger.info("Registered hazard alert subscription '%s' for '%s' via %s", sid, data.get("recipient_name"), data.get("channel"))
+        return data
+
+    def list_subscriptions(self) -> List[Dict[str, Any]]:
+        """Returns all registered hazard alert subscriptions."""
+        return list(self.subscriptions.values())
+
+    def dispatch_hazard_alert(self, req: Union[HazardAlertEvent, Dict[str, Any]]) -> Dict[str, Any]:
+        """Dispatches a multi-hazard early warning notification across configured channels (webhook/SSE)."""
+        data = req.dict() if hasattr(req, "dict") else dict(req)
+        alert_type = data.get("alert_type") or data.get("alertType") or "tailings_crest_deformation"
+        z_val = data.get("z_score") if data.get("z_score") is not None else data.get("zScore")
+        z_score = float(z_val if z_val is not None else 3.2)
+        asset_id = data.get("asset_id") or data.get("assetId") or "ASSET_TAILINGS_01"
+        channel = data.get("channel") or "webhook"
+
+        dispatch_res = dispatch_simulated_hazard_alert(
+            alert_type=alert_type,
+            z_score=z_score,
+            asset_id=asset_id,
+            channel=channel
+        )
+
+        # Broadcast event to active SSE queue
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                asyncio.create_task(alert_queue.put({
+                    "type": "hazard_early_warning_alert",
+                    "data": dispatch_res
+                }))
+            else:
+                alert_queue.put_nowait({
+                    "type": "hazard_early_warning_alert",
+                    "data": dispatch_res
+                })
+        except Exception:
+            pass
+
+        return dispatch_res
+
+    async def stream_alerts(self):
+        """Asynchronous generator yielding Server-Sent Events (SSE) for multi-hazard alerts."""
+        yield f"event: connected\ndata: {json.dumps({'status': 'connected', 'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
+        while True:
+            try:
+                alert = await asyncio.wait_for(alert_queue.get(), timeout=15.0)
+                yield f"event: alert\ndata: {json.dumps(alert)}\n\n"
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Error in alert SSE stream: %s", e)
+                yield ": keep-alive\n\n"
 
 alert_engine = AlertEngine()

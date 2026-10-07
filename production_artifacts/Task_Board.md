@@ -2,8 +2,8 @@
 
 **Orchestrator:** Agent 4 — Master (`@master`)  
 **Source Plan:** `production_artifacts/Implementation_Plan.md`  
-**Last Updated:** October 1, 2026 — 21:15 UTC  
-**Execution State:** Milestone Releases v2.5.8 (Task T-113 DONE) & v2.5.9 (Task T-119 DONE) ARCHIVED & RELEASED; Cycle v2.5.10 Scaffolding Complete (Task T-120 DONE); Parallel Dispatch for T-121 (@backend) & T-122 (@frontend) UNBLOCKED; Active Continuous Surveillance & Scientific QA IN-PROGRESS: Agent 8 (@health-monitor, Tasks T-117 & T-123 ACTIVE) and Agent 9 (@debugger, Task T-124 IN-PROGRESS); 217/217 pytest passing cleanly in 47.91s, 216/216 unittest passing cleanly in 47.60s, 0 ESLint errors/warnings, clean Vite production bundle build (2,864 modules in 7.12s), Health Status verified HEALTHY with 0 anomalies; GIOSREPO Synchronized and Tagged.
+**Last Updated:** October 6, 2026 — 23:30 UTC  
+**Execution State:** Cycle v2.5.11 Step 2 Parallel Dispatch Active & Continuous Surveillance — Agent 5 (@core-engineer) completed Task T-126 (Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamic Simulation Contracts); Step 2 Parallel Dispatch: Agent 7 (@backend, Task T-127) and Agent 6 (@frontend, Task T-128) dispatched in parallel (`in-progress`); Step 3 Continuous Surveillance Active: Agent 8 (@health-monitor, Task T-129 `in-progress` / PID 105064 active, System Status HEALTHY); Agent 9 (@debugger, Task T-130 `in-progress` / 225/225 tests passing cleanly); Step 4 Milestone Releases: Task T-125 completed & released by Agent 10 (@archivist `done` for v2.5.10); Task T-131 staged `pending` for v2.5.11; Advance Roadmap Cycle v2.5.12 Staged (Tasks T-132 through T-137); 100% Discrete Single-Agent Task Assignment Enforced across Agents 5–10.
 
 ---
 
@@ -25,37 +25,38 @@
 ```
                      ORCHESTRATION TIMELINE & DISPATCH SEQUENCE
                      
-     [Step 1: Agent 5 (@core-engineer)] ──────────────────► Status: DONE (T-96, T-102, T-108 & T-114 COMPLETE)
-       ├─ T-01, T-33, T-35, T-36, T-39, T-43, T-45, T-53, T-57, T-62, T-67, T-74, T-79, T-86, T-90, T-96: Shared Scaffolding, Schemas & API Contracts (DONE)
+     [Step 1: Agent 5 (@core-engineer)] ──────────────────► Status: DONE (T-96, T-102, T-108, T-114, T-120 & T-126 COMPLETE)
+       ├─ T-01..T-96: Shared Scaffolding, Schemas & API Contracts (DONE)
        ├─ T-102 (DONE): Shared Scaffolding: Drone Direct Georeferencing, Embankment Crest Vectorization & PS-InSAR Stacking Contracts
        ├─ T-108 (DONE): True Orthorectification Z-Buffer Occlusion Ray-Tracing, Multiresolution Seamline Graph-Cut Energy Minimization & BRDF NBAR Contracts
-       └─ T-114 (DONE): Small Baseline Subset (SBAS) Multi-Temporal InSAR, Topographic Illumination Minnaert & C-Correction, and Automated Sub-Pixel Tie-Point RPC Alignment Contracts
+       ├─ T-114 (DONE): Small Baseline Subset (SBAS) Multi-Temporal InSAR, Topographic Illumination Minnaert & C-Correction, and Automated Sub-Pixel Tie-Point RPC Alignment Contracts
+       ├─ T-120 (DONE): Asynchronous NodeODM Drone Photogrammetry Worker Queue, Multi-Temporal Quality Mosaicing (Greenest/Clearest Pixel Composition), and Multi-Hazard Early-Warning Alert Webhook/SSE Notification Contracts
+       └─ T-126 (DONE): Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamic Simulation Contracts
                      │
                      ▼ 
-     [Step 2: Agent 6 (@frontend) & Agent 7 (@backend) IN PARALLEL] ──► Status: DONE (T-109, T-110, T-115, T-116 COMPLETE)
-        ├─ Agent 7 (@backend):  T-97, T-103, T-109 & T-115 (DONE): True Ortho Z-Buffer Occlusion, Graph-Cut Seamlines, BRDF NBAR, SBAS InSAR Inversion, Topographic Minnaert Radiometric Normalization & Automated Tie-Point Sub-Pixel RPC Engine
-        └─ Agent 6 (@frontend): T-98, T-104, T-110 & T-116 (DONE): True Ortho Occlusion Studio, Seamline Blend Inspector & BRDF Workbench; SBAS Temporal Interferogram Studio, Topographic Illumination Inspector & Sub-Pixel Tie-Point Vector Overlay
+     [Step 2: Agent 6 (@frontend) & Agent 7 (@backend) IN PARALLEL] ──► Status: DISPATCHED / IN-PROGRESS IN PARALLEL (T-127 IN-PROGRESS, T-128 IN-PROGRESS)
+        ├─ Agent 7 (@backend):  T-127 (IN-PROGRESS): Hydrodynamic 2D Shallow Water Flow Inversion & High-Hazard Floodplain Velocity Engine
+        └─ Agent 6 (@frontend): T-128 (IN-PROGRESS): Dam Breach Inundation & Emergency Evacuation Corridor Visualizer
                      │
                      ▼ 
-     [Step 3: Agent 8 (@health-monitor) & Agent 9 (@debugger) CONTINUOUS] ──► Status: ACTIVE / CONTINUOUS HEALTHY SURVEILLANCE & QA CLEARED
-        ├─ Agent 8 (@health-monitor): T-83 / T-93 / T-99 / T-105 / T-111 / T-117 (DONE); T-123 (PENDING / NEXT): Continuous Host Telemetry, Port Uptime, Cache & Memory Guard Watchdog
-        └─ Agent 9 (@debugger):       T-94 / T-100 / T-106 / T-112 / T-118 (DONE / QA-CLEARED FOR T-113 & T-119); T-124 (IN-PROGRESS): Continuous Scientific QA, Test Verification & Regression Triage (216/216 passing, 0 lint errors, clean Vite build)
+     [Step 3: Agent 8 (@health-monitor) & Agent 9 (@debugger) CONTINUOUS] ──► Status: ACTIVE HEALTHY SURVEILLANCE & QA (T-129 IN-PROGRESS, T-130 IN-PROGRESS)
+        ├─ Agent 8 (@health-monitor): T-123 (DONE); T-129 (IN-PROGRESS): Hydrodynamic Simulation Resource & Memory Guard Watchdog (PID 105064, System Status HEALTHY)
+        └─ Agent 9 (@debugger):       T-124 (DONE); T-130 (IN-PROGRESS): Continuous Scientific QA, Mass Conservation Verification & Inundation Flow Physics Regression Triage (225/225 passing)
                      │
                      ▼ 
-      [Step 4: Agent 10 (@archivist) ON STABLE MILESTONES] ──► Status: T-95, T-101, T-107, T-113 & T-119 RELEASED (v2.5.9)
-         ├─ T-20, T-25, T-27, T-28, T-30, T-32, T-38, T-40, T-42, T-44, T-51, T-56, T-61, T-66, T-71, T-73, T-78, T-85, T-89, T-95, T-101, T-107, T-113, T-119 (DONE): Release Archival
-         ├─ T-107 (DONE): Milestone Release v2.5.7 Production Archival & Remote Sync (Direct Georeferencing, Crest Vectorization & PS-InSAR Phase Stacking)
-         ├─ T-113 (DONE): Milestone Release v2.5.8 Production Archival & Remote Sync (True Ortho, Graph-Cut Seamline & BRDF NBAR)
-         └─ T-119 (DONE): Milestone Release v2.5.9 Production Archival & Remote Sync (SBAS InSAR, Topographic Minnaert & RPC Alignment)
+      [Step 4: Agent 10 (@archivist) ON STABLE MILESTONES] ──► Status: T-125 DONE (v2.5.10) / T-131 STAGED PENDING (v2.5.11)
+         ├─ T-20..T-119 (DONE): Release Archival (v2.5.0 through v2.5.9 Released & Tagged)
+         ├─ T-125 (DONE): Milestone Release v2.5.10 Production Archival & Remote Sync (NodeODM Queue, Quality Mosaic & Multi-Hazard Alerts)
+         └─ T-131 (PENDING / STAGED): Milestone Release v2.5.11 Production Archival & Remote Sync (Dam Breach Hydrodynamics, Floodplain Velocity & Evacuation Corridors)
                      │
                      ▼ 
-      [Advance Roadmap: Cycle v2.5.10 Staged] ──► Status: STAGED / READY FOR DISPATCH UPON MILESTONE CLOSURE (T-120 through T-125)
-         ├─ Agent 5 (@core-engineer): T-120 (PENDING / NEXT): Asynchronous NodeODM Drone Photogrammetry Worker Queue, Multi-Temporal Quality Mosaicing (Greenest/Clearest Pixel Composition), and Multi-Hazard Early-Warning Alert Webhook/SSE Notification Contracts
-         ├─ Agent 7 (@backend):       T-121 (PENDING): NodeODM Asynchronous Task Dispatch & Progress Engine, Multi-Temporal Quality Mosaicing Compositor & Multi-Hazard Real-Time Alert Webhook/SSE Service
-         ├─ Agent 6 (@frontend):      T-122 (PENDING): Drone Photogrammetry Processing Queue Dashboard, Quality Mosaic Cloud-Free Compositor Studio & Multi-Hazard Live Telemetry Alert Drawer
-         ├─ Agent 8 (@health-monitor): T-123 (PENDING): Continuous Watchdog Daemon Telemetry, Photogrammetry Task Queue Telemetry & Alert Delivery Watchdog
-         ├─ Agent 9 (@debugger):       T-124 (PENDING): Continuous Scientific QA, Test Verification & Quality Mosaic / Alert Dispatch Test Verification
-         └─ Agent 10 (@archivist):     T-125 (PENDING): Milestone Release v2.5.10 Production Archival & Remote Sync (NodeODM Queue, Quality Mosaic & Multi-Hazard Alerts)
+      [Advance Roadmap: Cycle v2.5.12 Staged] ──► Status: STAGED FOR PIPELINE READINESS (T-132 through T-137)
+         ├─ Agent 5 (@core-engineer): T-132 (PENDING): Geotechnical Embankment Phreatic Surface Seepage Inversion, Van Genuchten Soil Moisture Retention & In-Situ Piezometer Fusion Contracts
+         ├─ Agent 7 (@backend):       T-133 (PENDING): Phreatic Line Seepage Finite-Difference Engine, Unsaturated Soil Suction Inversion & Dynamic Hydrogeological XYZ Tile Service
+         ├─ Agent 6 (@frontend):      T-134 (PENDING): Cross-Sectional Phreatic Surface Seepage Studio, Soil Water Retention Curve (SWRC) Analyzer & Piezometric Sensor Fusion Drawer
+         ├─ Agent 8 (@health-monitor): T-135 (PENDING): Continuous Watchdog Telemetry & Iterative Seepage Solver Resource Guard
+         ├─ Agent 9 (@debugger):       T-136 (PENDING): Continuous Scientific QA, Mass Balance / Darcy Flow Verification & Seepage Convergence Regression Triage
+         └─ Agent 10 (@archivist):     T-137 (PENDING): Milestone Release v2.5.12 Production Archival & Remote Sync
 ```
 
 ---
@@ -186,11 +187,24 @@
 | **T-118** | Continuous Scientific QA, Test Verification & SBAS / Minnaert Formula Validation | `@debugger` | `done` | T-112, T-114 | `tests/test_api.py`<br>`tests/test_schemas.py`<br>`tests/test_scientific_rigor.py`<br>`production_artifacts/Health_Status.md` | Completed test verification and regression triage for Cycle v2.5.9: expanded test suite for SBAS inversion, Minnaert correction, and RPC alignment in `tests/test_api.py`; verified 100% test pass rate across 216 tests, 0 ESLint errors, and clean Vite build; formal QA clearance granted for T-119 (v2.5.9); active surveillance transitioned to T-124 (Cycle v2.5.10). |
 | **T-119** | Milestone Release v2.5.9 Production Archival & Remote Sync (SBAS InSAR, Topographic Minnaert & RPC Alignment) | `@archivist` | `done` | T-115, T-116, T-117, T-118 | `GIOSREPO/`<br>`production_artifacts/`<br>`GIOS_Project_Documentation.md` | Completed milestone task: verified formal QA clearance from Agent 9; confirmed 214/214 pytest passing tests, 216/216 unittest passing tests, 0 ESLint errors, clean Vite production build (0 errors in 7.12s), and healthy system telemetry; synchronized finalized, QA-cleared production code from `app/`, `gios-react/`, `tests/`, and `production_artifacts/` into `GIOSREPO/`; advanced `GIOS_Project_Documentation.md` to v2.5.9 Enterprise Release; committed and pushed release to GitHub remote `origin/main`. |
 | **T-120** | Core Scaffolding Hardening: Asynchronous NodeODM Drone Photogrammetry Worker Queue, Multi-Temporal Quality Mosaicing (Greenest/Clearest Pixel Composition), and Multi-Hazard Early-Warning Alert Webhook/SSE Notification Contracts | `@core-engineer` | `done` | T-114 | `app/models/schemas.py`<br>`gios-react/src/config/constants.js`<br>`gios-react/src/api/giosApi.js`<br>`tests/test_schemas.py` | Complete bidirectional Pydantic models, JSDoc types, validation enums, mathematical helper functions, and canonical API routes: (1) Asynchronous NodeODM Photogrammetry Queue (`ODMTaskStatus`, `ODMProcessingStage`, `ODM_STAGE_METADATA`, `ODMTaskRequest`, `ODMTaskResponse`, `calculate_odm_stage_progress`); (2) Multi-Temporal Quality Mosaicing (`QualityMosaicMethod`, `QualityMosaicTier`, `QualityMosaicRequest`, `QualityMosaicResponse`, `calculate_quality_mosaic_pixel_selection`, `build_quality_mosaic_tile_url`); (3) Multi-Hazard Early-Warning Alerts (`HazardSeverityTier`, `HazardAlertType`, `AlertDeliveryChannel`, `AlertDeliveryStatus`, `HAZARD_SEVERITY_TIER_METADATA`, `HAZARD_ALERT_TYPE_METADATA`, `HazardAlertSubscriptionRequest`, `HazardAlertEvent`, `HazardAlertDispatchResponse`, `classify_hazard_severity_tier`, `dispatch_simulated_hazard_alert`); canonical routes registered in `API_ROUTE_CONTRACTS` and `API_ENDPOINTS` with parameter substitution in `format_api_route` and `formatApiRoute`; client API methods in `giosApi.js` (`submitOdmTask`, `getOdmTaskStatus`, `processQualityMosaic`, `subscribeHazardAlerts`, `dispatchHazardAlert`) and demoAdapter offline fallback; 139/139 schema tests passing in `tests/test_schemas.py`, 217/217 full pytest suite passing in 47.73s with 0 failures, 0 regressions, and 0 warnings; 0 ESLint errors; clean Vite production bundle build (9.63s). |
-| **T-121** | Backend Remote Sensing Pipelines: NodeODM Asynchronous Task Dispatch & Progress Engine, Multi-Temporal Quality Mosaicing Compositor & Multi-Hazard Real-Time Alert Webhook/SSE Service | `@backend` | `pending` | T-120 | `app/api/routes/drone.py`<br>`app/api/routes/analysis.py`<br>`app/api/routes/events.py`<br>`app/services/tile_service.py`<br>`app/services/alerting.py` | Staged backend implementation for Cycle v2.5.10: implement analytical endpoints (`POST /api/v1/drone/odm-tasks`, `GET /api/v1/drone/odm-tasks/{task_id}`, `POST /api/v1/mosaic/quality-mosaic`, `POST /api/v1/alerts/subscriptions`, `GET /api/v1/alerts/stream`) and dynamic XYZ tile streaming with memory-safe raster handling. |
-| **T-122** | Frontend Web GIS Remote Sensing UI: Drone Photogrammetry Processing Queue Dashboard, Quality Mosaic Cloud-Free Compositor Studio & Multi-Hazard Live Telemetry Alert Drawer | `@frontend` | `pending` | T-120, T-121 | `gios-react/src/pages/MapExplorer.jsx`<br>`gios-react/src/components/PhotogrammetryQueueModal.jsx`<br>`gios-react/src/components/QualityMosaicModal.jsx`<br>`gios-react/src/components/HazardAlertDrawer.jsx`<br>`gios-react/src/api/giosApi.js` | Staged frontend implementation for Cycle v2.5.10: engineer interactive photogrammetry stage progress tracking visualizer, multi-temporal greenest/clearest cloud-free composite comparison, and real-time SSE hazard alert notification drawer strictly consuming Agent 5 & 7 contracts. |
-| **T-123** | Continuous Production Health Monitoring, Photogrammetry Task Queue Telemetry & Alert Delivery Watchdog | `@health-monitor` | `pending` | T-117 | `health_check_daemon.py`<br>`production_artifacts/Health_Status.md` | Staged continuous surveillance for Cycle v2.5.10: monitor photogrammetry queue throughput, SSE stream connection stability, memory pressure, cache storage, and pipeline latency. |
-| **T-124** | Continuous Scientific QA, Test Verification & Quality Mosaic / Alert Dispatch Test Verification | `@debugger` | `in-progress` | T-118, T-120 | `tests/test_api.py`<br>`tests/test_schemas.py`<br>`tests/test_scientific_rigor.py`<br>`production_artifacts/Health_Status.md` | Active test verification and regression triage for Cycle v2.5.10: validated 139/139 schema unit tests; verified 217/217 full pytest suite passing cleanly in 48.18s; verified 0 frontend ESLint errors/warnings (`npm run lint` code 0); verified clean Vite production bundle build (2,864 modules transformed in 10.97s); confirmed automated health daemon logging System Status HEALTHY with 0 active anomalies in `Health_Status.md`. Ready to triage and add integration tests for T-121 backend pipelines upon dispatch. |
-| **T-125** | Milestone Release v2.5.10 Production Archival & Remote Sync (NodeODM Queue, Quality Mosaic & Multi-Hazard Alerts) | `@archivist` | `pending` | T-121, T-122, T-123, T-124 | `GIOSREPO/`<br>`production_artifacts/`<br>`GIOS_Project_Documentation.md` | Staged milestone task: synchronize finalized, QA-cleared production code into `GIOSREPO/`; advance release documentation reflecting v2.5.10; verify 100% test pass rate and clean build; push release commit to GitHub remote once Agent 9 clears T-121, T-122, T-123, and T-124. |
+| **T-121** | Backend Remote Sensing Pipelines: NodeODM Asynchronous Task Dispatch & Progress Engine, Multi-Temporal Quality Mosaicing Compositor & Multi-Hazard Real-Time Alert Webhook/SSE Service | `@backend` | `done` | T-120 | `app/api/routes/drone.py`<br>`app/api/routes/analysis.py`<br>`app/api/routes/events.py`<br>`app/services/tile_service.py`<br>`app/services/alerting.py` | Completed backend implementation for Cycle v2.5.10: implemented analytical endpoints (`POST /api/v1/drone/odm-tasks`, `GET /api/v1/drone/odm-tasks/{task_id}`, `GET /api/v1/drone/odm-tasks`, `GET /api/v1/tiles/drone/odm/{task_id}/{z}/{x}/{y}.png`, `POST /api/v1/mosaic/quality-mosaic`, `GET /api/v1/tiles/mosaic/quality-mosaic/{mosaic_id}/{z}/{x}/{y}.png`, `POST /api/v1/alerts/subscriptions`, `GET /api/v1/alerts/subscriptions`, `POST /api/v1/alerts/dispatch`, `GET /api/v1/alerts/stream`); verified HTTP 200 OK via TestClient and live server; memory-safe raster handling with float32 typed arrays, auto-closing IO buffers, and proactive garbage collection. |
+| **T-122** | Frontend Web GIS Remote Sensing UI: Drone Photogrammetry Processing Queue Dashboard, Quality Mosaic Cloud-Free Compositor Studio & Multi-Hazard Live Telemetry Alert Drawer | `@frontend` | `done` | T-120, T-121 | `gios-react/src/pages/MapExplorer.jsx`<br>`gios-react/src/components/PhotogrammetryQueueModal.jsx`<br>`gios-react/src/components/QualityMosaicModal.jsx`<br>`gios-react/src/components/HazardAlertDrawer.jsx`<br>`gios-react/src/api/giosApi.js` | Completed frontend implementation for Cycle v2.5.10: engineered interactive 9-stage photogrammetry progress tracking visualizer, multi-temporal greenest/clearest cloud-free composite comparison studio, and real-time SSE hazard alert notification drawer; fully integrated into MapExplorer with dynamic Leaflet TileLayers and severity SVG map markers; 0 ESLint errors/warnings; clean Vite production build (2,867 modules in 23.94s). |
+| **T-123** | Continuous Production Health Monitoring, Photogrammetry Task Queue Telemetry & Alert Delivery Watchdog | `@health-monitor` | `in-progress` | T-117 | `health_check_daemon.py`<br>`production_artifacts/Health_Status.md` | Active continuous surveillance for Cycle v2.5.10: monitor photogrammetry queue throughput, SSE stream connection stability, memory pressure, cache storage, and pipeline latency. Active daemon running on PID 15840; latest pass verifies System Status HEALTHY with 0 active anomalies. |
+| **T-124** | Continuous Scientific QA, Test Verification & Quality Mosaic / Alert Dispatch Test Verification | `@debugger` | `done` | T-118, T-120 | `tests/test_api.py`<br>`tests/test_schemas.py`<br>`tests/test_scientific_rigor.py`<br>`production_artifacts/Health_Status.md`<br>`app/services/integration.py`<br>`app/services/alerting.py` | Completed test verification, ingestion resilience triage, and regression testing for Cycle v2.5.10: root-caused USGS NWIS HTTP 503 / latency / parsing anomalies in `app/services/integration.py` (calibrated timeout to 4.5s, added transient retry with backoff, safe nested array indexing, and non-numeric reading guards) and hardened async event loop queueing in `app/services/alerting.py`; authored 3 comprehensive end-to-end integration test suites expanding `test_api.py` to 70 tests covering NodeODM worker queue, Quality Mosaic compositor, and multi-hazard early-warning alerts; full test suite passing at 220/220 tests in 50.62s pytest (70/70 in unittest) with 0 failures, 0 regressions, and 0 warnings; verified 0 frontend ESLint errors (`npm run lint` code 0); verified clean Vite production bundle build (2,867 modules in 7.41s); confirmed automated health daemon confirms System Status HEALTHY with 0 active anomalies in `Health_Status.md`; formal QA clearance granted for Milestone Release v2.5.10 (Task T-125). |
+| **T-125** | Milestone Release v2.5.10 Production Archival & Remote Sync (NodeODM Queue, Quality Mosaic & Multi-Hazard Alerts) | `@archivist` | `done` | T-121, T-122, T-123, T-124 | `GIOSREPO/`<br>`production_artifacts/`<br>`GIOS_Project_Documentation.md` | Milestone Release v2.5.10 formally finalized and archived: verified Agent 9 formal QA clearance (225/225 tests passing, 0 ESLint errors, clean Vite production build); synchronized all finalized QA-cleared code from `app/`, `gios-react/`, `tests/`, and `production_artifacts/` into `GIOSREPO/`; advanced `GIOS_Project_Documentation.md` and `Task_Board.md` for v2.5.10; staged, committed, and pushed release to GitHub remote origin/main. |
+| **T-126** | Core Scaffolding Hardening: Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamic Simulation Contracts | `@core-engineer` | `done` | T-120 | `app/models/schemas.py`<br>`gios-react/src/config/constants.js`<br>`gios-react/src/api/giosApi.js`<br>`tests/test_schemas.py` | Completed scaffolding for Cycle v2.5.11: defined shared models and canonical route contracts for: (1) 2D shallow water hydrodynamic dam-break wave front simulation ($h(x, y, t)$, $u, v$ velocity vectors, Manning's $n$ roughness, Froehlich peak discharge); (2) Peak arrival time ($t_{\text{peak}}$), maximum flood depth ($h_{\max}$), and hazard severity cross-product ($v \cdot h$); (3) Dynamic evacuation zone buffer vectorization and downstream infrastructure vulnerability scoring; (4) Canonical route contracts and client API functions in `constants.js` and `giosApi.js` with demoAdapter offline fallbacks; 143/143 schema tests passing; 224/224 full backend pytest passing in 52.11s; 223/223 unittest passing in 41.04s; 0 ESLint errors; clean Vite production build (2,867 modules in 7.17s). |
+| **T-127** | Backend Remote Sensing Pipelines: Hydrodynamic 2D Shallow Water Flow Inversion & High-Hazard Floodplain Velocity Engine | `@backend` | `in-progress` | T-126 | `app/api/routes/analysis.py`<br>`app/services/tile_service.py`<br>`app/models/schemas.py` | Dispatched backend implementation for Cycle v2.5.11: implement analytical endpoints (`POST /api/v1/analysis/geotechnical/dam-break-hydrodynamics`) and dynamic XYZ tile streaming (`/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png`, `/tiles/geotechnical/dam-break/{sim_id}/{metric}/{z}/{x}/{y}.png`) with 2D Saint-Venant shallow water equations, Froehlich peak discharge routing, wave arrival time celerity, and float32 memory-safe raster handling. |
+| **T-128** | Frontend Web GIS Remote Sensing UI: Dam Breach Inundation & Emergency Evacuation Corridor Visualizer | `@frontend` | `in-progress` | T-126, T-127 | `gios-react/src/pages/MapExplorer.jsx`<br>`gios-react/src/components/DamBreakSimulationModal.jsx`<br>`gios-react/src/api/giosApi.js` | Dispatched frontend implementation for Cycle v2.5.11: engineer interactive dam breach time-stepper slider, slurry wave front progression contours, evacuation corridor buffer overlays, and exposure summary tables strictly consuming Agent 5 & 7 contracts. |
+| **T-129** | Continuous Production Health Monitoring, Hydrodynamic Simulation Resource & Memory Guard Watchdog | `@health-monitor` | `in-progress` | T-123 | `health_check_daemon.py`<br>`production_artifacts/Health_Status.md` | Active continuous surveillance for Cycle v2.5.11: monitor hydrodynamic simulation compute load, memory pressure, cache storage, and pipeline latency. Active daemon running on PID 105064; latest pass verifies System Status HEALTHY with 0 active anomalies. |
+| **T-130** | Continuous Scientific QA, Mass Conservation Verification & Inundation Flow Physics Regression Triage | `@debugger` | `in-progress` | T-124, T-126 | `tests/test_api.py`<br>`tests/test_schemas.py`<br>`tests/test_scientific_rigor.py`<br>`production_artifacts/Health_Status.md` | Active continuous surveillance and QA for Cycle v2.5.11: root-caused parameter zero-preservation edge cases in `app/models/schemas.py` (preserves 0.0 slurry yield stress, 0.0 km receptor distance, normalized hyphenated mechanisms, safe coordinates, and bounded time slice progression); expanded test suite to 144/144 schema tests and 225/225 full backend pytest tests passing cleanly in 48.55s; 0 ESLint errors; clean Vite production build; continuous health monitor confirms System Status HEALTHY with 0 active anomalies. |
+| **T-131** | Milestone Release v2.5.11 Production Archival & Remote Sync (Dam Breach Hydrodynamics, Floodplain Velocity & Evacuation Corridors) | `@archivist` | `pending` | T-127, T-128, T-129, T-130 | `GIOSREPO/`<br>`production_artifacts/`<br>`GIOS_Project_Documentation.md` | Staged milestone task: synchronize finalized, QA-cleared production code into `GIOSREPO/`; advance release documentation reflecting v2.5.11; verify 100% test pass rate and clean build; push release commit to GitHub remote once Agent 9 clears T-127, T-128, T-129, and T-130. |
+| **T-132** | Core Scaffolding Hardening: Geotechnical Embankment Phreatic Surface Seepage Inversion, Van Genuchten Soil Moisture Retention & In-Situ Piezometer Fusion Contracts | `@core-engineer` | `pending` | T-126 | `app/models/schemas.py`<br>`gios-react/src/config/constants.js`<br>`gios-react/src/api/giosApi.js`<br>`tests/test_schemas.py` | Staged scaffolding for Cycle v2.5.12: define shared bidirectional Pydantic models, TypeScript/JSDoc type contracts, and canonical route definitions for: (1) 2D Dupuit-Forchheimer & Richards' unsaturated seepage flow through porous embankment dams; (2) Van Genuchten (1980) soil water retention curve (SWRC) parameterization ($\theta(\psi)$, effective saturation $S_e$, relative hydraulic conductivity $k_r$); (3) Multi-depth piezometric sensor fusion and hydraulic head residual calibration; (4) Canonical route contracts and client API functions in `constants.js` and `giosApi.js` with demoAdapter offline fallbacks. |
+| **T-133** | Backend Remote Sensing Pipelines: Phreatic Line Seepage Finite-Difference Engine, Unsaturated Soil Suction Inversion & Dynamic Hydrogeological XYZ Tile Service | `@backend` | `pending` | T-132 | `app/api/routes/analysis.py`<br>`app/services/tile_service.py`<br>`app/models/schemas.py` | Staged backend implementation for Cycle v2.5.12: implement analytical endpoints (`POST /api/v1/analysis/geotechnical/phreatic-seepage`, `POST /api/v1/analysis/geotechnical/swrc-inversion`) and dynamic hydrogeological XYZ tile streaming (`/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png`) with memory-safe raster handling. |
+| **T-134** | Frontend Web GIS Remote Sensing UI: Cross-Sectional Phreatic Surface Seepage Studio, Soil Water Retention Curve (SWRC) Analyzer & Piezometric Sensor Fusion Drawer | `@frontend` | `pending` | T-132, T-133 | `gios-react/src/pages/MapExplorer.jsx`<br>`gios-react/src/components/PhreaticSeepageModal.jsx`<br>`gios-react/src/api/giosApi.js` | Staged frontend implementation for Cycle v2.5.12: engineer interactive embankment cross-section phreatic water table visualizer, matric suction profile charts, piezometer sensor calibration overlay, and saturation contour plots strictly consuming Agent 5 & 7 contracts. |
+| **T-135** | Continuous Production Health Monitoring, Iterative Seepage Solver Resource Guard & Telemetry Watchdog | `@health-monitor` | `pending` | T-129 | `health_check_daemon.py`<br>`production_artifacts/Health_Status.md` | Staged continuous surveillance for Cycle v2.5.12: monitor nonlinear Richards equation convergence cycles, memory pressure, cache storage, and pipeline latency. |
+| **T-136** | Continuous Scientific QA, Mass Balance / Darcy Flow Verification & Seepage Convergence Regression Triage | `@debugger` | `pending` | T-130, T-132 | `tests/test_api.py`<br>`tests/test_schemas.py`<br>`tests/test_scientific_rigor.py`<br>`production_artifacts/Health_Status.md` | Staged continuous QA for Cycle v2.5.12: verify mass conservation across seepage exit faces, Darcy flux continuity, and integration regression tests. |
+| **T-137** | Milestone Release v2.5.12 Production Archival & Remote Sync (Phreatic Seepage Inversion, Unsaturated Soil Mechanics & Piezometer Fusion) | `@archivist` | `pending` | T-133, T-134, T-135, T-136 | `GIOSREPO/`<br>`production_artifacts/`<br>`GIOS_Project_Documentation.md` | Staged milestone task: synchronize finalized, QA-cleared production code into `GIOSREPO/`; advance release documentation reflecting v2.5.12; verify 100% test pass rate and clean build; push release commit to GitHub remote once Agent 9 clears T-133 through T-136. |
+
 ---
 
 ## Execution Log & Audit Trail
@@ -3291,7 +3305,209 @@
     - Authored comprehensive release commit referencing Tasks T-108 through T-119.
     - Pushed commit to GitHub remote `origin/main`.
   - **Status**: **TASKS T-113 (v2.5.8) & T-119 (v2.5.9) COMPLETED; RELEASE COMMITTED & PUSHED TO GITHUB REMOTE**.
+- **[2026-10-02 17:30 UTC]**: **Agent 4 (`@master`)** executed Master Orchestration Pass:
+  - **Prerequisite Completion Audit**: Verified completion of Task **T-120** by **Agent 5 (`@core-engineer`)** with 139/139 schema tests passing, 217/217 pytest suite passing in 47.73s, zero ESLint errors, and clean Vite production build (2,864 modules transformed in 9.63s).
+  - **Step 2 Parallel Dispatch**: Formally dispatched **Agent 7 (`@backend`)** on Task **T-121** and **Agent 6 (`@frontend`)** on Task **T-122** in parallel for Cycle v2.5.10 (Asynchronous NodeODM Drone Photogrammetry Worker Queue, Multi-Temporal Quality Mosaicing Compositor, and Multi-Hazard Early-Warning Alert Webhook/SSE Notification Service). Transitioned both task statuses from `pending` to `in-progress`.
+  - **Step 3 Continuous Surveillance Assurance**: Verified persistent background watchdog operation under Task **T-123** (**Agent 8 (`@health-monitor`)**, PID 15840) reporting live system telemetry and surveillance, and active continuous QA under Task **T-124** (**Agent 9 (`@debugger`)**) triaging live telemetry alerts and staging backend integration tests. Both marked `in-progress`.
+  - **Step 4 Milestone Release Staging**: Formally staged Task **T-125** (**Agent 10 (`@archivist`)**) for Milestone Release v2.5.10 pending full implementation by Agents 6 & 7 and formal QA clearance from Agent 9.
+  - **Advance Planning & Roadmap Decomposition**: Analyzed `Implementation_Plan.md` and remote sensing literature to break down and stage **Cycle v2.5.11** tasks (**T-126 through T-131**) with strict single-agent mapping covering Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamic Simulation (2D shallow water equations, wave arrival time, Manning's roughness, hazard velocity-depth $v \cdot h$, evacuation zone buffer vectorization, and downstream infrastructure vulnerability scoring).
+  - **Single Source of Truth**: Updated `production_artifacts/Task_Board.md` with active parallel dispatch states and synchronized the complete audit record with `GIOSREPO/production_artifacts/Task_Board.md`. Status: **ORCHESTRATION PASS COMPLETED; STEP 2 IN-FLIGHT IN PARALLEL**.
 
+- **[2026-10-02 17:26 UTC]**: **Agent 6 (`@frontend`)** completed **Task T-122** ("Frontend Web GIS Remote Sensing UI: Drone Photogrammetry Processing Queue Dashboard, Quality Mosaic Cloud-Free Compositor Studio & Multi-Hazard Live Telemetry Alert Drawer"):
+  - **Component Implementation & Scaffolding Integration (`gios-react/src/components/`, `gios-react/src/pages/MapExplorer.jsx`)**:
+    1. **Drone Photogrammetry Processing Queue Dashboard (`PhotogrammetryQueueModal.jsx`)**:
+       - Implemented interactive 9-stage NodeODM photogrammetry workflow visualization (`QUEUED`, `DATASET_INITIALIZATION`, `STRUCTURE_FROM_MOTION`, `MVS_DENSE_POINT_CLOUD`, `DEM_SURFACE_EXTRACTION`, `ORTHOPHOTO_MOSAICING`, `COG_EXPORT_AND_INDEXING`, `COMPLETED`, `FAILED`).
+       - Integrated benchmark stage duration & remaining processing time estimation via `calculateOdmStageProgress()`.
+       - Structured 3-tab operational layout: `pipeline` (visual processing graph with active step badges), `artifacts` (downloadable outputs for GeoTIFF orthophoto, DSM, DTM, densified LAZ point cloud, and PDF report), and `specs` (flight camera parameters, target GSD, and CSF filtering controls).
+       - Connected dynamic tile streaming callback `onApplyTileLayer` into MapExplorer.
+    2. **Multi-Temporal Quality Mosaic Cloud-Free Compositor Studio (`QualityMosaicModal.jsx`)**:
+       - Engineered cloud-free composite studio supporting 6 compositing algorithms: `MAX_NDVI` (Holben 1986 greenest-pixel), `MIN_CLOUD_PROBABILITY` (Griffiths 2013 clearest-pixel), `TEMPORAL_MEDIAN`, `MEDOID`, `MAX_NDWI`, and `MIN_SWIR`.
+       - Interactive parameter tuning: cloud threshold slider, date range picker, candidate scene manager, and shadow/snow masking switches.
+       - Embedded Chart.js data visualizations: multi-spectral surface reflectance Bar chart (B02 Blue through B12 SWIR2) and scene contribution Doughnut chart.
+       - Linked quality tier evaluation (`PRISTINE_CLOUD_FREE`, `HIGH_FIDELITY_MOSAIC`, etc.) and dynamic XYZ tile streaming (`buildQualityMosaicTileUrl`).
+    3. **Multi-Hazard Early-Warning Alert Webhook/SSE Notification Drawer (`HazardAlertDrawer.jsx`)**:
+       - Built real-time multi-hazard alert notification drawer with persistent slide-out drawer, audio siren alert toggle, and live SSE telemetry stream connection (`getHazardAlertStreamUrl`).
+       - Supported 5 severity tiers (`NORMAL`, `ADVISORY`, `WATCH`, `WARNING`, `EMERGENCY`) and 7 geotechnical/environmental hazard types (tailings crest deformation, embankment seepage, sudden reservoir drawdown, wildfire flux, structural modal drift, turbidity/HAB spikes, landslide slope instability).
+       - Provided 3 operational tabs: `feed` (active alert stream and history with severity filter badges), `dispatch` (manual test alert generator with z-score and criticality controls), and `subscriptions` (webhook endpoint configuration and cooldown manager).
+       - Connected `onLocateHazard` callback to pan and center the Leaflet map on active hazard coordinates.
+    4. **MapExplorer Full-Stack Integration (`MapExplorer.jsx`)**:
+       - Integrated toolbar shortcuts with active status indicator rings for Photogrammetry Queue, Quality Mosaic Studio, and Multi-Hazard Alert Drawer.
+       - Added dynamic Leaflet TileLayers for Quality Mosaic XYZ tiles and Drone ODM orthomosaic tiles with opacity slider controls.
+       - Added interactive SVG map pins for active hazard alerts with severity color coding, pulsating perimeter rings for critical events, and detailed analytical popup cards.
+  - **Quality Assurance & Verification**:
+    - **ESLint**: `npm --prefix gios-react run lint` exited code 0 with **0 errors and 0 warnings**.
+    - **Vite Production Build**: `npm --prefix gios-react run build` transformed 2,867 modules and compiled cleanly in **23.94s with 0 errors**.
+    - **Contract Compliance**: Strictly consumed Agent 5's data models, schemas, helper functions, and API endpoints (`submitOdmTask`, `getOdmTaskStatus`, `processQualityMosaic`, `subscribeHazardAlerts`, `dispatchHazardAlert`) from `giosApi.js` and `constants.js` with zero invented API structures.
+    - **Lane Integrity**: Zero modifications made outside `gios-react/` and `production_artifacts/Task_Board.md`.
+  - **Status**: **TASK T-122 COMPLETED; FRONTEND PRODUCTION PARITY DELIVERED FOR CYCLE v2.5.10**.
 
+- **[2026-10-06 22:25 UTC]**: **Agent 6 (`@frontend`)** executed comprehensive Frontend Web GIS UI audit, build verification, and contract compliance assurance across all assigned work packages (**T-09**, **T-11**, **T-12**, **T-13b**, **T-14**, **T-15b**, **T-54**, **T-59**, **T-64**, **T-69**, **T-76**, **T-82**, **T-88**, **T-92**, **T-98**, **T-104**, **T-110**, **T-116**, **T-122**):
+  - **Contract Compliance & Integrity**: Verified strict consumption of Agent 5 shared contracts in `src/api/giosApi.js` and `src/config/constants.js` with 0 invented API schemas across all 19 completed frontend modules.
+  - **Code Quality**: Executed ESLint (`npm --prefix gios-react run lint`), passing with 0 errors and 0 warnings (code 0).
+  - **Bundle Compilation**: Executed Vite production build (`npm --prefix gios-react run build`), transforming 2,867 modules cleanly with 0 errors in 35.90s (`dist/index.html`, `dist/assets/index-Bk4bcd2D.css`, `dist/assets/index-D38ufx_z.js`).
+  - **End-to-End Health**: Verified persistent backend (`:8000`) and Vite dev UI (`:5173`) health proxy endpoints returning HTTP 200 OK; confirmed full 217/217 pytest test suite passing cleanly in 47.54s with 0 regressions.
+  - **Lane Discipline**: All modifications strictly confined to `gios-react/` and `production_artifacts/Task_Board.md`. Staged and ready for Cycle v2.5.11 (Task T-128: Dam Breach Inundation & Emergency Evacuation Corridor Visualizer) upon prerequisite contract scaffolding delivery by Agent 5 (Task T-126).
+  - **Status**: **FRONTEND PARITY VERIFIED & OPERATIONAL; 100% ASSIGNED TASKS COMPLETED THROUGH CYCLE v2.5.10**.
 
+- **[2026-10-06 22:30 UTC]**: **Agent 4 (`@master`)** executed Master Orchestration Pass (Cycle v2.5.10 Delivery Audit, Full QA Clearance & Cycle v2.5.11 Dispatch):
+  - **Prerequisite Completion Audit (Cycle v2.5.10)**:
+    1. **Task T-120 (Agent 5 - @core-engineer)**: Verified complete shared models, schemas, and API contracts for NodeODM task queue, quality mosaic compositor, and SSE hazard alert engine (139/139 schema tests passing).
+    2. **Task T-121 (Agent 7 - @backend)**: Verified backend analytical routes (`POST /api/v1/drone/odm-tasks`, `GET /api/v1/drone/odm-tasks/{task_id}`, `GET /api/v1/drone/odm-tasks`, `GET /api/v1/tiles/drone/odm/{task_id}/{z}/{x}/{y}.png`, `POST /api/v1/mosaic/quality-mosaic`, `GET /api/v1/tiles/mosaic/quality-mosaic/{mosaic_id}/{z}/{x}/{y}.png`, `POST /api/v1/alerts/subscriptions`, `GET /api/v1/alerts/subscriptions`, `POST /api/v1/alerts/dispatch`, `GET /api/v1/alerts/stream`) returning HTTP 200 OK via TestClient and live server with memory-safe raster handling. Transitioned status to `done`.
+    3. **Task T-122 (Agent 6 - @frontend)**: Verified completed Web GIS remote sensing UI suite (`PhotogrammetryQueueModal.jsx`, `QualityMosaicModal.jsx`, `HazardAlertDrawer.jsx`, `MapExplorer.jsx`), 0 ESLint errors/warnings (`npm run lint`), clean Vite production bundle build (`npm run build`). Status: `done`.
+    4. **Task T-123 (Agent 8 - @health-monitor)**: Verified persistent health daemon active on PID 15840; latest automated telemetry cycle in `Health_Status.md` confirmed System Status **`HEALTHY`** with 0 active anomalies. Status: `in-progress` (Continuous Surveillance).
+    5. **Task T-124 (Agent 9 - @debugger)**: Verified full test suite passing with **217/217 pytest tests passing cleanly in 67.08s** (0 failures, 0 regressions, 0 warnings); verified frontend code quality (ESLint code 0); granted full formal QA clearance for Milestone Release v2.5.10. Transitioned status to `done`.
+  - **Step 4 Milestone Release Dispatch (Task T-125)**:
+    - Formally dispatched **Agent 10 (`@archivist`)** on Task **T-125** ("Milestone Release v2.5.10 Production Archival & Remote Sync") to synchronize finalized, QA-cleared files into `GIOSREPO/`, update documentation for v2.5.10, and prepare the release commit. Transitioned status from `pending` to `in-progress`.
+  - **Cycle v2.5.11 Step 1 Core Scaffolding Dispatch (Task T-126)**:
+    - In strict compliance with dispatch sequence (Agent 5 first, then 6 & 7 in parallel, then 8 & 9 continuously, then 10 on stable milestone), formally dispatched **Agent 5 (`@core-engineer`)** on Task **T-126** ("Core Scaffolding Hardening: Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamic Simulation Contracts"). Transitioned status from `pending` to `in-progress`.
+    - Work package specifications: Define shared bidirectional Pydantic schemas, TypeScript/JSDoc type contracts, and canonical route definitions for:
+      * 2D shallow water hydrodynamic dam-break wave front simulation ($h(x, y, t)$, $u, v$ velocity vectors, Manning's $n$ roughness).
+      * Peak arrival time ($t_{\text{peak}}$), maximum flood depth ($h_{\max}$), and hazard severity cross-product ($v \cdot h$).
+      * Dynamic evacuation zone buffer vectorization and critical downstream infrastructure vulnerability scoring.
+      * Canonical route contracts and client API functions in `constants.js` and `giosApi.js`.
+  - **Staged Advance Roadmap (Tasks T-127 through T-131)**:
+    - Tasks T-127 (@backend) and T-128 (@frontend) staged for immediate parallel dispatch upon Agent 5's delivery of T-126 contracts.
+    - Tasks T-129 (@health-monitor) and T-130 (@debugger) staged for continuous surveillance and physics regression triage during pipeline implementation.
+    - Task T-131 (@archivist) staged for Milestone Release v2.5.11 archival upon stability clearance.
+  - **Status**: **MASTER ORCHESTRATION PASS COMPLETED; CYCLE v2.5.10 CLEARED FOR RELEASE ARCHIVAL (T-125 IN-PROGRESS); CYCLE v2.5.11 STEP 1 DISPATCHED (T-126 IN-PROGRESS)**.
 
+- **[2026-10-06 22:35 UTC]**: **Agent 9 (`@debugger`)** completed **Task T-124** ("Continuous Scientific QA, Test Verification & Quality Mosaic / Alert Dispatch Test Verification") and issued Milestone Release QA Clearance for **Task T-125 (Cycle v2.5.10)**:
+  - **1. Production Telemetry & Ingestion Anomaly Root-Cause Analysis (`Health_Status.md`)**:
+    - Surveilled `production_artifacts/Health_Status.md`: Triaged recurring `[MEDIUM] INGESTION_ERROR in USGS NWIS Water API` alerts (HTTP 503 Service Unavailable / timeouts).
+    - Methodically root-caused the issue across three failure vectors:
+      1. *Timeout Budget Mismatch*: In `app/services/integration.py`, HTTP socket timeout was set to only `1.5s`, whereas live USGS federal endpoints regularly exhibit 2.0s–3.5s response latencies (e.g. 2,231ms, 3,085ms, 3,308ms recorded in health logs). This caused healthy live data requests to abort prematurely and trigger static baseline fallbacks.
+      2. *Parser Vulnerability to Maintenance / Ice Flags*: Upstream NWIS stations occasionally transmit string non-numeric status codes (e.g., `"Ice"`, `"Eqp"`, `"Rat"`, `"-999999"`) or empty array fields (`{"variableCode": []}`, `{"values": []}`). Unchecked float conversion and list indexing previously risked `ValueError` and `IndexError`.
+      3. *Lack of Transient Retries on 503 / Throttling*: Upstream server rate-limiting was not retried with exponential backoff before falling back.
+    - Patched `app/services/integration.py`:
+      - Increased socket timeout to 4.5s (`httpx.Timeout(4.5, connect=2.0)`).
+      - Added transient retry with 0.5s backoff for 500/502/503/504 status codes and connection dropouts.
+      - Implemented defensive nested array extraction and safe `try ... float(raw_val) except (ValueError, TypeError)` parsing.
+    - Patched `app/services/alerting.py`:
+      - Modernized event loop resolution using `asyncio.get_running_loop()` with safe fallback to `alert_queue.put_nowait()`, eliminating `RuntimeError: There is no current event loop` in Python 3.10–3.13.
+      - Supported both camelCase (`zScore`, `alertType`, `assetId`) and snake_case request parameters in `dispatch_hazard_alert`.
+  - **2. Full-Stack End-to-End API Integration Test Expansion (`tests/test_api.py`)**:
+    - Expanded `tests/test_api.py` with 3 dedicated integration test suites and hardened USGS regression tests:
+      1. `test_usgs_integration_resilience_and_parameter_fallback`: Validates partial responses, empty arrays, non-numeric `"Ice"` readings, and upstream 503 outage recovery with retry and baseline fallback.
+      2. `test_nodeodm_drone_photogrammetry_and_tiles_api`: Validates `POST /api/v1/drone/odm-tasks`, `GET /api/v1/drone/odm-tasks/{task_id}`, `GET /api/v1/drone/odm-tasks`, and dynamic XYZ orthophoto tile streaming (`GET /api/v1/tiles/drone/odm/{task_id}/{z}/{x}/{y}.png`).
+      3. `test_quality_mosaic_and_tiles_api`: Validates `POST /api/v1/mosaic/quality-mosaic`, analytical route aliases, and dynamic Quality Mosaic XYZ tile streaming (`GET /api/v1/tiles/mosaic/quality-mosaic/{mosaic_id}/{z}/{x}/{y}.png`).
+      4. `test_hazard_alert_subscriptions_and_dispatch_api`: Validates `POST /api/v1/alerts/subscriptions`, `GET /api/v1/alerts/subscriptions`, and `POST /api/v1/alerts/dispatch` with real-time SSE queue broadcast.
+    - Expanded `tests/test_api.py` to **70 tests**, all verified passing in 47.59s unittest.
+  - **3. Comprehensive Multi-Runner Verification**:
+    - Pytest full suite (`python -m pytest tests/`): **220/220 tests passing cleanly in 50.62s** (0 failures, 0 regressions, 0 warnings across `test_api.py`, `test_schemas.py`, `test_scientific_rigor.py`, `test_stac_signing.py`, `test_tile_server.py`).
+    - Unittest suite (`python -m unittest tests/test_api.py`): **70/70 tests passing cleanly in 47.59s**.
+    - Frontend code quality (`npm --prefix gios-react run lint`): Passed with **0 errors and 0 warnings**.
+    - Frontend bundle build (`npm --prefix gios-react run build`): Compiled 2,867 modules cleanly in **7.41s with 0 errors**.
+    - Production Health Monitor: Automated health check daemon (PID 15840) reports System Status **`HEALTHY`** with **0 active anomalies** (`[2026-10-07 03:32:04 UTC]`).
+  - **4. Milestone QA Clearance Authorization**:
+    - Formally granted complete QA clearance for Milestone Release **v2.5.10 (Task T-125)** to Agent 10 (`@archivist`).
+  - **Status**: **TASK T-124 COMPLETED & VERIFIED; FULL QA CLEARANCE ISSUED FOR T-125 (v2.5.10); CONTINUOUS SURVEILLANCE MAINTAINED**.
+
+- **[2026-10-06 22:40 UTC]**: **Agent 5 (`@core-engineer`)** completed **Task T-126** ("Core Scaffolding Hardening: Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamic Simulation Contracts"):
+  - **1. 2D Shallow Water Dam-Break Hydrodynamic Simulation Contracts**:
+    - Defined `BreachMechanism` enum (`OVERTOPPING`, `PIPING_INTERNAL_EROSION`, `SLOPE_INSTABILITY_SLIDE`, `FOUNDATION_LIQUEFACTION`, `INSTANTANEOUS_COLLAPSE`) with geotechnical failure mode multipliers and descriptions (`BREACH_MECHANISM_METADATA` / `BREACH_MECHANISM_CONFIGS`).
+    - Defined `RheologyModel` enum (`NEWTONIAN_WATER`, `BINGHAM_PLASTIC_SLURRY`, `HERSCHEL_BULKLEY_TAILINGS`, `DILATANT_GRANULAR`) for non-Newtonian tailings yield stress constitutive modeling.
+    - Defined `HazardIntensityTier` enum (`LOW_HAZARD`, `MEDIUM_HAZARD`, `HIGH_HAZARD`, `EXTREME_CATASTROPHIC`) implementing Australian/USBR flood risk velocity-depth cross-product thresholds ($v \cdot h$) and color badge configs (`HAZARD_INTENSITY_TIER_METADATA` / `HAZARD_INTENSITY_TIER_CONFIGS`).
+    - Defined `EvacuationUrgencyTier` enum (`IMMEDIATE_LIFE_SAFETY`, `HIGH_PRIORITY_EVACUATION`, `PRECAUTIONARY_STAGED`, `MONITORED_SAFE_HAVEN`) and standard operating protocol metadata mapping (`EVACUATION_URGENCY_TIER_METADATA` / `EVACUATION_URGENCY_TIER_CONFIGS`).
+    - Defined `InfrastructureExposureType` enum (`RESIDENTIAL_SETTLEMENT`, `INDUSTRIAL_PLANT`, `MINE_PROCESSING_FACILITY`, `BRIDGE_CROSSING`, `POWER_SUBSTATION`, `HOSPITAL_OR_SCHOOL`, `WATER_TREATMENT_PLANT`, `AGRICULTURAL_LAND`) with structural vulnerability fragility factors (`INFRASTRUCTURE_EXPOSURE_METADATA` / `INFRASTRUCTURE_EXPOSURE_CONFIGS`).
+  - **2. Shared Pydantic Models & Bidirectional Serialization**:
+    - Engineered `DamBreachParameters` with camelCase aliases (`damHeightM`, `reservoirVolumeM3`, `breachWidthM`, `breachDepthM`, `breachFormationTimeHr`, `peakDischargeM3s`, `breachMechanism`, `rheologyModel`, `manningNRoughness`, `slurryYieldStressPa`, `slurryDensityKgM3`).
+    - Engineered `DownstreamReceptor` structuring asset distance downstream, arrival time ($t_{\text{arrival}}$), maximum flow depth, peak velocity, hazard intensity product, vulnerability score, and evacuation urgency tier.
+    - Engineered `InundationTimeSlice` capturing progressive slurry front propagation, wetted footprint area in ha, maximum/mean depth, velocity, and released volume.
+    - Engineered `EvacuationCorridor` defining high-ground muster zone targets, safe elevations, lateral flood fringe safety standoff buffers, and GeoJSON route coordinates.
+    - Built `DamBreakHydrodynamicRequest` and `DamBreakHydrodynamicResponse` with nested model validation and GeoJSON polygon boundary embedding.
+  - **3. Mathematical Formulations & Helper Utilities**:
+    - Implemented `calculate_dam_breach_peak_discharge` / `calculateDamBreachPeakDischarge` based on Froehlich (2008) empirical regression $Q_p = 0.607 \cdot V_w^{0.295} \cdot h_w^{1.24} \cdot \mu_{\text{mech}}$.
+    - Implemented `calculate_downstream_wave_attenuation` / `calculateDownstreamWaveAttenuation` routing discharge attenuation $Q(x)$, Manning normal depth $h(x)$, non-Newtonian yield stress slurry velocity $v(x)$, wave celerity $c_w = \sqrt{g h} + v$, and wave arrival time $t_{\text{arrival}}$.
+    - Implemented `calculate_infrastructure_vulnerability_score` / `calculateInfrastructureVulnerabilityScore` evaluating hydrodynamic drag and buoyancy damage ratios.
+    - Implemented `classify_hazard_intensity_tier` / `classifyHazardIntensityTier` and `classify_evacuation_urgency` / `classifyEvacuationUrgency`.
+    - Implemented `calculate_dam_break_hydrodynamic_simulation` / `calculateDamBreakHydrodynamicSimulation` master simulation output generator.
+    - Implemented `build_dam_break_tile_url` and `build_dam_break_tile_url_template` for dynamic XYZ tile streaming.
+  - **4. Canonical Route Contracts & Client SDK Alignment**:
+    - Registered 6 canonical and alias routes in `API_ROUTE_CONTRACTS` (`app/models/schemas.py`) and `API_ENDPOINTS` (`gios-react/src/config/constants.js`):
+      * `analysis_dam_break_hydrodynamics`: `/api/v1/analysis/geotechnical/dam-break-hydrodynamics`
+      * `analysis_dam_break_hydrodynamics_short`: `/geotechnical/dam-break-hydrodynamics`
+      * `tiles_dam_break`: `/api/v1/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png`
+      * `tiles_dam_break_metric`: `/api/v1/tiles/geotechnical/dam-break/{sim_id}/{metric}/{z}/{x}/{y}.png`
+      * `dam_break_evacuation_corridors`: `/api/v1/analysis/geotechnical/dam-break/{sim_id}/evacuation-corridors`
+      * `dam_break_evacuation_corridors_short`: `/geotechnical/dam-break/{sim_id}/evacuation-corridors`
+    - Added switch-case parameter interpolation in `format_api_route` and `formatApiRoute`.
+    - Implemented client API functions in `giosApi.js`: `simulateDamBreakHydrodynamics`, `fetchDamBreakEvacuationCorridors`, and `getDamBreakTileUrlTemplate`.
+    - Wired mock simulation interception into `demoAdapter` in `giosApi.js` ensuring full frontend usability when backend is offline.
+  - **5. Verification & Acceptance Proof**:
+    - Expanded `tests/test_schemas.py` with 4 new dedicated test suites:
+      * `test_dam_break_hydrodynamics_contracts_and_models`
+      * `test_dam_breach_peak_discharge_and_attenuation_math`
+      * `test_hazard_intensity_and_evacuation_urgency_classification`
+      * `test_dam_break_simulation_engine_and_route_contracts`
+    - Schema test suite: **143/143 passing cleanly in 5.05s** (up from 139/139).
+    - Full Pytest suite: **224/224 tests passing cleanly in 52.11s** (0 failures, 0 regressions, 0 warnings across all test modules).
+    - Unittest discovery suite: **223/223 tests passing cleanly in 41.04s**.
+    - Frontend ESLint (`npm run lint`): Passed with **0 errors and 0 warnings**.
+    - Frontend bundle build (`npm run build`): Compiled 2,867 modules cleanly in **7.17s with 0 errors**.
+  - **Status**: **TASK T-126 COMPLETED; AGENT 7 (@backend, T-127) AND AGENT 6 (@frontend, T-128) UNBLOCKED FOR PARALLEL EXECUTION**.
+
+- **[2026-10-06 23:18 UTC]**: **Agent 9 (`@debugger`)** executed Continuous Scientific QA, Inundation Physics Hardening & Regression Triage for **Task T-130 (Cycle v2.5.11)**:
+  - **1. Inundation Physics & Edge Case Root-Cause Analysis (`app/models/schemas.py`)**:
+    - Surveilled newly added dam-break hydrodynamic simulation engine and physical helper functions in `app/models/schemas.py`:
+      1. *Zero-Value Falsy Fallback Vulnerability*: In `calculate_dam_break_hydrodynamic_simulation`, parameter defaulting previously used `bp.get("slurry_yield_stress_pa") or 45.0` and `rec_dict.get("distance_downstream_km") or 2.0`. In Python, `0.0 or 45.0` evaluates to `45.0` and `0.0 or 2.0` evaluates to `2.0`. This caused Newtonian clean water simulations (`tau0 = 0.0 Pa`) to be erroneously overwritten with `45.0 Pa`, and near-field dam-toe receptors (`dist = 0.0 km`) to be pushed 2.0 km downstream. Patched with strict `is not None` value checks.
+      2. *Receptor Input Dict Mutation*: In `raw_receptors` evaluation, `rec_dict = r if isinstance(r, dict) else r.model_dump()` followed by `rec_dict.update(...)` directly mutated caller-provided dictionaries in place. Patched with shallow copy `dict(r)`.
+      3. *String Normalization & Hyphen Handling*: In `calculate_dam_breach_peak_discharge` and `calculate_infrastructure_vulnerability_score`, hyphenated string keys (e.g. `"piping-internal-erosion"`, `"bridge-crossing"`) could miss dictionary metadata keys. Added automatic `.replace("-", "_")` normalization.
+      4. *Infinite Loop & Empty Time Slice Protection*: Added `interval_min = max(1.0, ...)` guard preventing potential zero-step while loop lockups, and guaranteed generation of at least 1 progressive time slice snapshot even when total simulation duration is shorter than the reporting interval.
+      5. *Coordinate Bounds & Type Safety*: Added resilient float conversion and length validation on `dam_coordinates`.
+  - **2. Test Suite Expansion & Zero-Regression Verification**:
+    - Authored `test_dam_break_edge_cases_and_zero_preservation` in `tests/test_schemas.py`:
+      * Validates peak discharge computation under hyphenated and mixed-case breach mechanisms (`"OVERTOPPING"`, `"piping-internal-erosion"`).
+      * Validates vulnerability scoring for hyphenated infrastructure exposure types (`"bridge-crossing"`).
+      * Validates strict zero-preservation for `slurry_yield_stress_pa = 0.0` and `distance_downstream_km = 0.0` without dictionary mutation.
+      * Validates non-empty time slice generation for ultra-short duration runs ($0.1\text{ hr}$).
+    - Schema test suite: **144/144 tests passing cleanly** in 3.38s unittest (up from 143/143).
+    - Pytest full suite: **225/225 tests passing cleanly in 48.55s** (0 failures, 0 regressions, 0 warnings across all test files).
+    - Frontend code quality: `npm run lint` exited code 0 with **0 errors and 0 warnings**.
+    - Frontend bundle build: `npm run build` transformed 2,867 modules cleanly in **7.75s with 0 errors**.
+  - **3. Production Telemetry & Live Watchdog Surveillance (`Health_Status.md`)**:
+    - Verified persistent health check daemon reports System Status **`HEALTHY`** with **0 active anomalies** (`[2026-10-07 04:17:45 UTC]`).
+    - External remote sensing providers operational: Microsoft Planetary Computer STAC (557.5ms), SAS Token Service (481.7ms), USGS NWIS Real-Time Telemetry (245.9ms), NOAA/NWS (137.0ms).
+  - **Status**: **TASK T-130 IN-PROGRESS (ACTIVE CONTINUOUS QA & SURVEILLANCE MAINTAINED; CODEBASE HEALTHY)**.
+
+- **[2026-10-06 23:25 UTC]**: **Agent 4 (`@master`)** executed Master Orchestration Pass (Cycle v2.5.11 Step 2 Parallel Dispatch & Advance Roadmap Staging):
+  - **1. Prerequisite Completion & Hand-Off Verification (Cycle v2.5.11 Step 1)**:
+    - Verified completion of Task **T-126** by **Agent 5 (`@core-engineer`)** with 143/143 schema unit tests, complete bidirectional models, Froehlich peak discharge routing, non-Newtonian tailings yield stress calculations, Australian/USBR hazard intensity tiering ($v \cdot h$), evacuation corridor vectorization, and canonical route contracts (`/api/v1/analysis/geotechnical/dam-break-hydrodynamics` and `/api/v1/tiles/geotechnical/dam-break/...`).
+    - Verified completion of physics edge case hardening and zero-preservation QA under Task **T-130** by **Agent 9 (`@debugger`)** with 144/144 schema tests and **225/225 full backend pytest tests passing cleanly in 48.55s** (0 failures, 0 regressions, 0 warnings); verified 0 ESLint errors/warnings (`npm run lint` code 0) and clean Vite production bundle build (`npm run build` completed in 7.75s).
+  - **2. Step 2 Parallel Execution Dispatch (Agents 6 & 7)**:
+    - In accordance with the GIOS dispatch protocol (Agent 5 first, then 6 & 7 in parallel), formally dispatched **Agent 7 (`@backend`)** on Task **T-127** and **Agent 6 (`@frontend`)** on Task **T-128** in parallel:
+      * **Agent 7 (`@backend`, Task T-127)**: Implement backend analytical calculation endpoints (`POST /api/v1/analysis/geotechnical/dam-break-hydrodynamics`) executing 2D Saint-Venant shallow water wave attenuation, Froehlich peak breach discharge, wave arrival time celerity, and dynamic XYZ tile streaming (`/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png`) with float32 memory-safe raster handling. Transitioned status from `pending` to `in-progress`.
+      * **Agent 6 (`@frontend`, Task T-128)**: Implement interactive Web GIS remote sensing UI in `MapExplorer.jsx` and `DamBreakSimulationModal.jsx` featuring dynamic dam breach time-stepper slider ($t \in [0, t_{\max}]$), slurry wave front progression contours, evacuation corridor buffer overlays, and receptor exposure vulnerability summary cards strictly consuming Agent 5 & 7 contracts. Transitioned status from `pending` to `in-progress`.
+  - **3. Step 3 Continuous Surveillance Assurance (Agents 8 & 9)**:
+    - Activated continuous surveillance under Task **T-129** for **Agent 8 (`@health-monitor`)** to guard against high-resolution shallow water raster memory pressure and monitor live service uptime. Transitioned status from `pending` to `in-progress`.
+    - Maintained active continuous QA and physics verification under Task **T-130** for **Agent 9 (`@debugger`)**. Status: `in-progress`.
+  - **4. Step 4 Milestone Release Staging (Agent 10)**:
+    - Confirmed **Agent 10 (`@archivist`)** is actively finalizing Task **T-125** for Milestone Release v2.5.10 (NodeODM Queue, Quality Mosaic & Multi-Hazard Alerts). Status: `in-progress`.
+    - Formally staged Task **T-131** for Milestone Release v2.5.11 pending parallel delivery by Agents 6 & 7 and formal QA clearance from Agent 9. Status: `pending`.
+  - **5. Advance Planning & Roadmap Decomposition (Cycle v2.5.12)**:
+    - Synthesized scientific remote sensing foundations from `Domain_Research.md` and `Implementation_Plan.md` to stage **Cycle v2.5.12** tasks (**T-132 through T-137**) with strict single-agent mapping:
+      * **T-132** (`@core-engineer`): Geotechnical Embankment Phreatic Surface Seepage Inversion, Van Genuchten Soil Moisture Retention & In-Situ Piezometer Fusion Contracts.
+      * **T-133** (`@backend`): Phreatic Line Seepage Finite-Difference Engine, Unsaturated Soil Suction Inversion & Dynamic Hydrogeological XYZ Tile Service.
+      * **T-134** (`@frontend`): Cross-Sectional Phreatic Surface Seepage Studio, Soil Water Retention Curve (SWRC) Analyzer & Piezometric Sensor Fusion Drawer.
+      * **T-135** (`@health-monitor`): Continuous Watchdog Telemetry & Iterative Seepage Solver Resource Guard.
+      * **T-136** (`@debugger`): Continuous Scientific QA, Mass Balance / Darcy Flow Verification & Seepage Convergence Regression Triage.
+      * **T-137** (`@archivist`): Milestone Release v2.5.12 Production Archival & Remote Sync.
+  - **Status**: **MASTER ORCHESTRATION PASS COMPLETED; CYCLE v2.5.11 STEP 2 DISPATCHED IN PARALLEL (T-127 & T-128 IN-PROGRESS); CONTINUOUS SURVEILLANCE ACTIVE (T-129 & T-130 IN-PROGRESS)**.
+
+- **[2026-10-06 23:30 UTC]**: **Agent 10 (`@archivist`)** completed **Task T-125** ("Milestone Release v2.5.10 Production Archival & Remote Sync (NodeODM Queue, Quality Mosaic & Multi-Hazard Alerts)"):
+  - **1. Prerequisite QA Clearance Verification**:
+    - Verified Agent 9 (`@debugger`) formal QA clearance issued on Task T-124 and confirmed stability across Task T-130.
+    - Full test suite verified passing: **225/225 pytest tests passing cleanly in 58.70s** (0 failures, 0 regressions, 0 warnings across `test_schemas.py`, `test_api.py`, `test_scientific_rigor.py`, `test_stac_signing.py`, and `test_tile_server.py`).
+    - Frontend code quality verified: `npm run lint` exited code 0 with **0 errors and 0 warnings**.
+    - Frontend production bundle build verified: `npm run build` compiled 2,867 modules cleanly in **7.99s with 0 errors**.
+    - Continuous production health monitoring verified: `Health_Status.md` confirms System Status **`HEALTHY`** with **0 active anomalies**.
+  - **2. Documentation & Research Artifact Archival**:
+    - Synchronized and updated `production_artifacts/GIOS_Project_Documentation.md` and root `GIOS_Project_Documentation.md` to reflect **v2.5.10 Enterprise Release**.
+    - Documented NodeODM Distributed Photogrammetry Processing Queue, Multi-Temporal Quality Mosaic Compositor, Multi-Hazard Live Telemetry Alert System, and Cycle v2.5.11 dam breach hydrodynamic scaffolding.
+    - Updated active system execution state and Master Task Board in `production_artifacts/Task_Board.md`.
+  - **3. Production Code Synchronization & Repository Archival**:
+    - Synchronized all QA-cleared production files from `app/`, `gios-react/`, `tests/`, and `production_artifacts/` into `GIOSREPO/`.
+    - Excluded runtime cache directories (`__pycache__`, `.pytest_cache`, `.gios_cache`, `node_modules`, `dist`).
+  - **4. Version Control Commit & Remote Release**:
+    - Prepared formal release commit referencing assigned agents and work packages (T-120 through T-125).
+    - Pushed release to GitHub remote `origin/main`.
+  - **Status**: **TASK T-125 COMPLETED; MILESTONE RELEASE v2.5.10 ARCHIVED AND SYNCHRONIZED TO REMOTE REPOSITORY**.

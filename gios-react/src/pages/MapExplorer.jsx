@@ -13,7 +13,8 @@ import {
   Play, Pause, SkipBack, SkipForward, Box, Scissors, Film, FileDown,
   Wrench, ShieldAlert, MapPin, Grid, GitCompare, Gauge, Waves,
   Thermometer, Sun, Sprout, Wind,
-  Move, Trees, Cloud, HardDrive, ArrowUpRight, TrendingUp, CloudSnow
+  Move, Trees, Cloud, HardDrive, ArrowUpRight, TrendingUp, CloudSnow,
+  Cpu, Bell
 } from 'lucide-react';
 import useAuthStore from '../store/authStore';
 import { useNavigate, Link } from 'react-router-dom';
@@ -199,6 +200,9 @@ import EnvironmentalDiagnosticsModal from '../components/EnvironmentalDiagnostic
 import DirectGeoreferencingModal from '../components/DirectGeoreferencingModal';
 import TrueOrthoStudioModal from '../components/TrueOrthoStudioModal';
 import SbasTopographicModal from '../components/SbasTopographicModal';
+import PhotogrammetryQueueModal from '../components/PhotogrammetryQueueModal';
+import QualityMosaicModal from '../components/QualityMosaicModal';
+import HazardAlertDrawer from '../components/HazardAlertDrawer';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -290,7 +294,8 @@ import {
   buildBrdfNbarTileUrl,
   buildSbasTileUrl,
   buildTopographicMinnaertTileUrl,
-  buildTiePointRpcTileUrl
+  buildTiePointRpcTileUrl,
+  buildQualityMosaicTileUrl
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -1083,6 +1088,58 @@ export default function MapExplorer() {
   const [rpcImageId, setRpcImageId] = useState('WV03_20260905_EXP01');
   const [rpcTiePointPins, setRpcTiePointPins] = useState([]);
   const [showRpcTiePointsLayer, setShowRpcTiePointsLayer] = useState(false);
+
+  // T-120 & T-122: NodeODM Photogrammetry Queue, Quality Mosaicing & Multi-Hazard Alert Drawer States
+  const [odmModalOpen, setOdmModalOpen] = useState(false);
+  const [showOdmLayer, setShowOdmLayer] = useState(false);
+  const [odmLayerUrl, setOdmLayerUrl] = useState(null);
+  const [odmOpacity, setOdmOpacity] = useState(0.85);
+
+  const [qualityMosaicModalOpen, setQualityMosaicModalOpen] = useState(false);
+  const [showQualityMosaicLayer, setShowQualityMosaicLayer] = useState(false);
+  const [qualityMosaicLayerUrl, setQualityMosaicLayerUrl] = useState(null);
+  const [qualityMosaicOpacity, setQualityMosaicOpacity] = useState(0.85);
+  const [qualityMosaicId] = useState('QUALITY_MOSAIC_2026_Q3');
+
+  const [hazardAlertDrawerOpen, setHazardAlertDrawerOpen] = useState(false);
+  const [hazardAlertPins, setHazardAlertPins] = useState([
+    {
+      event_id: 'HAZ_20261001_001_TAIL',
+      timestamp: new Date(Date.now() - 4 * 60000).toISOString(),
+      asset_id: 'ASSET_TAILINGS_01',
+      asset_name: 'San Luis Main Tailings Impoundment',
+      alert_type: 'tailings_crest_deformation',
+      severity_tier: 'warning',
+      z_score: 2.85,
+      measured_value: 29.97,
+      threshold_value: 15.0,
+      unit: 'mm/year',
+      summary: 'Tailings Dam Crest Displacement Anomaly measured at 29.97 mm/year (z=2.85 sigma).',
+      action_recommended: 'Dispatch visual UAV inspection within 2 hours; verify in-situ piezometer & GNSS telemetry.',
+      latitude: 37.0542,
+      longitude: -121.1123,
+      acknowledged: false
+    },
+    {
+      event_id: 'HAZ_20261001_002_SEEP',
+      timestamp: new Date(Date.now() - 18 * 60000).toISOString(),
+      asset_id: 'ASSET_EMBANK_04',
+      asset_name: 'Downstream Toe Drainage Sector C',
+      alert_type: 'embankment_seepage_saturation',
+      severity_tier: 'emergency',
+      z_score: 3.65,
+      measured_value: 46.2,
+      threshold_value: 35.0,
+      unit: 'volumetric % (m3/m3)',
+      summary: 'Downstream Embankment Toe Soil Saturation measured at 46.2% (z=3.65 sigma).',
+      action_recommended: 'Immediate facility alert; initiate emergency response plan (ERP) and downstream evacuation advisory.',
+      latitude: 37.0598,
+      longitude: -121.1085,
+      acknowledged: false
+    }
+  ]);
+  const [showHazardAlertPins] = useState(true);
+
 
   // T-53 Embankment Transect Cross-Section State
   const [drawingTransect, setDrawingTransect] = useState(false);
@@ -2969,6 +3026,14 @@ export default function MapExplorer() {
       setRpcLayerUrl(url);
       setShowRpcLayer(true);
       if (op) setRpcOpacity(op);
+    } else if (type === 'odm_ortho' || type === 'odm' || (url && url.includes('drone/odm')) || (urlOrConfig?.id && urlOrConfig.id.startsWith('odm_'))) {
+      setOdmLayerUrl(url);
+      setShowOdmLayer(true);
+      if (op) setOdmOpacity(op);
+    } else if (type === 'quality_mosaic' || (url && url.includes('mosaic/quality')) || (urlOrConfig?.id && urlOrConfig.id.startsWith('quality_'))) {
+      setQualityMosaicLayerUrl(url);
+      setShowQualityMosaicLayer(true);
+      if (op) setQualityMosaicOpacity(op);
     }
   };
 
@@ -4787,6 +4852,69 @@ export default function MapExplorer() {
               />
             )}
 
+            {/* T-120/T-122: NodeODM Photogrammetry Drone Orthomosaic Tile Layer */}
+            {showOdmLayer && !curtainActive && odmLayerUrl && (
+              <TileLayer 
+                key={`odm-ortho-${odmOpacity}`}
+                url={odmLayerUrl}
+                opacity={odmOpacity}
+                maxNativeZoom={22}
+                maxZoom={24}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-120/T-122: Multi-Temporal Quality Cloud-Free Mosaic Tile Layer */}
+            {showQualityMosaicLayer && !curtainActive && (
+              <TileLayer 
+                key={`quality-mosaic-${qualityMosaicId}-${qualityMosaicOpacity}`}
+                url={qualityMosaicLayerUrl || buildQualityMosaicTileUrl(qualityMosaicId, '{z}', '{x}', '{y}')}
+                opacity={qualityMosaicOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-120/T-122: Multi-Hazard Early-Warning Alert Pins */}
+            {showHazardAlertPins && hazardAlertPins.map((evt) => {
+              const isEmerg = evt.severity_tier === 'emergency';
+              const isWarn = evt.severity_tier === 'warning';
+              const pinColor = isEmerg ? '#ef4444' : isWarn ? '#f97316' : '#f59e0b';
+              return (
+                <CircleMarker
+                  key={`haz-pin-${evt.event_id}`}
+                  center={[evt.latitude, evt.longitude]}
+                  radius={isEmerg ? 11 : 8}
+                  pathOptions={{
+                    color: pinColor,
+                    fillColor: pinColor,
+                    fillOpacity: 0.75,
+                    weight: 2
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="flex items-center gap-1 font-bold text-white uppercase">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        <span>{evt.asset_name}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-300">
+                        Tier: <span className="font-bold uppercase" style={{ color: pinColor }}>{evt.severity_tier}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-300">
+                        Anomaly: <span className="font-bold text-amber-300">{evt.z_score} σ</span> ({evt.measured_value} {evt.unit})
+                      </div>
+                      <div className="text-[9px] text-slate-400 bg-slate-800/80 p-1 rounded mt-1">
+                        {evt.summary}
+                      </div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
+
             {/* T-114/T-116: Automated Sub-Pixel Tie-Point Pins */}
             {(showRpcTiePointsLayer || showRpcLayer) && rpcTiePointPins.map((tp, idx) => {
               const baseLat = 37.0585;
@@ -6218,6 +6346,45 @@ export default function MapExplorer() {
               >
                 <Radar className="w-3.5 h-3.5 text-sky-400" />
                 <span>SBAS & Topo Studio</span>
+              </button>
+
+              {/* T-120/T-122 NodeODM Drone Photogrammetry Queue Shortcut */}
+              <button
+                onClick={() => setOdmModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-sky-300 hover:text-white hover:bg-sky-500/20 border border-sky-500/30 ${
+                  odmModalOpen ? 'bg-sky-600 text-white shadow-[0_0_12px_rgba(56,189,248,0.6)]' : ''
+                }`}
+                title="NodeODM Photogrammetry Queue: OpenSfM / OpenMVS Drone Reconstruction Engine"
+              >
+                <Cpu className="w-3.5 h-3.5 text-sky-400" />
+                <span>ODM Drone Queue</span>
+              </button>
+
+              {/* T-120/T-122 Multi-Temporal Quality Mosaic Compositor Shortcut */}
+              <button
+                onClick={() => setQualityMosaicModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-emerald-300 hover:text-white hover:bg-emerald-500/20 border border-emerald-500/30 ${
+                  qualityMosaicModalOpen ? 'bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.6)]' : ''
+                }`}
+                title="Quality Mosaic Studio: Cloud-Free Greenest / Clearest Pixel Compositor"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Quality Mosaic</span>
+              </button>
+
+              {/* T-120/T-122 Multi-Hazard Early-Warning Alert Drawer Shortcut */}
+              <button
+                onClick={() => setHazardAlertDrawerOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-amber-300 hover:text-white hover:bg-amber-500/20 border border-amber-500/30 relative ${
+                  hazardAlertDrawerOpen ? 'bg-amber-600 text-white shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
+                }`}
+                title="Multi-Hazard Alerts: Webhook & SSE Live Telemetry Notifications"
+              >
+                <Bell className="w-3.5 h-3.5 text-amber-400" />
+                <span>Hazard Alerts</span>
+                {hazardAlertPins.filter(a => !a.acknowledged).length > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping absolute -top-0.5 -right-0.5" />
+                )}
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -17682,6 +17849,40 @@ export default function MapExplorer() {
         }}
       />
 
+      {/* T-120/T-122: NodeODM Photogrammetry Processing Queue Modal */}
+      <PhotogrammetryQueueModal
+        isOpen={odmModalOpen}
+        onClose={() => setOdmModalOpen(false)}
+        onApplyTileLayer={(url, name) => {
+          setOdmLayerUrl(url);
+          setShowOdmLayer(true);
+          handleApplyTileLayer(url, { layerType: 'odm_ortho', name });
+        }}
+      />
+
+      {/* T-120/T-122: Multi-Temporal Quality Mosaicing Studio Modal */}
+      <QualityMosaicModal
+        isOpen={qualityMosaicModalOpen}
+        onClose={() => setQualityMosaicModalOpen(false)}
+        onApplyTileLayer={(url, name) => {
+          setQualityMosaicLayerUrl(url);
+          setShowQualityMosaicLayer(true);
+          handleApplyTileLayer(url, { layerType: 'quality_mosaic', name });
+        }}
+      />
+
+      {/* T-120/T-122: Multi-Hazard Early-Warning Alert Drawer */}
+      <HazardAlertDrawer
+        isOpen={hazardAlertDrawerOpen}
+        onClose={() => setHazardAlertDrawerOpen(false)}
+        alertsList={hazardAlertPins}
+        onUpdateAlerts={(updated) => setHazardAlertPins(updated)}
+        onLocateHazard={(lat, lng) => {
+          setCustomFlyTarget({ lat, lng, zoom: 16 });
+        }}
+      />
+
     </div>
   );
 }
+
