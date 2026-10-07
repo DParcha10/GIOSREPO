@@ -547,7 +547,49 @@ from app.models.schemas import (
     calculate_infrastructure_vulnerability_score,
     calculate_dam_break_hydrodynamic_simulation,
     build_dam_break_tile_url,
-    build_dam_break_tile_url_template
+    build_dam_break_tile_url_template,
+    SoilTextureType,
+    SeepageHazardTier,
+    PiezometerType,
+    PiezometerAnomalyStatus,
+    SOIL_TEXTURE_METADATA,
+    SEEPAGE_HAZARD_TIER_METADATA,
+    PIEZOMETER_ANOMALY_METADATA,
+    VanGenuchtenParameters,
+    EmbankmentGeometry,
+    PiezometerReading,
+    PhreaticStation,
+    PhreaticSeepageRequest,
+    PhreaticSeepageResponse,
+    SWRCPoint,
+    SWRCInversionRequest,
+    SWRCInversionResponse,
+    calculate_van_genuchten_swrc,
+    calculate_swrc_inversion_curve,
+    classify_seepage_hazard_tier,
+    classify_piezometer_anomaly,
+    calculate_phreatic_surface_seepage,
+    build_phreatic_seepage_tile_url,
+    build_phreatic_seepage_tile_url_template,
+    SlopeStabilityMethod,
+    SlopeHazardTier,
+    InSARCreepStatus,
+    SLOPE_HAZARD_TIER_METADATA,
+    INSAR_CREEP_METADATA,
+    CircularSlipSurface,
+    SlopeSlice,
+    InSARCreepVector,
+    BishopSlopeStabilityRequest,
+    BishopSlopeStabilityResponse,
+    SlipSurfaceSearchRequest,
+    SlipSurfaceSearchResponse,
+    classify_slope_hazard_tier,
+    classify_insar_creep_status,
+    calculate_bishops_simplified_fs,
+    calculate_janbu_simplified_fs,
+    search_critical_circular_slip_surface,
+    build_slope_stability_tile_url,
+    build_slope_stability_tile_url_template
 )
 from app.config import settings
 
@@ -6130,6 +6172,642 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         rec_out = sim_edge["receptors"][0]
         self.assertLess(rec_out["arrival_time_min"], 1.0)
         self.assertEqual(rec_out["evacuation_urgency"], "immediate_life_safety")
+
+    # =========================================================================
+    # TASK T-132: GEOTECHNICAL PHREATIC SEEPAGE & PIEZOMETER FUSION TESTS
+    # =========================================================================
+
+    def test_geotechnical_phreatic_seepage_enums_and_metadata(self):
+        """Verify SoilTextureType, SeepageHazardTier, PiezometerType, and PiezometerAnomalyStatus enums and metadata catalogs."""
+        # 1. SoilTextureType enum
+        self.assertEqual(SoilTextureType.SILT_TAILINGS.value, "silt_tailings")
+        self.assertEqual(SoilTextureType.CLAY_CORE.value, "clay_core")
+        self.assertEqual(SoilTextureType.SANDY_SHELL.value, "sandy_shell")
+        self.assertEqual(SoilTextureType.GRAVEL_DRAIN.value, "gravel_drain")
+        self.assertEqual(SoilTextureType.WEATHERED_BEDROCK.value, "weathered_bedrock")
+
+        # 2. SeepageHazardTier enum
+        self.assertEqual(SeepageHazardTier.SAFE_STABLE.value, "safe_stable")
+        self.assertEqual(SeepageHazardTier.MONITORED_SEEPAGE.value, "monitored_seepage")
+        self.assertEqual(SeepageHazardTier.ELEVATED_RISK.value, "elevated_risk")
+        self.assertEqual(SeepageHazardTier.CRITICAL_PIPING_HAZARD.value, "critical_piping_hazard")
+
+        # 3. PiezometerType enum
+        self.assertEqual(PiezometerType.VIBRATING_WIRE.value, "vibrating_wire")
+        self.assertEqual(PiezometerType.STANDPIPE_CASAGRANDE.value, "standpipe_casagrande")
+        self.assertEqual(PiezometerType.PNEUMATIC.value, "pneumatic")
+        self.assertEqual(PiezometerType.FIBER_OPTIC_FBG.value, "fiber_optic_fbg")
+
+        # 4. PiezometerAnomalyStatus enum
+        self.assertEqual(PiezometerAnomalyStatus.NORMAL_CONVERGENCE.value, "normal_convergence")
+        self.assertEqual(PiezometerAnomalyStatus.ELEVATED_PRESSURE.value, "elevated_pressure")
+        self.assertEqual(PiezometerAnomalyStatus.EXCESS_PORE_PRESSURE.value, "excess_pore_pressure")
+        self.assertEqual(PiezometerAnomalyStatus.SENSOR_FAULT_DRIFT.value, "sensor_fault_drift")
+
+        # 5. Metadata catalogs
+        for soil in SoilTextureType:
+            meta = SOIL_TEXTURE_METADATA.get(soil.value)
+            self.assertIsNotNone(meta, f"Missing metadata for soil texture {soil.value}")
+            self.assertIn("name", meta)
+            self.assertIn("theta_s", meta)
+            self.assertIn("theta_r", meta)
+            self.assertIn("alpha_1_kpa", meta)
+            self.assertIn("n_param", meta)
+            self.assertIn("ksat_m_s", meta)
+            self.assertGreater(meta["theta_s"], meta["theta_r"])
+            self.assertGreater(meta["ksat_m_s"], 0.0)
+
+        for tier in SeepageHazardTier:
+            tmeta = SEEPAGE_HAZARD_TIER_METADATA.get(tier.value)
+            self.assertIsNotNone(tmeta, f"Missing metadata for seepage tier {tier.value}")
+            self.assertIn("name", tmeta)
+            self.assertIn("color", tmeta)
+            self.assertIn("mitigation_action", tmeta)
+
+        for anomaly in PiezometerAnomalyStatus:
+            ameta = PIEZOMETER_ANOMALY_METADATA.get(anomaly.value)
+            self.assertIsNotNone(ameta, f"Missing metadata for anomaly status {anomaly.value}")
+            self.assertIn("name", ameta)
+            self.assertIn("color", ameta)
+
+    def test_van_genuchten_swrc_mathematics(self):
+        """Verify Van Genuchten SWRC theta(psi), Se, kr, and Mualem unsaturated conductivity across textures."""
+        vg = VanGenuchtenParameters(
+            theta_s=0.44,
+            theta_r=0.07,
+            alpha_1_kpa=0.035,
+            n_param=1.55,
+            ksat_m_s=3.5e-6,
+            soil_texture="silt_tailings"
+        )
+
+        # 1. Zero matric suction (fully saturated condition)
+        sat_pt = calculate_van_genuchten_swrc(0.0, vg)
+        self.assertEqual(sat_pt["matric_suction_kpa"], 0.0)
+        self.assertEqual(sat_pt["effective_saturation"], 1.0)
+        self.assertAlmostEqual(sat_pt["volumetric_water_content"], 0.44, places=4)
+        self.assertEqual(sat_pt["relative_conductivity"], 1.0)
+        self.assertAlmostEqual(sat_pt["unsaturated_conductivity_m_s"], 3.5e-6, places=10)
+
+        # 2. Intermediate suction (capillary desaturation)
+        mid_pt = calculate_van_genuchten_swrc(25.0, vg)
+        self.assertEqual(mid_pt["matric_suction_kpa"], 25.0)
+        self.assertGreater(mid_pt["effective_saturation"], 0.0)
+        self.assertLess(mid_pt["effective_saturation"], 1.0)
+        self.assertGreater(mid_pt["volumetric_water_content"], 0.07)
+        self.assertLess(mid_pt["volumetric_water_content"], 0.44)
+        self.assertGreater(mid_pt["relative_conductivity"], 0.0)
+        self.assertLess(mid_pt["relative_conductivity"], 1.0)
+        self.assertGreater(mid_pt["unsaturated_conductivity_m_s"], 0.0)
+        self.assertLess(mid_pt["unsaturated_conductivity_m_s"], 3.5e-6)
+
+        # 3. High suction (residual saturation asymptotic limit)
+        dry_pt = calculate_van_genuchten_swrc(1000.0, vg)
+        self.assertEqual(dry_pt["matric_suction_kpa"], 1000.0)
+        self.assertLess(dry_pt["effective_saturation"], 0.20)
+        self.assertAlmostEqual(dry_pt["volumetric_water_content"], 0.07, delta=0.08)
+        self.assertLess(dry_pt["relative_conductivity"], 0.01)
+
+        # 4. Clay core vs sandy shell comparison
+        clay_vg = VanGenuchtenParameters(**SOIL_TEXTURE_METADATA["clay_core"])
+        sand_vg = VanGenuchtenParameters(**SOIL_TEXTURE_METADATA["sandy_shell"])
+
+        clay_at_10 = calculate_van_genuchten_swrc(10.0, clay_vg)
+        sand_at_10 = calculate_van_genuchten_swrc(10.0, sand_vg)
+        # Sandy shell desaturates much faster than clay core at 10 kPa suction
+        self.assertLess(sand_at_10["effective_saturation"], clay_at_10["effective_saturation"])
+
+    def test_swrc_inversion_curve_generation(self):
+        """Verify continuous SWRC curve derivation, air-entry suction, and Pydantic model validation."""
+        req = SWRCInversionRequest(
+            soil_texture="silt_tailings",
+            matric_suction_range_kpa=[0.0, 1.0, 5.0, 10.0, 50.0, 100.0, 500.0]
+        )
+        res_dict = calculate_swrc_inversion_curve(req)
+
+        # Verify response structure
+        self.assertEqual(res_dict["soil_texture"], "silt_tailings")
+        self.assertIn("air_entry_suction_kpa", res_dict)
+        self.assertGreater(res_dict["air_entry_suction_kpa"], 0.0)
+        self.assertEqual(len(res_dict["curve_points"]), 7)
+
+        # Verify monotonicity of saturation with suction
+        se_values = [p["effective_saturation"] for p in res_dict["curve_points"]]
+        for i in range(len(se_values) - 1):
+            self.assertGreaterEqual(se_values[i], se_values[i + 1])
+
+        # Verify Pydantic response parsing
+        parsed = SWRCInversionResponse(**res_dict)
+        self.assertEqual(parsed.soil_texture, "silt_tailings")
+        self.assertEqual(len(parsed.curve_points), 7)
+        self.assertIsInstance(parsed.curve_points[0], SWRCPoint)
+        self.assertEqual(parsed.curve_points[0].effective_saturation, 1.0)
+
+        # Verify camelCase serialization
+        dumped = parsed.model_dump(by_alias=True)
+        self.assertIn("soilTexture", dumped)
+        self.assertIn("airEntrySuctionKpa", dumped)
+        self.assertIn("curvePoints", dumped)
+
+    def test_phreatic_surface_seepage_simulation_and_dupuit_math(self):
+        """Verify Dupuit-Forchheimer unconfined phreatic line, seepage discharge, exit gradient, and piping FS."""
+        req_payload = {
+            "simulation_id": "SIM_SEEP_VERIFY_01",
+            "dam_id": "TAILINGS_DAM_VERIFY",
+            "dam_name": "Verified Tailings Facility",
+            "embankment": {
+                "crest_elevation_m": 820.0,
+                "base_elevation_m": 750.0,
+                "crest_width_m": 12.0,
+                "upstream_slope_h_v": 2.5,
+                "downstream_slope_h_v": 2.0
+            },
+            "reservoir_pool_elevation_m": 812.0,
+            "tailwater_elevation_m": 752.0,
+            "soil_params": {
+                "soil_texture": "silt_tailings",
+                "ksat_m_s": 3.5e-6
+            },
+            "transect_stations_count": 50
+        }
+
+        res_dict = calculate_phreatic_surface_seepage(req_payload)
+
+        # Verify hydraulic heads
+        self.assertEqual(res_dict["simulation_id"], "SIM_SEEP_VERIFY_01")
+        self.assertEqual(res_dict["dam_id"], "TAILINGS_DAM_VERIFY")
+        self.assertAlmostEqual(res_dict["reservoir_head_m"], 62.0, places=1)  # 812 - 750
+        self.assertAlmostEqual(res_dict["tailwater_head_m"], 2.0, places=1)   # 752 - 750
+
+        # Verify positive seepage discharge
+        self.assertGreater(res_dict["seepage_discharge_m3s_m"], 0.0)
+
+        # Verify exit gradient and piping factor of safety
+        self.assertGreater(res_dict["exit_gradient_max"], 0.0)
+        self.assertGreater(res_dict["factor_of_safety_piping"], 0.0)
+        self.assertIn(res_dict["hazard_tier"], [t.value for t in SeepageHazardTier])
+
+        # Verify phreatic stations
+        stations = res_dict["phreatic_stations"]
+        self.assertEqual(len(stations), 50)
+        self.assertAlmostEqual(stations[0]["phreatic_elevation_m"], 812.0, delta=1.0)
+        self.assertAlmostEqual(stations[-1]["phreatic_elevation_m"], 752.0, delta=1.0)
+
+        # Verify GeoJSON cross-section
+        geojson = res_dict["cross_section_geojson"]
+        self.assertEqual(geojson["type"], "FeatureCollection")
+        self.assertEqual(len(geojson["features"]), 2)
+        shell_feature = geojson["features"][0]
+        self.assertEqual(shell_feature["geometry"]["type"], "LineString")
+        self.assertEqual(shell_feature["properties"]["feature_type"], "embankment_shell")
+
+        # Validate with PhreaticSeepageResponse Pydantic model
+        validated = PhreaticSeepageResponse(**res_dict)
+        self.assertEqual(validated.simulation_id, "SIM_SEEP_VERIFY_01")
+        self.assertEqual(len(validated.phreatic_stations), 50)
+
+    def test_piezometer_fusion_residuals_and_hazard_classification(self):
+        """Verify in-situ piezometer head fusion, residual error calculation, anomaly categorization, and hazard tiering."""
+        # 1. Piezometer anomaly classification
+        self.assertEqual(classify_piezometer_anomaly(2.1), PiezometerAnomalyStatus.EXCESS_PORE_PRESSURE)
+        self.assertEqual(classify_piezometer_anomaly(1.0), PiezometerAnomalyStatus.ELEVATED_PRESSURE)
+        self.assertEqual(classify_piezometer_anomaly(0.2), PiezometerAnomalyStatus.NORMAL_CONVERGENCE)
+        self.assertEqual(classify_piezometer_anomaly(-1.5), PiezometerAnomalyStatus.NORMAL_CONVERGENCE)
+        self.assertEqual(classify_piezometer_anomaly(-4.0), PiezometerAnomalyStatus.SENSOR_FAULT_DRIFT)
+
+        # 2. Seepage hazard tier classification
+        self.assertEqual(classify_seepage_hazard_tier(1.05, 0.90), SeepageHazardTier.CRITICAL_PIPING_HAZARD)
+        self.assertEqual(classify_seepage_hazard_tier(1.50, 0.60), SeepageHazardTier.ELEVATED_RISK)
+        self.assertEqual(classify_seepage_hazard_tier(2.10, 0.40), SeepageHazardTier.MONITORED_SEEPAGE)
+        self.assertEqual(classify_seepage_hazard_tier(3.20, 0.15), SeepageHazardTier.SAFE_STABLE)
+
+        # 3. Piezometer fusion in simulation
+        custom_piezos = [
+            {
+                "piezometer_id": "PZ_HIGH_01",
+                "name": "High Pressure Standpipe",
+                "piezometer_type": "standpipe_casagrande",
+                "station_x_m": 200.0,
+                "tip_elevation_m": 760.0,
+                "pore_water_pressure_kpa": 400.0  # h_meas = 800.77m vs h_sim = 797.83m -> residual +2.94m
+            },
+            {
+                "piezometer_id": "PZ_DRIFT_02",
+                "name": "Defective Piezometer",
+                "piezometer_type": "vibrating_wire",
+                "station_x_m": 200.0,
+                "tip_elevation_m": 760.0,
+                "pore_water_pressure_kpa": 0.0    # h_meas = 760.0m vs h_sim = 797.83m -> residual -37.83m
+            }
+        ]
+
+        sim_res = calculate_phreatic_surface_seepage({
+            "simulation_id": "SIM_PIEZO_TEST",
+            "dam_id": "DAM_TEST",
+            "reservoir_pool_elevation_m": 810.0,
+            "tailwater_elevation_m": 752.0,
+            "piezometers": custom_piezos
+        })
+
+        fused = sim_res["piezometer_fusion"]
+        self.assertEqual(len(fused), 2)
+
+        p1 = fused[0]
+        self.assertAlmostEqual(p1["measured_head_m"], 760.0 + (400.0 / 9.81), places=1)
+        self.assertIn("residual_head_m", p1)
+        self.assertEqual(p1["anomaly_status"], PiezometerAnomalyStatus.EXCESS_PORE_PRESSURE.value)
+
+        p2 = fused[1]
+        self.assertAlmostEqual(p2["measured_head_m"], 760.0, places=1)
+        self.assertEqual(p2["anomaly_status"], PiezometerAnomalyStatus.SENSOR_FAULT_DRIFT.value)
+
+    def test_phreatic_seepage_route_contracts_and_tile_urls(self):
+        """Verify API route contracts and dynamic tile URL constructors for geotechnical phreatic seepage and SWRC."""
+        # 1. API Route Contracts existence and canonical paths
+        expected_routes = {
+            "analysis_phreatic_seepage": "/api/v1/analysis/geotechnical/phreatic-seepage",
+            "analysis_phreatic_seepage_short": "/geotechnical/phreatic-seepage",
+            "analysis_swrc_inversion": "/api/v1/analysis/geotechnical/swrc-inversion",
+            "analysis_swrc_inversion_short": "/geotechnical/swrc-inversion",
+            "geotechnical_piezometers": "/api/v1/analysis/geotechnical/piezometers/{dam_id}",
+            "geotechnical_piezometers_short": "/geotechnical/piezometers/{dam_id}",
+            "tiles_phreatic_seepage": "/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png",
+            "tiles_phreatic_seepage_metric": "/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{metric}/{z}/{x}/{y}.png"
+        }
+
+        for key, path in expected_routes.items():
+            self.assertIn(key, API_ROUTE_CONTRACTS, f"Route contract {key} missing from API_ROUTE_CONTRACTS")
+            self.assertEqual(API_ROUTE_CONTRACTS[key], path)
+
+        # 2. Route formatting via format_api_route
+        route_fmt = format_api_route("tiles_phreatic_seepage", sim_id="SIM_SEEP_99", z=14, x=2048, y=1024)
+        self.assertEqual(route_fmt, "/api/v1/tiles/geotechnical/phreatic-seepage/SIM_SEEP_99/14/2048/1024.png")
+
+        metric_fmt = format_api_route("tiles_phreatic_seepage_metric", sim_id="SIM_SEEP_99", metric="saturation", z=12, x=1024, y=512)
+        self.assertEqual(metric_fmt, "/api/v1/tiles/geotechnical/phreatic-seepage/SIM_SEEP_99/saturation/12/1024/512.png")
+
+        piezo_fmt = format_api_route("geotechnical_piezometers", dam_id="TAILINGS_DAM_A")
+        self.assertEqual(piezo_fmt, "/api/v1/analysis/geotechnical/piezometers/TAILINGS_DAM_A")
+
+        # 3. Tile URL builders
+        tile_url = build_phreatic_seepage_tile_url("SIM_SEEP_01", "saturation", 15, 4096, 2048)
+        self.assertEqual(tile_url, "/api/v1/tiles/geotechnical/phreatic-seepage/SIM_SEEP_01/saturation/15/4096/2048.png")
+
+        tile_template = build_phreatic_seepage_tile_url_template("SIM_SEEP_01", "pore_pressure")
+        self.assertEqual(tile_template, "/api/v1/tiles/geotechnical/phreatic-seepage/SIM_SEEP_01/pore_pressure/{z}/{x}/{y}.png")
+
+    def test_phreatic_seepage_edge_cases_and_zero_preservation(self):
+        """Verify edge-case resilience, zero-preservation for suction and pore pressure, and input immutability."""
+        # 1. Zero-preservation for matric suction
+        zero_suction_res = calculate_van_genuchten_swrc(0.0)
+        self.assertEqual(zero_suction_res["matric_suction_kpa"], 0.0)
+        self.assertEqual(zero_suction_res["effective_saturation"], 1.0)
+        self.assertEqual(zero_suction_res["relative_conductivity"], 1.0)
+
+        # 2. Input dictionary immutability
+        raw_piezo = {
+            "piezometer_id": "PZ_IMMUTABLE",
+            "name": "Piezometer For Immutability Check",
+            "station_x_m": 80.0,
+            "tip_elevation_m": 760.0,
+            "pore_water_pressure_kpa": 0.0
+        }
+        raw_copy = dict(raw_piezo)
+
+        sim_out = calculate_phreatic_surface_seepage({
+            "simulation_id": "SIM_IMMUTABLE",
+            "dam_id": "DAM_IMMUTABLE",
+            "piezometers": [raw_piezo]
+        })
+
+        # Ensure caller dict was not mutated
+        self.assertEqual(raw_piezo, raw_copy)
+        self.assertNotIn("measured_head_m", raw_piezo)
+        self.assertNotIn("residual_head_m", raw_piezo)
+
+        # 3. Hyphenated and mixed-case soil textures
+        swrc_hyphen = calculate_swrc_inversion_curve({"soil_texture": "clay-core"})
+        self.assertEqual(swrc_hyphen["soil_texture"], "clay_core")
+
+        swrc_upper = calculate_swrc_inversion_curve({"soil_texture": "SANDY_SHELL"})
+        self.assertEqual(swrc_upper["soil_texture"], "sandy_shell")
+
+        # 4. Fallback for unlisted texture
+        swrc_unknown = calculate_swrc_inversion_curve({"soil_texture": "volcanic_tuff_unknown"})
+        self.assertEqual(swrc_unknown["soil_texture"], "volcanic_tuff_unknown")
+        self.assertEqual(swrc_unknown["residual_water_content"], SOIL_TEXTURE_METADATA["silt_tailings"]["theta_r"])
+
+    def test_slope_stability_enums_and_metadata(self):
+        """Verify geotechnical slope stability enums, hazard tiers, InSAR creep tiers, and soil strength metadata."""
+        # 1. Enums
+        self.assertEqual(SlopeStabilityMethod.BISHOPS_SIMPLIFIED.value, "bishops_simplified")
+        self.assertEqual(SlopeStabilityMethod.JANBU_SIMPLIFIED.value, "janbu_simplified")
+        self.assertEqual(SlopeStabilityMethod.SPENCER_RIGOROUS.value, "spencer_rigorous")
+        self.assertEqual(SlopeStabilityMethod.INFINITE_SLOPE.value, "infinite_slope")
+
+        self.assertEqual(SlopeHazardTier.STABLE.value, "stable")
+        self.assertEqual(SlopeHazardTier.CONDITIONALLY_STABLE.value, "conditionally_stable")
+        self.assertEqual(SlopeHazardTier.ELEVATED_INSTABILITY_RISK.value, "elevated_instability_risk")
+        self.assertEqual(SlopeHazardTier.CRITICAL_SHEAR_FAILURE.value, "critical_shear_failure")
+
+        self.assertEqual(InSARCreepStatus.STABLE_NEGLIGIBLE.value, "stable_negligible")
+        self.assertEqual(InSARCreepStatus.LINEAR_STEADY_CREEP.value, "linear_steady_creep")
+        self.assertEqual(InSARCreepStatus.ELEVATED_CREEP_RATE.value, "elevated_creep_rate")
+        self.assertEqual(InSARCreepStatus.TERTIARY_ACCELERATING_CREEP.value, "tertiary_accelerating_creep")
+
+        # 2. SLOPE_HAZARD_TIER_METADATA
+        self.assertEqual(len(SLOPE_HAZARD_TIER_METADATA), 4)
+        for tier in SlopeHazardTier:
+            meta = SLOPE_HAZARD_TIER_METADATA[tier.value]
+            self.assertIn("id", meta)
+            self.assertIn("name", meta)
+            self.assertIn("min_fs", meta)
+            self.assertIn("color", meta)
+            self.assertIn("action_protocol", meta)
+
+        # 3. INSAR_CREEP_METADATA
+        self.assertEqual(len(INSAR_CREEP_METADATA), 4)
+        for tier in InSARCreepStatus:
+            meta = INSAR_CREEP_METADATA[tier.value]
+            self.assertIn("id", meta)
+            self.assertIn("name", meta)
+            self.assertIn("max_velocity_mm_yr", meta)
+            self.assertIn("color", meta)
+            self.assertIn("action_protocol", meta)
+
+        # 4. SOIL_TEXTURE_METADATA geotechnical shear strength enrichment
+        for key, soil in SOIL_TEXTURE_METADATA.items():
+            self.assertIn("cohesion_c_kpa", soil, f"cohesion_c_kpa missing in {key}")
+            self.assertIn("friction_angle_phi_deg", soil, f"friction_angle_phi_deg missing in {key}")
+            self.assertIn("unit_weight_sat_kn_m3", soil, f"unit_weight_sat_kn_m3 missing in {key}")
+            self.assertIn("unit_weight_dry_kn_m3", soil, f"unit_weight_dry_kn_m3 missing in {key}")
+            self.assertGreaterEqual(soil["cohesion_c_kpa"], 0.0)
+            self.assertGreater(soil["friction_angle_phi_deg"], 0.0)
+            self.assertGreater(soil["unit_weight_sat_kn_m3"], 10.0)
+            self.assertGreater(soil["unit_weight_dry_kn_m3"], 10.0)
+
+    def test_slope_stability_pydantic_models(self):
+        """Verify Pydantic models for slip surfaces, slices, InSAR creep vectors, and slope stability requests/responses."""
+        # 1. CircularSlipSurface
+        arc = CircularSlipSurface(
+            center_x_m=236.0,
+            center_y_m=869.0,
+            radius_m=94.5,
+            entry_x_m=175.0,
+            entry_y_m=820.0,
+            exit_x_m=239.16,
+            exit_y_m=793.92
+        )
+        self.assertEqual(arc.center_x_m, 236.0)
+        self.assertEqual(arc.radius_m, 94.5)
+
+        # 2. SlopeSlice
+        slice_obj = SlopeSlice(
+            slice_index=1,
+            midpoint_x_m=176.28,
+            width_b_m=2.57,
+            surface_y_m=820.0,
+            base_y_m=795.76,
+            height_h_m=24.24,
+            base_angle_alpha_deg=-39.19,
+            weight_w_kn_m=1213.15,
+            pore_water_pressure_u_kpa=123.42,
+            effective_normal_force_n_kn_m=1156.03,
+            shear_resistance_t_kn_m=750.0
+        )
+        self.assertEqual(slice_obj.slice_index, 1)
+        self.assertEqual(slice_obj.width_b_m, 2.57)
+
+        # 3. InSARCreepVector
+        creep = InSARCreepVector(
+            station_x_m=181.0,
+            los_velocity_mm_yr=-8.4,
+            vertical_velocity_mm_yr=-9.2,
+            shear_strain_rate_microstrain_yr=85.0,
+            creep_status="linear_steady_creep"
+        )
+        self.assertEqual(creep.creep_status, "linear_steady_creep")
+        self.assertEqual(creep.los_velocity_mm_yr, -8.4)
+
+        # 4. BishopSlopeStabilityRequest & Response validation
+        req = BishopSlopeStabilityRequest(
+            dam_id="DAM-FEIJAO-01",
+            soil_texture="silt_tailings",
+            reservoir_pool_elevation_m=810.0,
+            tailwater_elevation_m=755.0,
+            num_slices=30,
+            method="bishops_simplified"
+        )
+        self.assertEqual(req.dam_id, "DAM-FEIJAO-01")
+        self.assertEqual(req.num_slices, 30)
+
+        resp = BishopSlopeStabilityResponse(
+            simulation_id="SIM-STAB-001",
+            dam_id=req.dam_id,
+            dam_name="North Tailings Impoundment",
+            method="bishops_simplified",
+            factor_of_safety=1.38,
+            iterations_converged=8,
+            hazard_tier="conditionally_stable",
+            critical_slip_surface=arc,
+            slices=[slice_obj],
+            insar_creep_fusion=[creep],
+            tile_url_template="/api/v1/tiles/geotechnical/slope-stability/SIM-STAB-001/factor_of_safety/{z}/{x}/{y}.png",
+            simulated_at="2026-10-07T00:00:00Z"
+        )
+        self.assertAlmostEqual(resp.factor_of_safety, 1.38)
+        dumped = resp.model_dump()
+        self.assertEqual(dumped["hazard_tier"], "conditionally_stable")
+
+        # 5. SlipSurfaceSearchRequest & Response
+        search_req = SlipSurfaceSearchRequest(
+            dam_id="DAM-FEIJAO-01",
+            grid_density=4
+        )
+        self.assertEqual(search_req.grid_density, 4)
+
+        search_resp = SlipSurfaceSearchResponse(
+            dam_id="DAM-FEIJAO-01",
+            min_factor_of_safety=1.18,
+            critical_surface=arc,
+            evaluated_surfaces_count=27,
+            hazard_tier="elevated_instability_risk",
+            searched_at="2026-10-07T00:00:00Z"
+        )
+        self.assertEqual(search_resp.evaluated_surfaces_count, 27)
+        self.assertEqual(search_resp.hazard_tier, "elevated_instability_risk")
+
+    def test_bishops_simplified_limit_equilibrium_calculation(self):
+        """Verify Bishop's Simplified Picard iteration solver, convergence, moment equilibrium, and pore pressure destabilization."""
+        # 1. Baseline simulation on silt tailings embankment
+        sim = calculate_bishops_simplified_fs({
+            "dam_id": "DAM-TEST-B1",
+            "soil_texture": "silt_tailings"
+        })
+
+        self.assertIn("factor_of_safety", sim)
+        self.assertGreater(sim["factor_of_safety"], 1.0)
+        self.assertLess(sim["factor_of_safety"], 2.5)
+        self.assertLessEqual(sim["iterations_converged"], 50)
+        self.assertEqual(sim["method"], "bishops_simplified")
+        self.assertEqual(sim["hazard_tier"], SlopeHazardTier.ELEVATED_INSTABILITY_RISK.value)
+
+        # Verify slice geometry and damping clamps
+        slices = sim["slices"]
+        self.assertGreater(len(slices), 0)
+        for s in slices:
+            self.assertGreater(s["width_b_m"], 0.0)
+            self.assertGreaterEqual(s["effective_normal_force_n_kn_m"], 0.0)
+            self.assertGreaterEqual(s["shear_resistance_t_kn_m"], 0.0)
+
+        # 2. Destabilizing effect of elevated phreatic pore water pressure
+        sim_dry = calculate_bishops_simplified_fs({
+            "dam_id": "DAM-TEST-B1",
+            "soil_texture": "silt_tailings",
+            "reservoir_pool_elevation_m": 755.0,  # Dry/low reservoir pool
+            "tailwater_elevation_m": 751.0
+        })
+
+        sim_wet = calculate_bishops_simplified_fs({
+            "dam_id": "DAM-TEST-B1",
+            "soil_texture": "silt_tailings",
+            "reservoir_pool_elevation_m": 818.0,  # Saturated high pool
+            "tailwater_elevation_m": 765.0
+        })
+
+        self.assertGreater(sim_dry["factor_of_safety"], sim_wet["factor_of_safety"],
+                           "Elevated phreatic pore water pressure must reduce limit equilibrium Factor of Safety")
+
+        # 3. Pseudo-static seismic acceleration destabilization
+        sim_seismic = calculate_bishops_simplified_fs({
+            "dam_id": "DAM-TEST-B1",
+            "soil_texture": "silt_tailings",
+            "seismic_coefficient_kh": 0.15
+        })
+
+        self.assertGreater(sim["factor_of_safety"], sim_seismic["factor_of_safety"],
+                           "Seismic horizontal acceleration coefficient kh > 0 must reduce Factor of Safety")
+        self.assertEqual(sim_seismic["seismic_coefficient_kh"], 0.15)
+
+    def test_janbu_simplified_calculation_and_curvature_correction(self):
+        """Verify Janbu's Simplified non-circular limit equilibrium calculation and empirical curvature correction factor."""
+        janbu_res = calculate_janbu_simplified_fs({
+            "dam_id": "DAM-JANBU-01",
+            "soil_texture": "silt_tailings"
+        })
+
+        self.assertEqual(janbu_res["method"], "janbu_simplified")
+        self.assertIn("factor_of_safety", janbu_res)
+        self.assertGreater(janbu_res["factor_of_safety"], 0.5)
+        self.assertIn("curvature_correction_f0", janbu_res)
+        self.assertGreaterEqual(janbu_res["curvature_correction_f0"], 1.0)
+        self.assertLessEqual(janbu_res["curvature_correction_f0"], 1.3)
+
+    def test_critical_slip_surface_grid_search(self):
+        """Verify 3D grid search optimization to discover the critical minimum Factor of Safety slip surface."""
+        search_res = search_critical_circular_slip_surface({
+            "dam_id": "DAM-SEARCH-B1",
+            "soil_texture": "silt_tailings",
+            "grid_density": 2
+        })
+
+        self.assertIn("evaluated_surfaces_count", search_res)
+        self.assertGreater(search_res["evaluated_surfaces_count"], 0)
+        self.assertIn("min_factor_of_safety", search_res)
+        self.assertGreater(search_res["min_factor_of_safety"], 0.0)
+        self.assertIn("critical_surface", search_res)
+        self.assertIn("hazard_tier", search_res)
+
+    def test_insar_creep_and_hazard_tier_classifications(self):
+        """Verify classification functions for InSAR radar creep status and limit equilibrium slope hazard tiers."""
+        # 1. InSAR creep velocity and strain rate tiers
+        self.assertEqual(classify_insar_creep_status(-2.0, 40.0), InSARCreepStatus.STABLE_NEGLIGIBLE)
+        self.assertEqual(classify_insar_creep_status(-10.0, 100.0), InSARCreepStatus.LINEAR_STEADY_CREEP)
+        self.assertEqual(classify_insar_creep_status(-20.0, 300.0), InSARCreepStatus.ELEVATED_CREEP_RATE)
+        self.assertEqual(classify_insar_creep_status(-35.0, 600.0), InSARCreepStatus.TERTIARY_ACCELERATING_CREEP)
+
+        # Creep strain rate triggering higher tier even with lower velocity
+        self.assertEqual(classify_insar_creep_status(-4.0, 600.0), InSARCreepStatus.TERTIARY_ACCELERATING_CREEP)
+
+        # 2. Slope hazard tier by factor of safety
+        self.assertEqual(classify_slope_hazard_tier(0.85), SlopeHazardTier.CRITICAL_SHEAR_FAILURE)
+        self.assertEqual(classify_slope_hazard_tier(1.15), SlopeHazardTier.ELEVATED_INSTABILITY_RISK)
+        self.assertEqual(classify_slope_hazard_tier(1.38), SlopeHazardTier.CONDITIONALLY_STABLE)
+        self.assertEqual(classify_slope_hazard_tier(1.72), SlopeHazardTier.STABLE)
+
+    def test_slope_stability_route_contracts_and_tile_urls(self):
+        """Verify API route contracts and dynamic XYZ tile URL constructors for geotechnical slope stability."""
+        # 1. Expected route contracts in API_ROUTE_CONTRACTS
+        expected_routes = {
+            "analysis_slope_stability_bishop": "/api/v1/analysis/geotechnical/slope-stability-bishop",
+            "analysis_slope_stability_bishop_short": "/geotechnical/slope-stability-bishop",
+            "analysis_slip_surface_search": "/api/v1/analysis/geotechnical/slip-surface-search",
+            "analysis_slip_surface_search_short": "/geotechnical/slip-surface-search",
+            "geotechnical_insar_creep": "/api/v1/analysis/geotechnical/insar-creep/{dam_id}",
+            "geotechnical_insar_creep_short": "/geotechnical/insar-creep/{dam_id}",
+            "tiles_geotechnical_slope_stability": "/api/v1/tiles/geotechnical/slope-stability/{sim_id}/{z}/{x}/{y}.png",
+            "tiles_slope_stability_metric": "/api/v1/tiles/geotechnical/slope-stability/{sim_id}/{metric}/{z}/{x}/{y}.png"
+        }
+
+        for key, path in expected_routes.items():
+            self.assertIn(key, API_ROUTE_CONTRACTS, f"Route contract {key} missing from API_ROUTE_CONTRACTS")
+            self.assertEqual(API_ROUTE_CONTRACTS[key], path)
+
+        # 2. Route formatting via format_api_route
+        route_fmt = format_api_route("tiles_slope_stability", sim_id="SIM_BISHOP_12", z=15, x=4096, y=2048)
+        self.assertEqual(route_fmt, "/api/v1/tiles/geotechnical/slope-stability/SIM_BISHOP_12/15/4096/2048.png")
+
+        metric_fmt = format_api_route("tiles_slope_stability_metric", sim_id="SIM_BISHOP_12", metric="factor_of_safety", z=14, x=2048, y=1024)
+        self.assertEqual(metric_fmt, "/api/v1/tiles/geotechnical/slope-stability/SIM_BISHOP_12/factor_of_safety/14/2048/1024.png")
+
+        creep_fmt = format_api_route("geotechnical_insar_creep", dam_id="DAM_VALE_S11D")
+        self.assertEqual(creep_fmt, "/api/v1/analysis/geotechnical/insar-creep/DAM_VALE_S11D")
+
+        # 3. Tile URL builders
+        tile_url = build_slope_stability_tile_url("SIM_BISHOP_12", "pore_pressure", 16, 8192, 4096)
+        self.assertEqual(tile_url, "/api/v1/tiles/geotechnical/slope-stability/SIM_BISHOP_12/pore_pressure/16/8192/4096.png")
+
+        tile_tmpl = build_slope_stability_tile_url_template("SIM_BISHOP_12", "factor_of_safety")
+        self.assertEqual(tile_tmpl, "/api/v1/tiles/geotechnical/slope-stability/SIM_BISHOP_12/factor_of_safety/{z}/{x}/{y}.png")
+
+    def test_slope_stability_edge_cases_and_immutability(self):
+        """Verify edge-case handling, zero-preservation for seismic/pore parameters, and input dictionary immutability."""
+        # 1. Zero-preservation for kh and cohesion
+        zero_res = calculate_bishops_simplified_fs({
+            "dam_id": "DAM-ZERO-01",
+            "cohesion_kpa": 0.0,
+            "seismic_coefficient_kh": 0.0,
+            "friction_angle_deg": 32.0
+        })
+        self.assertEqual(zero_res["seismic_coefficient_kh"], 0.0)
+        self.assertGreater(zero_res["factor_of_safety"], 0.0)
+
+        # 2. Input dictionary immutability
+        raw_dict = {
+            "dam_id": "DAM-IMMUTABLE-01",
+            "soil_texture": "silt-tailings",
+            "num_slices": 20
+        }
+        raw_copy = dict(raw_dict)
+
+        sim_out = calculate_bishops_simplified_fs(raw_dict)
+
+        # Assert caller dictionary was not altered
+        self.assertEqual(raw_dict, raw_copy)
+        self.assertNotIn("factor_of_safety", raw_dict)
+        self.assertNotIn("slices", raw_dict)
+
+        # 3. Hyphenated and uppercase soil textures
+        sim_hyphen = calculate_bishops_simplified_fs({"soil_texture": "clay-core"})
+        self.assertIn("slices", sim_hyphen)
+
+        sim_upper = calculate_bishops_simplified_fs({"soil_texture": "SANDY_SHELL"})
+        self.assertIn("slices", sim_upper)
+
+        # 4. Fallback for unlisted texture
+        sim_unknown = calculate_bishops_simplified_fs({"soil_texture": "volcanic_lahar_unknown"})
+        self.assertIn("slices", sim_unknown)
+        self.assertGreater(sim_unknown["factor_of_safety"], 0.0)
 
 if __name__ == "__main__":
     unittest.main()

@@ -173,7 +173,10 @@ import giosApi, {
   executePyramidSplineBlend,
   calibrateDirectGeoreferencing,
   analyzeEmbankmentCrestAlignment,
-  processPsInsarStack
+  processPsInsarStack,
+  buildDamBreakTileUrlTemplate,
+  buildPhreaticSeepageTileUrlTemplate,
+  buildSlopeStabilityBishopTileUrlTemplate
 } from '../api/giosApi';
 import useJarvisStore from '../store/jarvisStore';
 import {
@@ -203,6 +206,9 @@ import SbasTopographicModal from '../components/SbasTopographicModal';
 import PhotogrammetryQueueModal from '../components/PhotogrammetryQueueModal';
 import QualityMosaicModal from '../components/QualityMosaicModal';
 import HazardAlertDrawer from '../components/HazardAlertDrawer';
+import DamBreakSimulationModal from '../components/DamBreakSimulationModal';
+import PhreaticSeepageModal from '../components/PhreaticSeepageModal';
+import SlopeStabilityModal from '../components/SlopeStabilityModal';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -1140,6 +1146,50 @@ export default function MapExplorer() {
   ]);
   const [showHazardAlertPins] = useState(true);
 
+  // T-126 & T-128: Dam Breach Inundation & Emergency Evacuation Corridor Visualizer States
+  const [damBreakModalOpen, setDamBreakModalOpen] = useState(false);
+  const [showDamBreakLayer, setShowDamBreakLayer] = useState(false);
+  const [damBreakSimulation, setDamBreakSimulation] = useState(null);
+  const [activeDamBreakTimeSliceIndex, setActiveDamBreakTimeSliceIndex] = useState(0);
+  const [damBreakMetric, setDamBreakMetric] = useState('hazard_product');
+  const [damBreakOpacity, setDamBreakOpacity] = useState(0.85);
+  const [showEvacuationCorridors, setShowEvacuationCorridors] = useState(true);
+  const [showReceptorMarkers, setShowReceptorMarkers] = useState(true);
+  const [isPlayingDamBreak, setIsPlayingDamBreak] = useState(false);
+
+  // T-128: Dam Breach Time-Stepper Auto-Advance Loop
+  useEffect(() => {
+    let timer = null;
+    if (isPlayingDamBreak && damBreakSimulation?.time_slices?.length) {
+      timer = setInterval(() => {
+        setActiveDamBreakTimeSliceIndex((prev) => {
+          if (prev >= damBreakSimulation.time_slices.length - 1) {
+            return 0;
+          }
+          return prev + 1;
+        });
+      }, 1200);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isPlayingDamBreak, damBreakSimulation?.time_slices?.length]);
+
+  // T-132 & T-134: Cross-Sectional Phreatic Surface Seepage Studio & Piezometer Fusion States
+  const [phreaticSeepageModalOpen, setPhreaticSeepageModalOpen] = useState(false);
+  const [showPhreaticSeepageLayer, setShowPhreaticSeepageLayer] = useState(false);
+  const [phreaticSeepageSimulation, setPhreaticSeepageSimulation] = useState(null);
+  const [phreaticSeepageMetric, setPhreaticSeepageMetric] = useState('saturation');
+  const [phreaticSeepageOpacity, setPhreaticSeepageOpacity] = useState(0.85);
+  const [showPiezometerMarkers, setShowPiezometerMarkers] = useState(true);
+
+  // T-138 & T-140: Geotechnical Embankment Slope Stability Limit Equilibrium & InSAR Creep Fusion States
+  const [slopeStabilityModalOpen, setSlopeStabilityModalOpen] = useState(false);
+  const [showSlopeStabilityLayer, setShowSlopeStabilityLayer] = useState(false);
+  const [slopeStabilitySimulation, setSlopeStabilitySimulation] = useState(null);
+  const [slopeStabilityMetric, setSlopeStabilityMetric] = useState('factor_of_safety');
+  const [slopeStabilityOpacity, setSlopeStabilityOpacity] = useState(0.85);
+  const [showInSARCreepMarkers, setShowInSARCreepMarkers] = useState(true);
 
   // T-53 Embankment Transect Cross-Section State
   const [drawingTransect, setDrawingTransect] = useState(false);
@@ -3034,6 +3084,9 @@ export default function MapExplorer() {
       setQualityMosaicLayerUrl(url);
       setShowQualityMosaicLayer(true);
       if (op) setQualityMosaicOpacity(op);
+    } else if (type === 'dam_break' || (url && url.includes('dam-break')) || (urlOrConfig?.id && urlOrConfig.id.startsWith('dam_break_'))) {
+      setShowDamBreakLayer(true);
+      if (op) setDamBreakOpacity(op);
     }
   };
 
@@ -4914,6 +4967,273 @@ export default function MapExplorer() {
               );
             })}
 
+            {/* T-126/T-128: Dam Breach Inundation & Emergency Evacuation Corridor Visualizer Layers */}
+            {showDamBreakLayer && damBreakSimulation && !curtainActive && (
+              <TileLayer
+                key={`dam-break-${damBreakSimulation.simulation_id}-${damBreakMetric}-${damBreakOpacity}`}
+                url={buildDamBreakTileUrlTemplate(damBreakSimulation.simulation_id, damBreakMetric)}
+                opacity={damBreakOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* Inundation Boundary Polygon */}
+            {showDamBreakLayer && damBreakSimulation?.inundation_boundary_geojson?.geometry?.coordinates?.[0] && (
+              <Polygon
+                key={`inundation-poly-${damBreakSimulation.simulation_id}`}
+                positions={damBreakSimulation.inundation_boundary_geojson.geometry.coordinates[0].map(c => [c[1], c[0]])}
+                pathOptions={{
+                  color: '#dc2626',
+                  fillColor: '#ef4444',
+                  fillOpacity: 0.28,
+                  weight: 2,
+                  dashArray: '4, 4'
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="font-bold text-rose-400">🌊 Dam Breach Inundation Footprint</div>
+                    <div>Simulation: {damBreakSimulation.simulation_id}</div>
+                    <div>Max Footprint Area: {damBreakSimulation.max_inundation_area_ha} ha</div>
+                    <div>Peak Breach Discharge: {damBreakSimulation.peak_breach_discharge_m3s} m³/s</div>
+                    <div>Overall Hazard Tier: <span className="font-bold uppercase text-rose-300">{damBreakSimulation.overall_hazard_tier}</span></div>
+                  </div>
+                </Popup>
+              </Polygon>
+            )}
+
+            {/* Dam Breach Axis / Origin Marker */}
+            {showDamBreakLayer && damBreakSimulation?.dam_coordinates && (
+              <CircleMarker
+                center={[damBreakSimulation.dam_coordinates[1], damBreakSimulation.dam_coordinates[0]]}
+                radius={9}
+                pathOptions={{
+                  color: '#ffffff',
+                  fillColor: '#e11d48',
+                  fillOpacity: 0.95,
+                  weight: 2.5
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="font-bold text-rose-400">⚠️ {damBreakSimulation.dam_name}</div>
+                    <div>Breach Axis Origin: [{damBreakSimulation.dam_coordinates[1].toFixed(4)}, {damBreakSimulation.dam_coordinates[0].toFixed(4)}]</div>
+                    <div>Peak Breach Q<sub>p</sub>: {damBreakSimulation.peak_breach_discharge_m3s} m³/s</div>
+                    <div>Total Discharged: {(damBreakSimulation.total_volume_discharged_m3 / 1e6).toFixed(2)}M m³</div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            )}
+
+            {/* Leading Wave Front Contour Marker (Synchronized with active time slice) */}
+            {showDamBreakLayer && damBreakSimulation?.time_slices?.[activeDamBreakTimeSliceIndex] && damBreakSimulation?.dam_coordinates && (() => {
+              const slice = damBreakSimulation.time_slices[activeDamBreakTimeSliceIndex];
+              const dLat = -(slice.wave_front_distance_km / 111.0);
+              const dLon = (slice.wave_front_distance_km / 111.0) * 0.55;
+              const waveLat = damBreakSimulation.dam_coordinates[1] + dLat;
+              const waveLon = damBreakSimulation.dam_coordinates[0] + dLon;
+              return (
+                <CircleMarker
+                  key={`wave-front-${slice.timestep_minutes}`}
+                  center={[waveLat, waveLon]}
+                  radius={12}
+                  pathOptions={{
+                    color: '#38bdf8',
+                    fillColor: '#0ea5e9',
+                    fillOpacity: 0.65,
+                    weight: 3,
+                    dashArray: '2, 4'
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold text-cyan-400">🌊 Leading Slurry Wave Front</div>
+                      <div>Elapsed: T + {slice.timestep_minutes} min</div>
+                      <div>Wave Distance: {slice.wave_front_distance_km} km</div>
+                      <div>Peak Velocity: {slice.max_velocity_ms} m/s</div>
+                      <div>Max Slurry Depth: {slice.max_depth_m} m</div>
+                      <div>Inundated Area: {slice.inundation_area_ha} ha</div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })()}
+
+            {/* Evacuation Corridors & Assembly Haven Markers */}
+            {showDamBreakLayer && showEvacuationCorridors && damBreakSimulation?.evacuation_corridors?.map((corridor) => (
+              <React.Fragment key={`evac-frag-${corridor.corridor_id}`}>
+                <Polyline
+                  positions={corridor.coordinates.map(pt => [pt[1], pt[0]])}
+                  pathOptions={{
+                    color: '#10b981',
+                    weight: 4,
+                    dashArray: '6, 6',
+                    opacity: 0.95
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold text-emerald-400">🛡️ {corridor.name}</div>
+                      <div>ID: {corridor.corridor_id}</div>
+                      <div>Target Haven: {corridor.assembly_point}</div>
+                      <div>Safe Elevation: El. {corridor.safe_elevation_m} m</div>
+                      <div>Safety Buffer: {corridor.buffer_distance_m} m</div>
+                      <div>Transit Time: {corridor.estimated_evacuation_time_min} min</div>
+                      <div>Viability: <span className="font-bold text-emerald-300 uppercase">{corridor.route_status}</span></div>
+                    </div>
+                  </Popup>
+                </Polyline>
+
+                {corridor.coordinates.length > 0 && (
+                  <CircleMarker
+                    center={[
+                      corridor.coordinates[corridor.coordinates.length - 1][1],
+                      corridor.coordinates[corridor.coordinates.length - 1][0]
+                    ]}
+                    radius={8}
+                    pathOptions={{
+                      color: '#ffffff',
+                      fillColor: '#10b981',
+                      fillOpacity: 0.95,
+                      weight: 2
+                    }}
+                  >
+                    <Popup className="custom-popup">
+                      <div className="p-1 space-y-1 font-mono text-xs">
+                        <div className="font-bold text-emerald-300">🏁 {corridor.assembly_point}</div>
+                        <div>Designated High-Ground Assembly Haven</div>
+                        <div>Safe Elevation: El. {corridor.safe_elevation_m} m</div>
+                        <div>Transit Time: {corridor.estimated_evacuation_time_min} min</div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                )}
+              </React.Fragment>
+            ))}
+
+            {/* Downstream Infrastructure Receptor Pins */}
+            {showDamBreakLayer && showReceptorMarkers && damBreakSimulation?.receptors?.map((r) => {
+              const isImmediate = r.arrival_time_min <= 15.0;
+              const isHighPri = r.arrival_time_min > 15.0 && r.arrival_time_min <= 60.0;
+              const recColor = isImmediate ? '#dc2626' : isHighPri ? '#ea580c' : '#3b82f6';
+              return (
+                <CircleMarker
+                  key={`receptor-marker-${r.receptor_id}`}
+                  center={[r.latitude, r.longitude]}
+                  radius={isImmediate ? 9 : 7}
+                  pathOptions={{
+                    color: '#ffffff',
+                    fillColor: recColor,
+                    fillOpacity: 0.9,
+                    weight: 2
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold text-white flex items-center gap-1">
+                        <ShieldAlert className="w-3.5 h-3.5" style={{ color: recColor }} />
+                        <span>{r.name}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-300">
+                        Type: <span className="font-bold text-slate-200">{r.exposure_type}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-300">
+                        Distance: <span className="font-bold text-cyan-300">{r.distance_downstream_km} km</span> (El. {r.elevation_m}m)
+                      </div>
+                      <div className="text-[10px]">
+                        Wave Arrival: <span className="font-bold" style={{ color: recColor }}>{r.arrival_time_min} min</span> ({r.evacuation_urgency})
+                      </div>
+                      <div className="text-[10px] text-slate-300">
+                        Peak Depth: <span className="font-bold text-rose-300">{r.peak_depth_m} m</span> • Velocity: <span className="font-bold text-amber-300">{r.peak_velocity_ms} m/s</span>
+                      </div>
+                      <div className="text-[10px] text-slate-300">
+                        Pop. at Risk: <span className="font-bold text-white">{r.population_at_risk?.toLocaleString() || '0'}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-300">
+                        Vulnerability Score: <span className="font-bold text-amber-400">{((r.vulnerability_score || 0) * 100).toFixed(0)}%</span>
+                      </div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
+            {/* T-132/T-134: Phreatic Surface Seepage & Hydrogeological XYZ Tile Layers */}
+            {showPhreaticSeepageLayer && phreaticSeepageSimulation && !curtainActive && (
+              <TileLayer
+                key={`phreatic-seepage-${phreaticSeepageSimulation.simulation_id}-${phreaticSeepageMetric}-${phreaticSeepageOpacity}`}
+                url={buildPhreaticSeepageTileUrlTemplate(phreaticSeepageSimulation.simulation_id, phreaticSeepageMetric)}
+                opacity={phreaticSeepageOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* Embankment Center / Cross-Section Location Marker */}
+            {showPhreaticSeepageLayer && phreaticSeepageSimulation?.dam_coordinates && (
+              <CircleMarker
+                center={[phreaticSeepageSimulation.dam_coordinates[1], phreaticSeepageSimulation.dam_coordinates[0]]}
+                radius={8}
+                pathOptions={{
+                  color: '#ffffff',
+                  fillColor: '#06b6d4',
+                  fillOpacity: 0.95,
+                  weight: 2
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="font-bold text-cyan-400">💧 {phreaticSeepageSimulation.dam_name || 'Embankment Seepage'}</div>
+                    <div>Simulation: {phreaticSeepageSimulation.simulation_id}</div>
+                    <div>Seepage Discharge: {phreaticSeepageSimulation.seepage_discharge_m3s_m} m³/s/m</div>
+                    <div>Max Exit Gradient: {phreaticSeepageSimulation.exit_gradient_max}</div>
+                    <div>Piping FS: {phreaticSeepageSimulation.factor_of_safety_piping}</div>
+                    <div>Hazard Tier: <span className="font-bold uppercase text-cyan-300">{phreaticSeepageSimulation.hazard_tier?.replace('_', ' ')}</span></div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            )}
+
+            {/* In-Situ Piezometers Fusion Markers */}
+            {showPhreaticSeepageLayer && showPiezometerMarkers && phreaticSeepageSimulation?.dam_coordinates && phreaticSeepageSimulation?.piezometer_fusion?.map((pz, idx) => {
+              const damLat = phreaticSeepageSimulation.dam_coordinates[1];
+              const damLon = phreaticSeepageSimulation.dam_coordinates[0];
+              const offsetM = ((pz.station_x_m || 100) - 100);
+              const pzLat = damLat - (offsetM / 111139.0);
+              const pzLon = damLon + (offsetM / 111139.0) * 0.7;
+              const isAlert = pz.anomaly_status === 'excess_pore_pressure';
+              const isElevated = pz.anomaly_status === 'elevated_pressure';
+              const pzColor = isAlert ? '#dc2626' : isElevated ? '#f59e0b' : '#10b981';
+              return (
+                <CircleMarker
+                  key={`pz-marker-${pz.piezometer_id || idx}`}
+                  center={[pzLat, pzLon]}
+                  radius={6}
+                  pathOptions={{
+                    color: '#ffffff',
+                    fillColor: pzColor,
+                    fillOpacity: 0.9,
+                    weight: 1.5
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold text-cyan-400">📊 {pz.piezometer_id}</div>
+                      <div>Type: {pz.piezometer_type}</div>
+                      <div>Station x: {pz.station_x_m} m | Tip El: {pz.tip_elevation_m} m</div>
+                      <div>Pore Water Pressure: {pz.pore_water_pressure_kpa} kPa</div>
+                      <div>Measured Head: {pz.measured_head_m} m</div>
+                      <div>Simulated Head: {pz.simulated_head_m} m</div>
+                      <div>Residual Δh: <span className="font-bold text-amber-300">{pz.residual_head_m > 0 ? `+${pz.residual_head_m}` : pz.residual_head_m} m</span></div>
+                      <div>Status: <span className="font-bold uppercase" style={{ color: pzColor }}>{pz.anomaly_status?.replace('_', ' ')}</span></div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
 
             {/* T-114/T-116: Automated Sub-Pixel Tie-Point Pins */}
             {(showRpcTiePointsLayer || showRpcLayer) && rpcTiePointPins.map((tp, idx) => {
@@ -5700,6 +6020,272 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-126/T-128: Floating Dam Breach Hydrodynamic Time-Stepper Controller */}
+          {showDamBreakLayer && damBreakSimulation && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[920] glass-panel px-5 py-3 rounded-2xl border-rose-500/50 shadow-2xl bg-slate-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[580px] max-w-[92vw]">
+              {/* Header Row */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-rose-500/20 text-rose-400">
+                    <Waves className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <span className="font-bold text-white tracking-wide">
+                    {damBreakSimulation.dam_name || 'Tailings Dam Breach Runout'}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-600/50 uppercase font-bold">
+                    {damBreakSimulation.overall_hazard_tier?.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setDamBreakModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowDamBreakLayer(false);
+                      setIsPlayingDamBreak(false);
+                    }}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Active Slice Readout Row */}
+              {damBreakSimulation.time_slices?.[activeDamBreakTimeSliceIndex] && (() => {
+                const sl = damBreakSimulation.time_slices[activeDamBreakTimeSliceIndex];
+                return (
+                  <div className="flex items-center justify-between text-[11px] font-mono bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-cyan-400 font-bold">
+                        T + {sl.timestep_minutes}m
+                      </span>
+                      <span className="text-slate-500">|</span>
+                      <span className="text-slate-300">
+                        Wave: <strong className="text-white">{sl.wave_front_distance_km}km</strong>
+                      </span>
+                      <span className="text-slate-500">|</span>
+                      <span className="text-slate-300">
+                        Area: <strong className="text-emerald-300">{sl.inundation_area_ha}ha</strong>
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-300">
+                        Depth: <strong className="text-rose-300">{sl.max_depth_m}m</strong>
+                      </span>
+                      <span className="text-slate-500">|</span>
+                      <span className="text-slate-300">
+                        Vel: <strong className="text-amber-300">{sl.max_velocity_ms}m/s</strong>
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Scrubber Range Slider */}
+              <div className="space-y-1">
+                <input
+                  type="range"
+                  min="0"
+                  max={Math.max(0, (damBreakSimulation.time_slices?.length || 1) - 1)}
+                  value={activeDamBreakTimeSliceIndex}
+                  onChange={(e) => {
+                    setIsPlayingDamBreak(false);
+                    setActiveDamBreakTimeSliceIndex(Number(e.target.value));
+                  }}
+                  className="w-full accent-rose-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                />
+              </div>
+
+              {/* Player Controls & Layer Toggles Row */}
+              <div className="flex items-center justify-between text-xs font-mono pt-0.5">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setIsPlayingDamBreak(!isPlayingDamBreak)}
+                    className={`p-1.5 rounded font-bold transition-all ${
+                      isPlayingDamBreak
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-rose-600 hover:bg-rose-500 text-white'
+                    }`}
+                    title={isPlayingDamBreak ? 'Pause' : 'Play'}
+                  >
+                    {isPlayingDamBreak ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 ml-0.5" />}
+                  </button>
+
+                  <button
+                    onClick={() => setActiveDamBreakTimeSliceIndex(prev => Math.max(0, prev - 1))}
+                    disabled={activeDamBreakTimeSliceIndex === 0}
+                    className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+                    title="Previous Slice"
+                  >
+                    <SkipBack className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
+                    onClick={() => setActiveDamBreakTimeSliceIndex(prev => Math.min((damBreakSimulation.time_slices?.length || 1) - 1, prev + 1))}
+                    disabled={activeDamBreakTimeSliceIndex >= (damBreakSimulation.time_slices?.length || 1) - 1}
+                    className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+                    title="Next Slice"
+                  >
+                    <SkipForward className="w-3.5 h-3.5" />
+                  </button>
+
+                  <span className="text-[10px] text-slate-400 ml-1">
+                    Slice {activeDamBreakTimeSliceIndex + 1}/{damBreakSimulation.time_slices?.length || 1}
+                  </span>
+                </div>
+
+                {/* Layer Toggles & Metric Switcher */}
+                <div className="flex items-center gap-2 text-[10px]">
+                  {/* Metric Switcher */}
+                  <div className="flex rounded bg-slate-900 border border-slate-800 p-0.5">
+                    {['hazard_product', 'depth', 'velocity'].map(m => (
+                      <button
+                        key={m}
+                        onClick={() => setDamBreakMetric(m)}
+                        className={`px-1.5 py-0.5 rounded uppercase ${
+                          damBreakMetric === m ? 'bg-rose-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+                        }`}
+                        title={`Stream ${m} tiles`}
+                      >
+                        {m === 'hazard_product' ? 'v·h' : m === 'depth' ? 'h' : 'v'}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Evacuation Corridors Toggle */}
+                  <button
+                    onClick={() => setShowEvacuationCorridors(!showEvacuationCorridors)}
+                    className={`px-2 py-1 rounded border uppercase font-bold transition-all ${
+                      showEvacuationCorridors
+                        ? 'bg-emerald-600/30 text-emerald-300 border-emerald-500/50'
+                        : 'bg-slate-900 text-slate-500 border-slate-800'
+                    }`}
+                    title="Toggle Evacuation Corridors"
+                  >
+                    Corridors
+                  </button>
+
+                  {/* Receptors Toggle */}
+                  <button
+                    onClick={() => setShowReceptorMarkers(!showReceptorMarkers)}
+                    className={`px-2 py-1 rounded border uppercase font-bold transition-all ${
+                      showReceptorMarkers
+                        ? 'bg-amber-600/30 text-amber-300 border-amber-500/50'
+                        : 'bg-slate-900 text-slate-500 border-slate-800'
+                    }`}
+                    title="Toggle Receptor Pins"
+                  >
+                    Receptors
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* T-132/T-134 Phreatic Surface Seepage Floating HUD Card */}
+          {showPhreaticSeepageLayer && phreaticSeepageSimulation && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[920] glass-panel px-5 py-3 rounded-2xl border-cyan-500/50 shadow-2xl bg-slate-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[580px] max-w-[92vw]">
+              {/* Header Row */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-cyan-500/20 text-cyan-400">
+                    <Droplets className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <span className="font-bold text-white tracking-wide">
+                    {phreaticSeepageSimulation.dam_name || 'Embankment Phreatic Seepage'}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-600/50 uppercase font-bold">
+                    {phreaticSeepageSimulation.hazard_tier?.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPhreaticSeepageModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowPhreaticSeepageLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Telemetry Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-cyan-400 font-bold">
+                    q: {phreaticSeepageSimulation.seepage_discharge_m3s_m} m³/s/m
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    i_max: <strong className="text-amber-300">{phreaticSeepageSimulation.exit_gradient_max}</strong>
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-300">
+                    Piping FS: <strong className="text-emerald-300">{phreaticSeepageSimulation.factor_of_safety_piping}</strong>
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Piezometers: <strong className="text-cyan-300">{phreaticSeepageSimulation.piezometer_fusion?.length || 0}</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Controls Row */}
+              <div className="flex items-center justify-between text-xs font-mono pt-0.5">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowPiezometerMarkers(!showPiezometerMarkers)}
+                    className={`px-2 py-0.5 rounded text-[10px] border transition-all ${
+                      showPiezometerMarkers ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50' : 'bg-slate-900 text-slate-500 border-slate-800'
+                    }`}
+                  >
+                    {showPiezometerMarkers ? 'Piezometers Visible' : 'Piezometers Hidden'}
+                  </button>
+                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                    <span>Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={phreaticSeepageOpacity}
+                      onChange={(e) => setPhreaticSeepageOpacity(Number(e.target.value))}
+                      className="w-16 accent-cyan-500 h-1 bg-slate-800 rounded"
+                    />
+                  </div>
+                </div>
+
+                {/* Metric Switcher */}
+                <div className="flex rounded bg-slate-900 border border-slate-800 p-0.5">
+                  {['saturation', 'pore_pressure', 'exit_gradient'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setPhreaticSeepageMetric(m)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold transition-all ${
+                        phreaticSeepageMetric === m ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m === 'saturation' ? 'Sat' : m === 'pore_pressure' ? 'u' : 'i'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -6385,6 +6971,30 @@ export default function MapExplorer() {
                 {hazardAlertPins.filter(a => !a.acknowledged).length > 0 && (
                   <span className="w-2 h-2 rounded-full bg-red-500 animate-ping absolute -top-0.5 -right-0.5" />
                 )}
+              </button>
+
+              {/* T-126/T-128 Dam Breach Hydrodynamics & Evacuation Visualizer Shortcut */}
+              <button
+                onClick={() => setDamBreakModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-rose-300 hover:text-white hover:bg-rose-500/20 border border-rose-500/30 ${
+                  damBreakModalOpen || showDamBreakLayer ? 'bg-rose-600 text-white shadow-[0_0_12px_rgba(244,63,94,0.6)]' : ''
+                }`}
+                title="Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamics Studio (Cycle v2.5.11)"
+              >
+                <Waves className="w-3.5 h-3.5 text-rose-400" />
+                <span>Dam Breach (v2.5.11)</span>
+              </button>
+
+              {/* T-132/T-134 Phreatic Surface Seepage & SWRC Studio Shortcut (Cycle v2.5.12) */}
+              <button
+                onClick={() => setPhreaticSeepageModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  phreaticSeepageModalOpen || showPhreaticSeepageLayer ? 'bg-cyan-600 text-white shadow-[0_0_12px_rgba(6,182,212,0.6)]' : ''
+                }`}
+                title="Geotechnical Embankment Phreatic Surface Seepage, Van Genuchten SWRC & Piezometer Fusion Studio (Cycle v2.5.12)"
+              >
+                <Droplets className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Phreatic Seepage (v2.5.12)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -17879,6 +18489,51 @@ export default function MapExplorer() {
         onUpdateAlerts={(updated) => setHazardAlertPins(updated)}
         onLocateHazard={(lat, lng) => {
           setCustomFlyTarget({ lat, lng, zoom: 16 });
+        }}
+      />
+
+      {/* T-126/T-128: Dam Breach Inundation & Emergency Evacuation Corridor Visualizer Modal */}
+      <DamBreakSimulationModal
+        isOpen={damBreakModalOpen}
+        onClose={() => setDamBreakModalOpen(false)}
+        activeSimulation={damBreakSimulation}
+        onApplySimulation={(sim, opts) => {
+          setDamBreakSimulation(sim);
+          setShowDamBreakLayer(true);
+          if (opts?.activeTimeSliceIndex != null) {
+            setActiveDamBreakTimeSliceIndex(opts.activeTimeSliceIndex);
+          }
+          if (opts?.selectedMetric) {
+            setDamBreakMetric(opts.selectedMetric);
+          }
+          if (sim?.dam_coordinates && Array.isArray(sim.dam_coordinates)) {
+            setCustomFlyTarget({
+              lat: sim.dam_coordinates[1],
+              lng: sim.dam_coordinates[0],
+              zoom: 13
+            });
+          }
+        }}
+      />
+
+      {/* T-132/T-134: Cross-Sectional Phreatic Surface Seepage Studio & Piezometer Fusion Modal */}
+      <PhreaticSeepageModal
+        isOpen={phreaticSeepageModalOpen}
+        onClose={() => setPhreaticSeepageModalOpen(false)}
+        activeSimulation={phreaticSeepageSimulation}
+        onApplySimulation={(sim, opts) => {
+          setPhreaticSeepageSimulation(sim);
+          setShowPhreaticSeepageLayer(true);
+          if (opts?.selectedMetric) {
+            setPhreaticSeepageMetric(opts.selectedMetric);
+          }
+          if (opts?.damCoordinates && Array.isArray(opts.damCoordinates)) {
+            setCustomFlyTarget({
+              lat: opts.damCoordinates[1],
+              lng: opts.damCoordinates[0],
+              zoom: 14
+            });
+          }
         }}
       />
 

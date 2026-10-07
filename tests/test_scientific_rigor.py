@@ -143,5 +143,81 @@ class TestScientificRigor(unittest.TestCase):
         self.assertGreater(gsd_geo, 1.0)
         self.assertLess(gsd_geo, 10.0)
 
+    def test_dam_break_hydrodynamic_physics_and_mass_conservation(self):
+        """Task T-130: Verify Froehlich empirical discharge scaling, wave attenuation physics, and hazard tiers."""
+        from app.models.schemas import (
+            calculate_dam_breach_peak_discharge,
+            calculate_downstream_wave_attenuation,
+            classify_hazard_intensity_tier,
+            classify_evacuation_urgency,
+            calculate_infrastructure_vulnerability_score,
+            BreachMechanism,
+            HazardIntensityTier,
+            EvacuationUrgencyTier,
+            InfrastructureExposureType
+        )
+
+        # 1. Froehlich empirical discharge scaling
+        qp_base = calculate_dam_breach_peak_discharge(40.0, 10000000.0, BreachMechanism.OVERTOPPING)
+        qp_higher_dam = calculate_dam_breach_peak_discharge(60.0, 10000000.0, BreachMechanism.OVERTOPPING)
+        qp_higher_vol = calculate_dam_breach_peak_discharge(40.0, 20000000.0, BreachMechanism.OVERTOPPING)
+        qp_collapse = calculate_dam_breach_peak_discharge(40.0, 10000000.0, BreachMechanism.INSTANTANEOUS_COLLAPSE)
+
+        self.assertGreater(qp_higher_dam, qp_base, "Increasing dam height must increase peak discharge")
+        self.assertGreater(qp_higher_vol, qp_base, "Increasing reservoir volume must increase peak discharge")
+        self.assertGreater(qp_collapse, qp_base, "Instantaneous collapse multiplier must exceed overtopping")
+        self.assertAlmostEqual(qp_collapse, qp_base * 1.25, delta=1.0)
+
+        # 2. Downstream wave attenuation & mass conservation
+        reach_1km = calculate_downstream_wave_attenuation(1.0, qp_base, manning_n=0.040, valley_slope=0.015, slurry_yield_stress_pa=40.0)
+        reach_5km = calculate_downstream_wave_attenuation(5.0, qp_base, manning_n=0.040, valley_slope=0.015, slurry_yield_stress_pa=40.0)
+        reach_15km = calculate_downstream_wave_attenuation(15.0, qp_base, manning_n=0.040, valley_slope=0.015, slurry_yield_stress_pa=40.0)
+
+        # Monotonic peak discharge attenuation along channel reach
+        self.assertGreater(reach_1km["discharge_m3s"], reach_5km["discharge_m3s"])
+        self.assertGreater(reach_5km["discharge_m3s"], reach_15km["discharge_m3s"])
+
+        # Monotonic wave travel arrival time progression
+        self.assertLess(reach_1km["arrival_time_min"], reach_5km["arrival_time_min"])
+        self.assertLess(reach_5km["arrival_time_min"], reach_15km["arrival_time_min"])
+
+        # Flow depth attenuation
+        self.assertGreater(reach_1km["depth_m"], reach_5km["depth_m"])
+        self.assertGreater(reach_5km["depth_m"], reach_15km["depth_m"])
+
+        # 3. Slurry non-Newtonian rheology resistance
+        reach_water = calculate_downstream_wave_attenuation(3.0, qp_base, manning_n=0.040, valley_slope=0.015, slurry_yield_stress_pa=0.0)
+        reach_thick_slurry = calculate_downstream_wave_attenuation(3.0, qp_base, manning_n=0.040, valley_slope=0.015, slurry_yield_stress_pa=150.0)
+
+        self.assertGreater(reach_water["velocity_ms"], reach_thick_slurry["velocity_ms"], "Yield stress must retard slurry velocity")
+        self.assertLess(reach_water["arrival_time_min"], reach_thick_slurry["arrival_time_min"], "Viscous slurry wave front must arrive later than water")
+
+        # 4. Hazard intensity classification thresholds (v * h)
+        tier_extreme = classify_hazard_intensity_tier(velocity_ms=3.0, depth_m=1.0)  # v*h = 3.0 >= 2.5
+        self.assertEqual(tier_extreme, HazardIntensityTier.EXTREME_CATASTROPHIC)
+
+        tier_high = classify_hazard_intensity_tier(velocity_ms=2.0, depth_m=0.9)  # v*h = 1.8 >= 1.5
+        self.assertEqual(tier_high, HazardIntensityTier.HIGH_HAZARD)
+
+        tier_medium = classify_hazard_intensity_tier(velocity_ms=1.0, depth_m=0.8)  # v*h = 0.8 >= 0.5
+        self.assertEqual(tier_medium, HazardIntensityTier.MEDIUM_HAZARD)
+
+        tier_low = classify_hazard_intensity_tier(velocity_ms=0.5, depth_m=0.4)  # v*h = 0.2 < 0.5
+        self.assertEqual(tier_low, HazardIntensityTier.LOW_HAZARD)
+
+        # 5. Evacuation urgency tiers
+        self.assertEqual(classify_evacuation_urgency(10.0), EvacuationUrgencyTier.IMMEDIATE_LIFE_SAFETY)
+        self.assertEqual(classify_evacuation_urgency(45.0), EvacuationUrgencyTier.HIGH_PRIORITY_EVACUATION)
+        self.assertEqual(classify_evacuation_urgency(120.0), EvacuationUrgencyTier.PRECAUTIONARY_STAGED)
+        self.assertEqual(classify_evacuation_urgency(240.0), EvacuationUrgencyTier.MONITORED_SAFE_HAVEN)
+
+        # 6. Infrastructure vulnerability damage ratio
+        v_res = calculate_infrastructure_vulnerability_score(InfrastructureExposureType.RESIDENTIAL_SETTLEMENT, depth_m=2.5, velocity_ms=3.0)
+        v_bridge = calculate_infrastructure_vulnerability_score(InfrastructureExposureType.BRIDGE_CROSSING, depth_m=2.5, velocity_ms=3.0)
+        self.assertGreaterEqual(v_res, 0.0)
+        self.assertLessEqual(v_res, 1.0)
+        self.assertGreaterEqual(v_bridge, 0.0)
+        self.assertLessEqual(v_bridge, 1.0)
+
 if __name__ == "__main__":
     unittest.main()

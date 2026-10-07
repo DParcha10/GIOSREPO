@@ -379,7 +379,27 @@ from app.models.schemas import (
     DamBreakHydrodynamicResponse,
     calculate_dam_break_hydrodynamic_simulation,
     build_dam_break_tile_url,
-    build_dam_break_tile_url_template
+    build_dam_break_tile_url_template,
+    SoilTextureType,
+    SeepageHazardTier,
+    PiezometerType,
+    PiezometerAnomalyStatus,
+    VanGenuchtenParameters,
+    EmbankmentGeometry,
+    PiezometerReading,
+    PhreaticStation,
+    PhreaticSeepageRequest,
+    PhreaticSeepageResponse,
+    SWRCPoint,
+    SWRCInversionRequest,
+    SWRCInversionResponse,
+    calculate_van_genuchten_swrc,
+    calculate_swrc_inversion_curve,
+    classify_seepage_hazard_tier,
+    classify_piezometer_anomaly,
+    calculate_phreatic_surface_seepage,
+    build_phreatic_seepage_tile_url,
+    build_phreatic_seepage_tile_url_template
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -6075,6 +6095,298 @@ def get_analysis_drone_odm_tile(
     task_id: Optional[str] = "ODM_TASK_20261001_001"
 ):
     return get_drone_odm_tile_alias(z=z, x=x, y=y, task_id=task_id)
+
+
+# ============================================================================
+# T-127: 2D SHALLOW WATER DAM-BREAK HYDRODYNAMICS & EVACUATION CORRIDORS
+# ============================================================================
+
+DAM_BREAK_SIMULATION_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_DAM_BREAK_STORE_SIZE: int = 100
+
+
+def _store_dam_break_simulation(sim_res: Dict[str, Any]) -> None:
+    """Stores simulation in bounded in-memory cache with proactive garbage collection."""
+    global DAM_BREAK_SIMULATION_STORE
+    sim_id = sim_res.get("simulation_id")
+    if not sim_id:
+        return
+    if len(DAM_BREAK_SIMULATION_STORE) >= MAX_DAM_BREAK_STORE_SIZE:
+        oldest_key = next(iter(DAM_BREAK_SIMULATION_STORE))
+        DAM_BREAK_SIMULATION_STORE.pop(oldest_key, None)
+    DAM_BREAK_SIMULATION_STORE[sim_id] = sim_res
+    gc.collect()
+
+
+@router.post("/geotechnical/dam-break-hydrodynamics", response_model=DamBreakHydrodynamicResponse)
+@router.post("/geotechnical/dam_break_hydrodynamics", response_model=DamBreakHydrodynamicResponse, include_in_schema=False)
+@router.post("/dam-break-hydrodynamics", response_model=DamBreakHydrodynamicResponse, include_in_schema=False)
+@geotechnical_router.post("/dam-break-hydrodynamics", response_model=DamBreakHydrodynamicResponse, include_in_schema=False)
+@geotechnical_router.post("/dam_break_hydrodynamics", response_model=DamBreakHydrodynamicResponse, include_in_schema=False)
+def simulate_dam_break_hydrodynamics(req: DamBreakHydrodynamicRequest):
+    """Executes 2D shallow water dam-break hydrodynamic simulation, flood wave attenuation, and evacuation planning."""
+    sim_res = calculate_dam_break_hydrodynamic_simulation(req)
+    _store_dam_break_simulation(sim_res)
+    return DamBreakHydrodynamicResponse(**sim_res)
+
+
+@router.get("/geotechnical/dam-break/{sim_id}/evacuation-corridors", response_model=List[EvacuationCorridor])
+@router.get("/geotechnical/dam_break/{sim_id}/evacuation-corridors", response_model=List[EvacuationCorridor], include_in_schema=False)
+@router.get("/dam-break/{sim_id}/evacuation-corridors", response_model=List[EvacuationCorridor], include_in_schema=False)
+@geotechnical_router.get("/dam-break/{sim_id}/evacuation-corridors", response_model=List[EvacuationCorridor], include_in_schema=False)
+@geotechnical_router.get("/dam_break/{sim_id}/evacuation-corridors", response_model=List[EvacuationCorridor], include_in_schema=False)
+def get_dam_break_evacuation_corridors(sim_id: str):
+    """Retrieves high-ground emergency evacuation corridors and assembly safe zones for simulation."""
+    sim_res = DAM_BREAK_SIMULATION_STORE.get(sim_id)
+    if not sim_res:
+        sim_res = calculate_dam_break_hydrodynamic_simulation({"simulation_id": sim_id})
+        _store_dam_break_simulation(sim_res)
+    corridors = sim_res.get("evacuation_corridors", [])
+    return [c if isinstance(c, EvacuationCorridor) else EvacuationCorridor(**c) for c in corridors]
+
+
+@router.get("/geotechnical/dam-break/{sim_id}", response_model=DamBreakHydrodynamicResponse)
+@router.get("/geotechnical/dam_break/{sim_id}", response_model=DamBreakHydrodynamicResponse, include_in_schema=False)
+@geotechnical_router.get("/dam-break/{sim_id}", response_model=DamBreakHydrodynamicResponse, include_in_schema=False)
+def get_dam_break_simulation_detail(sim_id: str):
+    """Retrieves full simulation telemetry and impact evaluation for given simulation run."""
+    sim_res = DAM_BREAK_SIMULATION_STORE.get(sim_id)
+    if not sim_res:
+        sim_res = calculate_dam_break_hydrodynamic_simulation({"simulation_id": sim_id})
+        _store_dam_break_simulation(sim_res)
+    return DamBreakHydrodynamicResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@tiles_router.get("/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png")
+def get_dam_break_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,30.0"
+):
+    """Dynamic XYZ tile streaming for geotechnical dam-break hydrodynamic hazard product."""
+    png_bytes = tile_service.render_dam_break_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="hazard_product",
+        colormap=colormap or "turbo",
+        rescale=rescale or "0.0,30.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Hydrodynamic-2D-v2.5"}
+    )
+
+
+@tiles_router.get("/geotechnical/dam-break/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_dam_break_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for geotechnical dam-break hydrodynamics with selected metric."""
+    png_bytes = tile_service.render_dam_break_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Hydrodynamic-2D-{metric}"}
+    )
+
+
+@router.get("/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png")
+def get_analysis_dam_break_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,30.0"
+):
+    return get_dam_break_tile_default(sim_id=sim_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@router.get("/tiles/geotechnical/dam-break/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_analysis_dam_break_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_dam_break_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# T-133: EMBANKMENT PHREATIC SURFACE SEEPAGE INVERSION & SWRC SOLVER
+# ============================================================================
+
+PHREATIC_SEEPAGE_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_PHREATIC_SEEPAGE_STORE_SIZE: int = 100
+
+
+def _store_phreatic_seepage_simulation(sim_res: Dict[str, Any]) -> None:
+    """Stores phreatic seepage simulation in bounded in-memory cache with proactive garbage collection."""
+    global PHREATIC_SEEPAGE_STORE
+    sim_id = sim_res.get("simulation_id")
+    if not sim_id:
+        return
+    if len(PHREATIC_SEEPAGE_STORE) >= MAX_PHREATIC_SEEPAGE_STORE_SIZE:
+        oldest_key = next(iter(PHREATIC_SEEPAGE_STORE))
+        PHREATIC_SEEPAGE_STORE.pop(oldest_key, None)
+    PHREATIC_SEEPAGE_STORE[sim_id] = sim_res
+    gc.collect()
+
+
+@router.post("/geotechnical/phreatic-seepage", response_model=PhreaticSeepageResponse)
+@router.post("/geotechnical/phreatic_seepage", response_model=PhreaticSeepageResponse, include_in_schema=False)
+@router.post("/phreatic-seepage", response_model=PhreaticSeepageResponse, include_in_schema=False)
+@geotechnical_router.post("/phreatic-seepage", response_model=PhreaticSeepageResponse, include_in_schema=False)
+@geotechnical_router.post("/phreatic_seepage", response_model=PhreaticSeepageResponse, include_in_schema=False)
+def simulate_phreatic_seepage(req: PhreaticSeepageRequest):
+    """Executes 2D Dupuit-Forchheimer unconfined phreatic line seepage simulation, exit gradient calculation, and piezometer fusion."""
+    sim_res = calculate_phreatic_surface_seepage(req)
+    _store_phreatic_seepage_simulation(sim_res)
+    return PhreaticSeepageResponse(**sim_res)
+
+
+@router.get("/geotechnical/phreatic-seepage/{sim_id}", response_model=PhreaticSeepageResponse)
+@router.get("/geotechnical/phreatic_seepage/{sim_id}", response_model=PhreaticSeepageResponse, include_in_schema=False)
+@router.get("/phreatic-seepage/{sim_id}", response_model=PhreaticSeepageResponse, include_in_schema=False)
+@geotechnical_router.get("/phreatic-seepage/{sim_id}", response_model=PhreaticSeepageResponse, include_in_schema=False)
+@geotechnical_router.get("/phreatic_seepage/{sim_id}", response_model=PhreaticSeepageResponse, include_in_schema=False)
+def get_phreatic_seepage_simulation_detail(sim_id: str):
+    """Retrieves full seepage simulation telemetry, phreatic cross-section stations, and piezometer residuals for given run."""
+    sim_res = PHREATIC_SEEPAGE_STORE.get(sim_id)
+    if not sim_res:
+        sim_res = calculate_phreatic_surface_seepage({"simulation_id": sim_id})
+        _store_phreatic_seepage_simulation(sim_res)
+    return PhreaticSeepageResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@router.post("/geotechnical/swrc-inversion", response_model=SWRCInversionResponse)
+@router.post("/geotechnical/swrc_inversion", response_model=SWRCInversionResponse, include_in_schema=False)
+@router.post("/swrc-inversion", response_model=SWRCInversionResponse, include_in_schema=False)
+@geotechnical_router.post("/swrc-inversion", response_model=SWRCInversionResponse, include_in_schema=False)
+@geotechnical_router.post("/swrc_inversion", response_model=SWRCInversionResponse, include_in_schema=False)
+def calculate_swrc_inversion(req: SWRCInversionRequest):
+    """Computes Van Genuchten (1980) Soil Water Retention Curve (SWRC) and Mualem unsaturated hydraulic conductivities."""
+    inversion_res = calculate_swrc_inversion_curve(req)
+    return SWRCInversionResponse(**inversion_res)
+
+
+@router.get("/geotechnical/piezometers/{dam_id}", response_model=List[PiezometerReading])
+@router.get("/geotechnical/piezometers/{dam_id}", response_model=List[PiezometerReading], include_in_schema=False)
+@router.get("/piezometers/{dam_id}", response_model=List[PiezometerReading], include_in_schema=False)
+@geotechnical_router.get("/piezometers/{dam_id}", response_model=List[PiezometerReading], include_in_schema=False)
+def get_dam_piezometer_network(dam_id: str):
+    """Retrieves in-situ piezometric sensor array, measured vs. simulated hydraulic heads, and anomaly classifications."""
+    for sim in PHREATIC_SEEPAGE_STORE.values():
+        if sim.get("dam_id") == dam_id and sim.get("piezometer_fusion"):
+            piezos = sim.get("piezometer_fusion", [])
+            return [p if isinstance(p, PiezometerReading) else PiezometerReading(**p) for p in piezos]
+
+    sim_res = calculate_phreatic_surface_seepage({"dam_id": dam_id})
+    _store_phreatic_seepage_simulation(sim_res)
+    piezos = sim_res.get("piezometer_fusion", [])
+    return [p if isinstance(p, PiezometerReading) else PiezometerReading(**p) for p in piezos]
+
+
+@tiles_router.get("/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png")
+def get_phreatic_seepage_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "blues",
+    rescale: Optional[str] = "0.0,1.0"
+):
+    """Dynamic XYZ tile streaming for geotechnical phreatic seepage effective saturation raster."""
+    png_bytes = tile_service.render_phreatic_seepage_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="saturation",
+        colormap=colormap or "blues",
+        rescale=rescale or "0.0,1.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Phreatic-Seepage-2D-v2.5"}
+    )
+
+
+@tiles_router.get("/geotechnical/phreatic-seepage/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_phreatic_seepage_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for geotechnical phreatic seepage with selected hydrogeological metric."""
+    png_bytes = tile_service.render_phreatic_seepage_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Phreatic-Seepage-{metric}"}
+    )
+
+
+@router.get("/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png")
+def get_analysis_phreatic_seepage_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "blues",
+    rescale: Optional[str] = "0.0,1.0"
+):
+    return get_phreatic_seepage_tile_default(sim_id=sim_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@router.get("/tiles/geotechnical/phreatic-seepage/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_analysis_phreatic_seepage_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_phreatic_seepage_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
 
 
 

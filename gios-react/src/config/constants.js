@@ -917,7 +917,25 @@ export const API_ENDPOINTS = {
   GEOTECHNICAL_PIEZOMETERS: (damId) => `/api/v1/analysis/geotechnical/piezometers/${damId}`,
   GEOTECHNICAL_PIEZOMETERS_SHORT: (damId) => `/geotechnical/piezometers/${damId}`,
   TILES_PHREATIC_SEEPAGE: (simId, z, x, y) => `/api/v1/tiles/geotechnical/phreatic-seepage/${simId}/${z}/${x}/${y}.png`,
-  TILES_PHREATIC_SEEPAGE_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/phreatic-seepage/${simId}/${metric}/${z}/${x}/${y}.png`
+  TILES_PHREATIC_SEEPAGE_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/phreatic-seepage/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_SLOPE_STABILITY_BISHOP: '/api/v1/analysis/geotechnical/slope-stability-bishop',
+  ANALYSIS_SLOPE_STABILITY_BISHOP_SHORT: '/geotechnical/slope-stability-bishop',
+  ANALYSIS_SLIP_SURFACE_SEARCH: '/api/v1/analysis/geotechnical/slip-surface-search',
+  ANALYSIS_SLIP_SURFACE_SEARCH_SHORT: '/geotechnical/slip-surface-search',
+  GEOTECHNICAL_INSAR_CREEP: (damId) => `/api/v1/analysis/geotechnical/insar-creep/${damId}`,
+  GEOTECHNICAL_INSAR_CREEP_SHORT: (damId) => `/geotechnical/insar-creep/${damId}`,
+  TILES_GEOTECHNICAL_SLOPE_STABILITY: (simId, z, x, y) => `/api/v1/tiles/geotechnical/slope-stability/${simId}/${z}/${x}/${y}.png`,
+  TILES_SLOPE_STABILITY_BISHOP: (simId, z, x, y) => `/api/v1/tiles/geotechnical/slope-stability/${simId}/${z}/${x}/${y}.png`,
+  TILES_SLOPE_STABILITY_BISHOP_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/slope-stability/${simId}/${metric}/${z}/${x}/${y}.png`,
+  TILES_GEOTECHNICAL_SLOPE_STABILITY_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/slope-stability/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_RAINFALL_INFILTRATION: '/api/v1/analysis/geotechnical/rainfall-infiltration',
+  ANALYSIS_RAINFALL_INFILTRATION_SHORT: '/geotechnical/rainfall-infiltration',
+  ANALYSIS_THERMAL_APPARENT_INERTIA: '/api/v1/analysis/thermal/apparent-inertia',
+  ANALYSIS_THERMAL_APPARENT_INERTIA_SHORT: '/thermal/apparent-inertia',
+  TILES_RAINFALL_INFILTRATION: (simId, z, x, y) => `/api/v1/tiles/geotechnical/rainfall-infiltration/${simId}/${z}/${x}/${y}.png`,
+  TILES_RAINFALL_INFILTRATION_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/rainfall-infiltration/${simId}/${metric}/${z}/${x}/${y}.png`,
+  TILES_THERMAL_APPARENT_INERTIA: (simId, z, x, y) => `/api/v1/tiles/thermal/apparent-inertia/${simId}/${z}/${x}/${y}.png`,
+  TILES_THERMAL_APPARENT_INERTIA_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/thermal/apparent-inertia/${simId}/${metric}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1077,6 +1095,15 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.simId || params.sim_id || 'SIM_SEEPAGE_001', params.z, params.x, params.y);
       case 'TILES_PHREATIC_SEEPAGE_METRIC':
         return endpoint(params.simId || params.sim_id || 'SIM_SEEPAGE_001', params.metric || 'saturation', params.z, params.x, params.y);
+      case 'GEOTECHNICAL_INSAR_CREEP':
+      case 'GEOTECHNICAL_INSAR_CREEP_SHORT':
+        return endpoint(params.damId || params.dam_id || 'TAILINGS_DAM_A');
+      case 'TILES_GEOTECHNICAL_SLOPE_STABILITY':
+      case 'TILES_SLOPE_STABILITY_BISHOP':
+        return endpoint(params.simId || params.sim_id || 'SIM_BISHOP_001', params.z, params.x, params.y);
+      case 'TILES_GEOTECHNICAL_SLOPE_STABILITY_METRIC':
+      case 'TILES_SLOPE_STABILITY_BISHOP_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_BISHOP_001', params.metric || 'factor_of_safety', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -8644,6 +8671,1136 @@ export const buildDamBreakTileUrl = (simId, metric = 'hazard_product', z = 12, x
 export const buildDamBreakTileUrlTemplate = (simId, metric = 'hazard_product') => {
   return `/api/v1/tiles/geotechnical/dam-break/${simId}/${metric}/{z}/{x}/{y}.png`;
 };
+
+// ============================================================================
+// Task T-132: Geotechnical Embankment Phreatic Surface Seepage Inversion,
+// Van Genuchten Soil Moisture Retention & In-Situ Piezometer Fusion Contracts
+// ============================================================================
+
+export const SOIL_TEXTURE_TYPES = {
+  SILT_TAILINGS: 'silt_tailings',
+  CLAY_CORE: 'clay_core',
+  SANDY_SHELL: 'sandy_shell',
+  GRAVEL_DRAIN: 'gravel_drain',
+  WEATHERED_BEDROCK: 'weathered_bedrock'
+};
+
+export const SEEPAGE_HAZARD_TIERS = {
+  SAFE_STABLE: 'safe_stable',
+  MONITORED_SEEPAGE: 'monitored_seepage',
+  ELEVATED_RISK: 'elevated_risk',
+  CRITICAL_PIPING_HAZARD: 'critical_piping_hazard'
+};
+
+export const PIEZOMETER_TYPES = {
+  VIBRATING_WIRE: 'vibrating_wire',
+  STANDPIPE_CASAGRANDE: 'standpipe_casagrande',
+  PNEUMATIC: 'pneumatic',
+  FIBER_OPTIC_FBG: 'fiber_optic_fbg'
+};
+
+export const PIEZOMETER_ANOMALY_STATUSES = {
+  NORMAL_CONVERGENCE: 'normal_convergence',
+  ELEVATED_PRESSURE: 'elevated_pressure',
+  EXCESS_PORE_PRESSURE: 'excess_pore_pressure',
+  SENSOR_FAULT_DRIFT: 'sensor_fault_drift'
+};
+
+export const SOIL_TEXTURE_CONFIGS = {
+  silt_tailings: {
+    id: 'silt_tailings',
+    name: 'Hydraulically Deposited Tailings Silt',
+    theta_s: 0.42,
+    theta_r: 0.06,
+    alpha_1_kpa: 0.015,
+    n_param: 1.80,
+    ksat_m_s: 1.2e-6,
+    dry_density_kg_m3: 1550.0,
+    specific_gravity_gs: 2.75,
+    porosity_n: 0.436,
+    cohesion_c_kpa: 5.0,
+    friction_angle_phi_deg: 28.0,
+    unit_weight_sat_kn_m3: 19.5,
+    unit_weight_dry_kn_m3: 15.2,
+    description: 'Mine tailings beach material characterized by intermediate compressibility and capillary retention.'
+  },
+  clay_slimes: {
+    id: 'clay_slimes',
+    name: 'Ultra-Fine Tailings Clay Slimes',
+    theta_s: 0.52,
+    theta_r: 0.12,
+    alpha_1_kpa: 0.005,
+    n_param: 1.22,
+    ksat_m_s: 8.0e-10,
+    dry_density_kg_m3: 1420.0,
+    specific_gravity_gs: 2.72,
+    porosity_n: 0.478,
+    cohesion_c_kpa: 8.0,
+    friction_angle_phi_deg: 18.0,
+    unit_weight_sat_kn_m3: 17.0,
+    unit_weight_dry_kn_m3: 13.9,
+    description: 'Ultra-fine clay decant pond slimes exhibiting high plasticity and low permeability.'
+  },
+  dense_clay_core: {
+    id: 'dense_clay_core',
+    name: 'Compacted Dense Clay Core',
+    theta_s: 0.48,
+    theta_r: 0.10,
+    alpha_1_kpa: 0.008,
+    n_param: 1.30,
+    ksat_m_s: 5.0e-9,
+    dry_density_kg_m3: 1750.0,
+    specific_gravity_gs: 2.70,
+    porosity_n: 0.352,
+    cohesion_c_kpa: 25.0,
+    friction_angle_phi_deg: 24.0,
+    unit_weight_sat_kn_m3: 20.5,
+    unit_weight_dry_kn_m3: 17.2,
+    description: 'Engineered clay core barrier providing low saturated hydraulic conductivity and high air-entry suction.'
+  },
+  clay_core: {
+    id: 'clay_core',
+    name: 'Compacted Low-Permeability Clay Core',
+    theta_s: 0.48,
+    theta_r: 0.10,
+    alpha_1_kpa: 0.008,
+    n_param: 1.30,
+    ksat_m_s: 5.0e-9,
+    dry_density_kg_m3: 1750.0,
+    specific_gravity_gs: 2.70,
+    porosity_n: 0.352,
+    cohesion_c_kpa: 25.0,
+    friction_angle_phi_deg: 24.0,
+    unit_weight_sat_kn_m3: 20.5,
+    unit_weight_dry_kn_m3: 17.2,
+    description: 'Engineered clay core barrier providing low saturated hydraulic conductivity and high air-entry suction.'
+  },
+  sandy_silt: {
+    id: 'sandy_silt',
+    name: 'Transition Zone Sandy Silt',
+    theta_s: 0.40,
+    theta_r: 0.05,
+    alpha_1_kpa: 0.025,
+    n_param: 2.10,
+    ksat_m_s: 1.5e-5,
+    dry_density_kg_m3: 1680.0,
+    specific_gravity_gs: 2.68,
+    porosity_n: 0.373,
+    cohesion_c_kpa: 8.0,
+    friction_angle_phi_deg: 30.0,
+    unit_weight_sat_kn_m3: 20.0,
+    unit_weight_dry_kn_m3: 16.5,
+    description: 'Upstream to beach transition material with moderate drainage characteristics.'
+  },
+  sandy_shell: {
+    id: 'sandy_shell',
+    name: 'Compacted Granular Sandy Shell',
+    theta_s: 0.38,
+    theta_r: 0.04,
+    alpha_1_kpa: 0.035,
+    n_param: 2.50,
+    ksat_m_s: 4.5e-5,
+    dry_density_kg_m3: 1850.0,
+    specific_gravity_gs: 2.65,
+    porosity_n: 0.302,
+    cohesion_c_kpa: 2.0,
+    friction_angle_phi_deg: 34.0,
+    unit_weight_sat_kn_m3: 21.0,
+    unit_weight_dry_kn_m3: 18.1,
+    description: 'Downstream structural rockfill/sand supporting embankment shear resistance.'
+  },
+  coarse_tailings_sand: {
+    id: 'coarse_tailings_sand',
+    name: 'Cycloned Coarse Tailings Sand',
+    theta_s: 0.36,
+    theta_r: 0.03,
+    alpha_1_kpa: 0.045,
+    n_param: 2.80,
+    ksat_m_s: 1.2e-4,
+    dry_density_kg_m3: 1780.0,
+    specific_gravity_gs: 2.66,
+    porosity_n: 0.331,
+    cohesion_c_kpa: 1.0,
+    friction_angle_phi_deg: 32.0,
+    unit_weight_sat_kn_m3: 20.5,
+    unit_weight_dry_kn_m3: 17.5,
+    description: 'Hydraulically separated coarse tailings sand used for downstream raise construction.'
+  },
+  rockfill_shell: {
+    id: 'rockfill_shell',
+    name: 'Coarse Granular Rockfill Embankment Shell',
+    theta_s: 0.30,
+    theta_r: 0.02,
+    alpha_1_kpa: 0.090,
+    n_param: 3.40,
+    ksat_m_s: 2.5e-3,
+    dry_density_kg_m3: 2050.0,
+    specific_gravity_gs: 2.65,
+    porosity_n: 0.226,
+    cohesion_c_kpa: 0.0,
+    friction_angle_phi_deg: 42.0,
+    unit_weight_sat_kn_m3: 22.0,
+    unit_weight_dry_kn_m3: 20.1,
+    description: 'Pervious rockfill shell ensuring free drainage and slope stability.'
+  },
+  gravel_drain: {
+    id: 'gravel_drain',
+    name: 'Internal Chimney & Toe Filter Gravel',
+    theta_s: 0.32,
+    theta_r: 0.02,
+    alpha_1_kpa: 0.080,
+    n_param: 3.20,
+    ksat_m_s: 1.0e-3,
+    dry_density_kg_m3: 1950.0,
+    specific_gravity_gs: 2.68,
+    porosity_n: 0.272,
+    cohesion_c_kpa: 0.0,
+    friction_angle_phi_deg: 38.0,
+    unit_weight_sat_kn_m3: 21.5,
+    unit_weight_dry_kn_m3: 19.1,
+    description: 'Free-draining aggregate filter layer designed to suppress phreatic elevation and prevent migration of fines.'
+  },
+  weathered_bedrock: {
+    id: 'weathered_bedrock',
+    name: 'Fractured Weathered Bedrock Foundation',
+    theta_s: 0.25,
+    theta_r: 0.03,
+    alpha_1_kpa: 0.020,
+    n_param: 2.10,
+    ksat_m_s: 8.0e-7,
+    dry_density_kg_m3: 2200.0,
+    specific_gravity_gs: 2.72,
+    porosity_n: 0.191,
+    cohesion_c_kpa: 50.0,
+    friction_angle_phi_deg: 36.0,
+    unit_weight_sat_kn_m3: 24.0,
+    unit_weight_dry_kn_m3: 21.6,
+    description: 'Geological stratum underlying embankment with localized joint conductivity.'
+  }
+};
+
+export const SEEPAGE_HAZARD_TIER_CONFIGS = {
+  safe_stable: {
+    id: 'safe_stable',
+    name: 'Safe / Stable Seepage Regime',
+    min_fs: 2.5,
+    max_fs: null,
+    color: '#10B981',
+    badge_class: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    piping_risk: 'Negligible risk of piping; phreatic line fully suppressed beneath internal filter.',
+    mitigation_action: 'Routine surveillance and weekly piezometer telemetry logging.'
+  },
+  monitored_seepage: {
+    id: 'monitored_seepage',
+    name: 'Monitored Seepage (Moderate Exit Gradient)',
+    min_fs: 1.8,
+    max_fs: 2.5,
+    color: '#F59E0B',
+    badge_class: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    piping_risk: 'Low to moderate piping risk; localized wetting front detected on downstream shell.',
+    mitigation_action: 'Increase piezometer sampling cadence to 6-hour intervals; inspect toe drain outflow.'
+  },
+  elevated_risk: {
+    id: 'elevated_risk',
+    name: 'Elevated Seepage Risk (Daylighting Phreatic Line)',
+    min_fs: 1.2,
+    max_fs: 1.8,
+    color: '#EF4444',
+    badge_class: 'bg-red-500/20 text-red-300 border border-red-500/40',
+    piping_risk: 'High internal erosion risk; seepage daylighting on downstream slope face.',
+    mitigation_action: 'Place inverted filter berm at seepage breakout point; initiate stage-1 drawdown.'
+  },
+  critical_piping_hazard: {
+    id: 'critical_piping_hazard',
+    name: 'Critical Piping / Sand Boiling Hazard',
+    min_fs: 0.0,
+    max_fs: 1.2,
+    color: '#7F1D1D',
+    badge_class: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    piping_risk: 'Critical failure imminent; exit hydraulic gradient exceeds critical heave threshold.',
+    mitigation_action: 'Sound site emergency evacuation siren; activate maximum emergency spillway drawdown.'
+  }
+};
+
+export const PIEZOMETER_ANOMALY_CONFIGS = {
+  normal_convergence: {
+    id: 'normal_convergence',
+    name: 'Normal Convergence (Consistent with Model)',
+    threshold_residual_m: 0.5,
+    color: '#10B981',
+    badge_class: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    action_protocol: 'Accept model calibration; pore water pressure matches steady-state flow net.'
+  },
+  elevated_pressure: {
+    id: 'elevated_pressure',
+    name: 'Elevated Pore Pressure (Moderate Residual)',
+    threshold_residual_m: 1.5,
+    color: '#F59E0B',
+    badge_class: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    action_protocol: 'Flag piezometer cluster; cross-reference with rainfall accumulation and pool rising rate.'
+  },
+  excess_pore_pressure: {
+    id: 'excess_pore_pressure',
+    name: 'Excess Pore Water Pressure (Critical Head)',
+    threshold_residual_m: 3.0,
+    color: '#DC2626',
+    badge_class: 'bg-red-600/30 text-red-200 border border-red-500 animate-pulse',
+    action_protocol: 'Trigger geotechnical alarm; verify slope stability factor of safety under elevated pore pressures.'
+  },
+  sensor_fault_drift: {
+    id: 'sensor_fault_drift',
+    name: 'Sensor Fault / Calibration Drift',
+    threshold_residual_m: null,
+    color: '#6B7280',
+    badge_class: 'bg-gray-500/20 text-gray-300 border border-gray-500/40',
+    action_protocol: 'Dispatch technician for zero-frequency check or cable continuity audit.'
+  }
+};
+
+export const calculateVanGenuchtenSwrc = (suctionKpa = 0.0, vgParams = {}) => {
+  const psi = Math.max(0.0, Number(suctionKpa));
+  const thetaS = Number(vgParams.theta_s ?? vgParams.thetaS ?? 0.42);
+  const thetaR = Number(vgParams.theta_r ?? vgParams.thetaR ?? 0.06);
+  const alpha = Math.max(0.0001, Number(vgParams.alpha_1_kpa ?? vgParams.alpha1Kpa ?? 0.015));
+  const n = Math.max(1.01, Number(vgParams.n_param ?? vgParams.nParam ?? 1.80));
+  const m = 1.0 - (1.0 / n);
+  const ksat = Number(vgParams.ksat_m_s ?? vgParams.ksatMS ?? 1.2e-6);
+
+  let se = 1.0;
+  let theta = thetaS;
+  let kr = 1.0;
+
+  if (psi > 0.0) {
+    const denom = 1.0 + Math.pow(alpha * psi, n);
+    se = Math.pow(denom, -m);
+    theta = thetaR + (thetaS - thetaR) * se;
+
+    const seClamped = Math.min(1.0, Math.max(1e-6, se));
+    const term = 1.0 - Math.pow(seClamped, 1.0 / m);
+    if (term < 0.0) {
+      kr = 1.0;
+    } else {
+      kr = Math.pow(seClamped, 0.5) * Math.pow(1.0 - Math.pow(term, m), 2);
+    }
+  }
+
+  const kUnsat = ksat * Math.max(1e-8, kr);
+
+  return {
+    matric_suction_kpa: Number(psi.toFixed(3)),
+    effective_saturation: Number(se.toFixed(4)),
+    volumetric_water_content: Number(theta.toFixed(4)),
+    relative_conductivity: Number(kr.toFixed(6)),
+    unsaturated_conductivity_m_s: Number(kUnsat.toExponential(4))
+  };
+};
+
+export const calculateSwrcInversionCurve = (options = {}) => {
+  const texture = String(options.soil_texture || options.soilTexture || 'silt_tailings').toLowerCase().replace(/-/g, '_');
+  const meta = SOIL_TEXTURE_CONFIGS[texture] || SOIL_TEXTURE_CONFIGS.silt_tailings;
+
+  const vgInput = options.van_genuchten || options.vanGenuchten || {};
+  const vgParams = {
+    theta_s: Number(vgInput.theta_s ?? vgInput.thetaS ?? meta.theta_s),
+    theta_r: Number(vgInput.theta_r ?? vgInput.thetaR ?? meta.theta_r),
+    alpha_1_kpa: Number(vgInput.alpha_1_kpa ?? vgInput.alpha1Kpa ?? meta.alpha_1_kpa),
+    n_param: Number(vgInput.n_param ?? vgInput.nParam ?? meta.n_param),
+    ksat_m_s: Number(vgInput.ksat_m_s ?? vgInput.ksatMS ?? meta.ksat_m_s),
+    soil_texture: texture
+  };
+
+  const suctions = options.matric_suction_range_kpa || options.matricSuctionRangeKpa || [
+    0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 200.0, 500.0, 1000.0
+  ];
+
+  const curvePoints = suctions.map((s) => calculateVanGenuchtenSwrc(s, vgParams));
+  const airEntry = Number((1.0 / Math.max(0.001, vgParams.alpha_1_kpa)).toFixed(2));
+
+  return {
+    soil_texture: texture,
+    van_genuchten: vgParams,
+    air_entry_suction_kpa: airEntry,
+    residual_water_content: vgParams.theta_r,
+    saturated_water_content: vgParams.theta_s,
+    curve_points: curvePoints,
+    calculated_at: new Date().toISOString()
+  };
+};
+
+export const classifySeepageHazardTier = (fsPiping = 3.0, exitGradient = 0.15) => {
+  const fs = Number(fsPiping);
+  const grad = Number(exitGradient);
+  if (fs < 1.2 || grad >= 0.85) {
+    return SEEPAGE_HAZARD_TIER_CONFIGS.critical_piping_hazard;
+  }
+  if (fs < 1.8 || grad >= 0.55) {
+    return SEEPAGE_HAZARD_TIER_CONFIGS.elevated_risk;
+  }
+  if (fs < 2.5 || grad >= 0.35) {
+    return SEEPAGE_HAZARD_TIER_CONFIGS.monitored_seepage;
+  }
+  return SEEPAGE_HAZARD_TIER_CONFIGS.safe_stable;
+};
+
+export const classifyPiezometerAnomaly = (residualHeadM = 0.0) => {
+  const res = Number(residualHeadM);
+  if (res > 1.5) {
+    return PIEZOMETER_ANOMALY_CONFIGS.excess_pore_pressure;
+  }
+  if (res > 0.5) {
+    return PIEZOMETER_ANOMALY_CONFIGS.elevated_pressure;
+  }
+  if (res < -3.0) {
+    return PIEZOMETER_ANOMALY_CONFIGS.sensor_fault_drift;
+  }
+  return PIEZOMETER_ANOMALY_CONFIGS.normal_convergence;
+};
+
+export const calculatePhreaticSurfaceSeepage = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `SIM_SEEPAGE_${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`;
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const damName = options.dam_name || options.damName || 'North Tailings Impoundment';
+
+  const emb = options.embankment || {};
+  const crestElev = Number(emb.crest_elevation_m ?? emb.crestElevationM ?? 820.0);
+  const baseElev = Number(emb.base_elevation_m ?? emb.baseElevationM ?? 750.0);
+  const crestWidth = Number(emb.crest_width_m ?? emb.crestWidthM ?? 12.0);
+  const upSlope = Number(emb.upstream_slope_h_v ?? emb.upstreamSlopeHV ?? 2.5);
+  const downSlope = Number(emb.downstream_slope_h_v ?? emb.downstreamSlopeHV ?? 2.0);
+  const damHeight = Math.max(5.0, crestElev - baseElev);
+
+  const upLength = upSlope * damHeight;
+  const downLength = downSlope * damHeight;
+  const totalBaseLength = upLength + crestWidth + downLength;
+
+  const poolElev = Number(options.reservoir_pool_elevation_m ?? options.reservoirPoolElevationM ?? 812.0);
+  const tailElev = Number(options.tailwater_elevation_m ?? options.tailwaterElevationM ?? 752.0);
+
+  const h1 = Math.max(1.0, poolElev - baseElev);
+  const h2 = Math.max(0.5, tailElev - baseElev);
+
+  const soilData = options.soil_params || options.soilParams || {};
+  const texture = String(soilData.soil_texture || soilData.soilTexture || 'silt_tailings').toLowerCase().replace(/-/g, '_');
+  const meta = SOIL_TEXTURE_CONFIGS[texture] || SOIL_TEXTURE_CONFIGS.silt_tailings;
+
+  const ksat = Number(soilData.ksat_m_s ?? soilData.ksatMS ?? meta.ksat_m_s);
+
+  const xEntry = (h1 / damHeight) * upLength;
+  const xExit = Math.max(xEntry + 10.0, totalBaseLength - 40.0);
+  const seepPath = Math.max(10.0, xExit - xEntry);
+
+  const qSeep = ksat * (Math.pow(h1, 2) - Math.pow(h2, 2)) / (2.0 * seepPath);
+
+  const numStations = Math.max(10, Number(options.transect_stations_count ?? options.transectStationsCount ?? 50));
+  const dx = totalBaseLength / (numStations - 1);
+  const phreaticStations = [];
+  let maxExitGrad = 0.0;
+
+  for (let i = 0; i < numStations; i++) {
+    const x = i * dx;
+    let y = 0.0;
+    let grad = 0.0;
+
+    if (x <= xEntry) {
+      y = h1;
+    } else if (x >= xExit) {
+      y = h2;
+    } else {
+      const frac = (x - xEntry) / seepPath;
+      const ySq = Math.max(Math.pow(h2, 2), Math.pow(h1, 2) - (Math.pow(h1, 2) - Math.pow(h2, 2)) * frac);
+      y = Math.sqrt(ySq);
+      grad = Math.abs((Math.pow(h1, 2) - Math.pow(h2, 2)) / (2.0 * seepPath * Math.max(0.5, y)));
+    }
+
+    if (grad > maxExitGrad) {
+      maxExitGrad = grad;
+    }
+
+    const phreaticZ = baseElev + y;
+    const poreP = Math.max(0.0, y * 9.81);
+
+    phreaticStations.push({
+      station_x_m: Number(x.toFixed(2)),
+      phreatic_elevation_m: Number(phreaticZ.toFixed(2)),
+      total_head_m: Number(phreaticZ.toFixed(2)),
+      pore_pressure_kpa: Number(poreP.toFixed(2)),
+      exit_gradient: Number(grad.toFixed(4)),
+      effective_saturation: 1.0,
+      matric_suction_kpa: 0.0
+    });
+  }
+
+  const gs = meta.specific_gravity_gs || 2.70;
+  const eVoid = (meta.porosity_n || 0.40) / Math.max(0.01, 1.0 - (meta.porosity_n || 0.40));
+  const iCrit = (gs - 1.0) / (1.0 + eVoid);
+  const fsPiping = Number((iCrit / Math.max(0.01, maxExitGrad)).toFixed(2));
+
+  const hazardTier = classifySeepageHazardTier(fsPiping, maxExitGrad);
+
+  const rawPiezos = options.piezometers || [
+    {
+      piezometer_id: 'PZ_CREST_01',
+      name: 'Crest Central Vibrating Wire',
+      piezometer_type: 'vibrating_wire',
+      station_x_m: upLength + (crestWidth * 0.5),
+      tip_elevation_m: baseElev + 15.0,
+      pore_water_pressure_kpa: Math.max(0.0, (h1 * 0.70 - 15.0) * 9.81)
+    },
+    {
+      piezometer_id: 'PZ_DOWNSTREAM_02',
+      name: 'Downstream Intermediate Shell Piezometer',
+      piezometer_type: 'vibrating_wire',
+      station_x_m: upLength + crestWidth + (downLength * 0.4),
+      tip_elevation_m: baseElev + 8.0,
+      pore_water_pressure_kpa: Math.max(0.0, (h1 * 0.45 - 8.0) * 9.81)
+    },
+    {
+      piezometer_id: 'PZ_TOE_DRAIN_03',
+      name: 'Toe Drainage Blanket Verification Well',
+      piezometer_type: 'standpipe_casagrande',
+      station_x_m: totalBaseLength - 25.0,
+      tip_elevation_m: baseElev + 2.0,
+      pore_water_pressure_kpa: Math.max(0.0, (h2 - 2.0) * 9.81)
+    }
+  ];
+
+  const piezoFusion = [];
+  for (const p of rawPiezos) {
+    const tipZ = Number(p.tip_elevation_m ?? p.tipElevationM ?? (baseElev + 10.0));
+    const xP = Number(p.station_x_m ?? p.stationXM ?? (totalBaseLength * 0.5));
+    const pU = Number(p.pore_water_pressure_kpa ?? p.poreWaterPressureKpa ?? 100.0);
+
+    const hMeas = Number((tipZ + (pU / 9.81)).toFixed(2));
+
+    let ySim = 0.0;
+    if (xP <= xEntry) {
+      ySim = h1;
+    } else if (xP >= xExit) {
+      ySim = h2;
+    } else {
+      const frac = (xP - xEntry) / seepPath;
+      ySim = Math.sqrt(Math.max(Math.pow(h2, 2), Math.pow(h1, 2) - (Math.pow(h1, 2) - Math.pow(h2, 2)) * frac));
+    }
+    const hSim = Number((baseElev + ySim).toFixed(2));
+    const residual = Number((hMeas - hSim).toFixed(2));
+
+    const status = classifyPiezometerAnomaly(residual);
+    piezoFusion.push({
+      ...p,
+      measured_head_m: hMeas,
+      simulated_head_m: hSim,
+      residual_head_m: residual,
+      anomaly_status: status.id
+    });
+  }
+
+  const damCoords = [
+    [0.0, baseElev],
+    [upLength, crestElev],
+    [upLength + crestWidth, crestElev],
+    [totalBaseLength, baseElev],
+    [0.0, baseElev]
+  ];
+  const phreaticLineCoords = phreaticStations.map((st) => [st.station_x_m, st.phreatic_elevation_m]);
+
+  const crossSectionGeojson = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: damCoords },
+        properties: { feature_type: 'embankment_shell', dam_id: damId }
+      },
+      {
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: phreaticLineCoords },
+        properties: { feature_type: 'phreatic_surface_line', status: hazardTier.id }
+      }
+    ]
+  };
+
+  const tileTemplate = `/api/v1/tiles/geotechnical/phreatic-seepage/${simId}/saturation/{z}/{x}/{y}.png`;
+
+  return {
+    simulation_id: simId,
+    dam_id: damId,
+    dam_name: damName,
+    status: 'completed',
+    reservoir_head_m: Number(h1.toFixed(2)),
+    tailwater_head_m: Number(h2.toFixed(2)),
+    seepage_discharge_m3s_m: Number(qSeep.toExponential(4)),
+    exit_gradient_max: Number(maxExitGrad.toFixed(4)),
+    factor_of_safety_piping: fsPiping,
+    hazard_tier: hazardTier.id,
+    tier_metadata: hazardTier,
+    phreatic_stations: phreaticStations,
+    piezometer_fusion: piezoFusion,
+    cross_section_geojson: crossSectionGeojson,
+    tile_url_template: tileTemplate,
+    simulated_at: new Date().toISOString()
+  };
+};
+
+export const buildPhreaticSeepageTileUrl = (simId, metric = 'saturation', z = 12, x = 2048, y = 1024) => {
+  return `/api/v1/tiles/geotechnical/phreatic-seepage/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildPhreaticSeepageTileUrlTemplate = (simId, metric = 'saturation') => {
+  return `/api/v1/tiles/geotechnical/phreatic-seepage/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+// ============================================================================
+// Task T-138: Geotechnical Embankment Circular & Non-Circular Slope Stability
+// Limit Equilibrium (Bishop's Simplified & Janbu Methods), Phreatic Pore
+// Pressure Coupling & InSAR Creep Vector Fusion Contracts
+// ============================================================================
+
+export const SLOPE_STABILITY_METHODS = {
+  BISHOPS_SIMPLIFIED: 'bishops_simplified',
+  JANBU_SIMPLIFIED: 'janbu_simplified',
+  SPENCER_RIGOROUS: 'spencer_rigorous',
+  INFINITE_SLOPE: 'infinite_slope'
+};
+
+export const SLOPE_HAZARD_TIERS = {
+  STABLE: 'stable',
+  CONDITIONALLY_STABLE: 'conditionally_stable',
+  ELEVATED_INSTABILITY_RISK: 'elevated_instability_risk',
+  CRITICAL_SHEAR_FAILURE: 'critical_shear_failure'
+};
+
+export const INSAR_CREEP_STATUSES = {
+  STABLE_NEGLIGIBLE: 'stable_negligible',
+  LINEAR_STEADY_CREEP: 'linear_steady_creep',
+  ELEVATED_CREEP_RATE: 'elevated_creep_rate',
+  TERTIARY_ACCELERATING_CREEP: 'tertiary_accelerating_creep'
+};
+
+export const SLOPE_HAZARD_TIER_CONFIGS = {
+  stable: {
+    id: 'stable',
+    name: 'Stable Slope Regime (FS >= 1.50)',
+    label: 'Stable Slope Regime (FS >= 1.50)',
+    min_fs: 1.50,
+    max_fs: null,
+    color: '#10B981',
+    badge_class: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    stability_narrative: 'Slope satisfies ICOLD / USBR regulatory factor of safety requirements for steady-state seepage.',
+    action_protocol: 'Maintain scheduled piezometric and satellite InSAR deformation surveillance cadence.'
+  },
+  conditionally_stable: {
+    id: 'conditionally_stable',
+    name: 'Conditionally Stable (1.30 <= FS < 1.50)',
+    label: 'Conditionally Stable (1.30 <= FS < 1.50)',
+    min_fs: 1.30,
+    max_fs: 1.50,
+    color: '#3B82F6',
+    badge_class: 'bg-blue-500/20 text-blue-300 border border-blue-500/40',
+    stability_narrative: 'Meets temporary criteria for seismic pseudo-static or rapid drawdown; reduced margin under pore pressure surge.',
+    action_protocol: 'Increase InSAR interferogram processing frequency to 6-day Sentinel-1 passes; monitor crest benchmarks.'
+  },
+  elevated_instability_risk: {
+    id: 'elevated_instability_risk',
+    name: 'Elevated Instability Risk (1.00 <= FS < 1.30)',
+    label: 'Elevated Instability Risk (1.00 <= FS < 1.30)',
+    min_fs: 1.00,
+    max_fs: 1.30,
+    color: '#F59E0B',
+    badge_class: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    stability_narrative: 'Slope in marginal equilibrium; internal shear stress concentrations approaching shear strength envelope.',
+    action_protocol: 'Implement reservoir stage-1 drawdown; construct stabilizing toe rockfill berm; verify piezometer pressures.'
+  },
+  critical_shear_failure: {
+    id: 'critical_shear_failure',
+    name: 'Critical Shear Failure / Active Slip (FS < 1.00)',
+    label: 'Critical Shear Failure / Active Slip (FS < 1.00)',
+    min_fs: 0.0,
+    max_fs: 1.00,
+    color: '#DC2626',
+    badge_class: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    stability_narrative: 'Active shear mobilization; driving moments exceed resisting shear capacity. Catastrophic breach imminent.',
+    action_protocol: 'Activate emergency civil defense evacuation protocol; initiate maximum spillway release and alert downstream receptors.'
+  }
+};
+
+export const INSAR_CREEP_CONFIGS = {
+  stable_negligible: {
+    id: 'stable_negligible',
+    name: 'Stable / Negligible Displacement',
+    label: 'Stable / Negligible Displacement',
+    max_velocity_mm_yr: 5.0,
+    color: '#10B981',
+    badge_class: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    action_protocol: 'Consistent with seasonal thermal and elastic foundation breathing.'
+  },
+  linear_steady_creep: {
+    id: 'linear_steady_creep',
+    name: 'Secondary Steady-State Creep',
+    label: 'Secondary Steady-State Creep',
+    max_velocity_mm_yr: 15.0,
+    color: '#F59E0B',
+    badge_class: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    action_protocol: 'Track creep velocity gradient; verify differential settlement across embankment crest.'
+  },
+  elevated_creep_rate: {
+    id: 'elevated_creep_rate',
+    name: 'Elevated Surface Displacement',
+    label: 'Elevated Surface Displacement',
+    max_velocity_mm_yr: 30.0,
+    color: '#EA580C',
+    badge_class: 'bg-orange-500/20 text-orange-300 border border-orange-500/40',
+    action_protocol: 'Cross-reference displacement vectors with phreatic line daylighting zone and toe piezometers.'
+  },
+  tertiary_accelerating_creep: {
+    id: 'tertiary_accelerating_creep',
+    name: 'Tertiary Accelerating Creep (Impending Failure)',
+    label: 'Tertiary Accelerating Creep (Impending Failure)',
+    max_velocity_mm_yr: null,
+    color: '#DC2626',
+    badge_class: 'bg-red-600/30 text-red-200 border border-red-500 animate-pulse',
+    action_protocol: 'Execute inverse-velocity failure forecast (Saito / Voight); sound automated emergency siren.'
+  }
+};
+
+export const classifySlopeHazardTier = (factorOfSafety = 1.50) => {
+  const fs = Number(factorOfSafety);
+  if (fs < 1.00) return SLOPE_HAZARD_TIER_CONFIGS.critical_shear_failure;
+  if (fs < 1.30) return SLOPE_HAZARD_TIER_CONFIGS.elevated_instability_risk;
+  if (fs < 1.50) return SLOPE_HAZARD_TIER_CONFIGS.conditionally_stable;
+  return SLOPE_HAZARD_TIER_CONFIGS.stable;
+};
+
+export const classifyInSARCreepStatus = (losVelocityMmYr = 0.0, shearStrainRateMicrostrainYr = 0.0) => {
+  const vAbs = Math.abs(Number(losVelocityMmYr));
+  const strain = Math.abs(Number(shearStrainRateMicrostrainYr));
+  if (vAbs >= 30.0 || strain >= 500.0) return INSAR_CREEP_CONFIGS.tertiary_accelerating_creep;
+  if (vAbs >= 15.0 || strain >= 250.0) return INSAR_CREEP_CONFIGS.elevated_creep_rate;
+  if (vAbs >= 5.0) return INSAR_CREEP_CONFIGS.linear_steady_creep;
+  return INSAR_CREEP_CONFIGS.stable_negligible;
+};
+
+const getEmbankmentSurfaceElev = (x, baseElev, upLength, crestWidth, downLength, crestElev) => {
+  const totalLength = upLength + crestWidth + downLength;
+  if (x <= 0.0) return baseElev;
+  if (x <= upLength) return baseElev + (x / Math.max(0.1, upLength)) * (crestElev - baseElev);
+  if (x <= upLength + crestWidth) return crestElev;
+  if (x <= totalLength) return crestElev - ((x - (upLength + crestWidth)) / Math.max(0.1, downLength)) * (crestElev - baseElev);
+  return baseElev;
+};
+
+const interpolatePhreaticElev = (x, phreaticStations, baseElev, h1, h2, upLength, crestWidth, downLength) => {
+  if (phreaticStations && phreaticStations.length > 0) {
+    const sortedSt = [...phreaticStations].sort((a, b) => Number(a.station_x_m || a.stationXM || 0) - Number(b.station_x_m || b.stationXM || 0));
+    const firstX = Number(sortedSt[0].station_x_m || sortedSt[0].stationXM || 0);
+    const lastX = Number(sortedSt[sortedSt.length - 1].station_x_m || sortedSt[sortedSt.length - 1].stationXM || 0);
+    if (x <= firstX) return Number(sortedSt[0].phreatic_elevation_m || sortedSt[0].phreaticElevationM || (baseElev + h1));
+    if (x >= lastX) return Number(sortedSt[sortedSt.length - 1].phreatic_elevation_m || sortedSt[sortedSt.length - 1].phreaticElevationM || (baseElev + h2));
+
+    for (let i = 0; i < sortedSt.length - 1; i++) {
+      const x0 = Number(sortedSt[i].station_x_m || sortedSt[i].stationXM || 0);
+      const x1 = Number(sortedSt[i + 1].station_x_m || sortedSt[i + 1].stationXM || 0);
+      if (x0 <= x && x <= x1) {
+        const z0 = Number(sortedSt[i].phreatic_elevation_m || sortedSt[i].phreaticElevationM || (baseElev + h1));
+        const z1 = Number(sortedSt[i + 1].phreatic_elevation_m || sortedSt[i + 1].phreaticElevationM || (baseElev + h2));
+        const span = Math.max(0.001, x1 - x0);
+        return z0 + ((x - x0) / span) * (z1 - z0);
+      }
+    }
+  }
+
+  // Dupuit parabolic analytical fallback
+  const totalLength = upLength + crestWidth + downLength;
+  const xEntry = (h1 / Math.max(1.0, h1 + 5.0)) * upLength;
+  const xExit = Math.max(xEntry + 10.0, totalLength - 40.0);
+  const seepPath = Math.max(10.0, xExit - xEntry);
+
+  if (x <= xEntry) return baseElev + h1;
+  if (x >= xExit) return baseElev + h2;
+  const frac = (x - xEntry) / seepPath;
+  const ySq = Math.max(Math.pow(h2, 2), Math.pow(h1, 2) - (Math.pow(h1, 2) - Math.pow(h2, 2)) * frac);
+  return baseElev + Math.sqrt(ySq);
+};
+
+export const calculateBishopsSimplifiedFs = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `SIM_BISHOP_${Date.now()}`;
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const damName = options.dam_name || options.damName || 'North Tailings Impoundment';
+  const methodName = options.method || 'bishops_simplified';
+
+  const embData = options.embankment || {};
+  const crestElev = Number(embData.crest_elevation_m || embData.crestElevationM || 820.0);
+  const baseElev = Number(embData.base_elevation_m || embData.baseElevationM || 750.0);
+  const crestWidth = Number(embData.crest_width_m || embData.crestWidthM || 12.0);
+  const upSlope = Number(embData.upstream_slope_h_v || embData.upstreamSlopeHV || 2.5);
+  const downSlope = Number(embData.downstream_slope_h_v || embData.downstreamSlopeHV || 2.0);
+  const damHeight = Math.max(5.0, crestElev - baseElev);
+
+  const upLength = upSlope * damHeight;
+  const downLength = downSlope * damHeight;
+  const totalLength = upLength + crestWidth + downLength;
+
+  const texture = String(options.soil_texture || options.soilTexture || 'silt_tailings').toLowerCase().replace(/-/g, '_');
+  const meta = SOIL_TEXTURE_CONFIGS[texture] || SOIL_TEXTURE_CONFIGS.silt_tailings;
+
+  const cohesion = Number(options.cohesion_kpa ?? options.cohesionKpa ?? meta.cohesion_c_kpa ?? 5.0);
+  const frictionDeg = Number(options.friction_angle_deg ?? options.frictionAngleDeg ?? meta.friction_angle_phi_deg ?? 28.0);
+  const unitWeight = Number(options.unit_weight_kn_m3 ?? options.unitWeightKnM3 ?? meta.unit_weight_sat_kn_m3 ?? 19.5);
+
+  const poolElev = Number(options.reservoir_pool_elevation_m ?? options.reservoirPoolElevationM ?? 812.0);
+  const tailElev = Number(options.tailwater_elevation_m ?? options.tailwaterElevationM ?? 752.0);
+  const h1 = Math.max(1.0, poolElev - baseElev);
+  const h2 = Math.max(0.5, tailElev - baseElev);
+  const phreaticSt = options.phreatic_stations || options.phreaticStations;
+
+  const xCrestDown = upLength + crestWidth;
+  const xc = Number(options.slip_center_x_m ?? options.slipCenterXM ?? (xCrestDown + downLength * 0.35));
+  const yc = Number(options.slip_center_y_m ?? options.slipCenterYM ?? (crestElev + damHeight * 0.70));
+  const radius = Number(options.slip_radius_m ?? options.slipRadiusM ?? (damHeight * 1.35));
+
+  let xEntry = Math.max(upLength, Math.min(xCrestDown + 5.0, xc - Math.sqrt(Math.max(10.0, Math.pow(radius, 2) - Math.pow(yc - crestElev, 2)))));
+  let xExit = Math.min(totalLength, Math.max(xCrestDown + 10.0, xc + Math.sqrt(Math.max(10.0, Math.pow(radius, 2) - Math.pow(yc - baseElev, 2)))));
+  if (xExit <= xEntry + 5.0) {
+    xEntry = xCrestDown - 2.0;
+    xExit = totalLength;
+  }
+
+  const yEntry = getEmbankmentSurfaceElev(xEntry, baseElev, upLength, crestWidth, downLength, crestElev);
+  const yExit = getEmbankmentSurfaceElev(xExit, baseElev, upLength, crestWidth, downLength, crestElev);
+
+  const numSlices = Math.max(10, Number(options.num_slices || options.numSlices || 35));
+  const dx = (xExit - xEntry) / numSlices;
+
+  const slices = [];
+  const phiRad = (frictionDeg * Math.PI) / 180.0;
+  const tanPhi = Math.tan(phiRad);
+
+  let drivingSum = 0.0;
+
+  for (let i = 0; i < numSlices; i++) {
+    const xi = xEntry + (i + 0.5) * dx;
+    const radTerm = Math.pow(radius, 2) - Math.pow(xi - xc, 2);
+    if (radTerm < 0.0) continue;
+    const yb = yc - Math.sqrt(radTerm);
+    const ys = getEmbankmentSurfaceElev(xi, baseElev, upLength, crestWidth, downLength, crestElev);
+    const hi = Math.max(0.05, ys - yb);
+    if (yb >= ys) continue;
+
+    // For downstream failure towards increasing x, slices with xi < xc drive the rotation
+    const sinAlpha = Math.max(-0.99, Math.min(0.99, (xc - xi) / radius));
+    const alphaRad = Math.asin(sinAlpha);
+    const alphaDeg = (alphaRad * 180.0) / Math.PI;
+
+    const wi = unitWeight * dx * hi;
+    const zPhreatic = interpolatePhreaticElev(xi, phreaticSt, baseElev, h1, h2, upLength, crestWidth, downLength);
+    const ui = 9.81 * Math.max(0.0, zPhreatic - yb);
+
+    const kh = Number(options.seismic_coefficient_kh ?? options.seismicCoefficientKh ?? 0.0);
+    const armY = Math.max(0.0, yc - (yb + ys) / 2.0);
+    const seismicDriving = kh * wi * (armY / Math.max(1.0, radius));
+    drivingSum += (wi * sinAlpha) + seismicDriving;
+
+    slices.push({
+      slice_index: i + 1,
+      midpoint_x_m: Number(xi.toFixed(2)),
+      width_b_m: Number(dx.toFixed(2)),
+      surface_y_m: Number(ys.toFixed(2)),
+      base_y_m: Number(yb.toFixed(2)),
+      height_h_m: Number(hi.toFixed(2)),
+      base_angle_alpha_deg: Number(alphaDeg.toFixed(2)),
+      base_angle_rad: alphaRad,
+      weight_w_kn_m: Number(wi.toFixed(2)),
+      pore_water_pressure_u_kpa: Number(ui.toFixed(2)),
+      effective_normal_force_n_kn_m: 0.0,
+      shear_resistance_t_kn_m: 0.0
+    });
+  }
+
+  if (drivingSum <= 0.01) drivingSum = 0.01;
+
+  let fs = 1.50;
+  let iterations = 0;
+  for (let it = 0; it < 50; it++) {
+    iterations = it + 1;
+    const fsOld = fs;
+    let resistingSum = 0.0;
+
+    for (const sl of slices) {
+      const alpha = sl.base_angle_rad;
+      const cosA = Math.cos(alpha);
+      const sinA = Math.sin(alpha);
+      const mAlpha = Math.max(0.10, cosA + (sinA * tanPhi) / Math.max(0.1, fs));
+
+      const wEff = sl.weight_w_kn_m - sl.pore_water_pressure_u_kpa * sl.width_b_m;
+      const resSlice = (cohesion * sl.width_b_m + wEff * tanPhi) / mAlpha;
+      resistingSum += resSlice;
+    }
+
+    const fsNew = Math.max(0.20, resistingSum / drivingSum);
+    if (Math.abs(fsNew - fsOld) < 1e-4) {
+      fs = fsNew;
+      break;
+    }
+    fs = 0.5 * fsOld + 0.5 * fsNew;
+  }
+
+  for (const sl of slices) {
+    const alpha = sl.base_angle_rad;
+    const cosA = Math.cos(alpha);
+    const sinA = Math.sin(alpha);
+    const mAlpha = Math.max(0.10, cosA + (sinA * tanPhi) / Math.max(0.1, fs));
+    const wEff = sl.weight_w_kn_m - sl.pore_water_pressure_u_kpa * sl.width_b_m;
+    const nPrime = wEff / mAlpha;
+    const tRes = (cohesion * sl.width_b_m + nPrime * tanPhi) / Math.max(0.1, fs);
+
+    sl.effective_normal_force_n_kn_m = Number(nPrime.toFixed(2));
+    sl.shear_resistance_t_kn_m = Number(tRes.toFixed(2));
+    delete sl.base_angle_rad;
+  }
+
+  const factorOfSafety = Number(fs.toFixed(3));
+  const hazardTier = classifySlopeHazardTier(factorOfSafety);
+
+  const rawInsar = options.insar_creep_vectors || options.insarCreepVectors || [
+    {
+      station_x_m: Number((upLength + crestWidth * 0.5).toFixed(2)),
+      los_velocity_mm_yr: -8.4,
+      vertical_velocity_mm_yr: -9.2,
+      shear_strain_rate_microstrain_yr: 85.0
+    },
+    {
+      station_x_m: Number((xCrestDown + downLength * 0.45).toFixed(2)),
+      los_velocity_mm_yr: -4.2,
+      vertical_velocity_mm_yr: -4.8,
+      shear_strain_rate_microstrain_yr: 35.0
+    },
+    {
+      station_x_m: Number((totalLength - 18.0).toFixed(2)),
+      los_velocity_mm_yr: factorOfSafety < 1.30 ? -26.5 : -11.0,
+      vertical_velocity_mm_yr: factorOfSafety < 1.30 ? -28.0 : -12.5,
+      shear_strain_rate_microstrain_yr: factorOfSafety < 1.30 ? 340.0 : 120.0
+    }
+  ];
+
+  const insarFusion = rawInsar.map((vec) => {
+    const vLos = Number(vec.los_velocity_mm_yr || vec.losVelocityMmYr || 0.0);
+    const vStrain = Number(vec.shear_strain_rate_microstrain_yr || vec.shearStrainRateMicrostrainYr || 0.0);
+    const status = classifyInSARCreepStatus(vLos, vStrain);
+    return {
+      ...vec,
+      creep_status: status.id
+    };
+  });
+
+  const damCoords = [
+    [0.0, baseElev],
+    [upLength, crestElev],
+    [upLength + crestWidth, crestElev],
+    [totalLength, baseElev],
+    [0.0, baseElev]
+  ];
+  const slipArcCoords = slices.map((sl) => [sl.midpoint_x_m, sl.base_y_m]);
+
+  const crossSectionGeojson = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: damCoords },
+        properties: { feature_type: 'embankment_shell', dam_id: damId }
+      },
+      {
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: slipArcCoords },
+        properties: {
+          feature_type: 'critical_slip_surface_arc',
+          method: methodName,
+          factor_of_safety: factorOfSafety,
+          hazard_tier: hazardTier.id
+        }
+      },
+      {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [xc, yc] },
+        properties: {
+          feature_type: 'center_of_rotation',
+          radius_m: radius
+        }
+      }
+    ]
+  };
+
+  const tileTemplate = `/api/v1/tiles/geotechnical/slope-stability/${simId}/factor_of_safety/{z}/{x}/{y}.png`;
+
+  return {
+    simulation_id: simId,
+    dam_id: damId,
+    dam_name: damName,
+    method: methodName,
+    factor_of_safety: factorOfSafety,
+    iterations_converged: iterations,
+    hazard_tier: hazardTier.id,
+    tier_metadata: hazardTier,
+    critical_slip_surface: {
+      center_x_m: Number(xc.toFixed(2)),
+      center_y_m: Number(yc.toFixed(2)),
+      radius_m: Number(radius.toFixed(2)),
+      entry_x_m: Number(xEntry.toFixed(2)),
+      entry_y_m: Number(yEntry.toFixed(2)),
+      exit_x_m: Number(xExit.toFixed(2)),
+      exit_y_m: Number(yExit.toFixed(2))
+    },
+    slices,
+    insar_creep_fusion: insarFusion,
+    cross_section_geojson: crossSectionGeojson,
+    tile_url_template: tileTemplate,
+    seismic_coefficient_kh: Number(options.seismic_coefficient_kh ?? options.seismicCoefficientKh ?? 0.0),
+    simulated_at: new Date().toISOString()
+  };
+};
+
+export const calculateJanbuSimplifiedFs = (options = {}) => {
+  const bishopRes = calculateBishopsSimplifiedFs({ ...options, method: 'janbu_simplified' });
+  const slices = bishopRes.slices;
+
+  const texture = String(options.soil_texture || options.soilTexture || 'silt_tailings').toLowerCase().replace(/-/g, '_');
+  const meta = SOIL_TEXTURE_CONFIGS[texture] || SOIL_TEXTURE_CONFIGS.silt_tailings;
+  const cohesion = Number(options.cohesion_kpa ?? options.cohesionKpa ?? meta.cohesion_c_kpa ?? 5.0);
+  const frictionDeg = Number(options.friction_angle_deg ?? options.frictionAngleDeg ?? meta.friction_angle_phi_deg ?? 28.0);
+  const phiRad = (frictionDeg * Math.PI) / 180.0;
+  const tanPhi = Math.tan(phiRad);
+
+  let denomF = 0.0;
+  for (const sl of slices) {
+    const alphaRad = (sl.base_angle_alpha_deg * Math.PI) / 180.0;
+    denomF += sl.weight_w_kn_m * Math.tan(alphaRad);
+  }
+  denomF = Math.max(0.01, denomF);
+
+  let fs = bishopRes.factor_of_safety;
+  for (let it = 0; it < 30; it++) {
+    const fsOld = fs;
+    let numerF = 0.0;
+    for (const sl of slices) {
+      const alphaRad = (sl.base_angle_alpha_deg * Math.PI) / 180.0;
+      const cosA = Math.cos(alphaRad);
+      const tanA = Math.tan(alphaRad);
+      const nAlpha = Math.max(0.10, Math.pow(cosA, 2) * (1.0 + (tanA * tanPhi) / Math.max(0.1, fs)));
+      const wEff = sl.weight_w_kn_m - sl.pore_water_pressure_u_kpa * sl.width_b_m;
+      numerF += (cohesion * sl.width_b_m + wEff * tanPhi) / nAlpha;
+    }
+    const fsNew = numerF / denomF;
+    if (Math.abs(fsNew - fsOld) < 1e-4) {
+      fs = fsNew;
+      break;
+    }
+    fs = 0.5 * fsOld + 0.5 * fsNew;
+  }
+
+  const xEntry = bishopRes.critical_slip_surface.entry_x_m;
+  const xExit = bishopRes.critical_slip_surface.exit_x_m;
+  const lengthChord = Math.max(10.0, xExit - xEntry);
+  const minYb = Math.min(...slices.map((sl) => sl.base_y_m));
+  const maxYs = Math.max(...slices.map((sl) => sl.surface_y_m));
+  const depthMax = Math.max(1.0, maxYs - minYb);
+  const dlRatio = Math.min(0.5, depthMax / lengthChord);
+  const f0 = 1.0 + 0.50 * (dlRatio - 1.4 * Math.pow(dlRatio, 2));
+
+  const janbuFs = Number(Math.max(0.20, fs * f0).toFixed(3));
+  const hazardTier = classifySlopeHazardTier(janbuFs);
+
+  return {
+    ...bishopRes,
+    factor_of_safety: janbuFs,
+    curvature_correction_f0: Number(f0.toFixed(4)),
+    hazard_tier: hazardTier.id,
+    tier_metadata: hazardTier,
+    method: 'janbu_simplified'
+  };
+};
+
+export const searchCriticalCircularSlipSurface = (options = {}) => {
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const gridDensity = Math.max(2, Math.min(8, Number(options.grid_density || options.gridDensity || 4)));
+
+  const embData = options.embankment || {};
+  const crestElev = Number(embData.crest_elevation_m || embData.crestElevationM || 820.0);
+  const baseElev = Number(embData.base_elevation_m || embData.baseElevationM || 750.0);
+  const crestWidth = Number(embData.crest_width_m || embData.crestWidthM || 12.0);
+  const upSlope = Number(embData.upstream_slope_h_v || embData.upstreamSlopeHV || 2.5);
+  const downSlope = Number(embData.downstream_slope_h_v || embData.downstreamSlopeHV || 2.0);
+  const damHeight = Math.max(5.0, crestElev - baseElev);
+
+  const upLength = upSlope * damHeight;
+  const downLength = downSlope * damHeight;
+  const xCrestDown = upLength + crestWidth;
+
+  const xcCandidates = [0.20, 0.40, 0.60].slice(0, gridDensity).map((f) => xCrestDown + downLength * f);
+  const ycCandidates = [0.40, 0.70, 1.00].slice(0, gridDensity).map((f) => crestElev + damHeight * f);
+  const rCandidates = [1.10, 1.35, 1.60].slice(0, gridDensity).map((f) => damHeight * f);
+
+  let minFs = 99.0;
+  let bestRes = null;
+  const surfacesSummary = [];
+
+  for (const xc of xcCandidates) {
+    for (const yc of ycCandidates) {
+      for (const r of rCandidates) {
+        const subReq = {
+          ...options,
+          slip_center_x_m: xc,
+          slip_center_y_m: yc,
+          slip_radius_m: r,
+          num_slices: 20
+        };
+        const trialRes = calculateBishopsSimplifiedFs(subReq);
+        const tFs = trialRes.factor_of_safety;
+        surfacesSummary.push({
+          center_x_m: Number(xc.toFixed(2)),
+          center_y_m: Number(yc.toFixed(2)),
+          radius_m: Number(r.toFixed(2)),
+          factor_of_safety: tFs,
+          hazard_tier: trialRes.hazard_tier
+        });
+        if (tFs < minFs) {
+          minFs = tFs;
+          bestRes = trialRes;
+        }
+      }
+    }
+  }
+
+  if (!bestRes) {
+    bestRes = calculateBishopsSimplifiedFs(options);
+    minFs = bestRes.factor_of_safety;
+  }
+
+  const hazardTier = classifySlopeHazardTier(minFs);
+
+  return {
+    dam_id: damId,
+    min_factor_of_safety: Number(minFs.toFixed(3)),
+    critical_surface: bestRes.critical_slip_surface,
+    evaluated_surfaces_count: surfacesSummary.length,
+    hazard_tier: hazardTier.id,
+    tier_metadata: hazardTier,
+    surfaces_summary: surfacesSummary.slice(0, 10),
+    searched_at: new Date().toISOString()
+  };
+};
+
+export const buildGeotechnicalSlopeStabilityTileUrl = (simId, metric = 'factor_of_safety', z = 12, x = 2048, y = 1024) => {
+  return `/api/v1/tiles/geotechnical/slope-stability/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildSlopeStabilityBishopTileUrl = buildGeotechnicalSlopeStabilityTileUrl;
+
+export const buildGeotechnicalSlopeStabilityTileUrlTemplate = (simId, metric = 'factor_of_safety') => {
+  return `/api/v1/tiles/geotechnical/slope-stability/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildSlopeStabilityBishopTileUrlTemplate = buildGeotechnicalSlopeStabilityTileUrlTemplate;
+
+
 
 
 

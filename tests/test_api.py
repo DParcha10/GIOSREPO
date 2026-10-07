@@ -2011,6 +2011,106 @@ class TestGIOSApi(unittest.TestCase):
         self.assertIn("event", disp_data)
         self.assertEqual(disp_data["event"]["severity_tier"], "emergency")
 
+    def test_dam_break_hydrodynamics_and_tiles_api(self):
+        """Test POST /api/v1/analysis/geotechnical/dam-break-hydrodynamics, aliases, GET details, corridors, and dynamic tiles."""
+        payload = {
+            "simulationId": "SIM_TEST_DAM_BREAK_QA",
+            "damId": "TAILINGS_DAM_A",
+            "damName": "North Tailings Impoundment",
+            "damCoordinates": [-44.1234, -20.1234],
+            "breachParams": {
+                "damHeightM": 48.0,
+                "reservoirVolumeM3": 14000000.0,
+                "breachMechanism": "piping_internal_erosion",
+                "manningNRoughness": 0.040,
+                "slurryYieldStressPa": 35.0
+            },
+            "simulationDurationHours": 4.0,
+            "timestepIntervalMin": 15.0,
+            "generateEvacuationCorridors": True,
+            "includeTimeSlices": True
+        }
+
+        # 1. Primary endpoint
+        res = self.client.post("/api/v1/analysis/geotechnical/dam-break-hydrodynamics", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["simulation_id"], "SIM_TEST_DAM_BREAK_QA")
+        self.assertEqual(data["dam_id"], "TAILINGS_DAM_A")
+        self.assertEqual(data["status"], "completed")
+        self.assertGreater(data["peak_breach_discharge_m3s"], 100.0)
+        self.assertGreater(data["max_inundation_area_ha"], 10.0)
+        self.assertGreater(data["max_flood_depth_m"], 1.0)
+        self.assertGreater(data["max_flow_velocity_ms"], 0.5)
+        self.assertGreater(data["max_hazard_product_m2s"], 1.0)
+        self.assertIn(data["overall_hazard_tier"], ["high_hazard", "extreme_catastrophic"])
+        self.assertIsNotNone(data["tier_metadata"])
+        self.assertGreater(len(data["receptors"]), 0)
+        self.assertGreater(len(data["time_slices"]), 0)
+        self.assertGreater(len(data["evacuation_corridors"]), 0)
+        self.assertIsNotNone(data["inundation_boundary_geojson"])
+        self.assertIn("tile_url_template", data)
+
+        # 2. Route aliases
+        res_alias1 = self.client.post("/api/v1/analysis/geotechnical/dam_break_hydrodynamics", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/dam-break-hydrodynamics", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+        res_alias3 = self.client.post("/api/v1/geotechnical/dam-break-hydrodynamics", json=payload)
+        self.assertEqual(res_alias3.status_code, 200)
+        res_alias4 = self.client.post("/api/v1/geotechnical/dam_break_hydrodynamics", json=payload)
+        self.assertEqual(res_alias4.status_code, 200)
+
+        # 3. Payload feature flags: exclude time slices and evacuation corridors
+        flag_payload = dict(payload)
+        flag_payload["simulationId"] = "SIM_TEST_FLAGS_QA"
+        flag_payload["includeTimeSlices"] = False
+        flag_payload["generateEvacuationCorridors"] = False
+        res_flags = self.client.post("/api/v1/analysis/geotechnical/dam-break-hydrodynamics", json=flag_payload)
+        self.assertEqual(res_flags.status_code, 200)
+        flags_data = res_flags.json()
+        self.assertEqual(len(flags_data["time_slices"]), 0)
+        self.assertEqual(len(flags_data["evacuation_corridors"]), 0)
+        self.assertGreater(flags_data["max_inundation_area_ha"], 10.0)
+
+        # 4. GET simulation detail & corridors
+        res_detail = self.client.get("/api/v1/analysis/geotechnical/dam-break/SIM_TEST_DAM_BREAK_QA")
+        self.assertEqual(res_detail.status_code, 200)
+        self.assertEqual(res_detail.json()["simulation_id"], "SIM_TEST_DAM_BREAK_QA")
+
+        res_detail_alias = self.client.get("/api/v1/geotechnical/dam-break/SIM_TEST_DAM_BREAK_QA")
+        self.assertEqual(res_detail_alias.status_code, 200)
+
+        res_corridors = self.client.get("/api/v1/analysis/geotechnical/dam-break/SIM_TEST_DAM_BREAK_QA/evacuation-corridors")
+        self.assertEqual(res_corridors.status_code, 200)
+        corrs = res_corridors.json()
+        self.assertIsInstance(corrs, list)
+        self.assertGreater(len(corrs), 0)
+        self.assertIn("corridor_id", corrs[0])
+
+        res_corridors_alias1 = self.client.get("/api/v1/geotechnical/dam-break/SIM_TEST_DAM_BREAK_QA/evacuation-corridors")
+        self.assertEqual(res_corridors_alias1.status_code, 200)
+        res_corridors_alias2 = self.client.get("/api/v1/analysis/dam-break/SIM_TEST_DAM_BREAK_QA/evacuation-corridors")
+        self.assertEqual(res_corridors_alias2.status_code, 200)
+
+        # 5. Dynamic XYZ Tile Streaming across metrics
+        sim_id = "SIM_TEST_DAM_BREAK_QA"
+        tile_urls = [
+            f"/api/v1/tiles/geotechnical/dam-break/{sim_id}/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dam-break/{sim_id}/hazard_product/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dam-break/{sim_id}/depth/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dam-break/{sim_id}/velocity/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dam-break/{sim_id}/arrival_time/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/dam-break/{sim_id}/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/dam-break/{sim_id}/depth/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
 if __name__ == "__main__":
     unittest.main()
 

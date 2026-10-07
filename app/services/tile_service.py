@@ -121,9 +121,26 @@ DEFAULT_INDEX_RANGES = {
     "hazard_product": (0.0, 30.0),
     "flood_depth": (0.0, 15.0),
     "dam_depth": (0.0, 15.0),
+    "depth": (0.0, 15.0),
+    "h": (0.0, 15.0),
     "flow_velocity": (0.0, 10.0),
     "dam_velocity": (0.0, 10.0),
-    "arrival_time": (0.0, 180.0)
+    "velocity": (0.0, 10.0),
+    "speed": (0.0, 10.0),
+    "v": (0.0, 10.0),
+    "arrival_time": (0.0, 180.0),
+    "time": (0.0, 180.0),
+    "t_arrival": (0.0, 180.0),
+    "phreatic_seepage": (0.0, 1.0),
+    "saturation": (0.0, 1.0),
+    "effective_saturation": (0.0, 1.0),
+    "pore_pressure": (0.0, 300.0),
+    "exit_gradient": (0.0, 1.0),
+    "gradient": (0.0, 1.0),
+    "hydraulic_head": (750.0, 825.0),
+    "total_head": (750.0, 825.0),
+    "suction": (0.0, 500.0),
+    "matric_suction": (0.0, 500.0)
 }
 
 class TileService:
@@ -214,7 +231,7 @@ class TileService:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
         raw_idx = str(index.value if hasattr(index, "value") else index).lower().strip() if index else "rgb"
-        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
+        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
             idx_clean = raw_idx
         else:
             idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
@@ -512,6 +529,57 @@ class TileService:
                 else:
                     # Default hazard product v * h (m^2/s)
                     val = np.where(in_corridor, np.clip(depth_grid * velocity_grid, 0.0, 50.0), 0.0)
+            elif col_clean in {"phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface"} or idx_clean in {"phreatic_seepage", "saturation", "effective_saturation", "pore_pressure", "exit_gradient", "gradient", "hydraulic_head", "total_head", "matric_suction", "suction"}:
+                # 2D unconfined phreatic line seepage and unsaturated soil mechanics
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                # Cross-sectional Dupuit-Forchheimer phreatic surface
+                h1_rel = 62.0
+                h2_rel = 2.0
+                x_entry = 0.25
+                x_exit = 0.85
+                seep_span = max(0.1, x_exit - x_entry)
+
+                # Normalized phreatic height as function of u_s along transect
+                frac_s = np.clip((u_s - x_entry) / seep_span, 0.0, 1.0)
+                y_sq = np.maximum(h2_rel**2, h1_rel**2 - (h1_rel**2 - h2_rel**2) * frac_s)
+                h_rel = np.where(u_s < x_entry, h1_rel, np.where(u_s > x_exit, h2_rel, np.sqrt(y_sq)))
+                phreatic_elev = 750.0 + h_rel
+
+                # Elevation within embankment cross-section: 750m base to 820m crest
+                current_elev = 750.0 + v_s * 70.0
+                depth_below_water = phreatic_elev - current_elev
+
+                # Saturated flag (depth_below_water >= 0)
+                is_saturated = depth_below_water >= 0.0
+
+                if idx_clean in {"saturation", "effective_saturation", "phreatic_seepage", "se"}:
+                    # Saturated: Se = 1.0. Unsaturated: Van Genuchten Se = [1 + (alpha * psi)^n]^(-m)
+                    # where psi = -u = gamma_w * (current_elev - phreatic_elev)
+                    psi_kpa = np.where(~is_saturated, np.clip(-depth_below_water * 9.81, 0.0, 1000.0), 0.0)
+                    alpha_vg = 0.015
+                    n_vg = 1.80
+                    m_vg = 1.0 - 1.0 / n_vg
+                    se_unsat = (1.0 + (alpha_vg * psi_kpa)**n_vg)**(-m_vg)
+                    val = np.where(is_saturated, 1.0, np.clip(se_unsat, 0.0, 1.0))
+                elif idx_clean in {"pore_pressure", "pressure", "u"}:
+                    # Pore water pressure in kPa (u = gamma_w * hw = 9.81 * depth_below_water)
+                    pore_press = np.where(is_saturated, np.clip(depth_below_water * 9.81, 0.0, 500.0), 0.0)
+                    val = pore_press
+                elif idx_clean in {"exit_gradient", "gradient", "hydraulic_gradient", "i"}:
+                    # Hydraulic exit gradient: dh/dx. Peaking at exit face (x_exit ~ 0.85)
+                    grad_profile = np.abs((h1_rel**2 - h2_rel**2) / (2.0 * seep_span * np.maximum(1.0, h_rel))) * 0.015
+                    exit_peak = np.exp(-((u_s - x_exit) / 0.08)**2) * 0.45
+                    val = np.clip(grad_profile + exit_peak + base_variation * 0.05, 0.0, 1.5)
+                elif idx_clean in {"hydraulic_head", "total_head", "head", "h"}:
+                    # Total head in meters (750 to 825m)
+                    val = np.clip(phreatic_elev + (base_variation - 0.5) * 1.5, 750.0, 825.0)
+                elif idx_clean in {"suction", "matric_suction", "psi"}:
+                    # Matric suction in kPa above phreatic surface
+                    val = np.where(~is_saturated, np.clip(-depth_below_water * 9.81, 0.0, 600.0), 0.0)
+                else:
+                    val = np.where(is_saturated, 1.0, 0.2)
             else:
                 val = base_variation
 
@@ -595,6 +663,8 @@ class TileService:
                 rgba[~flood_extent, 3] = 0
                 rgba[flood_extent & (val < 1.0), 3] = 170
                 rgba[flood_extent & (val >= 1.0), 3] = 225
+            elif col_clean in {"phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface"} or idx_clean in {"phreatic_seepage", "saturation", "effective_saturation", "pore_pressure", "exit_gradient", "gradient", "hydraulic_head", "total_head", "matric_suction", "suction"}:
+                rgba[:, :, 3] = 220
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
@@ -1554,6 +1624,73 @@ class TileService:
         return self.render_tile(
             collection="dam_break",
             item_id=sim_id or "SIM_DAM_BREAK_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_phreatic_seepage_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "saturation",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for geotechnical embankment phreatic surface seepage simulation."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "saturation"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"saturation", "effective_saturation", "se", "phreatic_seepage"}:
+                chosen_cmap = "blues"
+            elif metric_clean in {"pore_pressure", "pressure", "u"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"gradient", "exit_gradient", "hydraulic_gradient", "i"}:
+                chosen_cmap = "turbo"
+            elif metric_clean in {"hydraulic_head", "total_head", "head", "h"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"suction", "matric_suction", "psi"}:
+                chosen_cmap = "cividis"
+            else:
+                chosen_cmap = "blues"
+        else:
+            chosen_cmap = colormap
+
+        if not rescale:
+            if metric_clean in {"saturation", "effective_saturation", "se", "phreatic_seepage"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"pore_pressure", "pressure", "u"}:
+                chosen_rescale = "0.0,300.0"
+            elif metric_clean in {"gradient", "exit_gradient", "hydraulic_gradient", "i"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"hydraulic_head", "total_head", "head", "h"}:
+                chosen_rescale = "750.0,825.0"
+            elif metric_clean in {"suction", "matric_suction", "psi"}:
+                chosen_rescale = "0.0,500.0"
+            else:
+                chosen_rescale = "0.0,1.0"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="phreatic_seepage",
+            item_id=sim_id or "SIM_SEEPAGE_001",
             z=actual_z,
             x=actual_x,
             y=actual_y,

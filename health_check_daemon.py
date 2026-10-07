@@ -52,17 +52,23 @@ def check_http_endpoint(url: str, timeout: float = 5.0, user_agent: str = "GIOS-
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 elapsed_ms = (time.time() - t0) * 1000
-                content = resp.read().decode(errors="replace")
+                content_type = resp.headers.get("Content-Type", "").lower()
+                raw_bytes = resp.read()
                 parsed = None
-                try:
-                    parsed = json.loads(content)
-                except Exception:
-                    pass
+                if any(b in content_type for b in ("image", "octet-stream", "protobuf")):
+                    body = f"<{len(raw_bytes)} bytes binary>"
+                else:
+                    content = raw_bytes.decode(errors="replace")
+                    try:
+                        parsed = json.loads(content)
+                    except Exception:
+                        pass
+                    body = parsed or content[:200]
                 return {
                     "ok": resp.status in (200, 201, 204),
                     "status_code": resp.status,
                     "latency_ms": round(elapsed_ms, 1),
-                    "body": parsed or content[:200],
+                    "body": body,
                     "error": None
                 }
         except urllib.error.HTTPError as e:
@@ -207,7 +213,7 @@ def inspect_pipelines() -> dict:
             cwd=SCRIPT_DIR,
             capture_output=True,
             text=True,
-            timeout=90
+            timeout=180
         )
         elapsed_sec = round(time.time() - t0, 2)
         results["test_suite"] = {
