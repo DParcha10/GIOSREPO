@@ -935,7 +935,25 @@ export const API_ENDPOINTS = {
   TILES_RAINFALL_INFILTRATION: (simId, z, x, y) => `/api/v1/tiles/geotechnical/rainfall-infiltration/${simId}/${z}/${x}/${y}.png`,
   TILES_RAINFALL_INFILTRATION_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/rainfall-infiltration/${simId}/${metric}/${z}/${x}/${y}.png`,
   TILES_THERMAL_APPARENT_INERTIA: (simId, z, x, y) => `/api/v1/tiles/thermal/apparent-inertia/${simId}/${z}/${x}/${y}.png`,
-  TILES_THERMAL_APPARENT_INERTIA_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/thermal/apparent-inertia/${simId}/${metric}/${z}/${x}/${y}.png`
+  TILES_THERMAL_APPARENT_INERTIA_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/thermal/apparent-inertia/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_LIQUEFACTION: '/api/v1/analysis/geotechnical/liquefaction',
+  ANALYSIS_LIQUEFACTION_SHORT: '/geotechnical/liquefaction',
+  ANALYSIS_LIQUEFACTION_CPT: '/api/v1/analysis/geotechnical/liquefaction/cpt-sounding',
+  ANALYSIS_LIQUEFACTION_CPT_SHORT: '/geotechnical/cpt-sounding',
+  ANALYSIS_LIQUEFACTION_LATERAL_SPREADING: (damId) => `/api/v1/analysis/geotechnical/liquefaction/lateral-spreading/${damId}`,
+  ANALYSIS_LIQUEFACTION_LATERAL_SPREADING_SHORT: (damId) => `/geotechnical/lateral-spreading/${damId}`,
+  TILES_LIQUEFACTION: (simId, z, x, y) => `/api/v1/tiles/geotechnical/liquefaction/${simId}/${z}/${x}/${y}.png`,
+  TILES_LIQUEFACTION_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/liquefaction/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_LIQUEFACTION_SUSCEPTIBILITY: '/api/v1/analysis/geotechnical/liquefaction-susceptibility',
+  ANALYSIS_LIQUEFACTION_SUSCEPTIBILITY_SHORT: '/geotechnical/liquefaction-susceptibility',
+  ANALYSIS_DYNAMIC_PORE_PRESSURE: '/api/v1/analysis/geotechnical/dynamic-pore-pressure',
+  ANALYSIS_DYNAMIC_PORE_PRESSURE_SHORT: '/geotechnical/dynamic-pore-pressure',
+  ANALYSIS_VS30_PROXY: (lat, lon) => `/api/v1/analysis/geotechnical/vs30-proxy/${lat}/${lon}`,
+  ANALYSIS_VS30_PROXY_SHORT: (lat, lon) => `/geotechnical/vs30-proxy/${lat}/${lon}`,
+  ANALYSIS_LIQUEFACTION_SPT: '/api/v1/analysis/geotechnical/liquefaction/spt-sounding',
+  ANALYSIS_LIQUEFACTION_SPT_SHORT: '/geotechnical/spt-sounding',
+  ANALYSIS_FLOW_SLIDE_RUNOUT: '/api/v1/analysis/geotechnical/liquefaction/flow-slide-runout',
+  ANALYSIS_FLOW_SLIDE_RUNOUT_SHORT: '/geotechnical/flow-slide-runout'
 };
 
 /**
@@ -1112,6 +1130,19 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.simId || params.sim_id || 'ATI_SEEPAGE_001', params.z, params.x, params.y);
       case 'TILES_THERMAL_APPARENT_INERTIA_METRIC':
         return endpoint(params.simId || params.sim_id || 'ATI_SEEPAGE_001', params.metric || 'thermal_inertia', params.z, params.x, params.y);
+      case 'ANALYSIS_LIQUEFACTION_LATERAL_SPREADING':
+      case 'ANALYSIS_LIQUEFACTION_LATERAL_SPREADING_SHORT':
+        return endpoint(params.damId || params.dam_id || 'TAILINGS_DAM_A');
+      case 'ANALYSIS_VS30_PROXY':
+      case 'ANALYSIS_VS30_PROXY_SHORT': {
+        const lat = params.lat !== undefined ? params.lat : (params.latitude !== undefined ? params.latitude : 37.05);
+        const lon = params.lon !== undefined ? params.lon : (params.longitude !== undefined ? params.longitude : -121.05);
+        return endpoint(lat, lon);
+      }
+      case 'TILES_LIQUEFACTION':
+        return endpoint(params.simId || params.sim_id || 'SIM_LIQ_001', params.z, params.x, params.y);
+      case 'TILES_LIQUEFACTION_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_LIQ_001', params.metric || 'factor_of_safety', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -10256,6 +10287,1058 @@ export const buildApparentThermalInertiaTileUrl = (simId, metric = 'thermal_iner
 
 export const buildApparentThermalInertiaTileUrlTemplate = (simId, metric = 'thermal_inertia') => {
   return `/api/v1/tiles/thermal/apparent-inertia/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+
+// ==============================================================================
+// CYCLE v2.5.15: TAILINGS DAM DYNAMIC & STATIC LIQUEFACTION SUSCEPTIBILITY,
+// SEED-IDRISS CSR/CRR, ROBERTSON CPT & LATERAL SPREADING INSAR DISPLACEMENT CONTRACTS
+// ==============================================================================
+
+export const LIQUEFACTION_TRIGGER_MODES = {
+  DYNAMIC_SEISMIC: 'dynamic_seismic',
+  STATIC_FLOW: 'static_flow',
+  COMBINED_TRIGGER: 'combined_trigger'
+};
+
+export const LIQUEFACTION_HAZARD_TIERS = {
+  SAFE_NON_LIQUEFIABLE: 'safe_non_liquefiable',
+  MARGINAL_CYCLIC_SOFTENING: 'marginal_cyclic_softening',
+  ELEVATED_LIQUEFACTION_POTENTIAL: 'elevated_liquefaction_potential',
+  CRITICAL_CYCLIC_COLLAPSE: 'critical_cyclic_collapse'
+};
+
+export const STATIC_BRITTLENESS_TIERS = {
+  DUCTILE_DILATIVE: 'ductile_dilative',
+  MODERATE_CONTRACTIVE: 'moderate_contractive',
+  HIGHLY_BRITTLE_COLLAPSIBLE: 'highly_brittle_collapsible'
+};
+
+export const LATERAL_SPREADING_HAZARD_TIERS = {
+  NEGLIGIBLE_LATERAL_STRAIN: 'negligible_lateral_strain',
+  LOW_LATERAL_SPREADING: 'low_lateral_spreading',
+  MODERATE_LATERAL_SPREADING: 'moderate_lateral_spreading',
+  SEVERE_LATERAL_FLOW_FAILURE: 'severe_lateral_flow_failure'
+};
+
+export const NEHRP_SITE_CLASSES = {
+  CLASS_A: 'class_a',
+  CLASS_B: 'class_b',
+  CLASS_C: 'class_c',
+  CLASS_D: 'class_d',
+  CLASS_E: 'class_e',
+  CLASS_F: 'class_f'
+};
+
+export const FLOW_SLIDE_MOBILITY_TIERS = {
+  EXTREME_MOBILITY: 'extreme_mobility',
+  HIGH_MOBILITY: 'high_mobility',
+  MODERATE_MOBILITY: 'moderate_mobility',
+  LOW_MOBILITY: 'low_mobility'
+};
+
+export const LIQUEFACTION_HAZARD_CONFIGS = {
+  safe_non_liquefiable: {
+    id: 'safe_non_liquefiable',
+    name: 'Safe / Non-Liquefiable (FS >= 1.40)',
+    label: 'Safe / Non-Liquefiable (FS >= 1.40)',
+    min_fs: 1.40,
+    max_fs: null,
+    color: '#10B981',
+    badgeClass: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    stabilityNarrative: 'Cyclic resistance exceeds induced cyclic seismic shear stresses with robust safety margin; minimal excess pore pressure generation.',
+    actionProtocol: 'Standard geotechnical surveillance and periodic piezometer monitoring.'
+  },
+  marginal_cyclic_softening: {
+    id: 'marginal_cyclic_softening',
+    name: 'Marginal Cyclic Softening (1.15 <= FS < 1.40)',
+    label: 'Marginal Cyclic Softening (1.15 <= FS < 1.40)',
+    min_fs: 1.15,
+    max_fs: 1.40,
+    color: '#3B82F6',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border border-blue-500/40',
+    stabilityNarrative: 'Moderate excess pore pressure ratio (ru ~ 0.3-0.5); shear modulus degradation and limited cyclic strain accumulation.',
+    actionProtocol: 'Increase InSAR interferometric surveillance cadence; review seismic design basis.'
+  },
+  elevated_liquefaction_potential: {
+    id: 'elevated_liquefaction_potential',
+    name: 'Elevated Liquefaction Potential (1.00 <= FS < 1.15)',
+    label: 'Elevated Liquefaction Potential (1.00 <= FS < 1.15)',
+    min_fs: 1.00,
+    max_fs: 1.15,
+    color: '#F59E0B',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    stabilityNarrative: 'Near-critical cyclic shear state (ru ~ 0.7-0.9); high vulnerability to localized sand boils, crest cracking, and foundation softening.',
+    actionProtocol: 'Deploy emergency piezometer loggers; restrict reservoir pool surcharge; prepare buttress stabilization plans.'
+  },
+  critical_cyclic_collapse: {
+    id: 'critical_cyclic_collapse',
+    name: 'Critical Cyclic Collapse (FS < 1.00)',
+    label: 'Critical Cyclic Collapse (FS < 1.00)',
+    min_fs: 0.0,
+    max_fs: 1.00,
+    color: '#DC2626',
+    badgeClass: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    stabilityNarrative: 'Full liquefaction triggering (ru = 1.0); complete loss of effective stress; rapid transition to catastrophic flowslide and crest breach.',
+    actionProtocol: 'Activate emergency response siren warning system; initiate immediate downstream population evacuation.'
+  }
+};
+
+export const STATIC_BRITTLENESS_CONFIGS = {
+  ductile_dilative: {
+    id: 'ductile_dilative',
+    name: 'Ductile / Dilative Tailings (IB < 0.20)',
+    label: 'Ductile / Dilative Tailings (IB < 0.20)',
+    min_ib: 0.0,
+    max_ib: 0.20,
+    color: '#10B981',
+    badgeClass: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    narrative: 'Dense state parameter (psi < -0.05); positive dilatancy generates negative pore pressure under undrained shear.',
+    actionProtocol: 'Non-flowslide prone material.'
+  },
+  moderate_contractive: {
+    id: 'moderate_contractive',
+    name: 'Moderately Contractive (0.20 <= IB < 0.50)',
+    label: 'Moderately Contractive (0.20 <= IB < 0.50)',
+    min_ib: 0.20,
+    max_ib: 0.50,
+    color: '#F59E0B',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    narrative: 'Loose contractive state parameter; moderate peak-to-yield strength reduction requiring continuous monitoring.',
+    actionProtocol: 'Conduct in-situ CPTu dissipation tests to verify drainage characteristics.'
+  },
+  highly_brittle_collapsible: {
+    id: 'highly_brittle_collapsible',
+    name: 'Highly Brittle / Collapsible Slimes (IB >= 0.50)',
+    label: 'Highly Brittle / Collapsible Slimes (IB >= 0.50)',
+    min_ib: 0.50,
+    max_ib: 1.00,
+    color: '#DC2626',
+    badgeClass: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    narrative: 'Extreme strain-softening contractive slimes (psi > +0.05); catastrophic strength collapse once yield stress is exceeded.',
+    actionProtocol: 'Design upstream buttress reinforcement; dewater contractive tailings zones.'
+  }
+};
+
+export const LATERAL_SPREADING_CONFIGS = {
+  negligible_lateral_strain: {
+    id: 'negligible_lateral_strain',
+    name: 'Negligible Lateral Displacement (DH < 0.05 m)',
+    label: 'Negligible Lateral Displacement (DH < 0.05 m)',
+    min_dh_m: 0.0,
+    max_dh_m: 0.05,
+    color: '#10B981',
+    badgeClass: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    narrative: 'Minimal post-liquefaction shear strain accumulation; embankment toe remains intact.',
+    actionProtocol: 'Routine satellite InSAR monitoring.'
+  },
+  low_lateral_spreading: {
+    id: 'low_lateral_spreading',
+    name: 'Low Lateral Spreading (0.05 <= DH < 0.25 m)',
+    label: 'Low Lateral Spreading (0.05 <= DH < 0.25 m)',
+    min_dh_m: 0.05,
+    max_dh_m: 0.25,
+    color: '#3B82F6',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border border-blue-500/40',
+    narrative: 'Minor horizontal translation and crest slumping; manageable with superficial regrading.',
+    actionProtocol: 'Inspect crest tension cracks and instrument with automated tiltmeters.'
+  },
+  moderate_lateral_spreading: {
+    id: 'moderate_lateral_spreading',
+    name: 'Moderate Lateral Spreading (0.25 <= DH < 0.75 m)',
+    label: 'Moderate Lateral Spreading (0.25 <= DH < 0.75 m)',
+    min_dh_m: 0.25,
+    max_dh_m: 0.75,
+    color: '#F59E0B',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    narrative: 'Significant differential lateral spreading; potential breach of internal drain filter layers.',
+    actionProtocol: 'Draw down impoundment water level; install toe weighting berms.'
+  },
+  severe_lateral_flow_failure: {
+    id: 'severe_lateral_flow_failure',
+    name: 'Severe Lateral Flow Failure (DH >= 0.75 m)',
+    label: 'Severe Lateral Flow Failure (DH >= 0.75 m)',
+    min_dh_m: 0.75,
+    max_dh_m: null,
+    color: '#DC2626',
+    badgeClass: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    narrative: 'Massive catastrophic lateral translation and flowslide extrusion; imminent dam breach.',
+    actionProtocol: 'Trigger immediate downstream emergency dam breach protocol.'
+  }
+};
+
+export const TAILINGS_LIQUEFACTION_CONFIGS = {
+  brumadinho_upstream_slimes: {
+    id: 'brumadinho_upstream_slimes',
+    name: 'Brumadinho Analog Upstream Slimes (Contractive)',
+    label: 'Brumadinho Analog Upstream Slimes (Contractive)',
+    description: 'Very loose, saturated, contractive iron ore slimes with high static brittleness.',
+    pgaG: 0.15,
+    earthquakeMagnitudeMw: 6.5,
+    groundwaterDepthM: 1.5,
+    unitWeightKnM3: 17.5,
+    saturatedUnitWeightKnM3: 19.5,
+    representativeCptQcMpa: 1.4,
+    sleeveFrictionFsKpa: 18.0,
+    finesContentPct: 45.0,
+    stateParameterPsi: 0.08,
+    tauPeakKpa: 42.0,
+    tauYieldKpa: 15.0,
+    drivingShearStressKpa: 28.0,
+    insarObservedDisplacementM: 0.12
+  },
+  fundao_iron_ore_tailings: {
+    id: 'fundao_iron_ore_tailings',
+    name: 'Fundão Silty Sand Tailings Benchmark',
+    label: 'Fundão Silty Sand Tailings Benchmark',
+    description: 'Silty sand tailings deposited upstream; sensitive to saturation and dynamic loading.',
+    pgaG: 0.20,
+    earthquakeMagnitudeMw: 7.0,
+    groundwaterDepthM: 3.0,
+    unitWeightKnM3: 18.0,
+    saturatedUnitWeightKnM3: 20.0,
+    representativeCptQcMpa: 2.8,
+    sleeveFrictionFsKpa: 26.0,
+    finesContentPct: 28.0,
+    stateParameterPsi: 0.03,
+    tauPeakKpa: 65.0,
+    tauYieldKpa: 30.0,
+    drivingShearStressKpa: 34.0,
+    insarObservedDisplacementM: 0.08
+  },
+  san_luis_denser_shell: {
+    id: 'san_luis_denser_shell',
+    name: 'San Luis Forebay Dense Rockfill / Compacted Shell',
+    label: 'San Luis Forebay Dense Rockfill / Compacted Shell',
+    description: 'Compacted, dense granular shell with dilative behavior and high cyclic resistance.',
+    pgaG: 0.35,
+    earthquakeMagnitudeMw: 7.5,
+    groundwaterDepthM: 6.0,
+    unitWeightKnM3: 19.5,
+    saturatedUnitWeightKnM3: 21.5,
+    representativeCptQcMpa: 11.5,
+    sleeveFrictionFsKpa: 90.0,
+    finesContentPct: 8.0,
+    stateParameterPsi: -0.14,
+    tauPeakKpa: 160.0,
+    tauYieldKpa: 140.0,
+    drivingShearStressKpa: 55.0,
+    insarObservedDisplacementM: 0.015
+  },
+  cadia_tailings_layer: {
+    id: 'cadia_tailings_layer',
+    name: 'Cadia Analog Weak Tailings Foundation Interlayer',
+    label: 'Cadia Analog Weak Tailings Foundation Interlayer',
+    description: 'Stratified low-permeability foundation layer susceptible to localized flow liquefaction.',
+    pgaG: 0.18,
+    earthquakeMagnitudeMw: 6.8,
+    groundwaterDepthM: 2.2,
+    unitWeightKnM3: 17.8,
+    saturatedUnitWeightKnM3: 19.8,
+    representativeCptQcMpa: 1.9,
+    sleeveFrictionFsKpa: 22.0,
+    finesContentPct: 38.0,
+    stateParameterPsi: 0.05,
+    tauPeakKpa: 50.0,
+    tauYieldKpa: 19.0,
+    drivingShearStressKpa: 31.0,
+    insarObservedDisplacementM: 0.095
+  }
+};
+
+export const NEHRP_SITE_CLASS_CONFIGS = {
+  class_a: {
+    id: 'class_a',
+    name: 'Class A — Hard Rock (Vs30 > 1500 m/s)',
+    label: 'Class A — Hard Rock (Vs30 > 1500 m/s)',
+    vs30_min_m_s: 1500.0,
+    vs30_max_m_s: null,
+    site_amplification_fa: 0.8,
+    color: '#10B981',
+    badgeClass: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    liquefaction_susceptibility: 'non_susceptible',
+    description: 'Competent crystalline or unweathered bedrock with extremely high shear stiffness and negligible amplification.'
+  },
+  class_b: {
+    id: 'class_b',
+    name: 'Class B — Medium Rock (760 < Vs30 <= 1500 m/s)',
+    label: 'Class B — Medium Rock (760 < Vs30 <= 1500 m/s)',
+    vs30_min_m_s: 760.0,
+    vs30_max_m_s: 1500.0,
+    site_amplification_fa: 1.0,
+    color: '#06B6D4',
+    badgeClass: 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40',
+    liquefaction_susceptibility: 'very_low',
+    description: 'Standard engineering bedrock reference site condition with unitary ground motion amplification.'
+  },
+  class_c: {
+    id: 'class_c',
+    name: 'Class C — Very Dense Soil / Soft Rock (360 < Vs30 <= 760 m/s)',
+    label: 'Class C — Very Dense Soil / Soft Rock (360 < Vs30 <= 760 m/s)',
+    vs30_min_m_s: 360.0,
+    vs30_max_m_s: 760.0,
+    site_amplification_fa: 1.2,
+    color: '#3B82F6',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border border-blue-500/40',
+    liquefaction_susceptibility: 'low',
+    description: 'Dense gravelly sands, stiff glacial tills, or weathered saprolite with moderate cyclic resistance.'
+  },
+  class_d: {
+    id: 'class_d',
+    name: 'Class D — Stiff Soil (180 < Vs30 <= 360 m/s)',
+    label: 'Class D — Stiff Soil (180 < Vs30 <= 360 m/s)',
+    vs30_min_m_s: 180.0,
+    vs30_max_m_s: 360.0,
+    site_amplification_fa: 1.5,
+    color: '#F59E0B',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    liquefaction_susceptibility: 'moderate',
+    description: 'Cohesionless sand or silty alluvial sediments with moderate liquefaction potential under strong seismic shaking.'
+  },
+  class_e: {
+    id: 'class_e',
+    name: 'Class E — Soft Soil / Unconsolidated Fill (Vs30 <= 180 m/s)',
+    label: 'Class E — Soft Soil / Unconsolidated Fill (Vs30 <= 180 m/s)',
+    vs30_min_m_s: 0.0,
+    vs30_max_m_s: 180.0,
+    site_amplification_fa: 2.2,
+    color: '#EF4444',
+    badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/40',
+    liquefaction_susceptibility: 'high',
+    description: 'Unconsolidated, water-saturated hydraulic tailings slimes or soft alluvial delta deposits with critical liquefaction susceptibility.'
+  },
+  class_f: {
+    id: 'class_f',
+    name: 'Class F — Vulnerable / Liquefiable Deposits',
+    label: 'Class F — Vulnerable / Liquefiable Deposits',
+    vs30_min_m_s: 0.0,
+    vs30_max_m_s: null,
+    site_amplification_fa: 2.8,
+    color: '#DC2626',
+    badgeClass: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    liquefaction_susceptibility: 'critical',
+    description: 'Peats, highly organic clays, or contractive liquefiable mine tailings requiring site-specific dynamic response analysis.'
+  }
+};
+
+export const FLOW_SLIDE_MOBILITY_CONFIGS = {
+  extreme_mobility: {
+    id: 'extreme_mobility',
+    name: 'Extreme Runout Mobility (Reach Angle < 4.0°)',
+    label: 'Extreme Runout Mobility (Reach Angle < 4.0°)',
+    min_angle_deg: 0.0,
+    max_angle_deg: 4.0,
+    color: '#DC2626',
+    badgeClass: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    narrative: 'Hyper-mobile liquefied slurry flow slide with very low apparent friction (tan alpha_r < 0.07); severe downstream inundation hazard.',
+    actionProtocol: 'Immediate mandatory downstream population evacuation to high ground.'
+  },
+  high_mobility: {
+    id: 'high_mobility',
+    name: 'High Runout Mobility (4.0° <= Reach Angle < 8.0°)',
+    label: 'High Runout Mobility (4.0° <= Reach Angle < 8.0°)',
+    min_angle_deg: 4.0,
+    max_angle_deg: 8.0,
+    color: '#EF4444',
+    badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/40',
+    narrative: 'Mobile liquefied tailings slide capable of traveling multiple kilometers along downstream watercourses (tan alpha_r ~ 0.07-0.14).',
+    actionProtocol: 'Activate secondary containment dikes and close downstream transport routes.'
+  },
+  moderate_mobility: {
+    id: 'moderate_mobility',
+    name: 'Moderate Runout Mobility (8.0° <= Reach Angle < 14.0°)',
+    label: 'Moderate Runout Mobility (8.0° <= Reach Angle < 14.0°)',
+    min_angle_deg: 8.0,
+    max_angle_deg: 14.0,
+    color: '#F59E0B',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    narrative: 'Debris/slump movement primarily confined to the immediate dam toe and proximal valley floor (tan alpha_r ~ 0.14-0.25).',
+    actionProtocol: 'Establish exclusion zone around downstream toe and inspect drainage culverts.'
+  },
+  low_mobility: {
+    id: 'low_mobility',
+    name: 'Low Runout Mobility (Reach Angle >= 14.0°)',
+    label: 'Low Runout Mobility (Reach Angle >= 14.0°)',
+    min_angle_deg: 14.0,
+    max_angle_deg: 90.0,
+    color: '#10B981',
+    badgeClass: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    narrative: 'Non-liquefied frictional rotational or translational slump with limited travel distance beyond the slope footprint.',
+    actionProtocol: 'Standard geotechnical slope stabilization and toe regrading.'
+  }
+};
+
+export const classifyLiquefactionHazardTier = (fsLiq) => {
+  const val = Number(fsLiq);
+  if (val >= 1.40) return LIQUEFACTION_HAZARD_CONFIGS.safe_non_liquefiable;
+  if (val >= 1.15) return LIQUEFACTION_HAZARD_CONFIGS.marginal_cyclic_softening;
+  if (val >= 1.00) return LIQUEFACTION_HAZARD_CONFIGS.elevated_liquefaction_potential;
+  return LIQUEFACTION_HAZARD_CONFIGS.critical_cyclic_collapse;
+};
+
+export const classifyStaticBrittlenessTier = (brittlenessIndex) => {
+  const ib = Number(brittlenessIndex);
+  if (ib < 0.20) return STATIC_BRITTLENESS_CONFIGS.ductile_dilative;
+  if (ib < 0.50) return STATIC_BRITTLENESS_CONFIGS.moderate_contractive;
+  return STATIC_BRITTLENESS_CONFIGS.highly_brittle_collapsible;
+};
+
+export const classifyLateralSpreadingHazardTier = (dhM) => {
+  const d = Number(dhM);
+  if (d < 0.05) return LATERAL_SPREADING_CONFIGS.negligible_lateral_strain;
+  if (d < 0.25) return LATERAL_SPREADING_CONFIGS.low_lateral_spreading;
+  if (d < 0.75) return LATERAL_SPREADING_CONFIGS.moderate_lateral_spreading;
+  return LATERAL_SPREADING_CONFIGS.severe_lateral_flow_failure;
+};
+
+export const calculateSeedIdrissCsr = (pgaG, sigmaV0Kpa, sigmaV0EffKpa, depthM) => {
+  if (Number(sigmaV0EffKpa) <= 0) return Number((0.65 * Math.max(0.01, Number(pgaG))).toFixed(4));
+  const d = Math.max(0.0, Number(depthM));
+  let rd;
+  if (d <= 9.15) {
+    rd = 1.0 - 0.00765 * d;
+  } else if (d <= 23.0) {
+    rd = 1.174 - 0.0267 * d;
+  } else {
+    rd = Math.max(0.40, 0.744 - 0.008 * d);
+  }
+  const csr = 0.65 * Math.max(0.01, Number(pgaG)) * (Number(sigmaV0Kpa) / Math.max(1.0, Number(sigmaV0EffKpa))) * rd;
+  return Number(csr.toFixed(4));
+};
+
+export const calculateRobertsonCrr75 = (qc1ncs, _mw = 7.5, _sigmaV0EffKpa = 100.0) => {
+  const q = Math.max(1.0, Math.min(200.0, Number(qc1ncs)));
+  let crr75;
+  if (q < 50.0) {
+    crr75 = 0.833 * (q / 1000.0) + 0.05;
+  } else {
+    crr75 = 93.0 * Math.pow(q / 1000.0, 3) + 0.08;
+  }
+  return Number(crr75.toFixed(4));
+};
+
+export const calculateLiquefactionFactorOfSafety = (csr, crr75, mw = 7.5, sigmaV0EffKpa = 100.0) => {
+  const cSr = Math.max(0.001, Number(csr));
+  const mag = Math.max(5.0, Math.min(9.0, Number(mw)));
+  const msf = Math.min(1.80, Math.max(0.60, Math.pow(mag / 7.5, -2.56)));
+  const sigEff = Math.max(10.0, Number(sigmaV0EffKpa));
+  const pa = 100.0;
+  const kSigma = Math.min(1.10, Math.max(0.60, Math.pow(pa / sigEff, 0.7)));
+  const fs = (Number(crr75) * msf * kSigma) / cSr;
+  return Number(Math.max(0.05, Math.min(5.0, fs)).toFixed(2));
+};
+
+export const calculateStaticFlowLiquefaction = (tauPeakKpa, tauYieldKpa, drivingShearStressKpa, sigmaV0EffKpa = 100.0) => {
+  const tp = Math.max(5.0, Number(tauPeakKpa));
+  const ty = Math.max(1.0, Math.min(tp, Number(tauYieldKpa)));
+  const td = Math.max(0.0, Number(drivingShearStressKpa));
+  const sEff = Math.max(10.0, Number(sigmaV0EffKpa));
+
+  const ib = Number(((tp - ty) / tp).toFixed(3));
+  const tLiq = Number(Math.max(0.5, 0.35 * ty).toFixed(1));
+  const flowTriggered = td >= ty;
+
+  return {
+    peak_undrained_shear_strength_kpa: tp,
+    yield_undrained_shear_strength_kpa: ty,
+    liquefied_residual_shear_strength_kpa: tLiq,
+    driving_shear_stress_kpa: td,
+    brittleness_index: ib,
+    brittleness_tier: classifyStaticBrittlenessTier(ib).id,
+    flow_slide_triggered: flowTriggered,
+    yield_strength_ratio: Number((ty / sEff).toFixed(3)),
+    liquefied_strength_ratio: Number((tLiq / sEff).toFixed(3))
+  };
+};
+
+export const calculateLateralSpreadingDisplacement = (ldiM, slopeGradientPct = 2.5, _freeFaceHeightM = 0.0) => {
+  const l = Math.max(0.0, Number(ldiM));
+  const s = Math.max(0.1, Math.min(20.0, Number(slopeGradientPct)));
+  const dh = l * (0.2 + 0.05 * s);
+  return Number(Math.max(0.0, Math.min(10.0, dh)).toFixed(3));
+};
+
+export const calculateMagnitudeScalingFactor = (mw, formulation = 'youd_2001') => {
+  const m = Math.max(5.0, Math.min(9.0, Number(mw)));
+  const fmt = String(formulation).toLowerCase();
+  let msf;
+  if (fmt.includes('idriss')) {
+    msf = 6.9 * Math.exp(-m / 4.0) - 0.058;
+  } else if (fmt.includes('andrus') || fmt.includes('stokoe')) {
+    msf = Math.pow(m / 7.5, -3.3);
+  } else {
+    msf = Math.pow(m / 7.5, -2.56);
+  }
+  return Number(Math.min(1.80, Math.max(0.60, msf)).toFixed(3));
+};
+
+export const calculateSptN160cs = (
+  nSpt,
+  sigmaV0EffKpa,
+  finesContentPct = 0.0,
+  energyRatioCe = 1.0,
+  rodLengthCr = 1.0,
+  boreholeDiameterCb = 1.0,
+  samplerCs = 1.0
+) => {
+  const n = Math.max(0.0, Number(nSpt));
+  const sigEff = Math.max(5.0, Number(sigmaV0EffKpa));
+  const pa = 100.0;
+  const cn = Number(Math.min(1.70, Math.max(0.40, Math.sqrt(pa / sigEff))).toFixed(3));
+  const n60 = Number((n * Number(energyRatioCe) * Number(rodLengthCr) * Number(boreholeDiameterCb) * Number(samplerCs)).toFixed(2));
+  const n160 = Number((n60 * cn).toFixed(2));
+
+  const fc = Math.max(0.0, Math.min(100.0, Number(finesContentPct)));
+  let alpha, beta;
+  if (fc <= 5.0) {
+    alpha = 0.0;
+    beta = 1.0;
+  } else if (fc < 35.0) {
+    alpha = Math.exp(1.76 - (190.0 / Math.pow(fc, 2)));
+    beta = 0.99 + Math.pow(fc, 1.5) / 1000.0;
+  } else {
+    alpha = 5.0;
+    beta = 1.2;
+  }
+  const n160cs = Number((alpha + beta * n160).toFixed(2));
+  return {
+    cn_overburden_factor: cn,
+    n60_blows: n60,
+    normalized_n1_60: n160,
+    clean_sand_n1_60cs: n160cs
+  };
+};
+
+export const calculateSptCrr75 = (n160cs) => {
+  const n = Number(n160cs);
+  if (n >= 30.0) return 2.0;
+  const nVal = Math.max(1.0, n);
+  const crr75 = (1.0 / (34.0 - nVal)) + (nVal / 135.0) + (50.0 / Math.pow(10.0 * nVal + 45.0, 2)) - (1.0 / 200.0);
+  return Number(Math.max(0.03, crr75).toFixed(4));
+};
+
+export const calculateVs30FromTopographicSlope = (slopeDeg, terrainType = 'active_tectonic') => {
+  const sDeg = Math.max(0.0, Math.min(60.0, Number(slopeDeg)));
+  const s = Math.tan(sDeg * (Math.PI / 180.0));
+  const isActive = String(terrainType).toLowerCase().includes('active');
+
+  let vs30;
+  if (isActive) {
+    if (s >= 0.138) {
+      vs30 = 760.0 + Math.min(640.0, (s - 0.138) * 1200.0);
+    } else if (s >= 0.05) {
+      vs30 = 490.0 + ((s - 0.05) / (0.138 - 0.05)) * (760.0 - 490.0);
+    } else if (s >= 0.015) {
+      vs30 = 300.0 + ((s - 0.015) / (0.05 - 0.015)) * (490.0 - 300.0);
+    } else if (s >= 0.0022) {
+      vs30 = 200.0 + ((s - 0.0022) / (0.015 - 0.0022)) * (300.0 - 200.0);
+    } else {
+      vs30 = Math.max(130.0, 150.0 + (s / 0.0022) * 50.0);
+    }
+  } else {
+    if (s >= 0.08) {
+      vs30 = 760.0 + Math.min(640.0, (s - 0.08) * 1200.0);
+    } else if (s >= 0.02) {
+      vs30 = 510.0 + ((s - 0.02) / (0.08 - 0.02)) * (760.0 - 510.0);
+    } else if (s >= 0.004) {
+      vs30 = 350.0 + ((s - 0.004) / (0.02 - 0.004)) * (510.0 - 350.0);
+    } else {
+      vs30 = Math.max(180.0, 200.0 + (s / 0.004) * 150.0);
+    }
+  }
+  return Number(vs30.toFixed(1));
+};
+
+export const classifyNehrpSiteClass = (vs30MS) => {
+  const v = Number(vs30MS);
+  if (v > 1500.0) return NEHRP_SITE_CLASSES.CLASS_A;
+  if (v > 760.0) return NEHRP_SITE_CLASSES.CLASS_B;
+  if (v > 360.0) return NEHRP_SITE_CLASSES.CLASS_C;
+  if (v > 180.0) return NEHRP_SITE_CLASSES.CLASS_D;
+  if (v > 0.0) return NEHRP_SITE_CLASSES.CLASS_E;
+  return NEHRP_SITE_CLASSES.CLASS_F;
+};
+
+export const calculateVsCrr75 = (vs1MS, finesContentPct = 15.0) => {
+  const fc = Math.max(0.0, Math.min(100.0, Number(finesContentPct)));
+  let vs1Star;
+  if (fc <= 5.0) {
+    vs1Star = 215.0;
+  } else if (fc < 35.0) {
+    vs1Star = 215.0 - 0.5 * (fc - 5.0);
+  } else {
+    vs1Star = 200.0;
+  }
+  const v1 = Math.max(50.0, Number(vs1MS));
+  if (v1 >= vs1Star) return 2.0;
+  const crr = 0.022 * Math.pow(v1 / 100.0, 2) + 2.8 * ((1.0 / (vs1Star - v1)) - (1.0 / vs1Star));
+  return Number(Math.max(0.03, crr).toFixed(4));
+};
+
+export const calculateVs30Proxy = (options = {}) => {
+  const lat = Number(options.latitude !== undefined ? options.latitude : (options.lat !== undefined ? options.lat : 37.05));
+  const lon = Number(options.longitude !== undefined ? options.longitude : (options.lon !== undefined ? options.lon : -121.05));
+  let sDeg, sMM;
+  if (options.slope_deg !== undefined || options.slopeDeg !== undefined) {
+    sDeg = Number(options.slope_deg !== undefined ? options.slope_deg : options.slopeDeg);
+    sMM = Math.tan(sDeg * (Math.PI / 180.0));
+  } else if (options.slope_m_m !== undefined || options.slopeMM !== undefined) {
+    sMM = Number(options.slope_m_m !== undefined ? options.slope_m_m : options.slopeMM);
+    sDeg = Math.atan(sMM) * (180.0 / Math.PI);
+  } else {
+    sDeg = 5.0;
+    sMM = Math.tan(sDeg * (Math.PI / 180.0));
+  }
+  const terrainType = String(options.terrain_type || options.terrainType || 'active_tectonic');
+  const effectiveStressKpa = Number(options.effective_stress_kpa || options.effectiveStressKpa || 100.0);
+  const finesContentPct = Number(options.fines_content_pct || options.finesContentPct || 15.0);
+
+  const vs30 = calculateVs30FromTopographicSlope(sDeg, terrainType);
+  const nehrpClass = classifyNehrpSiteClass(vs30);
+  const meta = NEHRP_SITE_CLASS_CONFIGS[nehrpClass] || NEHRP_SITE_CLASS_CONFIGS.class_d;
+
+  const pa = 100.0;
+  const sigEff = Math.max(5.0, effectiveStressKpa);
+  const cnVs = Math.pow(pa / sigEff, 0.25);
+  const vs1 = Number((vs30 * cnVs).toFixed(1));
+  const crr75Vs = calculateVsCrr75(vs1, finesContentPct);
+
+  return {
+    latitude: Number(lat.toFixed(5)),
+    longitude: Number(lon.toFixed(5)),
+    slope_deg: Number(sDeg.toFixed(2)),
+    slope_m_m: Number(sMM.toFixed(4)),
+    terrain_type: terrainType,
+    vs30_m_s: vs30,
+    nehrp_site_class: nehrpClass,
+    site_class_name: meta.name,
+    site_amplification_fa: meta.site_amplification_fa,
+    normalized_vs1_m_s: vs1,
+    crr75_vs: crr75Vs,
+    liquefaction_susceptibility: meta.liquefaction_susceptibility,
+    source_reference: 'Wald & Allen (2007) / Andrus & Stokoe (2000)',
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateExcessPorePressureRatio = (fsLiq, _alpha = 0.7) => {
+  const fs = Math.max(0.01, Number(fsLiq));
+  if (fs >= 2.0) return 0.0;
+  let ru;
+  if (fs >= 1.40) {
+    ru = (0.25 * (2.0 - fs)) / 0.60;
+  } else if (fs >= 1.00) {
+    ru = 0.25 + (0.75 * (1.40 - fs)) / 0.40;
+  } else {
+    ru = 1.0;
+  }
+  return Number(Math.min(1.0, Math.max(0.0, ru)).toFixed(3));
+};
+
+export const calculateDynamicPorePressure = (sigmaV0EffKpa = 100.0, fsLiq = 1.0, damId = 'TAILINGS_DAM_A') => {
+  const sigEff = Math.max(5.0, Number(sigmaV0EffKpa));
+  const fs = Number(fsLiq);
+  const ru = calculateExcessPorePressureRatio(fs);
+  const deltaU = Number((ru * sigEff).toFixed(2));
+  const postSigEff = Number(Math.max(0.0, sigEff - deltaU).toFixed(2));
+  const lossPct = Number((ru * 100.0).toFixed(1));
+  const tier = classifyLiquefactionHazardTier(fs);
+
+  return {
+    dam_id: damId,
+    sigma_v0_eff_kpa: Number(sigEff.toFixed(2)),
+    factor_of_safety_liq: Number(fs.toFixed(2)),
+    excess_pore_pressure_ratio_ru: ru,
+    excess_pore_pressure_delta_u_kpa: deltaU,
+    post_cyclic_effective_stress_kpa: postSigEff,
+    effective_stress_loss_pct: lossPct,
+    liquefaction_triggered: fs < 1.0,
+    hazard_tier: tier.id,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const classifyFlowSlideMobilityTier = (reachAngleDeg) => {
+  const a = Number(reachAngleDeg);
+  if (a < 4.0) return FLOW_SLIDE_MOBILITY_TIERS.EXTREME_MOBILITY;
+  if (a < 8.0) return FLOW_SLIDE_MOBILITY_TIERS.HIGH_MOBILITY;
+  if (a < 14.0) return FLOW_SLIDE_MOBILITY_TIERS.MODERATE_MOBILITY;
+  return FLOW_SLIDE_MOBILITY_TIERS.LOW_MOBILITY;
+};
+
+export const calculateFlowSlideRunoutDistance = (
+  damHeightM = 35.0,
+  impoundedVolumeM3 = 12500000.0,
+  reachAngleDeg = 5.5,
+  _downstreamValleySlopeDeg = 1.5,
+  crestLat = 37.05,
+  crestLon = -121.05,
+  damId = 'TAILINGS_DAM_A',
+  damName = 'North Tailings Impoundment'
+) => {
+  const h = Math.max(2.0, Number(damHeightM));
+  const alphaR = Math.max(1.0, Math.min(45.0, Number(reachAngleDeg)));
+  const tanAlpha = Math.tan(alphaR * (Math.PI / 180.0));
+  const lFahr = Number((h / tanAlpha).toFixed(1));
+
+  const v = Math.max(0.0, Number(impoundedVolumeM3));
+  const lVol = v > 0 ? Number((10.0 * Math.pow(v, 0.30)).toFixed(1)) : lFahr;
+  const lMax = Math.max(lFahr, lVol);
+  const evacBuffer = Number((1.25 * lMax).toFixed(1));
+  const tier = classifyFlowSlideMobilityTier(alphaR);
+
+  const geojson = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [Number(crestLon.toFixed(5)), Number(crestLat.toFixed(5))]
+        },
+        properties: {
+          feature_type: 'dam_crest_origin',
+          dam_id: damId,
+          dam_height_m: h
+        }
+      },
+      {
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [Number(crestLon.toFixed(5)), Number(crestLat.toFixed(5))],
+            [Number((crestLon + 0.001 * (lFahr / 100.0)).toFixed(5)), Number((crestLat - 0.001 * (lFahr / 100.0)).toFixed(5))]
+          ]
+        },
+        properties: {
+          feature_type: 'flow_slide_centerline',
+          runout_distance_m: lFahr,
+          mobility_tier: tier
+        }
+      }
+    ]
+  };
+
+  return {
+    dam_id: damId,
+    dam_name: damName,
+    dam_height_m: h,
+    reach_angle_deg: alphaR,
+    apparent_friction_coef: Number(tanAlpha.toFixed(4)),
+    runout_distance_m: lFahr,
+    volume_scaled_runout_m: lVol,
+    evacuation_buffer_m: evacBuffer,
+    mobility_tier: tier,
+    runout_envelope_geojson: geojson,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateSptSoundingProfile = (options = {}) => {
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const sptId = options.spt_id || options.sptId || 'SPT_BH_01';
+  const gwDepthM = Number(options.groundwater_depth_m || options.groundwaterDepthM || 2.5);
+  const gamma = Number(options.unit_weight_kn_m3 || options.unitWeightKnM3 || 18.0);
+  const gammaSat = Number(options.saturated_unit_weight_kn_m3 || options.saturatedUnitWeightKnM3 || 20.0);
+  const pgaG = Number(options.pga_g || options.pgaG || 0.20);
+  const mw = Number(options.earthquake_magnitude_mw || options.earthquakeMagnitudeMw || 7.0);
+
+  const pointsIn = options.points;
+  let pointsRaw = [];
+  if (!pointsIn || !pointsIn.length) {
+    const depths = [1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0, 13.5, 15.0];
+    const baseBlows = [6, 8, 5, 7, 10, 12, 14, 18, 22, 25];
+    pointsRaw = depths.map((z, idx) => ({
+      depth_m: z,
+      spt_n_blows: baseBlows[idx],
+      fines_content_pct: 25.0
+    }));
+  } else {
+    pointsRaw = [...pointsIn];
+  }
+
+  const sptPoints = [];
+  let minFs = 99.0;
+  let critDepth = 0.0;
+  const gammaW = 9.81;
+  let sumN160cs = 0.0;
+
+  pointsRaw.forEach(p => {
+    const z = Number(p.depth_m || p.depthM || 1.5);
+    const nBlows = Number(p.spt_n_blows || p.sptNBlows || 8);
+    const fc = Number(p.fines_content_pct || p.finesContentPct || 15.0);
+    const ce = Number(p.energy_ratio_ce || p.energyRatioCe || 1.0);
+    const cr = Number(p.rod_length_cr || p.rodLengthCr || 1.0);
+    const cb = Number(p.borehole_diameter_cb || p.boreholeDiameterCb || 1.0);
+    const cs = Number(p.sampler_cs || p.samplerCs || 1.0);
+
+    let sigmaV0, u0;
+    if (z <= gwDepthM) {
+      sigmaV0 = gamma * z;
+      u0 = 0.0;
+    } else {
+      sigmaV0 = (gamma * gwDepthM) + (gammaSat * (z - gwDepthM));
+      u0 = gammaW * (z - gwDepthM);
+    }
+    const sigmaV0Eff = Math.max(5.0, sigmaV0 - u0);
+
+    const sptNorm = calculateSptN160cs(nBlows, sigmaV0Eff, fc, ce, cr, cb, cs);
+    const n160cs = sptNorm.clean_sand_n1_60cs;
+    sumN160cs += n160cs;
+
+    const csrVal = calculateSeedIdrissCsr(pgaG, sigmaV0, sigmaV0Eff, z);
+    const crrVal = calculateSptCrr75(n160cs);
+    const fsLiqVal = calculateLiquefactionFactorOfSafety(csrVal, crrVal, mw, sigmaV0Eff);
+    const tier = classifyLiquefactionHazardTier(fsLiqVal);
+    const ruVal = calculateExcessPorePressureRatio(fsLiqVal);
+
+    if (fsLiqVal < minFs) {
+      minFs = fsLiqVal;
+      critDepth = z;
+    }
+
+    sptPoints.push({
+      depth_m: Number(z.toFixed(2)),
+      spt_n_blows: nBlows,
+      fines_content_pct: fc,
+      cn_overburden_factor: sptNorm.cn_overburden_factor,
+      n60_blows: sptNorm.n60_blows,
+      normalized_n1_60: sptNorm.normalized_n1_60,
+      clean_sand_n1_60cs: n160cs,
+      cyclic_stress_ratio_csr: csrVal,
+      cyclic_resistance_ratio_crr75: crrVal,
+      factor_of_safety_liq: fsLiqVal,
+      hazard_tier: tier.id,
+      excess_pore_pressure_ratio_ru: ruVal
+    });
+  });
+
+  const meanN160cs = sptPoints.length > 0 ? Number((sumN160cs / sptPoints.length).toFixed(1)) : 0.0;
+  const totalDepth = sptPoints.length > 0 ? sptPoints[sptPoints.length - 1].depth_m : 0.0;
+  const overallTier = classifyLiquefactionHazardTier(minFs);
+
+  return {
+    dam_id: damId,
+    spt_id: sptId,
+    total_depth_m: totalDepth,
+    mean_n1_60cs: meanN160cs,
+    min_fs_liq: minFs,
+    critical_depth_m: critDepth,
+    overall_hazard_tier: overallTier.id,
+    points: sptPoints,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateTailingsLiquefactionAnalysis = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `LIQ_${Date.now()}`;
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const damName = options.dam_name || options.damName || 'North Tailings Impoundment';
+
+  const pgaG = Number(options.pga_g || options.pgaG || 0.20);
+  const mw = Number(options.earthquake_magnitude_mw || options.earthquakeMagnitudeMw || 7.0);
+  const gwDepthM = Number(options.groundwater_depth_m || options.groundwaterDepthM || 2.5);
+  const gamma = Number(options.unit_weight_kn_m3 || options.unitWeightKnM3 || 18.0);
+  const gammaSat = Number(options.saturated_unit_weight_kn_m3 || options.saturatedUnitWeightKnM3 || 20.0);
+  const presetKey = String(options.tailings_preset || options.tailingsPreset || 'brumadinho_upstream_slimes').toLowerCase().replace(/-/g, '_');
+  const slopeAngle = Number(options.slope_angle_deg || options.slopeAngleDeg || 5.0);
+
+  const preset = TAILINGS_LIQUEFACTION_CONFIGS[presetKey] || TAILINGS_LIQUEFACTION_CONFIGS.brumadinho_upstream_slimes;
+  const insarDisp = Number(options.insar_displacement_m !== undefined ? options.insar_displacement_m : (options.insarDisplacementM !== undefined ? options.insarDisplacementM : preset.insarObservedDisplacementM));
+
+  const cptIn = options.cpt_soundings || options.cptSoundings;
+  let cptRaw = [];
+  if (!cptIn || !cptIn.length) {
+    const depths = [1.0, 2.0, 3.5, 5.0, 6.5, 8.0, 10.0, 12.0, 14.0, 16.0];
+    const baseQc = preset.representativeCptQcMpa;
+    const baseFs = preset.sleeveFrictionFsKpa;
+    const basePsi = preset.stateParameterPsi;
+    cptRaw = depths.map(z => {
+      const zFactor = 1.0 + 0.05 * z;
+      return {
+        depth_m: z,
+        cone_resistance_qc_mpa: Number((baseQc * zFactor).toFixed(2)),
+        sleeve_friction_fs_kpa: Number((baseFs * zFactor).toFixed(1)),
+        pore_pressure_u2_kpa: Number((Math.max(0.0, (z - gwDepthM) * 9.81 * 1.5)).toFixed(1)),
+        state_parameter_psi: Number((basePsi - 0.002 * z).toFixed(3))
+      };
+    });
+  } else {
+    cptRaw = [...cptIn];
+  }
+
+  const cptPoints = [];
+  let minFs = 99.0;
+  let critDepth = 0.0;
+  let cumulativeLdi = 0.0;
+  const gammaW = 9.81;
+  let prevZ = 0.0;
+
+  cptRaw.forEach(p => {
+    const z = Number(p.depth_m || p.depthM || 1.0);
+    const qc = Math.max(0.2, Number(p.cone_resistance_qc_mpa || p.coneResistanceQcMpa || 1.5));
+    const fsSleeve = Math.max(1.0, Number(p.sleeve_friction_fs_kpa || p.sleeveFrictionFsKpa || 20.0));
+    const u2 = Math.max(0.0, Number(p.pore_pressure_u2_kpa || p.porePressureU2Kpa || 0.0));
+    const psi = Number(p.state_parameter_psi || p.stateParameterPsi || 0.05);
+
+    let sigmaV0, u0;
+    if (z <= gwDepthM) {
+      sigmaV0 = gamma * z;
+      u0 = 0.0;
+    } else {
+      sigmaV0 = (gamma * gwDepthM) + (gammaSat * (z - gwDepthM));
+      u0 = gammaW * (z - gwDepthM);
+    }
+    const sigmaV0Eff = Math.max(5.0, sigmaV0 - u0);
+
+    const rf = (fsSleeve / (qc * 1000.0)) * 100.0;
+    const pa = 100.0;
+    const normQ = Math.max(1.0, (qc * 1000.0 / pa) * Math.pow(pa / sigmaV0Eff, 0.6));
+    const ic = Number(Math.sqrt(Math.pow(3.47 - Math.log10(normQ), 2) + Math.pow(1.22 + Math.log10(Math.max(0.1, rf)), 2)).toFixed(2));
+    const kc = ic <= 1.64 ? 1.0 : Number(Math.max(1.0, -0.403 * Math.pow(ic, 4) + 5.581 * Math.pow(ic, 3) - 21.63 * Math.pow(ic, 2) + 33.75 * ic - 17.88).toFixed(2));
+    const qc1ncs = Number(Math.min(220.0, normQ * kc).toFixed(1));
+
+    const csrVal = calculateSeedIdrissCsr(pgaG, sigmaV0, sigmaV0Eff, z);
+    const crrVal = calculateRobertsonCrr75(qc1ncs, mw, sigmaV0Eff);
+    const fsLiqVal = calculateLiquefactionFactorOfSafety(csrVal, crrVal, mw, sigmaV0Eff);
+    const tier = classifyLiquefactionHazardTier(fsLiqVal);
+    const ruVal = calculateExcessPorePressureRatio(fsLiqVal);
+
+    let gammaMax = 0.0;
+    if (fsLiqVal >= 2.0) {
+      gammaMax = 0.0;
+    } else if (fsLiqVal >= 1.0) {
+      gammaMax = Number((0.03 * (2.0 - fsLiqVal) * 100.0).toFixed(2));
+    } else {
+      gammaMax = Number(((0.03 + 0.25 * (1.0 - fsLiqVal)) * 100.0).toFixed(2));
+    }
+
+    const dz = Math.max(0.1, z - prevZ);
+    prevZ = z;
+    cumulativeLdi += (gammaMax / 100.0) * dz;
+
+    if (fsLiqVal < minFs) {
+      minFs = fsLiqVal;
+      critDepth = z;
+    }
+
+    cptPoints.push({
+      depth_m: Number(z.toFixed(2)),
+      cone_resistance_qc_mpa: Number(qc.toFixed(2)),
+      sleeve_friction_fs_kpa: Number(fsSleeve.toFixed(1)),
+      pore_pressure_u2_kpa: Number(u2.toFixed(1)),
+      soil_behavior_type_index_ic: ic,
+      normalized_cone_resistance_qc1ncs: qc1ncs,
+      state_parameter_psi: Number(psi.toFixed(3)),
+      cyclic_resistance_ratio_crr75: crrVal,
+      cyclic_stress_ratio_csr: csrVal,
+      factor_of_safety_liq: fsLiqVal,
+      hazard_tier: tier.id,
+      cyclic_shear_strain_gamma_pct: gammaMax,
+      excess_pore_pressure_ratio_ru: ruVal
+    });
+  });
+
+  const overallTier = classifyLiquefactionHazardTier(minFs);
+  const slopeGradPct = Number((Math.tan(slopeAngle * (Math.PI / 180.0)) * 100.0).toFixed(2));
+  const predictedDh = calculateLateralSpreadingDisplacement(cumulativeLdi, slopeGradPct);
+  const latTier = classifyLateralSpreadingHazardTier(predictedDh);
+  const insarResidual = Number(Math.abs(insarDisp - predictedDh).toFixed(3));
+
+  const critEffStress = Math.max(20.0, gammaSat * critDepth - gammaW * Math.max(0.0, critDepth - gwDepthM));
+  const staticRes = calculateStaticFlowLiquefaction(
+    preset.tauPeakKpa,
+    preset.tauYieldKpa,
+    preset.drivingShearStressKpa,
+    critEffStress
+  );
+
+  const dynPp = calculateDynamicPorePressure(critEffStress, minFs, damId);
+  const lat = Number(options.latitude !== undefined ? options.latitude : (options.lat !== undefined ? options.lat : 37.05));
+  const lon = Number(options.longitude !== undefined ? options.longitude : (options.lon !== undefined ? options.lon : -121.05));
+  const vs30Res = calculateVs30Proxy({ latitude: lat, longitude: lon, slopeDeg: slopeAngle, effectiveStressKpa: critEffStress });
+
+  const damH = Number(options.dam_height_m || options.damHeightM || 35.0);
+  const impV = Number(options.impounded_volume_m3 || options.impoundedVolumeM3 || 12500000.0);
+  const rAng = Number(options.reach_angle_deg || options.reachAngleDeg || 5.5);
+  const runoutRes = calculateFlowSlideRunoutDistance(damH, impV, rAng, 1.5, lat, lon, damId, damName);
+
+  let sptPoints = [];
+  const sptIn = options.spt_soundings || options.sptSoundings;
+  if (sptIn) {
+    const sptCalc = calculateSptSoundingProfile({
+      dam_id: damId,
+      spt_id: 'SPT_BH_01',
+      groundwater_depth_m: gwDepthM,
+      unit_weight_kn_m3: gamma,
+      saturated_unit_weight_kn_m3: gammaSat,
+      pga_g: pgaG,
+      earthquake_magnitude_mw: mw,
+      points: sptIn
+    });
+    sptPoints = sptCalc.points || [];
+  }
+
+  return {
+    simulation_id: simId,
+    dam_id: damId,
+    dam_name: damName,
+    pga_g: pgaG,
+    earthquake_magnitude_mw: mw,
+    minimum_factor_of_safety_liq: minFs,
+    critical_liquefaction_depth_m: critDepth,
+    overall_liquefaction_hazard_tier: overallTier.id,
+    static_flow_slide_triggered: staticRes.flow_slide_triggered,
+    mean_brittleness_index: staticRes.brittleness_index,
+    static_brittleness_tier: staticRes.brittleness_tier,
+    predicted_lateral_spreading_dh_m: predictedDh,
+    lateral_spreading_hazard_tier: latTier.id,
+    cpt_sounding_points: cptPoints,
+    spt_sounding_points: sptPoints,
+    static_params: staticRes,
+    lateral_profile: {
+      lateral_displacement_index_ldi_m: Number(cumulativeLdi.toFixed(3)),
+      slope_gradient_pct: slopeGradPct,
+      free_face_height_h_m: 0.0,
+      predicted_lateral_displacement_dh_m: predictedDh,
+      insar_observed_displacement_m: Number(insarDisp.toFixed(3)),
+      insar_residual_m: insarResidual,
+      hazard_tier: latTier.id
+    },
+    dynamic_pore_pressure: dynPp,
+    vs30_proxy: vs30Res,
+    flow_slide_runout: runoutRes,
+    liquefaction_hazard_geojson: {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: cptPoints.map(p => [p.depth_m, p.factor_of_safety_liq])
+          },
+          properties: {
+            feature_type: 'liquefaction_fs_depth_profile',
+            dam_id: damId,
+            min_fs_liq: minFs,
+            critical_depth_m: critDepth,
+            overall_hazard_tier: overallTier.id
+          }
+        }
+      ]
+    },
+    tile_url_template: `/api/v1/tiles/geotechnical/liquefaction/${simId}/factor_of_safety/{z}/{x}/{y}.png`,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const buildLiquefactionTileUrl = (simId, metric = 'factor_of_safety', z = 12, x = 2048, y = 1024) => {
+  return `/api/v1/tiles/geotechnical/liquefaction/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildLiquefactionTileUrlTemplate = (simId, metric = 'factor_of_safety') => {
+  return `/api/v1/tiles/geotechnical/liquefaction/${simId}/${metric}/{z}/{x}/{y}.png`;
 };
 
 

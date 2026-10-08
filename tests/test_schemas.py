@@ -613,7 +613,54 @@ from app.models.schemas import (
     build_rainfall_infiltration_tile_url,
     build_rainfall_infiltration_tile_url_template,
     build_apparent_thermal_inertia_tile_url,
-    build_apparent_thermal_inertia_tile_url_template
+    build_apparent_thermal_inertia_tile_url_template,
+    LiquefactionHazardTier,
+    StaticBrittlenessTier,
+    LateralSpreadingHazardTier,
+    NEHRPSiteClass,
+    FlowSlideMobilityTier,
+    LIQUEFACTION_HAZARD_METADATA,
+    STATIC_BRITTLENESS_METADATA,
+    LATERAL_SPREADING_METADATA,
+    TAILINGS_LIQUEFACTION_PRESETS,
+    NEHRP_SITE_CLASS_METADATA,
+    FLOW_SLIDE_MOBILITY_METADATA,
+    LIQUEFACTION_TILE_METRICS,
+    CPTSoundingPoint,
+    SPTSoundingPoint,
+    SPTSoundingRequest,
+    SPTSoundingResponse,
+    Vs30ProxyRequest,
+    Vs30ProxyResponse,
+    DynamicPorePressureRequest,
+    DynamicPorePressureResponse,
+    FlowSlideRunoutRequest,
+    FlowSlideRunoutResponse,
+    TailingsLiquefactionRequest,
+    TailingsLiquefactionResponse,
+    calculate_seed_idriss_csr,
+    calculate_robertson_crr75,
+    calculate_liquefaction_factor_of_safety,
+    calculate_magnitude_scaling_factor,
+    calculate_spt_n1_60cs,
+    calculate_spt_crr75,
+    calculate_vs30_from_topographic_slope,
+    classify_nehrp_site_class,
+    calculate_vs_crr75,
+    calculate_vs30_proxy,
+    calculate_excess_pore_pressure_ratio,
+    calculate_dynamic_pore_pressure,
+    classify_flow_slide_mobility_tier,
+    calculate_flow_slide_runout_distance,
+    calculate_spt_sounding_profile,
+    calculate_static_flow_liquefaction,
+    calculate_lateral_spreading_displacement,
+    classify_liquefaction_hazard_tier,
+    classify_static_brittleness_tier,
+    classify_lateral_spreading_hazard_tier,
+    calculate_tailings_liquefaction_analysis,
+    build_liquefaction_tile_url,
+    build_liquefaction_tile_url_template
 )
 from app.config import settings
 
@@ -7084,6 +7131,377 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         res_unknown = calculate_green_ampt_infiltration({"soil_texture": "unknown_lava_pumice"})
         self.assertIn("time_steps", res_unknown)
         self.assertGreater(res_unknown["final_wetting_front_depth_m"], 0.0)
+
+    def test_liquefaction_cycle_v2515_enums_and_metadata(self):
+        """Verify NEHRPSiteClass, FlowSlideMobilityTier, and associated metadata catalogs."""
+        # NEHRP Site Classes
+        self.assertEqual(NEHRPSiteClass.CLASS_A.value, "class_a")
+        self.assertEqual(NEHRPSiteClass.CLASS_B.value, "class_b")
+        self.assertEqual(NEHRPSiteClass.CLASS_C.value, "class_c")
+        self.assertEqual(NEHRPSiteClass.CLASS_D.value, "class_d")
+        self.assertEqual(NEHRPSiteClass.CLASS_E.value, "class_e")
+        self.assertEqual(NEHRPSiteClass.CLASS_F.value, "class_f")
+
+        # Flow slide runout mobility tiers
+        self.assertEqual(FlowSlideMobilityTier.EXTREME_MOBILITY.value, "extreme_mobility")
+        self.assertEqual(FlowSlideMobilityTier.HIGH_MOBILITY.value, "high_mobility")
+        self.assertEqual(FlowSlideMobilityTier.MODERATE_MOBILITY.value, "moderate_mobility")
+        self.assertEqual(FlowSlideMobilityTier.LOW_MOBILITY.value, "low_mobility")
+
+        # NEHRP metadata checks
+        self.assertIn("class_a", NEHRP_SITE_CLASS_METADATA)
+        self.assertEqual(NEHRP_SITE_CLASS_METADATA["class_a"]["site_amplification_fa"], 0.8)
+        self.assertEqual(NEHRP_SITE_CLASS_METADATA["class_c"]["site_amplification_fa"], 1.2)
+        self.assertEqual(NEHRP_SITE_CLASS_METADATA["class_e"]["site_amplification_fa"], 2.2)
+        self.assertEqual(NEHRP_SITE_CLASS_METADATA["class_f"]["liquefaction_susceptibility"], "critical")
+
+        # Flow slide metadata checks
+        self.assertIn("extreme_mobility", FLOW_SLIDE_MOBILITY_METADATA)
+        self.assertEqual(FLOW_SLIDE_MOBILITY_METADATA["extreme_mobility"]["max_angle_deg"], 4.0)
+        self.assertEqual(FLOW_SLIDE_MOBILITY_METADATA["low_mobility"]["min_angle_deg"], 14.0)
+
+    def test_liquefaction_pydantic_models_and_aliases(self):
+        """Verify Pydantic models for SPT, Vs30, Dynamic Pore Pressure, and Runout schemas."""
+        # SPT Sounding Point
+        spt_pt = SPTSoundingPoint(
+            depth_m=4.5,
+            spt_n_blows=7,
+            fines_content_pct=22.0
+        )
+        self.assertEqual(spt_pt.depth_m, 4.5)
+        self.assertEqual(spt_pt.spt_n_blows, 7)
+        dump_pt = spt_pt.model_dump(by_alias=True)
+        self.assertEqual(dump_pt["depthM"], 4.5)
+        self.assertEqual(dump_pt["sptNBlows"], 7)
+
+        # SPTSoundingRequest & Response
+        spt_req = SPTSoundingRequest(
+            dam_id="DAM_SPT_01",
+            spt_id="SPT_BH_02",
+            groundwater_depth_m=3.0,
+            unit_weight_kn_m3=18.5,
+            saturated_unit_weight_kn_m3=20.5,
+            pga_g=0.25,
+            earthquake_magnitude_mw=7.2
+        )
+        self.assertEqual(spt_req.dam_id, "DAM_SPT_01")
+        self.assertEqual(spt_req.pga_g, 0.25)
+
+        spt_resp = SPTSoundingResponse(
+            dam_id="DAM_SPT_01",
+            spt_id="SPT_BH_02",
+            total_depth_m=15.0,
+            mean_n1_60cs=11.4,
+            min_fs_liq=0.82,
+            critical_depth_m=6.0,
+            overall_hazard_tier="critical_cyclic_collapse",
+            points=[],
+            analyzed_at="2026-10-08T00:00:00Z"
+        )
+        self.assertEqual(spt_resp.min_fs_liq, 0.82)
+        self.assertEqual(spt_resp.model_dump(by_alias=True)["minFsLiq"], 0.82)
+
+        # Vs30ProxyRequest & Response
+        vs30_req = Vs30ProxyRequest(
+            latitude=37.058,
+            longitude=-121.074,
+            slope_deg=6.5,
+            terrain_type="active_tectonic"
+        )
+        self.assertEqual(vs30_req.slope_deg, 6.5)
+
+        vs30_resp = Vs30ProxyResponse(
+            latitude=37.058,
+            longitude=-121.074,
+            slope_deg=6.5,
+            slope_m_m=0.1139,
+            terrain_type="active_tectonic",
+            vs30_m_s=685.2,
+            nehrp_site_class=NEHRPSiteClass.CLASS_C,
+            site_class_name="Class C — Very Dense Soil / Soft Rock",
+            site_amplification_fa=1.2,
+            normalized_vs1_m_s=685.2,
+            crr75_vs=2.0,
+            liquefaction_susceptibility="low",
+            source_reference="Wald & Allen (2007)",
+            analyzed_at="2026-10-08T00:00:00Z"
+        )
+        self.assertEqual(vs30_resp.nehrp_site_class, NEHRPSiteClass.CLASS_C)
+        self.assertEqual(vs30_resp.model_dump(by_alias=True)["vs30MS"], 685.2)
+
+        # DynamicPorePressureRequest & Response
+        pp_req = DynamicPorePressureRequest(
+            sigma_v0_eff_kpa=120.0,
+            factor_of_safety_liq=0.90,
+            dam_id="TAILINGS_DAM_B"
+        )
+        self.assertEqual(pp_req.sigma_v0_eff_kpa, 120.0)
+
+        pp_resp = DynamicPorePressureResponse(
+            dam_id="TAILINGS_DAM_B",
+            sigma_v0_eff_kpa=120.0,
+            factor_of_safety_liq=0.90,
+            excess_pore_pressure_ratio_ru=1.0,
+            excess_pore_pressure_delta_u_kpa=120.0,
+            post_cyclic_effective_stress_kpa=0.0,
+            effective_stress_loss_pct=100.0,
+            liquefaction_triggered=True,
+            hazard_tier="critical_cyclic_collapse",
+            analyzed_at="2026-10-08T00:00:00Z"
+        )
+        self.assertTrue(pp_resp.liquefaction_triggered)
+
+        # FlowSlideRunoutRequest & Response
+        run_req = FlowSlideRunoutRequest(
+            dam_height_m=42.0,
+            impounded_volume_m3=15000000.0,
+            reach_angle_deg=4.8
+        )
+        self.assertEqual(run_req.dam_height_m, 42.0)
+
+        run_resp = FlowSlideRunoutResponse(
+            dam_id="DAM_01",
+            dam_name="Impoundment 1",
+            dam_height_m=42.0,
+            reach_angle_deg=4.8,
+            apparent_friction_coef=0.084,
+            runout_distance_m=500.0,
+            volume_scaled_runout_m=720.0,
+            evacuation_buffer_m=900.0,
+            mobility_tier="high_mobility",
+            analyzed_at="2026-10-08T00:00:00Z"
+        )
+        self.assertEqual(run_resp.evacuation_buffer_m, 900.0)
+
+    def test_spt_normalization_and_crr75_calculation(self):
+        """Verify SPT blow count corrections (N1)60cs and CRR7.5 formulation."""
+        # 1. Overburden CN and fines corrections
+        # Clean sand (FC <= 5%)
+        clean_res = calculate_spt_n1_60cs(n_spt=10, sigma_v0_eff_kpa=100.0, fines_content_pct=3.0)
+        self.assertAlmostEqual(clean_res["cn_overburden_factor"], 1.0, delta=0.05)
+        self.assertEqual(clean_res["clean_sand_n1_60cs"], clean_res["normalized_n1_60"])
+
+        # High fines (FC >= 35%)
+        silty_res = calculate_spt_n1_60cs(n_spt=10, sigma_v0_eff_kpa=100.0, fines_content_pct=40.0)
+        self.assertGreater(silty_res["clean_sand_n1_60cs"], silty_res["normalized_n1_60"])
+
+        # CN clamping: very low stress clamped to 1.7
+        shallow_res = calculate_spt_n1_60cs(n_spt=5, sigma_v0_eff_kpa=10.0)
+        self.assertLessEqual(shallow_res["cn_overburden_factor"], 1.70)
+
+        # 2. CRR7.5 from (N1)60cs
+        crr_10 = calculate_spt_crr75(10.0)
+        self.assertGreater(crr_10, 0.08)
+        self.assertLess(crr_10, 0.20)
+
+        # Dense non-liquefiable (N1_60cs >= 30)
+        crr_dense = calculate_spt_crr75(32.0)
+        self.assertEqual(crr_dense, 2.0)
+
+        # 3. Full borehole profile solver
+        bh_res = calculate_spt_sounding_profile({
+            "dam_id": "TAILINGS_DAM_TEST",
+            "spt_id": "SPT_01",
+            "pga_g": 0.20,
+            "earthquake_magnitude_mw": 7.0,
+            "points": [
+                {"depth_m": 2.0, "spt_n_blows": 5, "fines_content_pct": 20.0},
+                {"depth_m": 5.0, "spt_n_blows": 7, "fines_content_pct": 20.0},
+                {"depth_m": 10.0, "spt_n_blows": 18, "fines_content_pct": 10.0}
+            ]
+        })
+        self.assertEqual(len(bh_res["points"]), 3)
+        self.assertGreater(bh_res["mean_n1_60cs"], 0.0)
+        self.assertIn("min_fs_liq", bh_res)
+        self.assertIn("overall_hazard_tier", bh_res)
+
+    def test_vs30_topographic_slope_proxy_and_nehrp_classification(self):
+        """Verify Wald & Allen (2007) topographic slope Vs30 proxy and NEHRP classifications."""
+        # Wald & Allen slope to Vs30
+        vs_steep = calculate_vs30_from_topographic_slope(15.0, terrain_type="active_tectonic")
+        self.assertGreaterEqual(vs_steep, 760.0)
+
+        vs_flat = calculate_vs30_from_topographic_slope(0.05, terrain_type="active_tectonic")
+        self.assertLess(vs_flat, 200.0)
+
+        # NEHRP Site Class classification
+        self.assertEqual(classify_nehrp_site_class(1600.0), NEHRPSiteClass.CLASS_A)
+        self.assertEqual(classify_nehrp_site_class(900.0), NEHRPSiteClass.CLASS_B)
+        self.assertEqual(classify_nehrp_site_class(450.0), NEHRPSiteClass.CLASS_C)
+        self.assertEqual(classify_nehrp_site_class(250.0), NEHRPSiteClass.CLASS_D)
+        self.assertEqual(classify_nehrp_site_class(140.0), NEHRPSiteClass.CLASS_E)
+
+        # Andrus & Stokoe (2000) Vs-based CRR7.5
+        crr_soft = calculate_vs_crr75(vs1_m_s=140.0, fines_content_pct=15.0)
+        self.assertLess(crr_soft, 0.30)
+        crr_stiff = calculate_vs_crr75(vs1_m_s=225.0, fines_content_pct=15.0)
+        self.assertEqual(crr_stiff, 2.0)
+
+        # Vs30 Proxy comprehensive solver
+        proxy_res = calculate_vs30_proxy(latitude=37.05, longitude=-121.05, slope_deg=4.5)
+        self.assertIn("vs30_m_s", proxy_res)
+        self.assertIn("nehrp_site_class", proxy_res)
+        self.assertIn("site_amplification_fa", proxy_res)
+        self.assertIn("crr75_vs", proxy_res)
+        self.assertEqual(proxy_res["latitude"], 37.05)
+
+    def test_excess_pore_pressure_ratio_and_effective_stress_loss(self):
+        """Verify Seed/Marcuson cyclic excess pore pressure ratio ru and dynamic stress loss."""
+        # 1. ru curve behavior
+        self.assertEqual(calculate_excess_pore_pressure_ratio(2.2), 0.0)
+        self.assertEqual(calculate_excess_pore_pressure_ratio(2.0), 0.0)
+        ru_15 = calculate_excess_pore_pressure_ratio(1.5)
+        self.assertGreater(ru_15, 0.15)
+        self.assertLess(ru_15, 0.30)
+
+        ru_11 = calculate_excess_pore_pressure_ratio(1.1)
+        self.assertGreater(ru_11, 0.70)
+        self.assertLess(ru_11, 0.95)
+
+        self.assertEqual(calculate_excess_pore_pressure_ratio(0.85), 1.0)
+        self.assertEqual(calculate_excess_pore_pressure_ratio(0.50), 1.0)
+
+        # 2. Dynamic pore pressure evaluation
+        pp_calc = calculate_dynamic_pore_pressure(sigma_v0_eff_kpa=100.0, fs_liq=0.92, dam_id="DAM_DYNP")
+        self.assertEqual(pp_calc["excess_pore_pressure_ratio_ru"], 1.0)
+        self.assertEqual(pp_calc["excess_pore_pressure_delta_u_kpa"], 100.0)
+        self.assertEqual(pp_calc["post_cyclic_effective_stress_kpa"], 0.0)
+        self.assertEqual(pp_calc["effective_stress_loss_pct"], 100.0)
+        self.assertTrue(pp_calc["liquefaction_triggered"])
+
+        # Non-liquefied state
+        pp_safe = calculate_dynamic_pore_pressure(sigma_v0_eff_kpa=100.0, fs_liq=1.60, dam_id="DAM_DYNP")
+        self.assertFalse(pp_safe["liquefaction_triggered"])
+        self.assertLess(pp_safe["excess_pore_pressure_ratio_ru"], 0.20)
+        self.assertGreater(pp_safe["post_cyclic_effective_stress_kpa"], 80.0)
+
+    def test_flow_slide_runout_distance_and_reach_angle(self):
+        """Verify Fahrböschung reach distance, Corominas volume scaling, and mobility classification."""
+        # Mobility tier classification
+        self.assertEqual(classify_flow_slide_mobility_tier(3.2), FlowSlideMobilityTier.EXTREME_MOBILITY)
+        self.assertEqual(classify_flow_slide_mobility_tier(6.5), FlowSlideMobilityTier.HIGH_MOBILITY)
+        self.assertEqual(classify_flow_slide_mobility_tier(11.0), FlowSlideMobilityTier.MODERATE_MOBILITY)
+        self.assertEqual(classify_flow_slide_mobility_tier(18.0), FlowSlideMobilityTier.LOW_MOBILITY)
+
+        # Runout calculation
+        run_res = calculate_flow_slide_runout_distance(
+            dam_height_m=35.0,
+            impounded_volume_m3=12500000.0,
+            reach_angle_deg=5.5,
+            crest_lat=37.05,
+            crest_lon=-121.05
+        )
+        self.assertGreater(run_res["runout_distance_m"], 300.0)
+        self.assertGreater(run_res["volume_scaled_runout_m"], 500.0)
+        self.assertEqual(run_res["mobility_tier"], "high_mobility")
+        self.assertEqual(run_res["evacuation_buffer_m"], round(1.25 * max(run_res["runout_distance_m"], run_res["volume_scaled_runout_m"]), 1))
+        self.assertEqual(run_res["runout_envelope_geojson"]["type"], "FeatureCollection")
+        self.assertEqual(len(run_res["runout_envelope_geojson"]["features"]), 2)
+
+    def test_tailings_liquefaction_multi_modal_analysis(self):
+        """Verify integrated tailings liquefaction analysis with CPT, SPT, Vs30, and runout outputs."""
+        req = {
+            "dam_id": "TAILINGS_DAM_INTEGRATED",
+            "dam_name": "Integrated Test Dam",
+            "pga_g": 0.22,
+            "earthquake_magnitude_mw": 7.1,
+            "tailings_preset": "brumadinho_upstream_slimes",
+            "spt_soundings": [
+                {"depth_m": 2.0, "spt_n_blows": 6, "fines_content_pct": 30.0},
+                {"depth_m": 5.0, "spt_n_blows": 8, "fines_content_pct": 35.0}
+            ]
+        }
+        res = calculate_tailings_liquefaction_analysis(req)
+
+        self.assertIn("simulation_id", res)
+        self.assertIn("minimum_factor_of_safety_liq", res)
+        self.assertIn("critical_liquefaction_depth_m", res)
+        self.assertIn("overall_liquefaction_hazard_tier", res)
+        self.assertIn("dynamic_pore_pressure", res)
+        self.assertIn("vs30_proxy", res)
+        self.assertIn("flow_slide_runout", res)
+        self.assertEqual(len(res["spt_sounding_points"]), 2)
+
+        # Check CPT points contain excess pore pressure ratio ru
+        self.assertTrue(len(res["cpt_sounding_points"]) > 0)
+        for pt in res["cpt_sounding_points"]:
+            self.assertIn("excess_pore_pressure_ratio_ru", pt)
+            self.assertGreaterEqual(pt["excess_pore_pressure_ratio_ru"], 0.0)
+            self.assertLessEqual(pt["excess_pore_pressure_ratio_ru"], 1.0)
+
+    def test_liquefaction_route_contracts_and_tile_urls(self):
+        """Verify API route contracts and tile URL templates for Cycle v2.5.15."""
+        # 1. API routes formatting
+        r1 = format_api_route("analysis_liquefaction_susceptibility")
+        self.assertEqual(r1, "/api/v1/analysis/geotechnical/liquefaction-susceptibility")
+
+        r2 = format_api_route("analysis_dynamic_pore_pressure")
+        self.assertEqual(r2, "/api/v1/analysis/geotechnical/dynamic-pore-pressure")
+
+        r3 = format_api_route("analysis_vs30_proxy", lat=37.05, lon=-121.05)
+        self.assertEqual(r3, "/api/v1/analysis/geotechnical/vs30-proxy/37.05/-121.05")
+
+        r4 = format_api_route("analysis_liquefaction_spt")
+        self.assertEqual(r4, "/api/v1/analysis/geotechnical/liquefaction/spt-sounding")
+
+        r5 = format_api_route("analysis_flow_slide_runout")
+        self.assertEqual(r5, "/api/v1/analysis/geotechnical/liquefaction/flow-slide-runout")
+
+        r6 = format_api_route("analysis_liquefaction_detail", simulation_id="LIQ_SIM_001")
+        self.assertEqual(r6, "/api/v1/analysis/geotechnical/liquefaction/LIQ_SIM_001")
+
+        r7 = format_api_route("analysis_liquefaction_detail_short", sim_id="LIQ_SIM_001")
+        self.assertEqual(r7, "/geotechnical/liquefaction/LIQ_SIM_001")
+
+        # 2. Tile URLs
+        t1 = build_liquefaction_tile_url("LIQ_001", "factor_of_safety", 12, 100, 200)
+        self.assertEqual(t1, "/api/v1/tiles/geotechnical/liquefaction/LIQ_001/factor_of_safety/12/100/200.png")
+
+        t2 = build_liquefaction_tile_url_template("LIQ_001", "excess_pore_pressure")
+        self.assertEqual(t2, "/api/v1/tiles/geotechnical/liquefaction/LIQ_001/excess_pore_pressure/{z}/{x}/{y}.png")
+
+        # 3. Liquefaction Tile Metrics Catalog & Presets
+        self.assertIn("factor_of_safety", LIQUEFACTION_TILE_METRICS)
+        self.assertIn("excess_pore_pressure", LIQUEFACTION_TILE_METRICS)
+        self.assertIn("dynamic_pore_pressure", LIQUEFACTION_TILE_METRICS)
+        self.assertIn("cyclic_stress_ratio", LIQUEFACTION_TILE_METRICS)
+        self.assertIn("cyclic_resistance_ratio", LIQUEFACTION_TILE_METRICS)
+        self.assertIn("vs30", LIQUEFACTION_TILE_METRICS)
+        self.assertIn("flow_slide_runout", LIQUEFACTION_TILE_METRICS)
+        self.assertIn("lateral_spreading", LIQUEFACTION_TILE_METRICS)
+        self.assertEqual(LIQUEFACTION_TILE_METRICS["factor_of_safety"]["colormap"], "rdylbu_r")
+        self.assertEqual(LIQUEFACTION_TILE_METRICS["excess_pore_pressure"]["unit"], "ratio")
+
+    def test_liquefaction_edge_cases_and_immutability(self):
+        """Verify MSF formulations, dictionary immutability, and extreme conditions."""
+        # 1. Magnitude scaling factor formulations
+        msf_youd = calculate_magnitude_scaling_factor(7.5, "youd_2001")
+        self.assertEqual(msf_youd, 1.0)
+
+        msf_idriss = calculate_magnitude_scaling_factor(7.5, "idriss_1999")
+        self.assertAlmostEqual(msf_idriss, 1.0, delta=0.08)
+
+        msf_andrus = calculate_magnitude_scaling_factor(7.5, "andrus_stokoe")
+        self.assertEqual(msf_andrus, 1.0)
+
+        # 2. Immutability of caller dictionary
+        caller_dict = {
+            "dam_id": "DAM_IMMUTABLE",
+            "pga_g": 0.25,
+            "earthquake_magnitude_mw": 6.8
+        }
+        dict_copy = dict(caller_dict)
+        _ = calculate_tailings_liquefaction_analysis(caller_dict)
+        self.assertEqual(caller_dict, dict_copy)
+        self.assertNotIn("cpt_sounding_points", caller_dict)
+
+        # 3. Extreme seismic shaking (PGA=0.8g)
+        extreme_res = calculate_tailings_liquefaction_analysis({
+            "pga_g": 0.80,
+            "earthquake_magnitude_mw": 8.2
+        })
+        self.assertLess(extreme_res["minimum_factor_of_safety_liq"], 1.0)
+        self.assertEqual(extreme_res["overall_liquefaction_hazard_tier"], "critical_cyclic_collapse")
 
 if __name__ == "__main__":
     unittest.main()

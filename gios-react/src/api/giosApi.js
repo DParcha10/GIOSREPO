@@ -27,7 +27,12 @@ import {
   calculateBishopsSimplifiedFs,
   searchCriticalCircularSlipSurface,
   calculateGreenAmptInfiltration,
-  calculateApparentThermalInertia
+  calculateApparentThermalInertia,
+  calculateTailingsLiquefactionAnalysis,
+  calculateDynamicPorePressure,
+  calculateVs30Proxy,
+  calculateSptSoundingProfile,
+  calculateFlowSlideRunoutDistance
 } from '../config/constants.js';
 
 export {
@@ -371,10 +376,41 @@ export {
   calculateFredlundApparentShearStrength,
   calculateGreenAmptInfiltration,
   calculateApparentThermalInertia,
-  buildRainfallInfiltrationTileUrl,
-  buildRainfallInfiltrationTileUrlTemplate,
-  buildApparentThermalInertiaTileUrl,
-  buildApparentThermalInertiaTileUrlTemplate
+  LIQUEFACTION_TRIGGER_MODES,
+  LIQUEFACTION_HAZARD_TIERS,
+  STATIC_BRITTLENESS_TIERS,
+  LATERAL_SPREADING_HAZARD_TIERS,
+  NEHRP_SITE_CLASSES,
+  FLOW_SLIDE_MOBILITY_TIERS,
+  LIQUEFACTION_HAZARD_CONFIGS,
+  STATIC_BRITTLENESS_CONFIGS,
+  LATERAL_SPREADING_CONFIGS,
+  TAILINGS_LIQUEFACTION_CONFIGS,
+  NEHRP_SITE_CLASS_CONFIGS,
+  FLOW_SLIDE_MOBILITY_CONFIGS,
+  classifyLiquefactionHazardTier,
+  classifyStaticBrittlenessTier,
+  classifyLateralSpreadingHazardTier,
+  classifyNehrpSiteClass,
+  classifyFlowSlideMobilityTier,
+  calculateSeedIdrissCsr,
+  calculateRobertsonCrr75,
+  calculateLiquefactionFactorOfSafety,
+  calculateMagnitudeScalingFactor,
+  calculateSptN160cs,
+  calculateSptCrr75,
+  calculateVs30FromTopographicSlope,
+  calculateVsCrr75,
+  calculateVs30Proxy,
+  calculateExcessPorePressureRatio,
+  calculateDynamicPorePressure,
+  calculateFlowSlideRunoutDistance,
+  calculateSptSoundingProfile,
+  calculateStaticFlowLiquefaction,
+  calculateLateralSpreadingDisplacement,
+  calculateTailingsLiquefactionAnalysis,
+  buildLiquefactionTileUrl,
+  buildLiquefactionTileUrlTemplate
 } from '../config/constants.js';
 
 /**
@@ -2352,6 +2388,42 @@ const demoAdapter = async (config) => {
         let parsed = {};
         try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
         data = calculateApparentThermalInertia(parsed);
+      }
+      else if (url.includes('/liquefaction-susceptibility') || url.includes('/geotechnical/liquefaction')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = calculateTailingsLiquefactionAnalysis(parsed);
+      }
+      else if (url.includes('/dynamic-pore-pressure')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const sEff = parsed.sigma_v0_eff_kpa || parsed.sigmaV0EffKpa || 100.0;
+        const fs = parsed.factor_of_safety_liq || parsed.factorOfSafetyLiq || parsed.fs_liq || 1.0;
+        const damId = parsed.dam_id || parsed.damId || 'TAILINGS_DAM_A';
+        data = calculateDynamicPorePressure(sEff, fs, damId);
+      }
+      else if (url.includes('/vs30-proxy')) {
+        const parts = url.split('/');
+        const lon = parseFloat(parts[parts.length - 1]) || -121.05;
+        const lat = parseFloat(parts[parts.length - 2]) || 37.05;
+        data = calculateVs30Proxy({ latitude: lat, longitude: lon, ...(config.params || {}) });
+      }
+      else if (url.includes('/spt-sounding')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = calculateSptSoundingProfile(parsed);
+      }
+      else if (url.includes('/flow-slide-runout')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const damH = parsed.dam_height_m || parsed.damHeightM || 35.0;
+        const impV = parsed.impounded_volume_m3 || parsed.impoundedVolumeM3 || 12500000.0;
+        const rAng = parsed.reach_angle_deg || parsed.reachAngleDeg || 5.5;
+        const lat = parsed.crest_lat || parsed.crestLat || 37.05;
+        const lon = parsed.crest_lon || parsed.crestLon || -121.05;
+        const damId = parsed.dam_id || parsed.damId || 'TAILINGS_DAM_A';
+        const damName = parsed.dam_name || parsed.damName || 'North Tailings Impoundment';
+        data = calculateFlowSlideRunoutDistance(damH, impV, rAng, 1.5, lat, lon, damId, damName);
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -5854,6 +5926,171 @@ export const getApparentThermalInertiaTileUrlTemplate = (analysisId, metric = 't
   const base = import.meta?.env?.VITE_API_BASE_URL || '';
   return `${base}/api/v1/tiles/thermal/apparent-inertia/${analysisId}/${metric}/{z}/{x}/{y}.png`;
 };
+
+export const buildRainfallInfiltrationTileUrlTemplate = getRainfallInfiltrationTileUrlTemplate;
+export const buildApparentThermalInertiaTileUrlTemplate = getApparentThermalInertiaTileUrlTemplate;
+
+/**
+ * @typedef {Object} SPTSoundingPoint
+ * @property {number} depth_m - Depth below ground surface (m)
+ * @property {number} spt_n_blows - Measured raw SPT field blow count N (blows/30cm)
+ * @property {number} [fines_content_pct=15.0] - Percentage fines passing #200 sieve
+ * @property {number} [cn_overburden_factor] - Overburden normalization factor CN
+ * @property {number} [n60_blows] - Energy-corrected blow count N60
+ * @property {number} [normalized_n1_60] - Overburden-corrected blow count (N1)60
+ * @property {number} [clean_sand_n1_60cs] - Clean sand equivalent (N1)60cs
+ * @property {number} [cyclic_stress_ratio_csr] - Induced Cyclic Stress Ratio (CSR)
+ * @property {number} [cyclic_resistance_ratio_crr75] - Cyclic Resistance Ratio (CRR7.5)
+ * @property {number} [factor_of_safety_liq] - Factor of safety against liquefaction
+ * @property {string} [hazard_tier] - Classified liquefaction susceptibility tier
+ * @property {number} [excess_pore_pressure_ratio_ru] - Cyclic excess pore pressure ratio ru
+ */
+
+/**
+ * @typedef {Object} Vs30ProxyResponse
+ * @property {number} latitude - Latitude coordinate (WGS84)
+ * @property {number} longitude - Longitude coordinate (WGS84)
+ * @property {number} slope_deg - Topographic slope angle in degrees
+ * @property {number} slope_m_m - Topographic slope gradient m/m
+ * @property {string} terrain_type - Regional tectonic activity classification
+ * @property {number} vs30_m_s - Estimated upper 30m shear wave velocity (m/s)
+ * @property {string} nehrp_site_class - NEHRP Site Class (class_a through class_f)
+ * @property {string} site_class_name - Descriptive NEHRP site class name
+ * @property {number} site_amplification_fa - Short-period site amplification factor Fa
+ * @property {number} normalized_vs1_m_s - Overburden-normalized shear wave velocity Vs1
+ * @property {number} crr75_vs - Andrus & Stokoe (2000) Cyclic Resistance Ratio
+ * @property {string} liquefaction_susceptibility - Classified qualitative susceptibility
+ * @property {string} source_reference - Scientific literature citation
+ * @property {string} analyzed_at - ISO 8601 calculation timestamp
+ */
+
+/**
+ * @typedef {Object} DynamicPorePressureResponse
+ * @property {string} dam_id - Target embankment dam identifier
+ * @property {number} sigma_v0_eff_kpa - Initial effective vertical stress (kPa)
+ * @property {number} factor_of_safety_liq - Factor of Safety against liquefaction
+ * @property {number} excess_pore_pressure_ratio_ru - Generated excess pore pressure ratio ru
+ * @property {number} excess_pore_pressure_delta_u_kpa - Dynamic excess pore water pressure (kPa)
+ * @property {number} post_cyclic_effective_stress_kpa - Post-liquefaction residual effective stress (kPa)
+ * @property {number} effective_stress_loss_pct - Percentage effective stress reduction
+ * @property {boolean} liquefaction_triggered - Flag indicating whether full liquefaction occurred (FS < 1.0)
+ * @property {string} hazard_tier - Liquefaction hazard tier
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} FlowSlideRunoutResponse
+ * @property {string} dam_id - Dam facility identifier
+ * @property {string} dam_name - Descriptive dam impoundment name
+ * @property {number} dam_height_m - Total structural dam height (m)
+ * @property {number} reach_angle_deg - Post-failure travel reach angle alpha_r (degrees)
+ * @property {number} apparent_friction_coef - Apparent friction coefficient tan(alpha_r)
+ * @property {number} runout_distance_m - Fahrböschung runout distance L = H / tan(alpha_r) (m)
+ * @property {number} volume_scaled_runout_m - Corominas/Martin volume-scaled distance (m)
+ * @property {number} evacuation_buffer_m - 1.25x safety buffer envelope distance (m)
+ * @property {string} mobility_tier - Runout mobility tier
+ * @property {Object} [runout_envelope_geojson] - RFC 7946 GeoJSON FeatureCollection
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * @typedef {Object} SPTSoundingRequest
+ * @property {string} [damId='TAILINGS_DAM_A'] - Embankment structure identifier
+ * @property {string} [sptId='SPT_BH_01'] - Borehole sounding ID
+ * @property {number} [groundwaterDepthM=2.5] - Depth to phreatic water surface (m)
+ * @property {number} [unitWeightKnM3=18.0] - Total moist unit weight (kN/m3)
+ * @property {number} [saturatedUnitWeightKnM3=20.0] - Saturated unit weight (kN/m3)
+ * @property {number} [pgaG=0.20] - Peak Ground Acceleration in g
+ * @property {number} [earthquakeMagnitudeMw=7.0] - Moment magnitude Mw
+ * @property {SPTSoundingPoint[]} [points] - Discrete borehole test depths and blow counts
+ */
+
+/**
+ * @typedef {Object} SPTSoundingResponse
+ * @property {string} dam_id - Embankment identifier
+ * @property {string} spt_id - Borehole sounding identifier
+ * @property {number} total_depth_m - Total explored depth of borehole (m)
+ * @property {number} mean_n1_60cs - Average clean sand normalized blow count
+ * @property {number} min_fs_liq - Minimum factor of safety against cyclic liquefaction
+ * @property {number} critical_depth_m - Critical depth of lowest factor of safety (m)
+ * @property {string} overall_hazard_tier - Classified overall borehole hazard tier
+ * @property {SPTSoundingPoint[]} points - Normalized depth points with CSR, CRR, and FS
+ * @property {string} analyzed_at - ISO 8601 timestamp
+ */
+
+/**
+ * Evaluates comprehensive tailings dynamic liquefaction susceptibility, Robertson CPTu profile,
+ * Seed-Idriss CSR/CRR, Sadrekarimi static brittleness, and Zhang lateral spreading.
+ * 
+ * @param {Object} params - Tailings liquefaction simulation parameters
+ * @returns {Promise<Object>} Factor of safety profile, LDI, InSAR residual, and hazard GeoJSON
+ */
+export const analyzeLiquefactionSusceptibility = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/liquefaction-susceptibility', params);
+  return response.data;
+};
+
+export const simulateTailingsLiquefaction = analyzeLiquefactionSusceptibility;
+
+/**
+ * Evaluates dynamic excess pore water pressure generation, effective stress loss, and liquefaction triggering.
+ * 
+ * @param {Object} params - Dynamic pore pressure parameters
+ * @returns {Promise<DynamicPorePressureResponse>} Dynamic pore pressure response
+ */
+export const analyzeDynamicPorePressure = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/dynamic-pore-pressure', params);
+  return response.data;
+};
+
+/**
+ * Fetches satellite DEM topographic slope proxy for average 30m shear wave velocity (Vs30) and NEHRP site classification.
+ * 
+ * @param {number} lat - Latitude in degrees
+ * @param {number} lon - Longitude in degrees
+ * @param {Object} [params={}] - Optional query parameters (slope_deg, terrain_type, effective_stress_kpa)
+ * @returns {Promise<Vs30ProxyResponse>} Vs30 velocity, NEHRP site class, and CRR7.5
+ */
+export const fetchVs30Proxy = async (lat, lon, params = {}) => {
+  const response = await giosApi.get(`/api/v1/analysis/geotechnical/vs30-proxy/${lat}/${lon}`, { params });
+  return response.data;
+};
+
+/**
+ * Evaluates Standard Penetration Test (SPT) borehole profile for cyclic liquefaction susceptibility.
+ * 
+ * @param {SPTSoundingRequest} params - SPT sounding borehole request payload
+ * @returns {Promise<SPTSoundingResponse>} Standardized SPT blow counts, CRR7.5, and minimum FS
+ */
+export const analyzeSptSounding = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/liquefaction/spt-sounding', params);
+  return response.data;
+};
+
+/**
+ * Computes post-liquefaction tailings flow slide reach angle, runout distance, and evacuation safety corridor.
+ * 
+ * @param {Object} params - Dam height, impounded volume, and reach angle
+ * @returns {Promise<FlowSlideRunoutResponse>} Runout distance, mobility tier, and envelope GeoJSON
+ */
+export const analyzeFlowSlideRunout = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/liquefaction/flow-slide-runout', params);
+  return response.data;
+};
+
+/**
+ * Constructs a dynamic XYZ tile streaming URL template for tailings liquefaction Factor of Safety maps.
+ * 
+ * @param {string} simId - Liquefaction simulation execution identifier
+ * @param {string} [metric='factor_of_safety'] - Raster metric ('factor_of_safety' | 'cyclic_stress_ratio' | 'excess_pore_pressure' | 'lateral_displacement')
+ * @returns {string} Tile URL template
+ */
+export const getLiquefactionTileUrlTemplate = (simId, metric = 'factor_of_safety') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/geotechnical/liquefaction/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildLiquefactionTileUrlTemplateInternal = getLiquefactionTileUrlTemplate;
 
 export default giosApi;
 

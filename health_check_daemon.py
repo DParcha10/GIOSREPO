@@ -185,7 +185,11 @@ def inspect_data_ingestion() -> dict:
     noaa_res = check_http_endpoint("https://api.weather.gov")
     results["noaa_weather"] = noaa_res
     
-    # 5. Local SQLite Database
+    # 5. USGS Earthquake & ShakeMap Feed (Seismic & Liquefaction Hazard Ingestion)
+    earthquake_res = check_http_endpoint("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson", timeout=10.0, retries=2)
+    results["usgs_earthquake"] = earthquake_res
+    
+    # 6. Local SQLite Database
     db_path = os.path.join(SCRIPT_DIR, "gios.db")
     db_status = {"exists": os.path.exists(db_path), "size_bytes": 0, "tables": [], "error": None}
     if os.path.exists(db_path):
@@ -330,6 +334,13 @@ def run_health_check() -> dict:
             "type": "INGESTION_ERROR",
             "message": f"NOAA API check failed: {data_ingestion['noaa_weather']['error']}"
         })
+    if "usgs_earthquake" in data_ingestion and not data_ingestion["usgs_earthquake"]["ok"]:
+        anomalies.append({
+            "component": "USGS Earthquake & ShakeMap Feed",
+            "severity": "MEDIUM",
+            "type": "INGESTION_ERROR",
+            "message": f"USGS Earthquake feed check failed: {data_ingestion['usgs_earthquake']['error']}"
+        })
     if data_ingestion["sqlite_db"]["error"]:
         anomalies.append({
             "component": "SQLite Database (gios.db)",
@@ -427,6 +438,9 @@ def write_health_status(report: dict):
     entry_lines.append(f"- **Planetary Computer SAS Token Service**: `{sas_ok}` ({data_ing['planetary_computer_sas']['latency_ms']} ms)")
     entry_lines.append(f"- **USGS NWIS Real-Time Telemetry**: `{usgs_ok}` ({data_ing['usgs_nwis']['latency_ms']} ms)")
     entry_lines.append(f"- **NOAA / NWS Weather Services**: `{noaa_ok}` ({data_ing['noaa_weather']['latency_ms']} ms)")
+    if "usgs_earthquake" in data_ing:
+        eq_ok = "REACHABLE" if data_ing["usgs_earthquake"]["ok"] else f"ERROR ({data_ing['usgs_earthquake']['error']})"
+        entry_lines.append(f"- **USGS Real-Time Earthquake & ShakeMap Feed**: `{eq_ok}` ({data_ing['usgs_earthquake']['latency_ms']} ms)")
     entry_lines.append(f"- **SQLite Database (`gios.db`)**: `HEALTHY` ({data_ing['sqlite_db']['size_bytes']} bytes, Tables: `{db_tables}`)")
     entry_lines.append("")
     

@@ -14,7 +14,7 @@ import {
   Wrench, ShieldAlert, MapPin, Grid, GitCompare, Gauge, Waves,
   Thermometer, Sun, Sprout, Wind,
   Move, Trees, Cloud, HardDrive, ArrowUpRight, TrendingUp, CloudSnow,
-  Cpu, Bell
+  Cpu, Bell, CloudRain
 } from 'lucide-react';
 import useAuthStore from '../store/authStore';
 import { useNavigate, Link } from 'react-router-dom';
@@ -176,7 +176,9 @@ import giosApi, {
   processPsInsarStack,
   buildDamBreakTileUrlTemplate,
   buildPhreaticSeepageTileUrlTemplate,
-  buildSlopeStabilityBishopTileUrlTemplate
+  buildSlopeStabilityBishopTileUrlTemplate,
+  buildRainfallInfiltrationTileUrlTemplate,
+  buildApparentThermalInertiaTileUrlTemplate
 } from '../api/giosApi';
 import useJarvisStore from '../store/jarvisStore';
 import {
@@ -209,6 +211,7 @@ import HazardAlertDrawer from '../components/HazardAlertDrawer';
 import DamBreakSimulationModal from '../components/DamBreakSimulationModal';
 import PhreaticSeepageModal from '../components/PhreaticSeepageModal';
 import SlopeStabilityModal from '../components/SlopeStabilityModal';
+import RainfallInfiltrationModal from '../components/RainfallInfiltrationModal';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -1190,6 +1193,17 @@ export default function MapExplorer() {
   const [slopeStabilityMetric, setSlopeStabilityMetric] = useState('factor_of_safety');
   const [slopeStabilityOpacity, setSlopeStabilityOpacity] = useState(0.85);
   const [showInSARCreepMarkers, setShowInSARCreepMarkers] = useState(true);
+
+  // T-144 & T-146: Transient Rainfall Infiltration, Wetting Front Suction Loss & ATI States (Cycle v2.5.14)
+  const [rainfallInfiltrationModalOpen, setRainfallInfiltrationModalOpen] = useState(false);
+  const [showRainfallInfiltrationLayer, setShowRainfallInfiltrationLayer] = useState(false);
+  const [rainfallInfiltrationSimulation, setRainfallInfiltrationSimulation] = useState(null);
+  const [rainfallInfiltrationMetric, setRainfallInfiltrationMetric] = useState('factor_of_safety');
+  const [rainfallInfiltrationOpacity, setRainfallInfiltrationOpacity] = useState(0.85);
+  const [showAtiLayer, setShowAtiLayer] = useState(false);
+  const [atiAnalysisResult, setAtiAnalysisResult] = useState(null);
+  const [atiMetric, setAtiMetric] = useState('thermal_inertia');
+  const [atiOpacity, setAtiOpacity] = useState(0.85);
 
   // T-53 Embankment Transect Cross-Section State
   const [drawingTransect, setDrawingTransect] = useState(false);
@@ -5309,6 +5323,56 @@ export default function MapExplorer() {
               );
             })}
 
+            {/* T-144/T-146: Transient Rainfall Infiltration Wetting Front & Dynamic XYZ Tile Layers */}
+            {showRainfallInfiltrationLayer && rainfallInfiltrationSimulation && !curtainActive && (
+              <TileLayer
+                key={`rainfall-infil-${rainfallInfiltrationSimulation.simulation_id}-${rainfallInfiltrationMetric}-${rainfallInfiltrationOpacity}`}
+                url={buildRainfallInfiltrationTileUrlTemplate(rainfallInfiltrationSimulation.simulation_id, rainfallInfiltrationMetric)}
+                opacity={rainfallInfiltrationOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-144/T-146: Apparent Thermal Inertia (ATI) Seepage Tracing Dynamic XYZ Tile Layers */}
+            {showAtiLayer && atiAnalysisResult && !curtainActive && (
+              <TileLayer
+                key={`ati-tile-${atiAnalysisResult.analysis_id}-${atiMetric}-${atiOpacity}`}
+                url={buildApparentThermalInertiaTileUrlTemplate(atiAnalysisResult.analysis_id, atiMetric)}
+                opacity={atiOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* Embankment Center / Rainfall Infiltration Simulation Marker */}
+            {showRainfallInfiltrationLayer && rainfallInfiltrationSimulation?.dam_coordinates && (
+              <CircleMarker
+                center={[rainfallInfiltrationSimulation.dam_coordinates[1], rainfallInfiltrationSimulation.dam_coordinates[0]]}
+                radius={8}
+                pathOptions={{
+                  color: '#ffffff',
+                  fillColor: rainfallInfiltrationSimulation.minimum_transient_fs < 1.0 ? '#ef4444' : (rainfallInfiltrationSimulation.minimum_transient_fs < 1.3 ? '#f59e0b' : '#10b981'),
+                  fillOpacity: 0.95,
+                  weight: 2
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="font-bold text-cyan-400">🌧️ {rainfallInfiltrationSimulation.dam_name || 'Rainfall Infiltration'}</div>
+                    <div>Simulation: {rainfallInfiltrationSimulation.simulation_id}</div>
+                    <div>Soil Texture: <span className="uppercase">{rainfallInfiltrationSimulation.soil_texture?.replace(/_/g, ' ')}</span></div>
+                    <div>Min Factor of Safety: <strong className="text-emerald-300">{rainfallInfiltrationSimulation.minimum_transient_fs}</strong></div>
+                    <div>Ponding Time: {rainfallInfiltrationSimulation.time_to_ponding_hr !== null ? `${rainfallInfiltrationSimulation.time_to_ponding_hr} h` : 'None'}</div>
+                    <div>Wetting Front: {rainfallInfiltrationSimulation.final_wetting_front_depth_m} m</div>
+                    <div>Hazard Tier: <span className="font-bold uppercase text-cyan-300">{rainfallInfiltrationSimulation.hazard_tier?.replace(/_/g, ' ')}</span></div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            )}
+
             {/* T-114/T-116: Automated Sub-Pixel Tie-Point Pins */}
             {(showRpcTiePointsLayer || showRpcLayer) && rpcTiePointPins.map((tp, idx) => {
               const baseLat = 37.0585;
@@ -6458,6 +6522,203 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-144/T-146 Rainfall Infiltration & Wetting Front Floating HUD Card (Cycle v2.5.14) */}
+          {showRainfallInfiltrationLayer && rainfallInfiltrationSimulation && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[920] glass-panel px-5 py-3 rounded-2xl border-cyan-500/50 shadow-2xl bg-slate-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[600px] max-w-[92vw]">
+              {/* Header Row */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-cyan-500/20 text-cyan-400">
+                    <CloudRain className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <span className="font-bold text-white tracking-wide">
+                    {rainfallInfiltrationSimulation.dam_name || 'Rainfall Infiltration'}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-600/50 uppercase font-bold">
+                    {rainfallInfiltrationSimulation.hazard_tier?.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setRainfallInfiltrationModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowRainfallInfiltrationLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Telemetry Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-cyan-400 font-bold">
+                    tp: {rainfallInfiltrationSimulation.time_to_ponding_hr !== null ? `${rainfallInfiltrationSimulation.time_to_ponding_hr}h` : 'No Ponding'}
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Cum Infil: <strong className="text-cyan-300">{rainfallInfiltrationSimulation.total_cumulative_infiltration_mm}mm</strong>
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Runoff: <strong className="text-amber-300">{rainfallInfiltrationSimulation.total_surface_runoff_mm}mm</strong>
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-300">
+                    Wetting Front: <strong className="text-purple-300">{rainfallInfiltrationSimulation.final_wetting_front_depth_m}m</strong>
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Min FS: <strong className={rainfallInfiltrationSimulation.minimum_transient_fs < 1.0 ? 'text-rose-400' : (rainfallInfiltrationSimulation.minimum_transient_fs < 1.3 ? 'text-amber-300' : 'text-emerald-300')}>{rainfallInfiltrationSimulation.minimum_transient_fs}</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Controls Row */}
+              <div className="flex items-center justify-between text-xs font-mono pt-0.5">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                    <span>Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={rainfallInfiltrationOpacity}
+                      onChange={(e) => setRainfallInfiltrationOpacity(Number(e.target.value))}
+                      className="w-16 accent-cyan-500 h-1 bg-slate-800 rounded"
+                    />
+                  </div>
+                </div>
+
+                {/* Metric Switcher */}
+                <div className="flex rounded bg-slate-900 border border-slate-800 p-0.5">
+                  {[
+                    { id: 'factor_of_safety', label: 'FS' },
+                    { id: 'wetting_front', label: 'zw' },
+                    { id: 'suction', label: 'ψ' },
+                    { id: 'infiltration_rate', label: 'Rate' }
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => setRainfallInfiltrationMetric(m.id)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold transition-all ${
+                        rainfallInfiltrationMetric === m.id ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* T-144/T-146 Apparent Thermal Inertia (ATI) Seepage Tracing Floating HUD Card (Cycle v2.5.14) */}
+          {showAtiLayer && atiAnalysisResult && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[920] glass-panel px-5 py-3 rounded-2xl border-amber-500/50 shadow-2xl bg-slate-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[620px] max-w-[92vw]">
+              {/* Header Row */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-amber-500/20 text-amber-400">
+                    <Sun className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <span className="font-bold text-white tracking-wide">
+                    {atiAnalysisResult.dam_name || 'Apparent Thermal Inertia (ATI)'}
+                  </span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold border ${
+                    atiAnalysisResult.thermal_seepage_detected
+                      ? 'bg-rose-950/80 text-rose-300 border-rose-600/60 animate-pulse'
+                      : 'bg-emerald-950/80 text-emerald-300 border-emerald-600/60'
+                  }`}>
+                    {atiAnalysisResult.thermal_seepage_detected ? 'Seepage Anomaly Detected' : 'Normal Thermal Shell'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setRainfallInfiltrationModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowAtiLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Telemetry Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-amber-400 font-bold">
+                    Mean ATI: <strong>{atiAnalysisResult.mean_apparent_thermal_inertia}</strong>
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Peak ATI: <strong className="text-rose-300">{atiAnalysisResult.max_apparent_thermal_inertia}</strong>
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Area: <strong className="text-cyan-300">{atiAnalysisResult.seepage_area_hectares} ha</strong>
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-300">
+                    Points: <strong className="text-purple-300">{atiAnalysisResult.ati_points?.length || 0}</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Controls Row */}
+              <div className="flex items-center justify-between text-xs font-mono pt-0.5">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                    <span>Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={atiOpacity}
+                      onChange={(e) => setAtiOpacity(Number(e.target.value))}
+                      className="w-16 accent-amber-500 h-1 bg-slate-800 rounded"
+                    />
+                  </div>
+                </div>
+
+                {/* Metric Switcher */}
+                <div className="flex rounded bg-slate-900 border border-slate-800 p-0.5">
+                  {[
+                    { id: 'thermal_inertia', label: 'ATI' },
+                    { id: 'seepage_anomaly', label: 'Anomaly' },
+                    { id: 'dtr', label: 'ΔT DTR' }
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => setAtiMetric(m.id)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold transition-all ${
+                        atiMetric === m.id ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -7179,6 +7440,18 @@ export default function MapExplorer() {
               >
                 <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Slope Stability (v2.5.13)</span>
+              </button>
+
+              {/* T-144/T-146 Transient Rainfall Infiltration, Wetting Front & ATI Studio Shortcut (Cycle v2.5.14) */}
+              <button
+                onClick={() => setRainfallInfiltrationModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  rainfallInfiltrationModalOpen || showRainfallInfiltrationLayer ? 'bg-cyan-600 text-white shadow-[0_0_12px_rgba(6,182,212,0.6)]' : ''
+                }`}
+                title="Transient Rainfall Infiltration, Wetting Front Suction Loss & Apparent Thermal Inertia (ATI) Studio (Cycle v2.5.14)"
+              >
+                <CloudRain className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Rainfall & Infiltration (v2.5.14)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -18739,6 +19012,31 @@ export default function MapExplorer() {
               zoom: 14
             });
           }
+        }}
+      />
+
+      {/* T-144/T-146: Transient Rainfall Infiltration, Wetting Front Suction Loss & ATI Studio Modal (Cycle v2.5.14) */}
+      <RainfallInfiltrationModal
+        isOpen={rainfallInfiltrationModalOpen}
+        onClose={() => setRainfallInfiltrationModalOpen(false)}
+        activeSimulation={rainfallInfiltrationSimulation}
+        onApplySimulation={(sim, opts) => {
+          setRainfallInfiltrationSimulation(sim);
+          setShowRainfallInfiltrationLayer(true);
+          if (opts?.selectedMetric) {
+            setRainfallInfiltrationMetric(opts.selectedMetric);
+          }
+          if (sim?.dam_coordinates && Array.isArray(sim.dam_coordinates)) {
+            setCustomFlyTarget({
+              lat: sim.dam_coordinates[1],
+              lng: sim.dam_coordinates[0],
+              zoom: 14
+            });
+          }
+        }}
+        onApplyAtiAnalysis={(ati) => {
+          setAtiAnalysisResult(ati);
+          setShowAtiLayer(true);
         }}
       />
 

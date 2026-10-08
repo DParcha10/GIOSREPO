@@ -2212,6 +2212,221 @@ class TestGIOSApi(unittest.TestCase):
             self.assertGreater(len(res_tile.content), 100)
             self.assertEqual(res_tile.content[:4], b"\x89PNG")
 
+    def test_geotechnical_slope_stability_and_tiles_api(self):
+        """Comprehensive test for geotechnical limit equilibrium slope stability (Bishop & Janbu), critical slip surface search, InSAR creep fusion, and dynamic XYZ tile streaming."""
+        # 1. Primary simulation with Bishop's Simplified method
+        payload_bishop = {
+            "damId": "DAM-001",
+            "damName": "North Tailings Impoundment",
+            "embankmentHeightM": 50.0,
+            "crestWidthM": 10.0,
+            "slopeRatio": 2.0,
+            "soilUnitWeightKnM3": 19.5,
+            "cohesionKpa": 15.0,
+            "frictionAngleDeg": 28.0,
+            "method": "bishop_simplified",
+            "includeUnsaturatedSuction": True,
+            "seismicKh": 0.05
+        }
+        res = self.client.post("/api/v1/analysis/geotechnical/slope-stability", json=payload_bishop)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data.get("dam_id"), "DAM-001")
+        self.assertGreater(data.get("factor_of_safety"), 0.0)
+        self.assertGreater(data.get("iterations_converged"), 0)
+        self.assertIn(data.get("hazard_tier"), {"critical_shear_failure", "elevated_instability_risk", "conditionally_stable", "stable"})
+        self.assertGreater(len(data.get("slices", [])), 0)
+        self.assertGreater(len(data.get("insar_creep_fusion", [])), 0)
+        self.assertTrue("tile_url_template" in data)
+
+        # 2. Simulation with Janbu's Simplified method
+        payload_janbu = dict(payload_bishop)
+        payload_janbu["method"] = "janbu_simplified"
+        res_j = self.client.post("/api/v1/analysis/geotechnical/slope-stability", json=payload_janbu)
+        self.assertEqual(res_j.status_code, 200)
+        data_j = res_j.json()
+        self.assertEqual(data_j.get("method"), "janbu_simplified")
+        self.assertGreater(data_j.get("factor_of_safety"), 0.0)
+
+        # 3. Route aliases
+        res_alias1 = self.client.post("/api/v1/geotechnical/slope-stability", json=payload_bishop)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/geotechnical/slope-stability-bishop", json=payload_bishop)
+        self.assertEqual(res_alias2.status_code, 200)
+        res_alias3 = self.client.post("/api/v1/geotechnical/slope_stability", json=payload_bishop)
+        self.assertEqual(res_alias3.status_code, 200)
+        res_alias4 = self.client.post("/api/v1/analysis/slope-stability", json=payload_bishop)
+        self.assertEqual(res_alias4.status_code, 200)
+
+        # 4. Simulation detail retrieval
+        sim_id = data.get("simulation_id")
+        res_detail = self.client.get(f"/api/v1/analysis/geotechnical/slope-stability/{sim_id}")
+        self.assertEqual(res_detail.status_code, 200)
+        detail_data = res_detail.json()
+        self.assertEqual(detail_data.get("simulation_id"), sim_id)
+
+        res_detail_alias = self.client.get(f"/api/v1/geotechnical/slope-stability/{sim_id}")
+        self.assertEqual(res_detail_alias.status_code, 200)
+
+        # 5. Critical slip surface optimization search
+        search_payload = {
+            "damId": "DAM-001",
+            "embankmentHeightM": 50.0,
+            "crestWidthM": 10.0,
+            "slopeRatio": 2.0,
+            "soilUnitWeightKnM3": 19.5,
+            "cohesionKpa": 15.0,
+            "frictionAngleDeg": 28.0,
+            "searchGridDensity": 3
+        }
+        res_search = self.client.post("/api/v1/analysis/geotechnical/critical-slip-search", json=search_payload)
+        self.assertEqual(res_search.status_code, 200)
+        search_data = res_search.json()
+        self.assertGreater(search_data.get("min_factor_of_safety"), 0.0)
+        self.assertGreater(search_data.get("evaluated_surfaces_count") or search_data.get("evaluatedSurfacesCount", 0), 0)
+        crit_surf = search_data.get("critical_surface")
+        self.assertIsNotNone(crit_surf)
+        self.assertGreater(crit_surf.get("radius_m"), 0.0)
+
+        res_search_alias = self.client.post("/api/v1/geotechnical/slip-surface-search", json=search_payload)
+        self.assertEqual(res_search_alias.status_code, 200)
+
+        # 6. InSAR creep vector endpoint
+        res_creep = self.client.get("/api/v1/analysis/geotechnical/insar-creep/DAM-001")
+        self.assertEqual(res_creep.status_code, 200)
+        creep_list = res_creep.json()
+        self.assertIsInstance(creep_list, list)
+        self.assertGreater(len(creep_list), 0)
+        self.assertIn("vertical_velocity_mm_yr", creep_list[0])
+        self.assertIn("creep_status", creep_list[0])
+
+        res_creep_alias = self.client.get("/api/v1/geotechnical/insar-creep/DAM-001")
+        self.assertEqual(res_creep_alias.status_code, 200)
+
+        # 7. Dynamic XYZ Tile Streaming across metrics
+        tile_sim_id = "SIM_SLOPE_TEST_001"
+        tile_urls = [
+            f"/api/v1/tiles/geotechnical/slope-stability/{tile_sim_id}/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/slope-stability/{tile_sim_id}/factor_of_safety/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/slope-stability/{tile_sim_id}/pore_pressure/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/slope-stability/{tile_sim_id}/shear_resistance/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/slope-stability/{tile_sim_id}/slip_surface/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/slope-stability/{tile_sim_id}/insar_creep/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/slope-stability/{tile_sim_id}/suction/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/slope-stability/{tile_sim_id}/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/slope-stability/{tile_sim_id}/factor_of_safety/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
+    def test_geotechnical_rainfall_infiltration_and_tiles_api(self):
+        """Test POST /api/v1/analysis/geotechnical/rainfall-infiltration and dynamic XYZ tile streaming."""
+        payload = {
+            "dam_id": "DAM-INFIL-TEST-01",
+            "dam_name": "San Luis Forebay Embankment",
+            "soil_texture": "silt_tailings",
+            "storm_duration_hr": 4.0,
+            "rainfall_intensity_mm_hr": 30.0,
+            "time_step_hr": 0.5,
+            "embankment_slope_deg": 26.0,
+            "cohesion_kpa": 12.0,
+            "friction_angle_deg": 32.0,
+            "initial_suction_head_m": 0.40
+        }
+
+        # 1. Primary endpoint
+        res = self.client.post("/api/v1/analysis/geotechnical/rainfall-infiltration", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        sim_id = data["simulation_id"]
+        self.assertEqual(data["dam_id"], "DAM-INFIL-TEST-01")
+        self.assertGreater(data["total_cumulative_infiltration_mm"], 0.0)
+        self.assertGreater(data["total_surface_runoff_mm"], 0.0)
+        self.assertGreater(data["minimum_transient_fs"], 0.0)
+        self.assertIn("time_steps", data)
+        self.assertGreater(len(data["time_steps"]), 0)
+
+        # 2. Route alias
+        res_alias = self.client.post("/api/v1/analysis/rainfall-infiltration", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # 3. Detail GET endpoint
+        res_detail = self.client.get(f"/api/v1/analysis/geotechnical/rainfall-infiltration/{sim_id}")
+        self.assertEqual(res_detail.status_code, 200)
+        self.assertEqual(res_detail.json()["simulation_id"], sim_id)
+
+        # 4. Dynamic XYZ Tile Streaming across metrics
+        tile_urls = [
+            f"/api/v1/tiles/geotechnical/rainfall-infiltration/{sim_id}/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/rainfall-infiltration/{sim_id}/factor_of_safety/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/rainfall-infiltration/{sim_id}/wetting_front/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/rainfall-infiltration/{sim_id}/suction/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/rainfall-infiltration/{sim_id}/infiltration_rate/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/rainfall-infiltration/{sim_id}/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/rainfall-infiltration/{sim_id}/factor_of_safety/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
+    def test_thermal_apparent_inertia_and_tiles_api(self):
+        """Test POST /api/v1/analysis/thermal/apparent-inertia and dynamic XYZ tile streaming."""
+        payload = {
+            "dam_id": "DAM-ATI-TEST-01",
+            "dam_name": "Cadia Downstream Shell",
+            "solar_correction_factor": 1.0,
+            "min_ati_threshold": 0.045,
+            "transect_points": [
+                {"station_x_m": 0.0, "albedo": 0.28, "day_lst_celsius": 39.0, "night_lst_celsius": 13.0},
+                {"station_x_m": 60.0, "albedo": 0.20, "day_lst_celsius": 35.0, "night_lst_celsius": 14.5},
+                {"station_x_m": 120.0, "albedo": 0.12, "day_lst_celsius": 24.0, "night_lst_celsius": 18.0}
+            ]
+        }
+
+        # 1. Primary endpoint
+        res = self.client.post("/api/v1/analysis/thermal/apparent-inertia", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        analysis_id = data["analysis_id"]
+        self.assertEqual(data["dam_id"], "DAM-ATI-TEST-01")
+        self.assertGreater(data["mean_apparent_thermal_inertia"], 0.0)
+        self.assertGreater(data["max_apparent_thermal_inertia"], 0.0)
+        self.assertTrue(data["thermal_seepage_detected"])
+        self.assertIn("ati_points", data)
+        self.assertEqual(len(data["ati_points"]), 3)
+
+        # 2. Route alias
+        res_alias = self.client.post("/api/v1/analysis/apparent-inertia", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # 3. Detail GET endpoint
+        res_detail = self.client.get(f"/api/v1/analysis/thermal/apparent-inertia/{analysis_id}")
+        self.assertEqual(res_detail.status_code, 200)
+        self.assertEqual(res_detail.json()["analysis_id"], analysis_id)
+
+        # 4. Dynamic XYZ Tile Streaming across metrics
+        tile_urls = [
+            f"/api/v1/tiles/thermal/apparent-inertia/{analysis_id}/12/2048/1024.png",
+            f"/api/v1/tiles/thermal/apparent-inertia/{analysis_id}/thermal_inertia/12/2048/1024.png",
+            f"/api/v1/tiles/thermal/apparent-inertia/{analysis_id}/seepage_anomaly/12/2048/1024.png",
+            f"/api/v1/tiles/thermal/apparent-inertia/{analysis_id}/dtr/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/thermal/apparent-inertia/{analysis_id}/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/thermal/apparent-inertia/{analysis_id}/thermal_inertia/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
 if __name__ == "__main__":
     unittest.main()
 

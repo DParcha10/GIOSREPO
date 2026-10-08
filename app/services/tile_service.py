@@ -157,6 +157,9 @@ DEFAULT_INDEX_RANGES = {
     "infiltration_rate": (0.0, 50.0),
     "cumulative_infiltration": (0.0, 150.0),
     "runoff_rate": (0.0, 30.0),
+    "richards_moisture": (0.10, 0.48),
+    "moisture_content": (0.10, 0.48),
+    "volumetric_moisture": (0.10, 0.48),
     "apparent_thermal_inertia": (0.010, 0.080),
     "thermal_apparent_inertia": (0.010, 0.080),
     "thermal_inertia": (0.010, 0.080),
@@ -167,7 +170,35 @@ DEFAULT_INDEX_RANGES = {
     "night_lst": (5.0, 25.0),
     "t_day": (15.0, 45.0),
     "t_night": (5.0, 25.0),
-    "albedo": (0.05, 0.35)
+    "albedo": (0.05, 0.35),
+    "seepage_saturation": (0.0, 1.0),
+    "seepage_anomaly": (0.0, 1.0),
+    "thermal_seepage": (0.0, 1.0),
+    "daylighting_outflow": (0.0, 1.0),
+    "liquefaction": (0.5, 2.5),
+    "liquefaction_fs": (0.5, 2.5),
+    "excess_pore_pressure": (0.0, 1.0),
+    "excess_pore_pressure_ratio": (0.0, 1.0),
+    "ru": (0.0, 1.0),
+    "delta_u": (0.0, 150.0),
+    "dynamic_pore_pressure": (0.0, 150.0),
+    "vs30": (150.0, 760.0),
+    "vs30_proxy": (150.0, 760.0),
+    "flow_slide_runout": (0.0, 1.0),
+    "runout": (0.0, 1.0),
+    "post_cyclic_effective_stress": (0.0, 200.0),
+    "csr": (0.05, 0.65),
+    "crr": (0.05, 0.65),
+    "crr75": (0.05, 0.65),
+    "cpt_qc": (0.5, 15.0),
+    "qc1ncs": (20.0, 180.0),
+    "state_parameter": (-0.15, 0.12),
+    "psi": (-0.15, 0.12),
+    "brittleness": (0.0, 0.8),
+    "brittleness_index": (0.0, 0.8),
+    "lateral_spreading": (0.0, 1.5),
+    "dh": (0.0, 1.5),
+    "ldi": (0.0, 3.0)
 }
 
 class TileService:
@@ -258,7 +289,7 @@ class TileService:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
         raw_idx = str(index.value if hasattr(index, "value") else index).lower().strip() if index else "rgb"
-        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
+        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
             idx_clean = raw_idx
         else:
             idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
@@ -765,10 +796,15 @@ class TileService:
                 elif idx_clean in {"suction", "slip_surface_suction", "matric_suction"}:
                     suction_val = np.where(is_wetted, 2.5 + base_variation * 3.0, 32.0 - depth_below_ground * 4.0)
                     val = np.where(inside_embankment, np.clip(suction_val, 0.0, 50.0), 0.0)
+                elif idx_clean in {"richards_moisture", "moisture", "moisture_content", "volumetric_moisture", "saturation"}:
+                    theta_sat = 0.42
+                    theta_init = 0.16
+                    theta_profile = np.where(is_wetted, theta_sat - (depth_below_ground / np.maximum(0.1, zw_depth)) * 0.04, theta_init + 0.05 * np.exp(-((depth_below_ground - zw_depth) / 0.8)**2))
+                    val = np.where(inside_embankment, np.clip(theta_profile + (base_variation - 0.5) * 0.02, 0.10, 0.48), 0.0)
                 else:
                     val = np.clip(1.25 + (base_variation - 0.5) * 0.4, 0.8, 2.5)
 
-            elif col_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati"} or idx_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal_inertia", "ati", "dtr", "dtr_celsius", "day_lst", "night_lst", "t_day", "t_night", "albedo"}:
+            elif col_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati"} or idx_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal_inertia", "ati", "dtr", "dtr_celsius", "day_lst", "night_lst", "t_day", "t_night", "albedo", "seepage_anomaly", "daylighting_outflow"}:
                 # 2D Remote sensing Apparent Thermal Inertia (ATI) phreatic moisture tracing & daylighting seepage
                 u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
                 v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
@@ -792,10 +828,114 @@ class TileService:
                     val = night_lst_grid
                 elif idx_clean in {"albedo", "alpha"}:
                     val = albedo_grid
-                elif idx_clean in {"seepage_saturation", "anomaly", "thermal_seepage"}:
+                elif idx_clean in {"seepage_saturation", "anomaly", "thermal_seepage", "seepage_anomaly", "daylighting_outflow"}:
                     val = np.clip(seepage_corridor, 0.0, 1.0)
                 else:
                     val = ati_grid
+            elif col_clean in {"geotechnical_liquefaction", "liquefaction", "geotechnical-liquefaction", "tailings_liquefaction"} or (col_clean in {"geotechnical", "geotechnical_slope_stability", "slope_stability"} and idx_clean in {"liquefaction", "fs_liq", "factor_of_safety_liq", "ru", "excess_pore_pressure", "excess_pore_pressure_ratio", "cyclic_stress_ratio", "cyclic_resistance_ratio", "csr", "crr", "vs30", "flow_slide_runout", "lateral_spreading", "delta_u"}) or idx_clean in {"liquefaction", "fs_liq", "factor_of_safety_liq", "ru", "excess_pore_pressure", "excess_pore_pressure_ratio", "cyclic_stress_ratio", "cyclic_resistance_ratio", "csr", "crr", "vs30", "flow_slide_runout", "lateral_spreading", "delta_u"}:
+                # 2D Seed-Idriss Dynamic Liquefaction, Excess Pore Pressure & Flow Slide Runout Grid
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                dam_height = 35.0
+                z_depth = 1.0 + v_s * 20.0
+                z_gw = np.where(u_s < 0.45, 1.5, 8.0)
+
+                # Total and effective vertical stresses
+                sigma_v0 = 18.0 * np.minimum(z_depth, z_gw) + 20.0 * np.maximum(0.0, z_depth - z_gw)
+                u0 = 9.81 * np.maximum(0.0, z_depth - z_gw)
+                sigma_v0_eff = np.maximum(5.0, sigma_v0 - u0)
+
+                # Depth reduction factor rd (Seed & Idriss 1971)
+                rd = np.where(z_depth <= 9.15, 1.0 - 0.00765 * z_depth, np.maximum(0.40, 1.174 - 0.0267 * z_depth))
+                pga = 0.25
+                csr = 0.65 * pga * (sigma_v0 / sigma_v0_eff) * rd
+
+                # Equivalent clean sand SPT blow count (N1)60cs
+                # Upstream slimes (u_s < 0.40): contractive, loose ((N1)60cs ~ 5-9)
+                # Crest & downstream shell (0.40 <= u_s <= 0.85): dense compacted sand ((N1)60cs ~ 25-34)
+                # Foundation/valley (u_s > 0.85): medium-dense ((N1)60cs ~ 16-22)
+                n1_60cs = np.where(
+                    u_s < 0.40,
+                    5.5 + 4.0 * u_s + (base_variation - 0.5) * 2.0,
+                    np.where(
+                        u_s <= 0.85,
+                        25.0 + 10.0 * ((u_s - 0.40) / 0.45) + (base_variation - 0.5) * 3.0,
+                        16.0 + (base_variation - 0.5) * 4.0
+                    )
+                )
+                n_clean = np.clip(n1_60cs, 1.0, 35.0)
+
+                # CRR7.5 (Youd et al. 2001)
+                crr75 = np.where(
+                    n_clean >= 30.0,
+                    2.0,
+                    1.0 / (34.0 - n_clean) + n_clean / 135.0 + 50.0 / ((10.0 * n_clean + 45.0) ** 2) - 1.0 / 200.0
+                )
+                crr75 = np.maximum(0.04, crr75)
+
+                # Overburden K_sigma factor
+                k_sigma = np.clip((100.0 / sigma_v0_eff) ** 0.7, 0.60, 1.10)
+                fs_liq = (crr75 * 1.0 * k_sigma) / np.maximum(0.01, csr)
+                fs_liq = np.clip(fs_liq + (base_variation - 0.5) * 0.04, 0.15, 3.50)
+
+                # Excess pore pressure ratio ru = delta_u / sigma'_v0
+                ru = np.where(
+                    fs_liq >= 2.0,
+                    0.0,
+                    np.where(
+                        fs_liq >= 1.40,
+                        0.25 * (2.0 - fs_liq) / 0.60,
+                        np.where(
+                            fs_liq >= 1.00,
+                            0.25 + 0.75 * (1.40 - fs_liq) / 0.40,
+                            1.0
+                        )
+                    )
+                )
+                delta_u = ru * sigma_v0_eff
+                post_sigma_eff = np.maximum(0.0, sigma_v0_eff - delta_u)
+
+                # Topographic slope Vs30 proxy (Wald & Allen 2007)
+                vs30 = np.where(
+                    u_s < 0.40,
+                    170.0 + 35.0 * u_s + (base_variation - 0.5) * 15.0,
+                    np.where(
+                        u_s <= 0.85,
+                        460.0 + 120.0 * ((u_s - 0.40) / 0.45) + (base_variation - 0.5) * 25.0,
+                        320.0 + (base_variation - 0.5) * 30.0
+                    )
+                )
+
+                # Flow slide runout corridor (Scheidegger / Hungr reach angle envelope)
+                runout_corridor = np.where(
+                    u_s >= 0.45,
+                    np.exp(-((v_s - 0.50) / 0.25) ** 2) * np.clip(1.0 - (u_s - 0.45) / 0.52, 0.0, 1.0),
+                    0.0
+                )
+                # Lateral spreading displacement (Zhang et al. 2004)
+                dh = np.where(u_s < 0.45, np.clip((2.0 - fs_liq) * 0.90, 0.0, 3.0), 0.05)
+
+                if idx_clean in {"factor_of_safety", "fs", "fs_liq", "factor_of_safety_liq", "liquefaction", "susceptibility", "geotechnical_liquefaction"}:
+                    val = fs_liq
+                elif idx_clean in {"excess_pore_pressure", "excess_pore_pressure_ratio", "ru", "pore_pressure_ratio"}:
+                    val = ru
+                elif idx_clean in {"delta_u", "excess_pore_pressure_delta_u", "dynamic_pore_pressure", "pore_pressure"}:
+                    val = delta_u
+                elif idx_clean in {"cyclic_stress_ratio", "csr"}:
+                    val = csr
+                elif idx_clean in {"cyclic_resistance_ratio", "crr", "crr75"}:
+                    val = crr75
+                elif idx_clean in {"vs30", "shear_wave_velocity", "vs30_proxy"}:
+                    val = vs30
+                elif idx_clean in {"flow_slide_runout", "runout", "flow_slide", "mobility"}:
+                    val = runout_corridor
+                elif idx_clean in {"lateral_spreading", "dh", "ldi"}:
+                    val = dh
+                elif idx_clean in {"post_cyclic_effective_stress", "effective_stress"}:
+                    val = post_sigma_eff
+                else:
+                    val = fs_liq
             else:
                 val = base_variation
 
@@ -887,6 +1027,8 @@ class TileService:
                 rgba[:, :, 3] = 220
             elif col_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati"} or idx_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal_inertia", "ati", "dtr", "dtr_celsius", "day_lst", "night_lst", "t_day", "t_night", "albedo"}:
                 rgba[:, :, 3] = 230
+            elif col_clean in {"geotechnical_liquefaction", "liquefaction", "geotechnical-liquefaction", "tailings_liquefaction"} or idx_clean in {"liquefaction", "fs_liq", "factor_of_safety_liq", "ru", "excess_pore_pressure", "excess_pore_pressure_ratio", "cyclic_stress_ratio", "cyclic_resistance_ratio", "csr", "crr", "vs30", "flow_slide_runout", "lateral_spreading", "delta_u"}:
+                rgba[:, :, 3] = 225
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
@@ -2047,6 +2189,8 @@ class TileService:
                 chosen_cmap = "magma"
             elif metric_clean in {"suction", "slip_surface_suction", "matric_suction"}:
                 chosen_cmap = "cividis"
+            elif metric_clean in {"richards_moisture", "moisture", "moisture_content", "volumetric_moisture", "saturation"}:
+                chosen_cmap = "blues"
             else:
                 chosen_cmap = "rdylbu"
         else:
@@ -2065,6 +2209,8 @@ class TileService:
                 chosen_rescale = "0.0,30.0"
             elif metric_clean in {"suction", "slip_surface_suction", "matric_suction"}:
                 chosen_rescale = "0.0,50.0"
+            elif metric_clean in {"richards_moisture", "moisture", "moisture_content", "volumetric_moisture", "saturation"}:
+                chosen_rescale = "0.10,0.48"
             else:
                 chosen_rescale = "0.8,2.2"
         else:
@@ -2116,7 +2262,7 @@ class TileService:
                 chosen_cmap = "cividis"
             elif metric_clean in {"albedo", "alpha"}:
                 chosen_cmap = "viridis"
-            elif metric_clean in {"seepage_saturation", "anomaly", "thermal_seepage"}:
+            elif metric_clean in {"seepage_saturation", "anomaly", "thermal_seepage", "seepage_anomaly", "daylighting_outflow"}:
                 chosen_cmap = "magma"
             else:
                 chosen_cmap = "turbo"
@@ -2134,7 +2280,7 @@ class TileService:
                 chosen_rescale = "5.0,25.0"
             elif metric_clean in {"albedo", "alpha"}:
                 chosen_rescale = "0.05,0.35"
-            elif metric_clean in {"seepage_saturation", "anomaly", "thermal_seepage"}:
+            elif metric_clean in {"seepage_saturation", "anomaly", "thermal_seepage", "seepage_anomaly", "daylighting_outflow"}:
                 chosen_rescale = "0.0,1.0"
             else:
                 chosen_rescale = "0.010,0.080"
@@ -2144,6 +2290,89 @@ class TileService:
         return self.render_tile(
             collection="thermal_apparent_inertia",
             item_id=sim_id or "ATI_SEEPAGE_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_liquefaction_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "factor_of_safety",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for dynamic seismic liquefaction susceptibility, excess pore pressure ratio (ru), and flow slide runout."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "factor_of_safety"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"factor_of_safety", "fs", "fs_liq", "liquefaction", "susceptibility"}:
+                chosen_cmap = "rdylbu"
+            elif metric_clean in {"excess_pore_pressure", "excess_pore_pressure_ratio", "ru", "pore_pressure_ratio"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"delta_u", "excess_pore_pressure_delta_u", "dynamic_pore_pressure", "pore_pressure"}:
+                chosen_cmap = "turbo"
+            elif metric_clean in {"cyclic_stress_ratio", "csr"}:
+                chosen_cmap = "magma"
+            elif metric_clean in {"cyclic_resistance_ratio", "crr", "crr75"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"vs30", "shear_wave_velocity", "vs30_proxy"}:
+                chosen_cmap = "turbo"
+            elif metric_clean in {"flow_slide_runout", "runout", "flow_slide", "mobility"}:
+                chosen_cmap = "hot"
+            elif metric_clean in {"lateral_spreading", "dh", "ldi"}:
+                chosen_cmap = "inferno"
+            elif metric_clean in {"post_cyclic_effective_stress", "effective_stress"}:
+                chosen_cmap = "cividis"
+            else:
+                chosen_cmap = "rdylbu"
+        else:
+            chosen_cmap = colormap
+
+        if not rescale:
+            if metric_clean in {"factor_of_safety", "fs", "fs_liq", "liquefaction", "susceptibility"}:
+                chosen_rescale = "0.5,2.0"
+            elif metric_clean in {"excess_pore_pressure", "excess_pore_pressure_ratio", "ru", "pore_pressure_ratio"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"delta_u", "excess_pore_pressure_delta_u", "dynamic_pore_pressure", "pore_pressure"}:
+                chosen_rescale = "0.0,150.0"
+            elif metric_clean in {"cyclic_stress_ratio", "csr"}:
+                chosen_rescale = "0.10,0.60"
+            elif metric_clean in {"cyclic_resistance_ratio", "crr", "crr75"}:
+                chosen_rescale = "0.10,0.60"
+            elif metric_clean in {"vs30", "shear_wave_velocity", "vs30_proxy"}:
+                chosen_rescale = "150.0,760.0"
+            elif metric_clean in {"flow_slide_runout", "runout", "flow_slide", "mobility"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"lateral_spreading", "dh", "ldi"}:
+                chosen_rescale = "0.0,2.5"
+            elif metric_clean in {"post_cyclic_effective_stress", "effective_stress"}:
+                chosen_rescale = "0.0,200.0"
+            else:
+                chosen_rescale = "0.5,2.0"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="geotechnical_liquefaction",
+            item_id=sim_id or "LIQ_001",
             z=actual_z,
             x=actual_x,
             y=actual_y,

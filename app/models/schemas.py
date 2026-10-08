@@ -738,6 +738,26 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_rainfall_infiltration_metric": "/api/v1/tiles/geotechnical/rainfall-infiltration/{sim_id}/{metric}/{z}/{x}/{y}.png",
     "tiles_thermal_apparent_inertia": "/api/v1/tiles/thermal/apparent-inertia/{sim_id}/{z}/{x}/{y}.png",
     "tiles_thermal_apparent_inertia_metric": "/api/v1/tiles/thermal/apparent-inertia/{sim_id}/{metric}/{z}/{x}/{y}.png",
+    "analysis_liquefaction": "/api/v1/analysis/geotechnical/liquefaction",
+    "analysis_liquefaction_short": "/geotechnical/liquefaction",
+    "analysis_liquefaction_susceptibility": "/api/v1/analysis/geotechnical/liquefaction-susceptibility",
+    "analysis_liquefaction_susceptibility_short": "/geotechnical/liquefaction-susceptibility",
+    "analysis_dynamic_pore_pressure": "/api/v1/analysis/geotechnical/dynamic-pore-pressure",
+    "analysis_dynamic_pore_pressure_short": "/geotechnical/dynamic-pore-pressure",
+    "analysis_vs30_proxy": "/api/v1/analysis/geotechnical/vs30-proxy/{lat}/{lon}",
+    "analysis_vs30_proxy_short": "/geotechnical/vs30-proxy/{lat}/{lon}",
+    "analysis_liquefaction_cpt": "/api/v1/analysis/geotechnical/liquefaction/cpt-sounding",
+    "analysis_liquefaction_cpt_short": "/geotechnical/cpt-sounding",
+    "analysis_liquefaction_spt": "/api/v1/analysis/geotechnical/liquefaction/spt-sounding",
+    "analysis_liquefaction_spt_short": "/geotechnical/spt-sounding",
+    "analysis_flow_slide_runout": "/api/v1/analysis/geotechnical/liquefaction/flow-slide-runout",
+    "analysis_flow_slide_runout_short": "/geotechnical/flow-slide-runout",
+    "analysis_liquefaction_lateral_spreading": "/api/v1/analysis/geotechnical/liquefaction/lateral-spreading/{dam_id}",
+    "analysis_liquefaction_lateral_spreading_short": "/geotechnical/lateral-spreading/{dam_id}",
+    "analysis_liquefaction_detail": "/api/v1/analysis/geotechnical/liquefaction/{simulation_id}",
+    "analysis_liquefaction_detail_short": "/geotechnical/liquefaction/{simulation_id}",
+    "tiles_liquefaction": "/api/v1/tiles/geotechnical/liquefaction/{sim_id}/{z}/{x}/{y}.png",
+    "tiles_liquefaction_metric": "/api/v1/tiles/geotechnical/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -756,6 +776,21 @@ def format_api_route(route_name: str, **kwargs) -> str:
         template = API_ROUTE_CONTRACTS.get("tiles_rainfall_infiltration_metric", "/api/v1/tiles/geotechnical/rainfall-infiltration/{sim_id}/{metric}/{z}/{x}/{y}.png")
     elif route_name == "tiles_thermal_apparent_inertia" and "metric" in kwargs:
         template = API_ROUTE_CONTRACTS.get("tiles_thermal_apparent_inertia_metric", "/api/v1/tiles/thermal/apparent-inertia/{sim_id}/{metric}/{z}/{x}/{y}.png")
+    elif route_name == "tiles_liquefaction" and "metric" in kwargs:
+        template = API_ROUTE_CONTRACTS.get("tiles_liquefaction_metric", "/api/v1/tiles/geotechnical/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png")
+    elif route_name in ("analysis_liquefaction_detail", "analysis_liquefaction_detail_short"):
+        if "simulation_id" not in kwargs and "sim_id" in kwargs:
+            kwargs["simulation_id"] = kwargs["sim_id"]
+        elif "sim_id" not in kwargs and "simulation_id" in kwargs:
+            kwargs["sim_id"] = kwargs["simulation_id"]
+    elif route_name in ("analysis_vs30_proxy", "analysis_vs30_proxy_short"):
+        if "lat" not in kwargs and "latitude" in kwargs:
+            kwargs["lat"] = kwargs["latitude"]
+        if "lon" not in kwargs:
+            if "longitude" in kwargs:
+                kwargs["lon"] = kwargs["longitude"]
+            elif "lng" in kwargs:
+                kwargs["lon"] = kwargs["lng"]
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -15251,6 +15286,19 @@ class InfiltrationTimeStep(BaseModel):
     slip_surface_suction_kpa: float = Field(..., description="Remaining matric suction at critical slip plane (kPa)", alias="slipSurfaceSuctionKpa")
     transient_factor_of_safety: float = Field(..., description="Instantaneous slope stability Factor of Safety FS(t)", alias="transientFactorOfSafety")
     ponding_regime: str = Field(..., description="Hydrodynamic ponding regime status", alias="pondingRegime")
+    moisture_content_at_slip_depth: Optional[float] = Field(None, description="Volumetric water content theta at critical slip depth", alias="moistureContentAtSlipDepth")
+    richards_drainage_flux_mm_hr: Optional[float] = Field(None, description="Transient unsaturated matrix drainage flux at column base (mm/hr)", alias="richardsDrainageFluxMmHr")
+
+
+class RichardsMatrixNode(BaseModel):
+    """1D vertical soil column node for transient Richards unsaturated matrix flow discretization."""
+    model_config = ConfigDict(populate_by_name=True)
+    depth_z_m: float = Field(..., description="Depth below ground surface (m)", alias="depthZM")
+    volumetric_moisture_theta: float = Field(..., description="Volumetric water content theta (m3/m3)", alias="volumetricMoistureTheta")
+    effective_saturation_se: float = Field(..., description="Effective saturation Se (0-1)", alias="effectiveSaturationSe")
+    matric_suction_psi_kpa: float = Field(..., description="Matric suction tension psi (kPa)", alias="matricSuctionPsiKpa")
+    hydraulic_conductivity_k_mm_hr: float = Field(..., description="Unsaturated hydraulic conductivity K (mm/hr)", alias="hydraulicConductivityKMmHr")
+    apparent_cohesion_kpa: float = Field(..., description="Apparent suction cohesion c_apparent (kPa)", alias="apparentCohesionKpa")
 
 
 class RainfallInfiltrationRequest(BaseModel):
@@ -15292,6 +15340,7 @@ class RainfallInfiltrationResponse(BaseModel):
     time_steps: List[InfiltrationTimeStep] = Field(default_factory=list, alias="timeSteps")
     decay_curve_geojson: Optional[Dict[str, Any]] = Field(None, alias="decayCurveGeojson")
     tile_url_template: str = Field(..., alias="tileUrlTemplate")
+    richards_matrix_profile: Optional[List[RichardsMatrixNode]] = Field(default_factory=list, alias="richardsMatrixProfile")
     simulated_at: str = Field(..., alias="simulatedAt")
 
 
@@ -15389,6 +15438,60 @@ def calculate_fredlund_apparent_shear_strength(
     }
 
 
+def calculate_richards_matrix_profile(
+    wetting_front_depth_m: float,
+    theta_s: float,
+    theta_i: float,
+    theta_r: float = 0.06,
+    ks_mm_hr: float = 12.0,
+    psi0_kpa: float = 30.0,
+    cohesion_prime_kpa: float = 5.0,
+    phi_b_deg: float = 14.0,
+    column_depth_m: float = 5.0,
+    dz_m: float = 0.25
+) -> List[Dict[str, Any]]:
+    """Discretizes 1D vertical unsaturated soil column profile according to Richards unsaturated matrix flow physics."""
+    zw = max(0.0, float(wetting_front_depth_m))
+    tan_phib = math.tan(math.radians(float(phi_b_deg)))
+    nodes: List[Dict[str, Any]] = []
+    num_nodes = int(math.ceil(column_depth_m / dz_m)) + 1
+    capillary_fringe_m = 0.35
+
+    for j in range(num_nodes):
+        z = round(j * dz_m, 2)
+        if z <= zw:
+            theta = theta_s
+            psi = 0.0
+            k_val = ks_mm_hr
+            se = 1.0
+        elif z < zw + capillary_fringe_m:
+            trans_factor = (z - zw) / capillary_fringe_m
+            theta = theta_s - trans_factor * (theta_s - theta_i)
+            se = max(0.01, min(1.0, (theta - theta_r) / max(0.01, theta_s - theta_r)))
+            psi = psi0_kpa * (trans_factor ** 0.5)
+            m = 0.5
+            kr = (se ** 0.5) * (1.0 - (1.0 - se ** (1.0 / m)) ** m) ** 2
+            k_val = max(1e-4, ks_mm_hr * kr)
+        else:
+            theta = theta_i
+            se = max(0.01, min(1.0, (theta_i - theta_r) / max(0.01, theta_s - theta_r)))
+            psi = psi0_kpa
+            m = 0.5
+            kr = (se ** 0.5) * (1.0 - (1.0 - se ** (1.0 / m)) ** m) ** 2
+            k_val = max(1e-4, ks_mm_hr * kr)
+
+        apparent_cohesion = round(cohesion_prime_kpa + psi * tan_phib, 2)
+        nodes.append({
+            "depth_z_m": z,
+            "volumetric_moisture_theta": round(theta, 3),
+            "effective_saturation_se": round(se, 3),
+            "matric_suction_psi_kpa": round(psi, 2),
+            "hydraulic_conductivity_k_mm_hr": round(k_val, 4),
+            "apparent_cohesion_kpa": apparent_cohesion
+        })
+    return nodes
+
+
 def calculate_green_ampt_infiltration(
     request_or_dict: Union[RainfallInfiltrationRequest, Dict[str, Any]]
 ) -> Dict[str, Any]:
@@ -15429,15 +15532,39 @@ def calculate_green_ampt_infiltration(
 
     sw = psi_f * delta_theta  # storage suction parameter in mm
 
+    # Hyetograph inspection
+    hyetograph_raw = req_data.get("hyetograph")
+    parsed_hyetograph: List[Dict[str, float]] = []
+    if hyetograph_raw and isinstance(hyetograph_raw, list):
+        for pt in hyetograph_raw:
+            if isinstance(pt, dict):
+                t_val = float(pt.get("time_hr", pt.get("timeHr", 0.0)))
+                i_val = float(pt.get("intensity_mm_hr", pt.get("intensityMmHr", 0.0)))
+                cum_rain = float(pt.get("cumulative_rainfall_mm", pt.get("cumulativeRainfallMm", 0.0)))
+                parsed_hyetograph.append({"time_hr": t_val, "intensity_mm_hr": i_val, "cumulative_rainfall_mm": cum_rain})
+        parsed_hyetograph.sort(key=lambda x: x["time_hr"])
+
+    if parsed_hyetograph:
+        storm_dur = max(storm_dur, parsed_hyetograph[-1]["time_hr"])
+
+    def get_hyetograph_intensity(t: float) -> float:
+        if not parsed_hyetograph:
+            return rainfall_i
+        for pt in parsed_hyetograph:
+            if t <= pt["time_hr"]:
+                return pt["intensity_mm_hr"]
+        return parsed_hyetograph[-1]["intensity_mm_hr"]
+
     # Time to ponding computation
     t_ponding: Optional[float] = None
     f_ponding = 0.0
-    if rainfall_i > ks:
-        # tp = Ks * psi_f * delta_theta / (i * (i - Ks))
-        t_p_calc = (ks * sw) / (rainfall_i * (rainfall_i - ks))
-        if t_p_calc < storm_dur:
-            t_ponding = round(max(0.1, t_p_calc), 2)
-            f_ponding = rainfall_i * t_ponding
+    if not parsed_hyetograph:
+        if rainfall_i > ks:
+            # tp = Ks * psi_f * delta_theta / (i * (i - Ks))
+            t_p_calc = (ks * sw) / (rainfall_i * (rainfall_i - ks))
+            if t_p_calc < storm_dur:
+                t_ponding = round(max(0.1, t_p_calc), 2)
+                f_ponding = rainfall_i * t_ponding
 
     # Discretization into hourly or fractional timesteps
     dt = 0.25 if (t_ponding and t_ponding < 1.0) else (1.0 if storm_dur >= 12.0 else max(0.25, storm_dur / 24.0))
@@ -15450,31 +15577,55 @@ def calculate_green_ampt_infiltration(
 
     for step in range(1, num_steps + 1):
         t_curr = min(storm_dur, step * dt)
+        curr_intensity = get_hyetograph_intensity(t_curr)
 
-        if t_ponding is None or t_curr <= t_ponding:
-            # Pre-ponding regime: all rainfall enters matrix
-            f_rate = rainfall_i
-            cum_f = rainfall_i * t_curr
-            runoff_rate = 0.0
-            regime = InfiltrationPondingRegime.PRE_PONDING.value
+        if not parsed_hyetograph:
+            # Standard uniform precipitation
+            if t_ponding is None or t_curr <= t_ponding:
+                # Pre-ponding regime: all rainfall enters matrix
+                f_rate = rainfall_i
+                cum_f = rainfall_i * t_curr
+                runoff_rate = 0.0
+                regime = InfiltrationPondingRegime.PRE_PONDING.value
+            else:
+                # Post-ponding Green-Ampt implicit Newton solver for cumulative infiltration F
+                # Equation: F - Sw * ln(1 + F/Sw) = Fp - Sw * ln(1 + Fp/Sw) + Ks * (t - tp)
+                c_target = (f_ponding - sw * math.log(1.0 + f_ponding / max(0.1, sw))) + ks * (t_curr - t_ponding)
+                f_guess = max(f_ponding + ks * (t_curr - t_ponding), cum_f)
+
+                for _ in range(20):
+                    g_val = f_guess - sw * math.log(1.0 + f_guess / max(0.1, sw)) - c_target
+                    g_prime = f_guess / max(0.01, f_guess + sw)
+                    if abs(g_val) < 1e-4 or g_prime < 1e-6:
+                        break
+                    f_guess = max(f_ponding, f_guess - g_val / g_prime)
+
+                cum_f = f_guess
+                f_rate = ks * (1.0 + sw / max(0.1, cum_f))
+                runoff_rate = max(0.0, rainfall_i - f_rate)
+                total_runoff += runoff_rate * dt
+                regime = InfiltrationPondingRegime.UNSTEADY_PONDING.value if f_rate > 1.25 * ks else InfiltrationPondingRegime.SATURATED_STEADY_STATE.value
         else:
-            # Post-ponding Green-Ampt implicit Newton solver for cumulative infiltration F
-            # Equation: F - Sw * ln(1 + F/Sw) = Fp - Sw * ln(1 + Fp/Sw) + Ks * (t - tp)
-            c_target = (f_ponding - sw * math.log(1.0 + f_ponding / max(0.1, sw))) + ks * (t_curr - t_ponding)
-            f_guess = max(f_ponding + ks * (t_curr - t_ponding), cum_f)
+            # Unsteady hyetograph processing
+            f_cap = ks * (1.0 + sw / max(0.1, cum_f))
+            if t_ponding is None:
+                if curr_intensity > ks:
+                    fp_thresh = (ks * sw) / (curr_intensity - ks)
+                    if cum_f + curr_intensity * dt >= fp_thresh:
+                        t_ponding = round(t_curr - dt + max(0.0, (fp_thresh - cum_f) / max(0.1, curr_intensity)), 2)
+                        f_ponding = cum_f
 
-            for _ in range(20):
-                g_val = f_guess - sw * math.log(1.0 + f_guess / max(0.1, sw)) - c_target
-                g_prime = f_guess / max(0.01, f_guess + sw)
-                if abs(g_val) < 1e-4 or g_prime < 1e-6:
-                    break
-                f_guess = max(f_ponding, f_guess - g_val / g_prime)
-
-            cum_f = f_guess
-            f_rate = ks * (1.0 + sw / max(0.1, cum_f))
-            runoff_rate = max(0.0, rainfall_i - f_rate)
-            total_runoff += runoff_rate * dt
-            regime = InfiltrationPondingRegime.UNSTEADY_PONDING.value if f_rate > 1.25 * ks else InfiltrationPondingRegime.SATURATED_STEADY_STATE.value
+            if t_ponding is None or t_curr <= t_ponding:
+                f_rate = curr_intensity
+                cum_f += curr_intensity * dt
+                runoff_rate = 0.0
+                regime = InfiltrationPondingRegime.PRE_PONDING.value
+            else:
+                f_rate = min(curr_intensity, f_cap)
+                cum_f += f_rate * dt
+                runoff_rate = max(0.0, curr_intensity - f_rate)
+                total_runoff += runoff_rate * dt
+                regime = InfiltrationPondingRegime.UNSTEADY_PONDING.value if f_rate > 1.25 * ks else InfiltrationPondingRegime.SATURATED_STEADY_STATE.value
 
         # Wetting front depth in meters: z_w = F / (1000 * delta_theta)
         zw_m = cum_f / (1000.0 * delta_theta)
@@ -15484,7 +15635,6 @@ def calculate_green_ampt_infiltration(
         psi_t = max(0.0, psi0 * (1.0 - (penetration_ratio ** 2)))
 
         # Transient factor of safety decay (Fredlund suction loss model)
-        # Ratio of apparent shear strength relative to initial condition
         tan_phi_b = math.tan(math.radians(phi_b))
         tan_phi_prime = math.tan(math.radians(28.0))
         sigma_n = 60.0
@@ -15496,16 +15646,27 @@ def calculate_green_ampt_infiltration(
         if fs_t < min_fs:
             min_fs = fs_t
 
+        # Richards unsaturated moisture content at slip depth & drainage flux
+        if zw_m >= z_slip:
+            theta_slip = theta_s
+            drainage_flux = round(ks, 4)
+        else:
+            ratio = (zw_m / z_slip)
+            theta_slip = round(theta_i + (theta_s - theta_i) * (ratio ** 2), 3)
+            drainage_flux = round(max(0.0, ks * ((theta_i / max(0.01, theta_s)) ** 3.5)), 4)
+
         time_steps.append({
             "time_hr": round(t_curr, 2),
-            "rainfall_intensity_mm_hr": round(rainfall_i, 2),
+            "rainfall_intensity_mm_hr": round(curr_intensity, 2),
             "infiltration_rate_mm_hr": round(f_rate, 2),
             "cumulative_infiltration_mm": round(cum_f, 2),
             "runoff_rate_mm_hr": round(runoff_rate, 2),
             "wetting_front_depth_m": round(zw_m, 3),
             "slip_surface_suction_kpa": round(psi_t, 2),
             "transient_factor_of_safety": fs_t,
-            "ponding_regime": regime
+            "ponding_regime": regime,
+            "moisture_content_at_slip_depth": theta_slip,
+            "richards_drainage_flux_mm_hr": drainage_flux
         })
 
     hazard_tier = classify_infiltration_hazard_tier(min_fs)
@@ -15541,9 +15702,23 @@ def calculate_green_ampt_infiltration(
         ]
     }
 
-    total_precip = rainfall_i * storm_dur
+    if parsed_hyetograph:
+        total_precip = round(sum(ts["rainfall_intensity_mm_hr"] * dt for ts in time_steps), 2)
+    else:
+        total_precip = rainfall_i * storm_dur
     total_surface_runoff = max(0.0, total_precip - cum_f)
     tile_template = f"/api/v1/tiles/geotechnical/rainfall-infiltration/{sim_id}/factor_of_safety/{{z}}/{{x}}/{{y}}.png"
+
+    richards_matrix = calculate_richards_matrix_profile(
+        wetting_front_depth_m=time_steps[-1]["wetting_front_depth_m"],
+        theta_s=theta_s,
+        theta_i=theta_i,
+        theta_r=meta.get("theta_r", 0.06),
+        ks_mm_hr=ks,
+        psi0_kpa=psi0,
+        phi_b_deg=phi_b,
+        column_depth_m=max(5.0, z_slip * 1.5)
+    )
 
     return {
         "simulation_id": sim_id,
@@ -15561,6 +15736,7 @@ def calculate_green_ampt_infiltration(
         "time_steps": time_steps,
         "decay_curve_geojson": decay_geojson,
         "tile_url_template": tile_template,
+        "richards_matrix_profile": richards_matrix,
         "simulated_at": datetime.now(timezone.utc).isoformat()
     }
 
@@ -15702,6 +15878,1548 @@ def build_apparent_thermal_inertia_tile_url_template(
 ) -> str:
     """Constructs dynamic XYZ tile URL template for Apparent Thermal Inertia."""
     return f"/api/v1/tiles/thermal/apparent-inertia/{sim_id}/{metric}/{{z}}/{{x}}/{{y}}.png"
+
+
+# ==============================================================================
+# CYCLE v2.5.15: TAILINGS DAM DYNAMIC & STATIC LIQUEFACTION SUSCEPTIBILITY,
+# SEED-IDRISS CSR/CRR, ROBERTSON CPT & LATERAL SPREADING INSAR DISPLACEMENT CONTRACTS
+# ==============================================================================
+
+class LiquefactionTriggerMode(str, Enum):
+    """Failure trigger mechanism for tailings liquefaction assessment."""
+    DYNAMIC_SEISMIC = "dynamic_seismic"
+    STATIC_FLOW = "static_flow"
+    COMBINED_TRIGGER = "combined_trigger"
+
+
+class LiquefactionHazardTier(str, Enum):
+    """Dynamic seismic liquefaction safety margin tiers based on Factor of Safety (FS_liq)."""
+    SAFE_NON_LIQUEFIABLE = "safe_non_liquefiable"
+    MARGINAL_CYCLIC_SOFTENING = "marginal_cyclic_softening"
+    ELEVATED_LIQUEFACTION_POTENTIAL = "elevated_liquefaction_potential"
+    CRITICAL_CYCLIC_COLLAPSE = "critical_cyclic_collapse"
+
+
+class StaticBrittlenessTier(str, Enum):
+    """Static flow liquefaction brittleness index classification."""
+    DUCTILE_DILATIVE = "ductile_dilative"
+    MODERATE_CONTRACTIVE = "moderate_contractive"
+    HIGHLY_BRITTLE_COLLAPSIBLE = "highly_brittle_collapsible"
+
+
+class LateralSpreadingHazardTier(str, Enum):
+    """Post-liquefaction lateral spreading displacement severity tiers."""
+    NEGLIGIBLE_LATERAL_STRAIN = "negligible_lateral_strain"
+    LOW_LATERAL_SPREADING = "low_lateral_spreading"
+    MODERATE_LATERAL_SPREADING = "moderate_lateral_spreading"
+    SEVERE_LATERAL_FLOW_FAILURE = "severe_lateral_flow_failure"
+
+
+class NEHRPSiteClass(str, Enum):
+    """NEHRP site classification based on average upper 30m shear wave velocity (Vs30)."""
+    CLASS_A = "class_a"
+    CLASS_B = "class_b"
+    CLASS_C = "class_c"
+    CLASS_D = "class_d"
+    CLASS_E = "class_e"
+    CLASS_F = "class_f"
+
+
+class FlowSlideMobilityTier(str, Enum):
+    """Post-liquefaction tailings flow slide runout mobility tiers based on reach angle."""
+    EXTREME_MOBILITY = "extreme_mobility"
+    HIGH_MOBILITY = "high_mobility"
+    MODERATE_MOBILITY = "moderate_mobility"
+    LOW_MOBILITY = "low_mobility"
+
+
+LIQUEFACTION_HAZARD_METADATA: Dict[str, Dict[str, Any]] = {
+    "safe_non_liquefiable": {
+        "id": "safe_non_liquefiable",
+        "name": "Safe / Non-Liquefiable (FS >= 1.40)",
+        "label": "Safe / Non-Liquefiable (FS >= 1.40)",
+        "min_fs": 1.40,
+        "max_fs": None,
+        "color": "#10B981",
+        "badge_class": "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40",
+        "stability_narrative": "Cyclic resistance exceeds induced cyclic seismic shear stresses with robust safety margin; minimal excess pore pressure generation.",
+        "action_protocol": "Standard geotechnical surveillance and periodic piezometer monitoring."
+    },
+    "marginal_cyclic_softening": {
+        "id": "marginal_cyclic_softening",
+        "name": "Marginal Cyclic Softening (1.15 <= FS < 1.40)",
+        "label": "Marginal Cyclic Softening (1.15 <= FS < 1.40)",
+        "min_fs": 1.15,
+        "max_fs": 1.40,
+        "color": "#3B82F6",
+        "badge_class": "bg-blue-500/20 text-blue-300 border border-blue-500/40",
+        "stability_narrative": "Moderate excess pore pressure ratio (ru ~ 0.3-0.5); shear modulus degradation and limited cyclic strain accumulation.",
+        "action_protocol": "Increase InSAR interferometric surveillance cadence; review seismic design basis."
+    },
+    "elevated_liquefaction_potential": {
+        "id": "elevated_liquefaction_potential",
+        "name": "Elevated Liquefaction Potential (1.00 <= FS < 1.15)",
+        "label": "Elevated Liquefaction Potential (1.00 <= FS < 1.15)",
+        "min_fs": 1.00,
+        "max_fs": 1.15,
+        "color": "#F59E0B",
+        "badge_class": "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+        "stability_narrative": "Near-critical cyclic shear state (ru ~ 0.7-0.9); high vulnerability to localized sand boils, crest cracking, and foundation softening.",
+        "action_protocol": "Deploy emergency piezometer loggers; restrict reservoir pool surcharge; prepare buttress stabilization plans."
+    },
+    "critical_cyclic_collapse": {
+        "id": "critical_cyclic_collapse",
+        "name": "Critical Cyclic Collapse (FS < 1.00)",
+        "label": "Critical Cyclic Collapse (FS < 1.00)",
+        "min_fs": 0.0,
+        "max_fs": 1.00,
+        "color": "#DC2626",
+        "badge_class": "bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse",
+        "stability_narrative": "Full liquefaction triggering (ru = 1.0); complete loss of effective stress; rapid transition to catastrophic flowslide and crest breach.",
+        "action_protocol": "Activate emergency response siren warning system; initiate immediate downstream population evacuation."
+    }
+}
+
+
+STATIC_BRITTLENESS_METADATA: Dict[str, Dict[str, Any]] = {
+    "ductile_dilative": {
+        "id": "ductile_dilative",
+        "name": "Ductile / Dilative Tailings (IB < 0.20)",
+        "label": "Ductile / Dilative Tailings (IB < 0.20)",
+        "min_ib": 0.0,
+        "max_ib": 0.20,
+        "color": "#10B981",
+        "badge_class": "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40",
+        "narrative": "Dense state parameter (psi < -0.05); positive dilatancy generates negative pore pressure under undrained shear.",
+        "action_protocol": "Non-flowslide prone material."
+    },
+    "moderate_contractive": {
+        "id": "moderate_contractive",
+        "name": "Moderately Contractive (0.20 <= IB < 0.50)",
+        "label": "Moderately Contractive (0.20 <= IB < 0.50)",
+        "min_ib": 0.20,
+        "max_ib": 0.50,
+        "color": "#F59E0B",
+        "badge_class": "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+        "narrative": "Loose contractive state parameter; moderate peak-to-yield strength reduction requiring continuous monitoring.",
+        "action_protocol": "Conduct in-situ CPTu dissipation tests to verify drainage characteristics."
+    },
+    "highly_brittle_collapsible": {
+        "id": "highly_brittle_collapsible",
+        "name": "Highly Brittle / Collapsible Slimes (IB >= 0.50)",
+        "label": "Highly Brittle / Collapsible Slimes (IB >= 0.50)",
+        "min_ib": 0.50,
+        "max_ib": 1.00,
+        "color": "#DC2626",
+        "badge_class": "bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse",
+        "narrative": "Extreme strain-softening contractive slimes (psi > +0.05); catastrophic strength collapse once yield stress is exceeded.",
+        "action_protocol": "Design upstream buttress reinforcement; dewater contractive tailings zones."
+    }
+}
+
+
+LATERAL_SPREADING_METADATA: Dict[str, Dict[str, Any]] = {
+    "negligible_lateral_strain": {
+        "id": "negligible_lateral_strain",
+        "name": "Negligible Lateral Displacement (DH < 0.05 m)",
+        "label": "Negligible Lateral Displacement (DH < 0.05 m)",
+        "min_dh_m": 0.0,
+        "max_dh_m": 0.05,
+        "color": "#10B981",
+        "badge_class": "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40",
+        "narrative": "Minimal post-liquefaction shear strain accumulation; embankment toe remains intact.",
+        "action_protocol": "Routine satellite InSAR monitoring."
+    },
+    "low_lateral_spreading": {
+        "id": "low_lateral_spreading",
+        "name": "Low Lateral Spreading (0.05 <= DH < 0.25 m)",
+        "label": "Low Lateral Spreading (0.05 <= DH < 0.25 m)",
+        "min_dh_m": 0.05,
+        "max_dh_m": 0.25,
+        "color": "#3B82F6",
+        "badge_class": "bg-blue-500/20 text-blue-300 border border-blue-500/40",
+        "narrative": "Minor horizontal translation and crest slumping; manageable with superficial regrading.",
+        "action_protocol": "Inspect crest tension cracks and instrument with automated tiltmeters."
+    },
+    "moderate_lateral_spreading": {
+        "id": "moderate_lateral_spreading",
+        "name": "Moderate Lateral Spreading (0.25 <= DH < 0.75 m)",
+        "label": "Moderate Lateral Spreading (0.25 <= DH < 0.75 m)",
+        "min_dh_m": 0.25,
+        "max_dh_m": 0.75,
+        "color": "#F59E0B",
+        "badge_class": "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+        "narrative": "Significant differential lateral spreading; potential breach of internal drain filter layers.",
+        "action_protocol": "Draw down impoundment water level; install toe weighting berms."
+    },
+    "severe_lateral_flow_failure": {
+        "id": "severe_lateral_flow_failure",
+        "name": "Severe Lateral Flow Failure (DH >= 0.75 m)",
+        "label": "Severe Lateral Flow Failure (DH >= 0.75 m)",
+        "min_dh_m": 0.75,
+        "max_dh_m": None,
+        "color": "#DC2626",
+        "badge_class": "bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse",
+        "narrative": "Massive catastrophic lateral translation and flowslide extrusion; imminent dam breach.",
+        "action_protocol": "Trigger immediate downstream emergency dam breach protocol."
+    }
+}
+
+
+TAILINGS_LIQUEFACTION_PRESETS: Dict[str, Dict[str, Any]] = {
+    "brumadinho_upstream_slimes": {
+        "id": "brumadinho_upstream_slimes",
+        "name": "Brumadinho Analog Upstream Slimes (Contractive)",
+        "label": "Brumadinho Analog Upstream Slimes (Contractive)",
+        "description": "Very loose, saturated, contractive iron ore slimes with high static brittleness.",
+        "pga_g": 0.15,
+        "earthquake_magnitude_mw": 6.5,
+        "groundwater_depth_m": 1.5,
+        "unit_weight_kn_m3": 17.5,
+        "saturated_unit_weight_kn_m3": 19.5,
+        "representative_cpt_qc_mpa": 1.4,
+        "sleeve_friction_fs_kpa": 18.0,
+        "fines_content_pct": 45.0,
+        "state_parameter_psi": 0.08,
+        "tau_peak_kpa": 42.0,
+        "tau_yield_kpa": 15.0,
+        "driving_shear_stress_kpa": 28.0,
+        "insar_observed_displacement_m": 0.12
+    },
+    "fundao_iron_ore_tailings": {
+        "id": "fundao_iron_ore_tailings",
+        "name": "Fundão Silty Sand Tailings Benchmark",
+        "label": "Fundão Silty Sand Tailings Benchmark",
+        "description": "Silty sand tailings deposited upstream; sensitive to saturation and dynamic loading.",
+        "pga_g": 0.20,
+        "earthquake_magnitude_mw": 7.0,
+        "groundwater_depth_m": 3.0,
+        "unit_weight_kn_m3": 18.0,
+        "saturated_unit_weight_kn_m3": 20.0,
+        "representative_cpt_qc_mpa": 2.8,
+        "sleeve_friction_fs_kpa": 26.0,
+        "fines_content_pct": 28.0,
+        "state_parameter_psi": 0.03,
+        "tau_peak_kpa": 65.0,
+        "tau_yield_kpa": 30.0,
+        "driving_shear_stress_kpa": 34.0,
+        "insar_observed_displacement_m": 0.08
+    },
+    "san_luis_denser_shell": {
+        "id": "san_luis_denser_shell",
+        "name": "San Luis Forebay Dense Rockfill / Compacted Shell",
+        "label": "San Luis Forebay Dense Rockfill / Compacted Shell",
+        "description": "Compacted, dense granular shell with dilative behavior and high cyclic resistance.",
+        "pga_g": 0.35,
+        "earthquake_magnitude_mw": 7.5,
+        "groundwater_depth_m": 6.0,
+        "unit_weight_kn_m3": 19.5,
+        "saturated_unit_weight_kn_m3": 21.5,
+        "representative_cpt_qc_mpa": 11.5,
+        "sleeve_friction_fs_kpa": 90.0,
+        "fines_content_pct": 8.0,
+        "state_parameter_psi": -0.14,
+        "tau_peak_kpa": 160.0,
+        "tau_yield_kpa": 140.0,
+        "driving_shear_stress_kpa": 55.0,
+        "insar_observed_displacement_m": 0.015
+    },
+    "cadia_tailings_layer": {
+        "id": "cadia_tailings_layer",
+        "name": "Cadia Analog Weak Tailings Foundation Interlayer",
+        "label": "Cadia Analog Weak Tailings Foundation Interlayer",
+        "description": "Stratified low-permeability foundation layer susceptible to localized flow liquefaction.",
+        "pga_g": 0.18,
+        "earthquake_magnitude_mw": 6.8,
+        "groundwater_depth_m": 2.2,
+        "unit_weight_kn_m3": 17.8,
+        "saturated_unit_weight_kn_m3": 19.8,
+        "representative_cpt_qc_mpa": 1.9,
+        "sleeve_friction_fs_kpa": 22.0,
+        "fines_content_pct": 38.0,
+        "state_parameter_psi": 0.05,
+        "tau_peak_kpa": 50.0,
+        "tau_yield_kpa": 19.0,
+        "driving_shear_stress_kpa": 31.0,
+        "insar_observed_displacement_m": 0.095
+    }
+}
+
+
+NEHRP_SITE_CLASS_METADATA: Dict[str, Dict[str, Any]] = {
+    "class_a": {
+        "id": "class_a",
+        "name": "Class A — Hard Rock (Vs30 > 1500 m/s)",
+        "label": "Class A — Hard Rock (Vs30 > 1500 m/s)",
+        "vs30_min_m_s": 1500.0,
+        "vs30_max_m_s": None,
+        "site_amplification_fa": 0.8,
+        "color": "#10B981",
+        "badge_class": "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40",
+        "liquefaction_susceptibility": "non_susceptible",
+        "description": "Competent crystalline or unweathered bedrock with extremely high shear stiffness and negligible amplification."
+    },
+    "class_b": {
+        "id": "class_b",
+        "name": "Class B — Medium Rock (760 < Vs30 <= 1500 m/s)",
+        "label": "Class B — Medium Rock (760 < Vs30 <= 1500 m/s)",
+        "vs30_min_m_s": 760.0,
+        "vs30_max_m_s": 1500.0,
+        "site_amplification_fa": 1.0,
+        "color": "#06B6D4",
+        "badge_class": "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40",
+        "liquefaction_susceptibility": "very_low",
+        "description": "Standard engineering bedrock reference site condition with unitary ground motion amplification."
+    },
+    "class_c": {
+        "id": "class_c",
+        "name": "Class C — Very Dense Soil / Soft Rock (360 < Vs30 <= 760 m/s)",
+        "label": "Class C — Very Dense Soil / Soft Rock (360 < Vs30 <= 760 m/s)",
+        "vs30_min_m_s": 360.0,
+        "vs30_max_m_s": 760.0,
+        "site_amplification_fa": 1.2,
+        "color": "#3B82F6",
+        "badge_class": "bg-blue-500/20 text-blue-300 border border-blue-500/40",
+        "liquefaction_susceptibility": "low",
+        "description": "Dense gravelly sands, stiff glacial tills, or weathered saprolite with moderate cyclic resistance."
+    },
+    "class_d": {
+        "id": "class_d",
+        "name": "Class D — Stiff Soil (180 < Vs30 <= 360 m/s)",
+        "label": "Class D — Stiff Soil (180 < Vs30 <= 360 m/s)",
+        "vs30_min_m_s": 180.0,
+        "vs30_max_m_s": 360.0,
+        "site_amplification_fa": 1.5,
+        "color": "#F59E0B",
+        "badge_class": "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+        "liquefaction_susceptibility": "moderate",
+        "description": "Cohesionless sand or silty alluvial sediments with moderate liquefaction potential under strong seismic shaking."
+    },
+    "class_e": {
+        "id": "class_e",
+        "name": "Class E — Soft Soil / Unconsolidated Fill (Vs30 <= 180 m/s)",
+        "label": "Class E — Soft Soil / Unconsolidated Fill (Vs30 <= 180 m/s)",
+        "vs30_min_m_s": 0.0,
+        "vs30_max_m_s": 180.0,
+        "site_amplification_fa": 2.2,
+        "color": "#EF4444",
+        "badge_class": "bg-rose-500/20 text-rose-300 border border-rose-500/40",
+        "liquefaction_susceptibility": "high",
+        "description": "Unconsolidated, water-saturated hydraulic tailings slimes or soft alluvial delta deposits with critical liquefaction susceptibility."
+    },
+    "class_f": {
+        "id": "class_f",
+        "name": "Class F — Vulnerable / Liquefiable Deposits",
+        "label": "Class F — Vulnerable / Liquefiable Deposits",
+        "vs30_min_m_s": 0.0,
+        "vs30_max_m_s": None,
+        "site_amplification_fa": 2.8,
+        "color": "#DC2626",
+        "badge_class": "bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse",
+        "liquefaction_susceptibility": "critical",
+        "description": "Peats, highly organic clays, or contractive liquefiable mine tailings requiring site-specific dynamic response analysis."
+    }
+}
+
+
+FLOW_SLIDE_MOBILITY_METADATA: Dict[str, Dict[str, Any]] = {
+    "extreme_mobility": {
+        "id": "extreme_mobility",
+        "name": "Extreme Runout Mobility (Reach Angle < 4.0°)",
+        "label": "Extreme Runout Mobility (Reach Angle < 4.0°)",
+        "min_angle_deg": 0.0,
+        "max_angle_deg": 4.0,
+        "color": "#DC2626",
+        "badge_class": "bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse",
+        "narrative": "Hyper-mobile liquefied slurry flow slide with very low apparent friction (tan alpha_r < 0.07); severe downstream inundation hazard.",
+        "action_protocol": "Immediate mandatory downstream population evacuation to high ground."
+    },
+    "high_mobility": {
+        "id": "high_mobility",
+        "name": "High Runout Mobility (4.0° <= Reach Angle < 8.0°)",
+        "label": "High Runout Mobility (4.0° <= Reach Angle < 8.0°)",
+        "min_angle_deg": 4.0,
+        "max_angle_deg": 8.0,
+        "color": "#EF4444",
+        "badge_class": "bg-rose-500/20 text-rose-300 border border-rose-500/40",
+        "narrative": "Mobile liquefied tailings slide capable of traveling multiple kilometers along downstream watercourses (tan alpha_r ~ 0.07-0.14).",
+        "action_protocol": "Activate secondary containment dikes and close downstream transport routes."
+    },
+    "moderate_mobility": {
+        "id": "moderate_mobility",
+        "name": "Moderate Runout Mobility (8.0° <= Reach Angle < 14.0°)",
+        "label": "Moderate Runout Mobility (8.0° <= Reach Angle < 14.0°)",
+        "min_angle_deg": 8.0,
+        "max_angle_deg": 14.0,
+        "color": "#F59E0B",
+        "badge_class": "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+        "narrative": "Debris/slump movement primarily confined to the immediate dam toe and proximal valley floor (tan alpha_r ~ 0.14-0.25).",
+        "action_protocol": "Establish exclusion zone around downstream toe and inspect drainage culverts."
+    },
+    "low_mobility": {
+        "id": "low_mobility",
+        "name": "Low Runout Mobility (Reach Angle >= 14.0°)",
+        "label": "Low Runout Mobility (Reach Angle >= 14.0°)",
+        "min_angle_deg": 14.0,
+        "max_angle_deg": 90.0,
+        "color": "#10B981",
+        "badge_class": "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40",
+        "narrative": "Non-liquefied frictional rotational or translational slump with limited travel distance beyond the slope footprint.",
+        "action_protocol": "Standard geotechnical slope stabilization and toe regrading."
+    }
+}
+
+
+LIQUEFACTION_TILE_METRICS: Dict[str, Dict[str, Any]] = {
+    "factor_of_safety": {
+        "id": "factor_of_safety",
+        "name": "Liquefaction Factor of Safety (FS_liq)",
+        "unit": "ratio",
+        "min": 0.2,
+        "max": 2.5,
+        "colormap": "rdylbu_r",
+        "description": "Seed-Idriss dynamic Factor of Safety (FS_liq = CRR7.5 * MSF / CSR)"
+    },
+    "excess_pore_pressure": {
+        "id": "excess_pore_pressure",
+        "name": "Excess Pore Pressure Ratio (ru)",
+        "unit": "ratio",
+        "min": 0.0,
+        "max": 1.0,
+        "colormap": "plasma",
+        "description": "Cyclic excess pore water pressure ratio ru = delta_u / sigma_v0_eff"
+    },
+    "dynamic_pore_pressure": {
+        "id": "dynamic_pore_pressure",
+        "name": "Dynamic Pore Pressure (delta_u)",
+        "unit": "kPa",
+        "min": 0.0,
+        "max": 150.0,
+        "colormap": "turbo",
+        "description": "Absolute cyclic excess pore pressure delta_u generated at critical depth"
+    },
+    "cyclic_stress_ratio": {
+        "id": "cyclic_stress_ratio",
+        "name": "Cyclic Stress Ratio (CSR)",
+        "unit": "ratio",
+        "min": 0.05,
+        "max": 0.60,
+        "colormap": "magma",
+        "description": "Induced earthquake cyclic shear stress ratio"
+    },
+    "cyclic_resistance_ratio": {
+        "id": "cyclic_resistance_ratio",
+        "name": "Cyclic Resistance Ratio (CRR7.5)",
+        "unit": "ratio",
+        "min": 0.05,
+        "max": 0.80,
+        "colormap": "viridis",
+        "description": "Normalized cyclic shear resistance from clean-sand equivalent SPT/CPTu"
+    },
+    "vs30": {
+        "id": "vs30",
+        "name": "Shear Wave Velocity (Vs30)",
+        "unit": "m/s",
+        "min": 100.0,
+        "max": 800.0,
+        "colormap": "spectral",
+        "description": "Upper 30m average shear wave velocity from satellite DEM slope proxy"
+    },
+    "flow_slide_runout": {
+        "id": "flow_slide_runout",
+        "name": "Flow Slide Runout Corridor",
+        "unit": "intensity",
+        "min": 0.0,
+        "max": 1.0,
+        "colormap": "hot",
+        "description": "Fahrböschung reach angle runout mobility envelope"
+    },
+    "lateral_spreading": {
+        "id": "lateral_spreading",
+        "name": "Lateral Spreading Displacement (DH)",
+        "unit": "m",
+        "min": 0.0,
+        "max": 3.0,
+        "colormap": "plasma",
+        "description": "Predicted horizontal ground displacement from LDI integration"
+    }
+}
+
+
+class CPTSoundingPoint(BaseModel):
+    """Point assessment from Cone Penetration Testing (CPTu) sounding depth profile."""
+    model_config = ConfigDict(populate_by_name=True)
+    depth_m: float = Field(..., description="Depth below ground surface (m)", alias="depthM")
+    cone_resistance_qc_mpa: float = Field(..., description="Measured cone tip resistance qc (MPa)", alias="coneResistanceQcMpa")
+    sleeve_friction_fs_kpa: float = Field(..., description="Sleeve friction fs (kPa)", alias="sleeveFrictionFsKpa")
+    pore_pressure_u2_kpa: float = Field(..., description="Penetration pore water pressure u2 (kPa)", alias="porePressureU2Kpa")
+    soil_behavior_type_index_ic: float = Field(..., description="Robertson (1990/2009) Soil Behavior Type index Ic", alias="soilBehaviorTypeIndexIc")
+    normalized_cone_resistance_qc1ncs: float = Field(..., description="Clean sand equivalent normalized cone resistance qc1Ncs", alias="normalizedConeResistanceQc1ncs")
+    state_parameter_psi: float = Field(..., description="Been & Jefferies (1985) State Parameter psi", alias="stateParameterPsi")
+    cyclic_resistance_ratio_crr75: float = Field(..., description="Cyclic Resistance Ratio for Mw=7.5 (CRR7.5)", alias="cyclicResistanceRatioCrr75")
+    cyclic_stress_ratio_csr: float = Field(..., description="Seed-Idriss Cyclic Stress Ratio CSR", alias="cyclicStressRatioCsr")
+    factor_of_safety_liq: float = Field(..., description="Liquefaction Factor of Safety (FS_liq = CRR/CSR)", alias="factorOfSafetyLiq")
+    hazard_tier: str = Field(..., description="Liquefaction hazard tier classification", alias="hazardTier")
+    cyclic_shear_strain_gamma_pct: float = Field(..., description="Maximum cyclic shear strain gamma_max (%)", alias="cyclicShearStrainGammaPct")
+    excess_pore_pressure_ratio_ru: float = Field(0.0, description="Dynamic excess pore pressure ratio ru = delta_u / sigma'_v0", alias="excessPorePressureRatioRu")
+
+
+class SPTSoundingPoint(BaseModel):
+    """Point assessment from Standard Penetration Test (SPT) borehole sounding."""
+    model_config = ConfigDict(populate_by_name=True)
+    depth_m: float = Field(..., description="Depth below ground surface (m)", alias="depthM")
+    spt_n_blows: int = Field(..., description="Field measured SPT N-value (blows/300mm)", alias="sptNBlows")
+    fines_content_pct: float = Field(0.0, description="Fines content FC (< 0.075mm) in %", alias="finesContentPct")
+    energy_ratio_ce: float = Field(1.0, description="Hammer energy correction CE = ER / 60", alias="energyRatioCe")
+    borehole_diameter_cb: float = Field(1.0, description="Borehole diameter correction factor CB", alias="boreholeDiameterCb")
+    rod_length_cr: float = Field(1.0, description="Rod length correction factor CR", alias="rodLengthCr")
+    sampler_cs: float = Field(1.0, description="Sampler liner correction factor CS", alias="samplerCs")
+    cn_overburden_factor: Optional[float] = Field(None, description="Overburden stress correction factor CN", alias="cnOverburdenFactor")
+    n60_blows: Optional[float] = Field(None, description="Energy-corrected blow count N60", alias="n60Blows")
+    normalized_n1_60: Optional[float] = Field(None, description="Overburden-normalized blow count (N1)60", alias="normalizedN160")
+    clean_sand_n1_60cs: Optional[float] = Field(None, description="Equivalent clean-sand blow count (N1)60cs", alias="cleanSandN160cs")
+    cyclic_resistance_ratio_crr75: Optional[float] = Field(None, description="Cyclic Resistance Ratio CRR7.5 (Youd et al. 2001)", alias="cyclicResistanceRatioCrr75")
+    cyclic_stress_ratio_csr: Optional[float] = Field(None, description="Seed-Idriss Cyclic Stress Ratio CSR", alias="cyclicStressRatioCsr")
+    factor_of_safety_liq: Optional[float] = Field(None, description="Liquefaction Factor of Safety (FS_liq = CRR/CSR)", alias="factorOfSafetyLiq")
+    hazard_tier: Optional[str] = Field(None, description="Liquefaction hazard tier classification", alias="hazardTier")
+    excess_pore_pressure_ratio_ru: float = Field(0.0, description="Dynamic excess pore pressure ratio ru = delta_u / sigma'_v0", alias="excessPorePressureRatioRu")
+
+
+class StaticLiquefactionParams(BaseModel):
+    """Static flow liquefaction brittleness and yield shear strength parameters."""
+    model_config = ConfigDict(populate_by_name=True)
+    peak_undrained_shear_strength_kpa: float = Field(..., description="Peak undrained shear strength s_u(peak) (kPa)", alias="peakUndrainedShearStrengthKpa")
+    yield_undrained_shear_strength_kpa: float = Field(..., description="Yield / quasi-steady state shear strength s_u(yield) (kPa)", alias="yieldUndrainedShearStrengthKpa")
+    liquefied_residual_shear_strength_kpa: float = Field(..., description="Liquefied residual shear strength s_u(liq) (kPa)", alias="liquefiedResidualShearStrengthKpa")
+    driving_shear_stress_kpa: float = Field(..., description="Gravitational static driving shear stress tau_driving (kPa)", alias="drivingShearStressKpa")
+    brittleness_index: float = Field(..., description="Brittleness Index IB = (tau_peak - tau_yield) / tau_peak", alias="brittlenessIndex")
+    brittleness_tier: str = Field(..., description="Static brittleness classification tier", alias="brittlenessTier")
+    flow_slide_triggered: bool = Field(..., description="Whether static driving shear stress exceeds yield strength (tau_driving >= s_u_yield)", alias="flowSlideTriggered")
+    yield_strength_ratio: float = Field(..., description="Yield shear strength ratio s_u(yield) / sigma'_v0", alias="yieldStrengthRatio")
+    liquefied_strength_ratio: float = Field(..., description="Liquefied shear strength ratio s_u(liq) / sigma'_v0", alias="liquefiedStrengthRatio")
+
+
+class LateralSpreadingProfile(BaseModel):
+    """Predicted post-liquefaction lateral spreading and InSAR vector integration."""
+    model_config = ConfigDict(populate_by_name=True)
+    lateral_displacement_index_ldi_m: float = Field(..., description="Zhang et al. (2004) Lateral Displacement Index LDI (m)", alias="lateralDisplacementIndexLdiM")
+    slope_gradient_pct: float = Field(..., description="Ground slope gradient S (%)", alias="slopeGradientPct")
+    free_face_height_h_m: float = Field(..., description="Free face height H (m)", alias="freeFaceHeightHM")
+    predicted_lateral_displacement_dh_m: float = Field(..., description="Empirical predicted lateral spreading displacement DH (m)", alias="predictedLateralDisplacementDhM")
+    insar_observed_displacement_m: float = Field(..., description="Interferometric InSAR line-of-sight displacement (m)", alias="insarObservedDisplacementM")
+    insar_residual_m: float = Field(..., description="Discrepancy residual |InSAR - DH| (m)", alias="insarResidualM")
+    hazard_tier: str = Field(..., description="Lateral spreading hazard tier", alias="hazardTier")
+
+
+class Vs30ProxyRequest(BaseModel):
+    """Request payload for satellite DEM topographic slope Vs30 proxy estimation."""
+    model_config = ConfigDict(populate_by_name=True)
+    latitude: float = Field(37.05, alias="latitude")
+    longitude: float = Field(-121.05, alias="longitude")
+    slope_deg: Optional[float] = Field(None, description="Topographic slope in degrees from satellite DEM", alias="slopeDeg")
+    slope_m_m: Optional[float] = Field(None, description="Topographic slope in m/m", alias="slopeMM")
+    terrain_type: str = Field("active_tectonic", description="'active_tectonic' or 'stable_continental'", alias="terrainType")
+    effective_stress_kpa: float = Field(100.0, description="Overburden effective stress (kPa)", alias="effectiveStressKpa")
+    fines_content_pct: float = Field(15.0, description="Estimated soil fines content (%)", alias="finesContentPct")
+
+
+class Vs30ProxyResponse(BaseModel):
+    """Response payload for satellite DEM topographic slope Vs30 proxy estimation."""
+    model_config = ConfigDict(populate_by_name=True)
+    latitude: float = Field(..., alias="latitude")
+    longitude: float = Field(..., alias="longitude")
+    slope_deg: float = Field(..., alias="slopeDeg")
+    slope_m_m: float = Field(..., alias="slopeMM")
+    terrain_type: str = Field(..., alias="terrainType")
+    vs30_m_s: float = Field(..., description="Estimated upper 30m shear wave velocity (m/s)", alias="vs30MS")
+    nehrp_site_class: str = Field(..., description="NEHRP Site Class (class_a to class_f)", alias="nehrpSiteClass")
+    site_class_name: str = Field(..., alias="siteClassName")
+    site_amplification_fa: float = Field(..., alias="siteAmplificationFa")
+    normalized_vs1_m_s: float = Field(..., alias="normalizedVs1MS")
+    crr75_vs: float = Field(..., description="Andrus & Stokoe (2000) CRR7.5 proxy", alias="crr75Vs")
+    liquefaction_susceptibility: str = Field(..., alias="liquefactionSusceptibility")
+    source_reference: str = Field("Wald & Allen (2007) / Andrus & Stokoe (2000)", alias="sourceReference")
+    analyzed_at: str = Field(..., alias="analyzedAt")
+
+
+class DynamicPorePressureRequest(BaseModel):
+    """Request payload for cyclic excess pore pressure ratio (ru) generation."""
+    model_config = ConfigDict(populate_by_name=True)
+    dam_id: str = Field("TAILINGS_DAM_A", alias="damId")
+    sigma_v0_eff_kpa: float = Field(100.0, description="Initial vertical effective stress sigma'_v0 (kPa)", alias="sigmaV0EffKpa")
+    factor_of_safety_liq: float = Field(1.0, description="Calculated liquefaction Factor of Safety", alias="factorOfSafetyLiq")
+    cycle_count: int = Field(15, description="Equivalent uniform stress cycles N_eq", alias="cycleCount")
+    csr: Optional[float] = Field(None, alias="csr")
+    crr75: Optional[float] = Field(None, alias="crr75")
+
+
+class DynamicPorePressureResponse(BaseModel):
+    """Response payload for cyclic excess pore pressure ratio (ru) generation."""
+    model_config = ConfigDict(populate_by_name=True)
+    dam_id: str = Field(..., alias="damId")
+    sigma_v0_eff_kpa: float = Field(..., alias="sigmaV0EffKpa")
+    factor_of_safety_liq: float = Field(..., alias="factorOfSafetyLiq")
+    excess_pore_pressure_ratio_ru: float = Field(..., description="Pore pressure ratio ru = delta_u / sigma'_v0", alias="excessPorePressureRatioRu")
+    excess_pore_pressure_delta_u_kpa: float = Field(..., description="Excess pore pressure delta_u (kPa)", alias="excessPorePressureDeltaUKpa")
+    post_cyclic_effective_stress_kpa: float = Field(..., description="Post-cyclic effective stress (kPa)", alias="postCyclicEffectiveStressKpa")
+    effective_stress_loss_pct: float = Field(..., description="Effective stress loss percentage (%)", alias="effectiveStressLossPct")
+    liquefaction_triggered: bool = Field(..., alias="liquefactionTriggered")
+    hazard_tier: str = Field(..., alias="hazardTier")
+    analyzed_at: str = Field(..., alias="analyzedAt")
+
+
+class FlowSlideRunoutRequest(BaseModel):
+    """Request payload for post-liquefaction flow slide reach angle & runout distance."""
+    model_config = ConfigDict(populate_by_name=True)
+    dam_id: str = Field("TAILINGS_DAM_A", alias="damId")
+    dam_name: str = Field("North Tailings Impoundment", alias="damName")
+    dam_height_m: float = Field(35.0, description="Dam crest height H (m)", alias="damHeightM")
+    impounded_volume_m3: float = Field(12500000.0, description="Tailings impoundment volume (m3)", alias="impoundedVolumeM3")
+    reach_angle_deg: float = Field(5.5, description="Fahrböschung / reach angle alpha_r (degrees)", alias="reachAngleDeg")
+    downstream_valley_slope_deg: float = Field(1.5, description="Average downstream valley gradient", alias="downstreamValleySlopeDeg")
+    crest_latitude: float = Field(37.05, alias="crestLatitude")
+    crest_longitude: float = Field(-121.05, alias="crestLongitude")
+
+
+class FlowSlideRunoutResponse(BaseModel):
+    """Response payload for post-liquefaction flow slide reach angle & runout distance."""
+    model_config = ConfigDict(populate_by_name=True)
+    dam_id: str = Field(..., alias="damId")
+    dam_name: str = Field(..., alias="damName")
+    dam_height_m: float = Field(..., alias="damHeightM")
+    reach_angle_deg: float = Field(..., alias="reachAngleDeg")
+    apparent_friction_coef: float = Field(..., description="tan(alpha_r)", alias="apparentFrictionCoef")
+    runout_distance_m: float = Field(..., description="Fahrböschung reach distance L = H / tan(alpha_r) (m)", alias="runoutDistanceM")
+    volume_scaled_runout_m: float = Field(..., description="Corominas/Martin volume-scaled distance (m)", alias="volumeScaledRunoutM")
+    evacuation_buffer_m: float = Field(..., description="Recommended downstream evacuation safety corridor (m)", alias="evacuationBufferM")
+    mobility_tier: str = Field(..., alias="mobilityTier")
+    runout_envelope_geojson: Optional[Dict[str, Any]] = Field(None, alias="runoutEnvelopeGeojson")
+    analyzed_at: str = Field(..., alias="analyzedAt")
+
+
+class LateralSpreadingInSARResponse(BaseModel):
+    """Response payload comparing empirical lateral spreading with InSAR radar scatterers."""
+    model_config = ConfigDict(populate_by_name=True)
+    dam_id: str = Field(..., alias="damId")
+    predicted_displacement_m: float = Field(..., alias="predictedDisplacementM")
+    insar_displacement_m: float = Field(..., alias="insarDisplacementM")
+    displacement_residual_m: float = Field(..., alias="displacementResidualM")
+    scatterer_count: int = Field(..., alias="scattererCount")
+    hazard_tier: str = Field(..., alias="hazardTier")
+    satellite_sensor: str = Field("Sentinel-1 C-Band", alias="satelliteSensor")
+    analyzed_at: str = Field(..., alias="analyzedAt")
+
+
+# ------------------------------------------------------------------------------
+# Mathematical Solvers & Classification Utilities for Tailings Liquefaction
+# ------------------------------------------------------------------------------
+
+def calculate_seed_idriss_csr(
+    pga_g: float,
+    sigma_v0_kpa: float,
+    sigma_v0_eff_kpa: float,
+    depth_m: float
+) -> float:
+    """Calculates Seed & Idriss (1971) Cyclic Stress Ratio (CSR) with Idriss (1999) depth reduction."""
+    if sigma_v0_eff_kpa <= 0.0:
+        return round(0.65 * max(0.01, pga_g), 4)
+    # Depth reduction factor rd (Idriss 1999 / Youd et al. 2001)
+    d = max(0.0, float(depth_m))
+    if d <= 9.15:
+        rd = 1.0 - 0.00765 * d
+    elif d <= 23.0:
+        rd = 1.174 - 0.0267 * d
+    else:
+        rd = max(0.40, 0.744 - 0.008 * d)
+    csr = 0.65 * max(0.01, float(pga_g)) * (float(sigma_v0_kpa) / max(1.0, float(sigma_v0_eff_kpa))) * rd
+    return round(float(csr), 4)
+
+
+def calculate_robertson_crr75(
+    qc1ncs: float,
+    mw: float = 7.5,
+    sigma_v0_eff_kpa: float = 100.0
+) -> float:
+    """Calculates Cyclic Resistance Ratio for Mw=7.5 (CRR_7.5) from clean-sand equivalent CPT cone resistance."""
+    q = max(1.0, min(200.0, float(qc1ncs)))
+    # Robertson & Wride (1998) / Robertson (2009) formulation
+    if q < 50.0:
+        crr75 = 0.833 * (q / 1000.0) + 0.05
+    else:
+        crr75 = 93.0 * ((q / 1000.0) ** 3) + 0.08
+    return round(float(crr75), 4)
+
+
+def calculate_liquefaction_factor_of_safety(
+    csr: float,
+    crr75: float,
+    mw: float = 7.5,
+    sigma_v0_eff_kpa: float = 100.0
+) -> float:
+    """Calculates dynamic liquefaction Factor of Safety (FS_liq = (CRR7.5 * MSF * K_sigma) / CSR)."""
+    c_sr = max(0.001, float(csr))
+    # Magnitude Scaling Factor (MSF) - Youd et al. (2001)
+    mag = max(5.0, min(9.0, float(mw)))
+    msf = min(1.80, max(0.60, (mag / 7.5) ** (-2.56)))
+    # Overburden correction factor K_sigma (Hynes & Olsen 1999)
+    sig_eff = max(10.0, float(sigma_v0_eff_kpa))
+    pa = 100.0
+    k_sigma = min(1.10, max(0.60, (pa / sig_eff) ** 0.7))
+    fs = (float(crr75) * msf * k_sigma) / c_sr
+    return round(float(max(0.05, min(5.0, fs))), 2)
+
+
+def calculate_magnitude_scaling_factor(
+    mw: float,
+    formulation: str = "youd_2001"
+) -> float:
+    """Calculates Earthquake Magnitude Scaling Factor (MSF).
+    
+    References:
+        - Youd et al. (2001) / NCEER: MSF = (Mw / 7.5)^(-2.56)
+        - Idriss (1999): MSF = 6.9 * exp(-Mw / 4) - 0.058
+        - Andrus & Stokoe (2000): MSF = (Mw / 7.5)^(-3.3)
+    """
+    m = max(5.0, min(9.0, float(mw)))
+    fmt = str(formulation).lower()
+    if "idriss" in fmt:
+        msf = 6.9 * math.exp(-m / 4.0) - 0.058
+    elif "andrus" in fmt or "stokoe" in fmt:
+        msf = (m / 7.5) ** (-3.3)
+    else:
+        msf = (m / 7.5) ** (-2.56)
+    return round(float(min(1.80, max(0.60, msf))), 3)
+
+
+def calculate_spt_n1_60cs(
+    n_spt: float,
+    sigma_v0_eff_kpa: float,
+    fines_content_pct: float = 0.0,
+    energy_ratio_ce: float = 1.0,
+    rod_length_cr: float = 1.0,
+    borehole_diameter_cb: float = 1.0,
+    sampler_cs: float = 1.0
+) -> Dict[str, float]:
+    """Calculates standardized SPT blow count (N1)60 and clean-sand equivalent (N1)60cs.
+    
+    References:
+        - Liao & Whitman (1986) / Youd et al. (2001): CN = min(1.7, sqrt(Pa / sigma'_v0))
+        - Youd et al. (2001) fines correction: (N1)60cs = alpha + beta * (N1)60
+    """
+    n = max(0.0, float(n_spt))
+    sig_eff = max(5.0, float(sigma_v0_eff_kpa))
+    pa = 100.0
+    cn = round(min(1.70, max(0.40, math.sqrt(pa / sig_eff))), 3)
+    n60 = round(n * float(energy_ratio_ce) * float(rod_length_cr) * float(borehole_diameter_cb) * float(sampler_cs), 2)
+    n1_60 = round(n60 * cn, 2)
+    
+    fc = max(0.0, min(100.0, float(fines_content_pct)))
+    if fc <= 5.0:
+        alpha = 0.0
+        beta = 1.0
+    elif fc < 35.0:
+        alpha = math.exp(1.76 - (190.0 / (fc ** 2)))
+        beta = 0.99 + (fc ** 1.5) / 1000.0
+    else:
+        alpha = 5.0
+        beta = 1.2
+    n1_60cs = round(alpha + beta * n1_60, 2)
+    return {
+        "cn_overburden_factor": cn,
+        "n60_blows": n60,
+        "normalized_n1_60": n1_60,
+        "clean_sand_n1_60cs": n1_60cs
+    }
+
+
+def calculate_spt_crr75(n1_60cs: float) -> float:
+    """Calculates Cyclic Resistance Ratio for Mw=7.5 (CRR7.5) from (N1)60cs.
+    
+    References:
+        - Youd et al. (2001) / Seed et al. (1985)
+        For (N1)60cs >= 30, soil is non-liquefiable (CRR7.5 >= 2.0).
+    """
+    n = float(n1_60cs)
+    if n >= 30.0:
+        return 2.0
+    n = max(1.0, n)
+    crr75 = (1.0 / (34.0 - n)) + (n / 135.0) + (50.0 / ((10.0 * n + 45.0) ** 2)) - (1.0 / 200.0)
+    return round(float(max(0.03, crr75)), 4)
+
+
+def calculate_vs30_from_topographic_slope(
+    slope_deg: float,
+    terrain_type: str = "active_tectonic"
+) -> float:
+    """Calculates average 30m shear wave velocity (Vs30, m/s) from topographic slope.
+    
+    Reference:
+        - Wald & Allen (2007): Based on USGS 30 arc-sec DEM slope correlations.
+    """
+    s_deg = max(0.0, min(60.0, float(slope_deg)))
+    s = math.tan(math.radians(s_deg))
+    is_active = "active" in str(terrain_type).lower()
+    
+    if is_active:
+        if s >= 0.138:
+            vs30 = 760.0 + min(640.0, (s - 0.138) * 1200.0)
+        elif s >= 0.05:
+            vs30 = 490.0 + (s - 0.05) / (0.138 - 0.05) * (760.0 - 490.0)
+        elif s >= 0.015:
+            vs30 = 300.0 + (s - 0.015) / (0.05 - 0.015) * (490.0 - 300.0)
+        elif s >= 0.0022:
+            vs30 = 200.0 + (s - 0.0022) / (0.015 - 0.0022) * (300.0 - 200.0)
+        else:
+            vs30 = max(130.0, 150.0 + (s / 0.0022) * 50.0)
+    else:
+        if s >= 0.08:
+            vs30 = 760.0 + min(640.0, (s - 0.08) * 1200.0)
+        elif s >= 0.02:
+            vs30 = 510.0 + (s - 0.02) / (0.08 - 0.02) * (760.0 - 510.0)
+        elif s >= 0.004:
+            vs30 = 350.0 + (s - 0.004) / (0.02 - 0.004) * (510.0 - 350.0)
+        else:
+            vs30 = max(180.0, 200.0 + (s / 0.004) * 150.0)
+    return round(float(vs30), 1)
+
+
+def classify_nehrp_site_class(vs30_m_s: float) -> NEHRPSiteClass:
+    """Classifies Vs30 (m/s) into NEHRP Site Class (A through F)."""
+    v = float(vs30_m_s)
+    if v > 1500.0:
+        return NEHRPSiteClass.CLASS_A
+    if v > 760.0:
+        return NEHRPSiteClass.CLASS_B
+    if v > 360.0:
+        return NEHRPSiteClass.CLASS_C
+    if v > 180.0:
+        return NEHRPSiteClass.CLASS_D
+    if v > 0.0:
+        return NEHRPSiteClass.CLASS_E
+    return NEHRPSiteClass.CLASS_F
+
+
+def calculate_vs_crr75(
+    vs1_m_s: float,
+    fines_content_pct: float = 15.0
+) -> float:
+    """Calculates CRR7.5 from overburden-normalized shear wave velocity Vs1 (Andrus & Stokoe 2000)."""
+    fc = max(0.0, min(100.0, float(fines_content_pct)))
+    if fc <= 5.0:
+        vs1_star = 215.0
+    elif fc < 35.0:
+        vs1_star = 215.0 - 0.5 * (fc - 5.0)
+    else:
+        vs1_star = 200.0
+    v1 = max(50.0, float(vs1_m_s))
+    if v1 >= vs1_star:
+        return 2.0
+    crr = 0.022 * ((v1 / 100.0) ** 2) + 2.8 * ((1.0 / (vs1_star - v1)) - (1.0 / vs1_star))
+    return round(float(max(0.03, crr)), 4)
+
+
+def calculate_vs30_proxy(
+    latitude: float = 37.05,
+    longitude: float = -121.05,
+    slope_deg: Optional[float] = None,
+    slope_m_m: Optional[float] = None,
+    terrain_type: str = "active_tectonic",
+    effective_stress_kpa: float = 100.0,
+    fines_content_pct: float = 15.0
+) -> Dict[str, Any]:
+    """Calculates satellite DEM topographic slope Vs30 proxy and NEHRP classification."""
+    if slope_deg is not None:
+        s_deg = float(slope_deg)
+        s_mm = math.tan(math.radians(s_deg))
+    elif slope_m_m is not None:
+        s_mm = float(slope_m_m)
+        s_deg = math.degrees(math.atan(s_mm))
+    else:
+        s_deg = 5.0
+        s_mm = math.tan(math.radians(s_deg))
+        
+    vs30 = calculate_vs30_from_topographic_slope(s_deg, terrain_type)
+    nehrp_class = classify_nehrp_site_class(vs30)
+    meta = NEHRP_SITE_CLASS_METADATA.get(nehrp_class.value, NEHRP_SITE_CLASS_METADATA["class_d"])
+    
+    pa = 100.0
+    sig_eff = max(5.0, float(effective_stress_kpa))
+    cn_vs = (pa / sig_eff) ** 0.25
+    vs1 = round(vs30 * cn_vs, 1)
+    crr75_vs = calculate_vs_crr75(vs1, fines_content_pct)
+    
+    return {
+        "latitude": round(float(latitude), 5),
+        "longitude": round(float(longitude), 5),
+        "slope_deg": round(s_deg, 2),
+        "slope_m_m": round(s_mm, 4),
+        "terrain_type": str(terrain_type),
+        "vs30_m_s": vs30,
+        "nehrp_site_class": nehrp_class.value,
+        "site_class_name": meta["name"],
+        "site_amplification_fa": meta["site_amplification_fa"],
+        "normalized_vs1_m_s": vs1,
+        "crr75_vs": crr75_vs,
+        "liquefaction_susceptibility": meta["liquefaction_susceptibility"],
+        "source_reference": "Wald & Allen (2007) / Andrus & Stokoe (2000)",
+        "analyzed_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+def calculate_excess_pore_pressure_ratio(
+    fs_liq: float,
+    alpha: float = 0.7
+) -> float:
+    """Calculates cyclic excess pore water pressure ratio ru = delta_u / sigma'_v0.
+    
+    References:
+        - Seed et al. (1976) / Marcuson et al. (1990)
+    """
+    fs = max(0.01, float(fs_liq))
+    if fs >= 2.0:
+        return 0.0
+    if fs >= 1.40:
+        ru = 0.25 * (2.0 - fs) / 0.60
+    elif fs >= 1.00:
+        ru = 0.25 + 0.75 * (1.40 - fs) / 0.40
+    else:
+        ru = 1.0
+    return round(float(min(1.0, max(0.0, ru))), 3)
+
+
+def calculate_dynamic_pore_pressure(
+    sigma_v0_eff_kpa: float = 100.0,
+    fs_liq: float = 1.0,
+    dam_id: str = "TAILINGS_DAM_A"
+) -> Dict[str, Any]:
+    """Evaluates cyclic excess pore pressure, effective stress degradation, and trigger state."""
+    sig_eff = max(5.0, float(sigma_v0_eff_kpa))
+    fs = float(fs_liq)
+    ru = calculate_excess_pore_pressure_ratio(fs)
+    delta_u = round(ru * sig_eff, 2)
+    post_sig_eff = round(max(0.0, sig_eff - delta_u), 2)
+    loss_pct = round(ru * 100.0, 1)
+    tier = classify_liquefaction_hazard_tier(fs)
+    return {
+        "dam_id": dam_id,
+        "sigma_v0_eff_kpa": round(sig_eff, 2),
+        "factor_of_safety_liq": round(fs, 2),
+        "excess_pore_pressure_ratio_ru": ru,
+        "excess_pore_pressure_delta_u_kpa": delta_u,
+        "post_cyclic_effective_stress_kpa": post_sig_eff,
+        "effective_stress_loss_pct": loss_pct,
+        "liquefaction_triggered": fs < 1.0,
+        "hazard_tier": tier.value,
+        "analyzed_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+def classify_flow_slide_mobility_tier(reach_angle_deg: float) -> FlowSlideMobilityTier:
+    """Classifies post-liquefaction flow slide reach angle into mobility tier."""
+    a = float(reach_angle_deg)
+    if a < 4.0:
+        return FlowSlideMobilityTier.EXTREME_MOBILITY
+    if a < 8.0:
+        return FlowSlideMobilityTier.HIGH_MOBILITY
+    if a < 14.0:
+        return FlowSlideMobilityTier.MODERATE_MOBILITY
+    return FlowSlideMobilityTier.LOW_MOBILITY
+
+
+def calculate_flow_slide_runout_distance(
+    dam_height_m: float = 35.0,
+    impounded_volume_m3: float = 12500000.0,
+    reach_angle_deg: float = 5.5,
+    downstream_valley_slope_deg: float = 1.5,
+    crest_lat: float = 37.05,
+    crest_lon: float = -121.05,
+    dam_id: str = "TAILINGS_DAM_A",
+    dam_name: str = "North Tailings Impoundment"
+) -> Dict[str, Any]:
+    """Calculates post-liquefaction flow slide reach distance and evacuation safety corridor.
+    
+    References:
+        - Lucia et al. (1981) / Hungr (1995): L = H / tan(alpha_r)
+        - Martin et al. (2019) / Corominas (1996): L_vol = 10 * V^0.30
+    """
+    h = max(2.0, float(dam_height_m))
+    alpha_r = max(1.0, min(45.0, float(reach_angle_deg)))
+    tan_alpha = math.tan(math.radians(alpha_r))
+    l_fahr = round(h / tan_alpha, 1)
+    
+    v = max(0.0, float(impounded_volume_m3))
+    l_vol = round(10.0 * (v ** 0.30), 1) if v > 0 else l_fahr
+    l_max = max(l_fahr, l_vol)
+    evac_buffer = round(1.25 * l_max, 1)
+    tier = classify_flow_slide_mobility_tier(alpha_r)
+    
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [round(crest_lon, 5), round(crest_lat, 5)]
+                },
+                "properties": {
+                    "feature_type": "dam_crest_origin",
+                    "dam_id": dam_id,
+                    "dam_height_m": h
+                }
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [
+                        [round(crest_lon, 5), round(crest_lat, 5)],
+                        [round(crest_lon + 0.001 * (l_fahr / 100.0), 5), round(crest_lat - 0.001 * (l_fahr / 100.0), 5)]
+                    ]
+                },
+                "properties": {
+                    "feature_type": "flow_slide_centerline",
+                    "runout_distance_m": l_fahr,
+                    "mobility_tier": tier.value
+                }
+            }
+        ]
+    }
+    
+    return {
+        "dam_id": dam_id,
+        "dam_name": dam_name,
+        "dam_height_m": h,
+        "reach_angle_deg": alpha_r,
+        "apparent_friction_coef": round(tan_alpha, 4),
+        "runout_distance_m": l_fahr,
+        "volume_scaled_runout_m": l_vol,
+        "evacuation_buffer_m": evac_buffer,
+        "mobility_tier": tier.value,
+        "runout_envelope_geojson": geojson,
+        "analyzed_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+class SPTSoundingRequest(BaseModel):
+    """Request payload for Standard Penetration Test (SPT) borehole profile analysis."""
+    model_config = ConfigDict(populate_by_name=True)
+    dam_id: str = Field("TAILINGS_DAM_A", alias="damId")
+    spt_id: str = Field("SPT_BH_01", alias="sptId")
+    gw_depth_m: float = Field(2.5, alias="groundwaterDepthM")
+    gamma: float = Field(18.0, alias="unitWeightKnM3")
+    gamma_sat: float = Field(20.0, alias="saturatedUnitWeightKnM3")
+    pga_g: float = Field(0.20, alias="pgaG")
+    mw: float = Field(7.0, alias="earthquakeMagnitudeMw")
+    points: Optional[List[Dict[str, Any]]] = Field(None)
+
+
+class SPTSoundingResponse(BaseModel):
+    """Response payload for Standard Penetration Test (SPT) borehole profile analysis."""
+    model_config = ConfigDict(populate_by_name=True)
+    dam_id: str = Field(..., alias="damId")
+    spt_id: str = Field(..., alias="sptId")
+    total_depth_m: float = Field(..., alias="totalDepthM")
+    mean_n1_60cs: float = Field(..., alias="meanN160cs")
+    min_fs_liq: float = Field(..., alias="minFsLiq")
+    critical_depth_m: float = Field(..., alias="criticalDepthM")
+    overall_hazard_tier: str = Field(..., alias="overallHazardTier")
+    points: List[Dict[str, Any]] = Field(default_factory=list)
+    analyzed_at: str = Field(..., alias="analyzedAt")
+
+
+def calculate_spt_sounding_profile(
+    request_or_dict: Union[SPTSoundingRequest, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Evaluates SPT borehole depth profile for cyclic liquefaction susceptibility."""
+    if isinstance(request_or_dict, SPTSoundingRequest):
+        req_data = request_or_dict.model_dump()
+    elif isinstance(request_or_dict, dict):
+        req_data = dict(request_or_dict)
+    else:
+        req_data = {}
+    
+    dam_id = req_data.get("dam_id") or req_data.get("damId") or "TAILINGS_DAM_A"
+    spt_id = req_data.get("spt_id") or req_data.get("sptId") or "SPT_BH_01"
+    gw_depth_m = float(req_data.get("groundwater_depth_m", req_data.get("groundwaterDepthM", 2.5)))
+    gamma = float(req_data.get("unit_weight_kn_m3", req_data.get("unitWeightKnM3", 18.0)))
+    gamma_sat = float(req_data.get("saturated_unit_weight_kn_m3", req_data.get("saturatedUnitWeightKnM3", 20.0)))
+    pga_g = float(req_data.get("pga_g", req_data.get("pgaG", 0.20)))
+    mw = float(req_data.get("earthquake_magnitude_mw", req_data.get("earthquakeMagnitudeMw", 7.0)))
+    
+    points_in = req_data.get("points")
+    if not points_in:
+        depths = [1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0, 13.5, 15.0]
+        base_blows = [6, 8, 5, 7, 10, 12, 14, 18, 22, 25]
+        points_raw = [{"depth_m": z, "spt_n_blows": b, "fines_content_pct": 25.0} for z, b in zip(depths, base_blows)]
+    else:
+        points_raw = [dict(p) if isinstance(p, dict) else p.model_dump() for p in points_in]
+    
+    spt_points: List[Dict[str, Any]] = []
+    min_fs = 99.0
+    crit_depth = 0.0
+    gamma_w = 9.81
+    sum_n1_60cs = 0.0
+    
+    for p in points_raw:
+        z = float(p.get("depth_m", p.get("depthM", 1.5)))
+        n_blows = int(p.get("spt_n_blows", p.get("sptNBlows", 8)))
+        fc = float(p.get("fines_content_pct", p.get("finesContentPct", 15.0)))
+        ce = float(p.get("energy_ratio_ce", p.get("energyRatioCe", 1.0)))
+        cr = float(p.get("rod_length_cr", p.get("rodLengthCr", 1.0)))
+        cb = float(p.get("borehole_diameter_cb", p.get("boreholeDiameterCb", 1.0)))
+        cs = float(p.get("sampler_cs", p.get("samplerCs", 1.0)))
+        
+        if z <= gw_depth_m:
+            sigma_v0 = gamma * z
+            u0 = 0.0
+        else:
+            sigma_v0 = (gamma * gw_depth_m) + (gamma_sat * (z - gw_depth_m))
+            u0 = gamma_w * (z - gw_depth_m)
+        sigma_v0_eff = max(5.0, sigma_v0 - u0)
+        
+        spt_norm = calculate_spt_n1_60cs(n_blows, sigma_v0_eff, fc, ce, cr, cb, cs)
+        n1_60cs = spt_norm["clean_sand_n1_60cs"]
+        sum_n1_60cs += n1_60cs
+        
+        csr = calculate_seed_idriss_csr(pga_g, sigma_v0, sigma_v0_eff, z)
+        crr75 = calculate_spt_crr75(n1_60cs)
+        fs_liq = calculate_liquefaction_factor_of_safety(csr, crr75, mw, sigma_v0_eff)
+        tier = classify_liquefaction_hazard_tier(fs_liq)
+        ru = calculate_excess_pore_pressure_ratio(fs_liq)
+        
+        if fs_liq < min_fs:
+            min_fs = fs_liq
+            crit_depth = z
+            
+        spt_points.append({
+            "depth_m": round(z, 2),
+            "spt_n_blows": n_blows,
+            "fines_content_pct": fc,
+            "energy_ratio_ce": ce,
+            "borehole_diameter_cb": cb,
+            "rod_length_cr": cr,
+            "sampler_cs": cs,
+            "cn_overburden_factor": spt_norm["cn_overburden_factor"],
+            "n60_blows": spt_norm["n60_blows"],
+            "normalized_n1_60": spt_norm["normalized_n1_60"],
+            "clean_sand_n1_60cs": n1_60cs,
+            "cyclic_resistance_ratio_crr75": crr75,
+            "cyclic_stress_ratio_csr": csr,
+            "factor_of_safety_liq": fs_liq,
+            "hazard_tier": tier.value,
+            "excess_pore_pressure_ratio_ru": ru
+        })
+        
+    overall_tier = classify_liquefaction_hazard_tier(min_fs)
+    mean_n = round(sum_n1_60cs / max(1, len(spt_points)), 1)
+    tot_depth = max([p["depth_m"] for p in spt_points]) if spt_points else 0.0
+    
+    return {
+        "dam_id": dam_id,
+        "spt_id": spt_id,
+        "total_depth_m": tot_depth,
+        "mean_n1_60cs": mean_n,
+        "min_fs_liq": min_fs,
+        "critical_depth_m": crit_depth,
+        "overall_hazard_tier": overall_tier.value,
+        "points": spt_points,
+        "analyzed_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+def calculate_static_flow_liquefaction(
+    tau_peak_kpa: float,
+    tau_yield_kpa: float,
+    driving_shear_stress_kpa: float,
+    sigma_v0_eff_kpa: float = 100.0
+) -> Dict[str, Any]:
+    """Calculates static flow liquefaction brittleness index and trigger state."""
+    tp = max(5.0, float(tau_peak_kpa))
+    ty = max(1.0, min(tp, float(tau_yield_kpa)))
+    td = max(0.0, float(driving_shear_stress_kpa))
+    s_eff = max(10.0, float(sigma_v0_eff_kpa))
+
+    # Brittleness Index IB = (tau_peak - tau_yield) / tau_peak
+    ib = round((tp - ty) / tp, 3)
+    # Liquefied residual strength ~ 0.35 * tau_yield (Sadrekarimi 2014)
+    t_liq = round(max(0.5, 0.35 * ty), 1)
+
+    flow_triggered = td >= ty
+    yield_ratio = round(ty / s_eff, 3)
+    liq_ratio = round(t_liq / s_eff, 3)
+
+    return {
+        "peak_undrained_shear_strength_kpa": tp,
+        "yield_undrained_shear_strength_kpa": ty,
+        "liquefied_residual_shear_strength_kpa": t_liq,
+        "driving_shear_stress_kpa": td,
+        "brittleness_index": ib,
+        "brittleness_tier": classify_static_brittleness_tier(ib).value,
+        "flow_slide_triggered": flow_triggered,
+        "yield_strength_ratio": yield_ratio,
+        "liquefied_strength_ratio": liq_ratio
+    }
+
+
+def calculate_lateral_spreading_displacement(
+    ldi_m: float,
+    slope_gradient_pct: float = 2.5,
+    free_face_height_m: float = 0.0
+) -> float:
+    """Calculates predicted horizontal lateral spreading displacement (Zhang et al. 2004)."""
+    l = max(0.0, float(ldi_m))
+    s = max(0.1, min(20.0, float(slope_gradient_pct)))
+    # For gentle sloping ground: DH = LDI * (0.2 + 0.05 * S)
+    dh = l * (0.2 + 0.05 * s)
+    return round(float(max(0.0, min(10.0, dh))), 3)
+
+
+def classify_liquefaction_hazard_tier(fs_liq: float) -> LiquefactionHazardTier:
+    """Classifies Factor of Safety against liquefaction into operational hazard tier."""
+    val = float(fs_liq)
+    if val >= 1.40:
+        return LiquefactionHazardTier.SAFE_NON_LIQUEFIABLE
+    if val >= 1.15:
+        return LiquefactionHazardTier.MARGINAL_CYCLIC_SOFTENING
+    if val >= 1.00:
+        return LiquefactionHazardTier.ELEVATED_LIQUEFACTION_POTENTIAL
+    return LiquefactionHazardTier.CRITICAL_CYCLIC_COLLAPSE
+
+
+def classify_static_brittleness_tier(brittleness_index: float) -> StaticBrittlenessTier:
+    """Classifies static flow liquefaction brittleness index."""
+    ib = float(brittleness_index)
+    if ib < 0.20:
+        return StaticBrittlenessTier.DUCTILE_DILATIVE
+    if ib < 0.50:
+        return StaticBrittlenessTier.MODERATE_CONTRACTIVE
+    return StaticBrittlenessTier.HIGHLY_BRITTLE_COLLAPSIBLE
+
+
+def classify_lateral_spreading_hazard_tier(dh_m: float) -> LateralSpreadingHazardTier:
+    """Classifies post-liquefaction lateral spreading displacement."""
+    d = float(dh_m)
+    if d < 0.05:
+        return LateralSpreadingHazardTier.NEGLIGIBLE_LATERAL_STRAIN
+    if d < 0.25:
+        return LateralSpreadingHazardTier.LOW_LATERAL_SPREADING
+    if d < 0.75:
+        return LateralSpreadingHazardTier.MODERATE_LATERAL_SPREADING
+    return LateralSpreadingHazardTier.SEVERE_LATERAL_FLOW_FAILURE
+
+
+class TailingsLiquefactionRequest(BaseModel):
+    """Request payload for comprehensive tailings dynamic liquefaction and static flow slide analysis."""
+    model_config = ConfigDict(populate_by_name=True)
+    simulation_id: Optional[str] = Field(None, alias="simulationId")
+    dam_id: str = Field("TAILINGS_DAM_A", alias="damId")
+    dam_name: str = Field("North Tailings Impoundment", alias="damName")
+    pga_g: float = Field(0.20, alias="pgaG", description="Peak Ground Acceleration in g")
+    earthquake_magnitude_mw: float = Field(7.0, alias="earthquakeMagnitudeMw")
+    groundwater_depth_m: float = Field(2.5, alias="groundwaterDepthM")
+    unit_weight_kn_m3: float = Field(18.0, alias="unitWeightKnM3")
+    saturated_unit_weight_kn_m3: float = Field(20.0, alias="saturatedUnitWeightKnM3")
+    tailings_preset: str = Field("brumadinho_upstream_slimes", alias="tailingsPreset")
+    slope_angle_deg: float = Field(5.0, alias="slopeAngleDeg")
+    free_face_ratio_pct: float = Field(0.0, alias="freeFaceRatioPct")
+    insar_displacement_m: Optional[float] = Field(None, alias="insarDisplacementM")
+    cpt_soundings: Optional[List[CPTSoundingPoint]] = Field(None, alias="cptSoundings")
+    spt_soundings: Optional[List[SPTSoundingPoint]] = Field(None, alias="sptSoundings")
+    dam_height_m: float = Field(35.0, alias="damHeightM")
+    impounded_volume_m3: float = Field(12500000.0, alias="impoundedVolumeM3")
+    reach_angle_deg: float = Field(5.5, alias="reachAngleDeg")
+    latitude: Optional[float] = Field(37.05, alias="latitude")
+    longitude: Optional[float] = Field(-121.05, alias="longitude")
+
+
+class TailingsLiquefactionResponse(BaseModel):
+    """Response payload for comprehensive tailings dynamic liquefaction and static flow slide analysis."""
+    model_config = ConfigDict(populate_by_name=True)
+    simulation_id: str = Field(..., alias="simulationId")
+    dam_id: str = Field(..., alias="damId")
+    dam_name: str = Field(..., alias="damName")
+    pga_g: float = Field(..., alias="pgaG")
+    earthquake_magnitude_mw: float = Field(..., alias="earthquakeMagnitudeMw")
+    minimum_factor_of_safety_liq: float = Field(..., alias="minimumFactorOfSafetyLiq")
+    critical_liquefaction_depth_m: float = Field(..., alias="criticalLiquefactionDepthM")
+    overall_liquefaction_hazard_tier: str = Field(..., alias="overallLiquefactionHazardTier")
+    static_flow_slide_triggered: bool = Field(..., alias="staticFlowSlideTriggered")
+    mean_brittleness_index: float = Field(..., alias="meanBrittlenessIndex")
+    static_brittleness_tier: str = Field(..., alias="staticBrittlenessTier")
+    predicted_lateral_spreading_dh_m: float = Field(..., alias="predictedLateralSpreadingDhM")
+    lateral_spreading_hazard_tier: str = Field(..., alias="lateralSpreadingHazardTier")
+    cpt_sounding_points: List[Dict[str, Any]] = Field(default_factory=list, alias="cptSoundingPoints")
+    spt_sounding_points: List[Dict[str, Any]] = Field(default_factory=list, alias="sptSoundingPoints")
+    static_params: Dict[str, Any] = Field(default_factory=dict, alias="staticParams")
+    lateral_profile: Dict[str, Any] = Field(default_factory=dict, alias="lateralProfile")
+    dynamic_pore_pressure: Optional[Dict[str, Any]] = Field(default_factory=dict, alias="dynamicPorePressure")
+    vs30_proxy: Optional[Dict[str, Any]] = Field(default_factory=dict, alias="vs30Proxy")
+    flow_slide_runout: Optional[Dict[str, Any]] = Field(default_factory=dict, alias="flowSlideRunout")
+    liquefaction_hazard_geojson: Dict[str, Any] = Field(default_factory=dict, alias="liquefactionHazardGeojson")
+    tile_url_template: str = Field(..., alias="tileUrlTemplate")
+    analyzed_at: str = Field(..., alias="analyzedAt")
+
+
+def calculate_tailings_liquefaction_analysis(
+    request_or_dict: Union[TailingsLiquefactionRequest, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Evaluates dynamic liquefaction, static flow slide, lateral spreading, and flow slide runout analysis."""
+    if isinstance(request_or_dict, TailingsLiquefactionRequest):
+        req_data = request_or_dict.model_dump()
+    elif isinstance(request_or_dict, dict):
+        req_data = dict(request_or_dict)
+    else:
+        req_data = {}
+
+    sim_id = req_data.get("simulation_id") or req_data.get("simulationId") or f"LIQ_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    dam_id = req_data.get("dam_id") or req_data.get("damId") or "TAILINGS_DAM_A"
+    dam_name = req_data.get("dam_name") or req_data.get("damName") or "North Tailings Impoundment"
+
+    pga_g = float(req_data.get("pga_g", req_data.get("pgaG", 0.20)))
+    mw = float(req_data.get("earthquake_magnitude_mw", req_data.get("earthquakeMagnitudeMw", 7.0)))
+    gw_depth_m = float(req_data.get("groundwater_depth_m", req_data.get("groundwaterDepthM", 2.5)))
+    gamma = float(req_data.get("unit_weight_kn_m3", req_data.get("unitWeightKnM3", 18.0)))
+    gamma_sat = float(req_data.get("saturated_unit_weight_kn_m3", req_data.get("saturatedUnitWeightKnM3", 20.0)))
+    preset_key = str(req_data.get("tailings_preset", req_data.get("tailingsPreset", "brumadinho_upstream_slimes"))).lower().replace("-", "_")
+    slope_angle = float(req_data.get("slope_angle_deg", req_data.get("slopeAngleDeg", 5.0)))
+    insar_disp_in = req_data.get("insar_displacement_m", req_data.get("insarDisplacementM"))
+
+    preset = TAILINGS_LIQUEFACTION_PRESETS.get(preset_key, TAILINGS_LIQUEFACTION_PRESETS["brumadinho_upstream_slimes"])
+    insar_disp = float(insar_disp_in if insar_disp_in is not None else preset["insar_observed_displacement_m"])
+
+    # Discretize profile into 10 depth points (0.5m to 15.0m)
+    cpt_in = req_data.get("cpt_soundings") or req_data.get("cptSoundings")
+    if not cpt_in:
+        depths = [1.0, 2.0, 3.5, 5.0, 6.5, 8.0, 10.0, 12.0, 14.0, 16.0]
+        base_qc = preset["representative_cpt_qc_mpa"]
+        base_fs = preset["sleeve_friction_fs_kpa"]
+        base_psi = preset["state_parameter_psi"]
+        cpt_raw = []
+        for i, z in enumerate(depths):
+            z_factor = 1.0 + 0.05 * z
+            cpt_raw.append({
+                "depth_m": z,
+                "cone_resistance_qc_mpa": round(base_qc * z_factor, 2),
+                "sleeve_friction_fs_kpa": round(base_fs * z_factor, 1),
+                "pore_pressure_u2_kpa": round(max(0.0, (z - gw_depth_m) * 9.81 * 1.5), 1),
+                "state_parameter_psi": round(base_psi - 0.002 * z, 3)
+            })
+    else:
+        cpt_raw = [dict(p) if isinstance(p, dict) else p.model_dump() for p in cpt_in]
+
+    cpt_points: List[Dict[str, Any]] = []
+    min_fs = 99.0
+    crit_depth = 0.0
+    cumulative_ldi = 0.0
+    gamma_w = 9.81
+
+    prev_z = 0.0
+    for p in cpt_raw:
+        z = float(p.get("depth_m", p.get("depthM", 1.0)))
+        qc = max(0.2, float(p.get("cone_resistance_qc_mpa", p.get("coneResistanceQcMpa", 1.5))))
+        fs_sleeve = max(1.0, float(p.get("sleeve_friction_fs_kpa", p.get("sleeveFrictionFsKpa", 20.0))))
+        u2 = max(0.0, float(p.get("pore_pressure_u2_kpa", p.get("porePressureU2Kpa", 0.0))))
+        psi = float(p.get("state_parameter_psi", p.get("stateParameterPsi", 0.05)))
+
+        # Total and effective vertical stresses
+        if z <= gw_depth_m:
+            sigma_v0 = gamma * z
+            u0 = 0.0
+        else:
+            sigma_v0 = (gamma * gw_depth_m) + (gamma_sat * (z - gw_depth_m))
+            u0 = gamma_w * (z - gw_depth_m)
+        sigma_v0_eff = max(5.0, sigma_v0 - u0)
+
+        # Robertson (1990/2009) Soil Behavior Type index Ic
+        rf = (fs_sleeve / (qc * 1000.0)) * 100.0  # friction ratio %
+        pa = 100.0
+        qt_eff = (qc * 1000.0 - u2) / pa
+        norm_q = max(1.0, (qc * 1000.0) / pa * ((pa / sigma_v0_eff) ** 0.6))
+        ic = round(((3.47 - math.log10(norm_q)) ** 2 + (1.22 + math.log10(max(0.1, rf))) ** 2) ** 0.5, 2)
+
+        # Clean sand equivalent normalized cone resistance qc1Ncs
+        kc = 1.0 if ic <= 1.64 else round(max(1.0, -0.403 * (ic ** 4) + 5.581 * (ic ** 3) - 21.63 * (ic ** 2) + 33.75 * ic - 17.88), 2)
+        qc1ncs = round(min(220.0, norm_q * kc), 1)
+
+        # Seed-Idriss CSR
+        csr_val = calculate_seed_idriss_csr(pga_g, sigma_v0, sigma_v0_eff, z)
+        # Robertson CRR7.5
+        crr_val = calculate_robertson_crr75(qc1ncs, mw, sigma_v0_eff)
+        # Factor of Safety
+        fs_liq_val = calculate_liquefaction_factor_of_safety(csr_val, crr_val, mw, sigma_v0_eff)
+        tier_enum = classify_liquefaction_hazard_tier(fs_liq_val)
+        ru_val = calculate_excess_pore_pressure_ratio(fs_liq_val)
+
+        # Cyclic shear strain gamma_max (%) for lateral displacement index (Zhang et al. 2004)
+        if fs_liq_val >= 2.0:
+            gamma_max = 0.0
+        elif fs_liq_val >= 1.0:
+            gamma_max = round(0.03 * (2.0 - fs_liq_val) * 100.0, 2)
+        else:
+            gamma_max = round((0.03 + 0.25 * (1.0 - fs_liq_val)) * 100.0, 2)
+
+        dz = max(0.1, z - prev_z)
+        prev_z = z
+        # LDI integration contribution
+        cumulative_ldi += (gamma_max / 100.0) * dz
+
+        if fs_liq_val < min_fs:
+            min_fs = fs_liq_val
+            crit_depth = z
+
+        cpt_points.append({
+            "depth_m": round(z, 2),
+            "cone_resistance_qc_mpa": round(qc, 2),
+            "sleeve_friction_fs_kpa": round(fs_sleeve, 1),
+            "pore_pressure_u2_kpa": round(u2, 1),
+            "soil_behavior_type_index_ic": ic,
+            "normalized_cone_resistance_qc1ncs": qc1ncs,
+            "state_parameter_psi": round(psi, 3),
+            "cyclic_resistance_ratio_crr75": crr_val,
+            "cyclic_stress_ratio_csr": csr_val,
+            "factor_of_safety_liq": fs_liq_val,
+            "hazard_tier": tier_enum.value,
+            "cyclic_shear_strain_gamma_pct": gamma_max,
+            "excess_pore_pressure_ratio_ru": ru_val
+        })
+
+    overall_tier = classify_liquefaction_hazard_tier(min_fs)
+    slope_grad_pct = round(math.tan(math.radians(slope_angle)) * 100.0, 2)
+    predicted_dh = calculate_lateral_spreading_displacement(cumulative_ldi, slope_grad_pct)
+    lat_tier = classify_lateral_spreading_hazard_tier(predicted_dh)
+    insar_residual = round(abs(insar_disp - predicted_dh), 3)
+
+    crit_eff_stress = max(20.0, gamma_sat * crit_depth - gamma_w * max(0.0, crit_depth - gw_depth_m))
+
+    # Static flow liquefaction assessment
+    static_res = calculate_static_flow_liquefaction(
+        tau_peak_kpa=preset["tau_peak_kpa"],
+        tau_yield_kpa=preset["tau_yield_kpa"],
+        driving_shear_stress_kpa=preset["driving_shear_stress_kpa"],
+        sigma_v0_eff_kpa=crit_eff_stress
+    )
+
+    lateral_profile_dict = {
+        "lateral_displacement_index_ldi_m": round(cumulative_ldi, 3),
+        "slope_gradient_pct": slope_grad_pct,
+        "free_face_height_h_m": 0.0,
+        "predicted_lateral_displacement_dh_m": predicted_dh,
+        "insar_observed_displacement_m": round(insar_disp, 3),
+        "insar_residual_m": insar_residual,
+        "hazard_tier": lat_tier.value
+    }
+
+    # Dynamic excess pore pressure at critical depth
+    dyn_pp = calculate_dynamic_pore_pressure(crit_eff_stress, min_fs, dam_id)
+
+    # Satellite Vs30 proxy calculation
+    lat = float(req_data.get("latitude") or 37.05)
+    lon = float(req_data.get("longitude") or -121.05)
+    vs30_res = calculate_vs30_proxy(
+        latitude=lat,
+        longitude=lon,
+        slope_deg=slope_angle,
+        effective_stress_kpa=crit_eff_stress
+    )
+
+    # Post-liquefaction flow slide runout estimation
+    dam_h = float(req_data.get("dam_height_m", req_data.get("damHeightM", 35.0)))
+    imp_v = float(req_data.get("impounded_volume_m3", req_data.get("impoundedVolumeM3", 12500000.0)))
+    r_ang = float(req_data.get("reach_angle_deg", req_data.get("reachAngleDeg", 5.5)))
+    runout_res = calculate_flow_slide_runout_distance(
+        dam_height_m=dam_h,
+        impounded_volume_m3=imp_v,
+        reach_angle_deg=r_ang,
+        crest_lat=lat,
+        crest_lon=lon,
+        dam_id=dam_id,
+        dam_name=dam_name
+    )
+
+    # Optional SPT soundings
+    spt_points = []
+    spt_in = req_data.get("spt_soundings") or req_data.get("sptSoundings")
+    if spt_in:
+        spt_calc = calculate_spt_sounding_profile({
+            "dam_id": dam_id,
+            "spt_id": "SPT_BH_01",
+            "groundwater_depth_m": gw_depth_m,
+            "unit_weight_kn_m3": gamma,
+            "saturated_unit_weight_kn_m3": gamma_sat,
+            "pga_g": pga_g,
+            "earthquake_magnitude_mw": mw,
+            "points": spt_in
+        })
+        spt_points = spt_calc.get("points", [])
+
+    hazard_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[p["depth_m"], p["factor_of_safety_liq"]] for p in cpt_points]
+                },
+                "properties": {
+                    "feature_type": "liquefaction_fs_depth_profile",
+                    "dam_id": dam_id,
+                    "min_fs_liq": min_fs,
+                    "critical_depth_m": crit_depth,
+                    "overall_hazard_tier": overall_tier.value
+                }
+            }
+        ]
+    }
+
+    tile_template = f"/api/v1/tiles/geotechnical/liquefaction/{sim_id}/factor_of_safety/{{z}}/{{x}}/{{y}}.png"
+
+    return {
+        "simulation_id": sim_id,
+        "dam_id": dam_id,
+        "dam_name": dam_name,
+        "pga_g": pga_g,
+        "earthquake_magnitude_mw": mw,
+        "minimum_factor_of_safety_liq": min_fs,
+        "critical_liquefaction_depth_m": crit_depth,
+        "overall_liquefaction_hazard_tier": overall_tier.value,
+        "static_flow_slide_triggered": static_res["flow_slide_triggered"],
+        "mean_brittleness_index": static_res["brittleness_index"],
+        "static_brittleness_tier": static_res["brittleness_tier"],
+        "predicted_lateral_spreading_dh_m": predicted_dh,
+        "lateral_spreading_hazard_tier": lat_tier.value,
+        "cpt_sounding_points": cpt_points,
+        "spt_sounding_points": spt_points,
+        "static_params": static_res,
+        "lateral_profile": lateral_profile_dict,
+        "dynamic_pore_pressure": dyn_pp,
+        "vs30_proxy": vs30_res,
+        "flow_slide_runout": runout_res,
+        "liquefaction_hazard_geojson": hazard_geojson,
+        "tile_url_template": tile_template,
+        "analyzed_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+def build_liquefaction_tile_url(
+    sim_id: str,
+    metric: str = "factor_of_safety",
+    z: int = 12,
+    x: int = 2048,
+    y: int = 1024
+) -> str:
+    """Constructs dynamic XYZ tile streaming URL for liquefaction susceptibility raster layer."""
+    return f"/api/v1/tiles/geotechnical/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png"
+
+
+def build_liquefaction_tile_url_template(
+    sim_id: str,
+    metric: str = "factor_of_safety"
+) -> str:
+    """Constructs dynamic XYZ tile URL template for liquefaction susceptibility."""
+    return f"/api/v1/tiles/geotechnical/liquefaction/{sim_id}/{metric}/{{z}}/{{x}}/{{y}}.png"
+
 
 
 

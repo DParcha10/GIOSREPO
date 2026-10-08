@@ -427,19 +427,50 @@ from app.models.schemas import (
     ATI_ANOMALY_METADATA,
     RainfallHyetographPoint,
     InfiltrationTimeStep,
+    RichardsMatrixNode,
     RainfallInfiltrationRequest,
     RainfallInfiltrationResponse,
     ATIPoint,
     ApparentThermalInertiaRequest,
     ApparentThermalInertiaResponse,
     calculate_green_ampt_infiltration,
+    calculate_richards_matrix_profile,
     calculate_apparent_thermal_inertia,
     classify_infiltration_hazard_tier,
     classify_ati_anomaly,
     build_rainfall_infiltration_tile_url,
     build_rainfall_infiltration_tile_url_template,
     build_apparent_thermal_inertia_tile_url,
-    build_apparent_thermal_inertia_tile_url_template
+    build_apparent_thermal_inertia_tile_url_template,
+    NEHRPSiteClass,
+    FlowSlideMobilityTier,
+    LiquefactionHazardTier,
+    SPTSoundingPoint,
+    SPTSoundingRequest,
+    SPTSoundingResponse,
+    Vs30ProxyRequest,
+    Vs30ProxyResponse,
+    DynamicPorePressureRequest,
+    DynamicPorePressureResponse,
+    FlowSlideRunoutRequest,
+    FlowSlideRunoutResponse,
+    TailingsLiquefactionRequest,
+    TailingsLiquefactionResponse,
+    calculate_tailings_liquefaction_analysis,
+    calculate_magnitude_scaling_factor,
+    calculate_spt_n1_60cs,
+    calculate_spt_crr75,
+    calculate_vs30_from_topographic_slope,
+    classify_nehrp_site_class,
+    calculate_vs_crr75,
+    calculate_vs30_proxy,
+    calculate_excess_pore_pressure_ratio,
+    calculate_dynamic_pore_pressure,
+    classify_flow_slide_mobility_tier,
+    calculate_flow_slide_runout_distance,
+    calculate_spt_sounding_profile,
+    build_liquefaction_tile_url,
+    build_liquefaction_tile_url_template
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -456,6 +487,7 @@ mosaic_router = APIRouter(prefix="/mosaic", tags=["Mosaic & Seamlines"])
 preprocessing_router = APIRouter(prefix="/preprocessing", tags=["Preprocessing & Radiometry"])
 sar_router = APIRouter(prefix="/sar", tags=["SAR Analytics"])
 geotechnical_router = APIRouter(prefix="/geotechnical", tags=["Geotechnical & Dam Safety"])
+thermal_router = APIRouter(prefix="/thermal", tags=["Thermal Remote Sensing"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -6670,6 +6702,8 @@ def get_rainfall_infiltration_simulation_detail(sim_id: str):
 @router.post("/thermal/apparent_inertia", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
 @router.post("/apparent-inertia", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
 @router.post("/apparent_inertia", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+@thermal_router.post("/apparent-inertia", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+@thermal_router.post("/apparent_inertia", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
 def analyze_apparent_thermal_inertia_endpoint(req: ApparentThermalInertiaRequest):
     """Computes Apparent Thermal Inertia (ATI) and identifies phreatic seepage daylighting anomalies."""
     analysis_res = calculate_apparent_thermal_inertia(req)
@@ -6681,6 +6715,8 @@ def analyze_apparent_thermal_inertia_endpoint(req: ApparentThermalInertiaRequest
 @router.get("/thermal/apparent_inertia/{analysis_id}", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
 @router.get("/apparent-inertia/{analysis_id}", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
 @router.get("/apparent_inertia/{analysis_id}", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+@thermal_router.get("/apparent-inertia/{analysis_id}", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+@thermal_router.get("/apparent_inertia/{analysis_id}", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
 def get_apparent_thermal_inertia_analysis_detail(analysis_id: str):
     """Retrieves Apparent Thermal Inertia analysis profile and anomaly classification for given run."""
     analysis_res = APPARENT_THERMAL_INERTIA_STORE.get(analysis_id)
@@ -6691,6 +6727,7 @@ def get_apparent_thermal_inertia_analysis_detail(analysis_id: str):
 
 
 @tiles_router.get("/geotechnical/rainfall-infiltration/{sim_id}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/rainfall-infiltration/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
 def get_rainfall_infiltration_tile_default(
     sim_id: str,
     z: int,
@@ -6717,6 +6754,7 @@ def get_rainfall_infiltration_tile_default(
 
 
 @tiles_router.get("/geotechnical/rainfall-infiltration/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/rainfall-infiltration/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
 def get_rainfall_infiltration_tile_metric(
     sim_id: str,
     metric: str,
@@ -6769,6 +6807,7 @@ def get_analysis_rainfall_infiltration_tile_metric(
 
 
 @tiles_router.get("/thermal/apparent-inertia/{sim_id}/{z}/{x}/{y}.png")
+@thermal_router.get("/tiles/apparent-inertia/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
 def get_apparent_thermal_inertia_tile_default(
     sim_id: str,
     z: int,
@@ -6795,6 +6834,7 @@ def get_apparent_thermal_inertia_tile_default(
 
 
 @tiles_router.get("/thermal/apparent-inertia/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@thermal_router.get("/tiles/apparent-inertia/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
 def get_apparent_thermal_inertia_tile_metric(
     sim_id: str,
     metric: str,
@@ -6844,6 +6884,241 @@ def get_analysis_apparent_thermal_inertia_tile_metric(
     rescale: Optional[str] = None
 ):
     return get_apparent_thermal_inertia_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# CYCLE v2.5.15: DYNAMIC SEISMIC LIQUEFACTION (SEED-IDRISS), EXCESS PORE PRESSURE
+# RATIO (ru), SATELLITE Vs30 PROXY & POST-LIQUEFACTION FLOW SLIDE RUNOUT
+# ============================================================================
+
+LIQUEFACTION_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_LIQUEFACTION_STORE_SIZE = 100
+
+
+def _store_liquefaction_simulation(sim_res: Dict[str, Any]):
+    """Caches dynamic liquefaction simulation run with bounded LRU memory retention."""
+    sim_id = sim_res.get("simulation_id")
+    if not sim_id:
+        return
+    if len(LIQUEFACTION_STORE) >= MAX_LIQUEFACTION_STORE_SIZE:
+        oldest_key = next(iter(LIQUEFACTION_STORE))
+        LIQUEFACTION_STORE.pop(oldest_key, None)
+    LIQUEFACTION_STORE[sim_id] = sim_res
+    gc.collect()
+
+
+@router.post("/geotechnical/liquefaction-susceptibility", response_model=TailingsLiquefactionResponse, response_model_by_alias=False)
+@router.post("/geotechnical/liquefaction", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/liquefaction-susceptibility", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/liquefaction", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/liquefaction-susceptibility", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/liquefaction", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_liquefaction_susceptibility_endpoint(req: TailingsLiquefactionRequest):
+    """Evaluates dynamic seismic liquefaction Factor of Safety (Seed-Idriss), static flow slide, and runout envelope."""
+    sim_res = calculate_tailings_liquefaction_analysis(req)
+    _store_liquefaction_simulation(sim_res)
+    return TailingsLiquefactionResponse(**sim_res)
+
+
+@router.get("/geotechnical/liquefaction/{sim_id}", response_model=TailingsLiquefactionResponse, response_model_by_alias=False)
+@router.get("/geotechnical/liquefaction-susceptibility/{sim_id}", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/liquefaction/{sim_id}", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/liquefaction-susceptibility/{sim_id}", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/liquefaction/{sim_id}", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/liquefaction-susceptibility/{sim_id}", response_model=TailingsLiquefactionResponse, response_model_by_alias=False, include_in_schema=False)
+def get_liquefaction_simulation_detail(sim_id: str):
+    """Retrieves full dynamic liquefaction sounding profile and hazard tiers for given simulation."""
+    sim_res = LIQUEFACTION_STORE.get(sim_id)
+    if not sim_res:
+        sim_res = calculate_tailings_liquefaction_analysis({"simulation_id": sim_id})
+        _store_liquefaction_simulation(sim_res)
+    return TailingsLiquefactionResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@router.post("/geotechnical/dynamic-pore-pressure", response_model=DynamicPorePressureResponse, response_model_by_alias=False)
+@router.post("/dynamic-pore-pressure", response_model=DynamicPorePressureResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/dynamic-pore-pressure", response_model=DynamicPorePressureResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/dynamic_pore_pressure", response_model=DynamicPorePressureResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_dynamic_pore_pressure_endpoint(req: DynamicPorePressureRequest):
+    """Calculates cyclic excess pore pressure ratio (ru = delta_u / sigma'_v0) and post-cyclic effective stress."""
+    res = calculate_dynamic_pore_pressure(
+        sigma_v0_eff_kpa=req.sigma_v0_eff_kpa,
+        fs_liq=req.factor_of_safety_liq,
+        dam_id=req.dam_id
+    )
+    return DynamicPorePressureResponse(**res)
+
+
+@router.get("/geotechnical/vs30-proxy/{lat}/{lon}", response_model=Vs30ProxyResponse, response_model_by_alias=False)
+@router.get("/vs30-proxy/{lat}/{lon}", response_model=Vs30ProxyResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/vs30-proxy/{lat}/{lon}", response_model=Vs30ProxyResponse, response_model_by_alias=False, include_in_schema=False)
+def get_vs30_proxy_endpoint(
+    lat: float,
+    lon: float,
+    slope_deg: Optional[float] = Query(None, description="Topographic slope in degrees"),
+    slope_m_m: Optional[float] = Query(None, description="Topographic slope in m/m"),
+    terrain_type: str = Query("active_tectonic", description="'active_tectonic' or 'stable_continental'"),
+    effective_stress_kpa: float = Query(100.0, description="Effective stress in kPa"),
+    fines_content_pct: float = Query(15.0, description="Fines content (%)")
+):
+    """Estimates 30m shear wave velocity (Vs30) from satellite DEM topographic slope (Wald & Allen 2007) and classifies NEHRP site class."""
+    res = calculate_vs30_proxy(
+        latitude=lat,
+        longitude=lon,
+        slope_deg=slope_deg,
+        slope_m_m=slope_m_m,
+        terrain_type=terrain_type,
+        effective_stress_kpa=effective_stress_kpa,
+        fines_content_pct=fines_content_pct
+    )
+    return Vs30ProxyResponse(**res)
+
+
+@router.post("/geotechnical/vs30-proxy", response_model=Vs30ProxyResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/vs30-proxy", response_model=Vs30ProxyResponse, response_model_by_alias=False, include_in_schema=False)
+def post_vs30_proxy_endpoint(req: Vs30ProxyRequest):
+    """Estimates 30m shear wave velocity (Vs30) from satellite DEM slope via POST."""
+    res = calculate_vs30_proxy(
+        latitude=req.latitude,
+        longitude=req.longitude,
+        slope_deg=req.slope_deg,
+        slope_m_m=req.slope_m_m,
+        terrain_type=req.terrain_type,
+        effective_stress_kpa=req.effective_stress_kpa,
+        fines_content_pct=req.fines_content_pct
+    )
+    return Vs30ProxyResponse(**res)
+
+
+@router.post("/geotechnical/liquefaction/spt-sounding", response_model=SPTSoundingResponse, response_model_by_alias=False)
+@router.post("/geotechnical/spt-sounding", response_model=SPTSoundingResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/liquefaction/spt-sounding", response_model=SPTSoundingResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/spt-sounding", response_model=SPTSoundingResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/liquefaction/spt-sounding", response_model=SPTSoundingResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/spt-sounding", response_model=SPTSoundingResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_spt_sounding_endpoint(req: SPTSoundingRequest):
+    """Evaluates in-situ Standard Penetration Test (SPT) borehole profile for cyclic liquefaction resistance."""
+    res = calculate_spt_sounding_profile(req)
+    return SPTSoundingResponse(**res)
+
+
+@router.post("/geotechnical/liquefaction/flow-slide-runout", response_model=FlowSlideRunoutResponse, response_model_by_alias=False)
+@router.post("/geotechnical/flow-slide-runout", response_model=FlowSlideRunoutResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/liquefaction/flow-slide-runout", response_model=FlowSlideRunoutResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/flow-slide-runout", response_model=FlowSlideRunoutResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/liquefaction/flow-slide-runout", response_model=FlowSlideRunoutResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/flow-slide-runout", response_model=FlowSlideRunoutResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_flow_slide_runout_endpoint(req: FlowSlideRunoutRequest):
+    """Calculates post-liquefaction flow slide Fahrböschung reach angle and runout envelope."""
+    res = calculate_flow_slide_runout_distance(
+        dam_height_m=req.dam_height_m,
+        impounded_volume_m3=req.impounded_volume_m3,
+        reach_angle_deg=req.reach_angle_deg,
+        downstream_valley_slope_deg=req.downstream_valley_slope_deg,
+        crest_lat=req.crest_latitude,
+        crest_lon=req.crest_longitude,
+        dam_id=req.dam_id,
+        dam_name=req.dam_name
+    )
+    return FlowSlideRunoutResponse(**res)
+
+
+@router.get("/geotechnical/liquefaction/lateral-spreading/{dam_id}")
+@router.get("/geotechnical/lateral-spreading/{dam_id}", include_in_schema=False)
+@geotechnical_router.get("/liquefaction/lateral-spreading/{dam_id}", include_in_schema=False)
+@geotechnical_router.get("/lateral-spreading/{dam_id}", include_in_schema=False)
+def get_lateral_spreading_endpoint(dam_id: str, slope_angle_deg: float = Query(5.0)):
+    """Retrieves post-liquefaction lateral spreading displacement index and InSAR comparison for given dam."""
+    sim = LIQUEFACTION_STORE.get(dam_id)
+    if not sim:
+        for s in LIQUEFACTION_STORE.values():
+            if s.get("dam_id") == dam_id:
+                sim = s
+                break
+    if not sim:
+        sim = calculate_tailings_liquefaction_analysis({"dam_id": dam_id, "slope_angle_deg": slope_angle_deg})
+    return sim.get("lateral_profile", {})
+
+
+@tiles_router.get("/geotechnical/liquefaction/{sim_id}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/liquefaction/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_liquefaction_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "rdylbu",
+    rescale: Optional[str] = "0.5,2.0"
+):
+    """Dynamic XYZ tile streaming for geotechnical dynamic liquefaction Factor of Safety raster."""
+    png_bytes = tile_service.render_liquefaction_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="factor_of_safety",
+        colormap=colormap or "rdylbu",
+        rescale=rescale or "0.5,2.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Liquefaction-v2.5"}
+    )
+
+
+@tiles_router.get("/geotechnical/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_liquefaction_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for geotechnical dynamic liquefaction with selected metric."""
+    png_bytes = tile_service.render_liquefaction_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Liquefaction-{metric}"}
+    )
+
+
+@router.get("/tiles/geotechnical/liquefaction/{sim_id}/{z}/{x}/{y}.png")
+def get_analysis_liquefaction_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "rdylbu",
+    rescale: Optional[str] = "0.5,2.0"
+):
+    return get_liquefaction_tile_default(sim_id=sim_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@router.get("/tiles/geotechnical/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_analysis_liquefaction_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_liquefaction_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
 
 
 
