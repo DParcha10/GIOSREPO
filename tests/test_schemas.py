@@ -589,7 +589,31 @@ from app.models.schemas import (
     calculate_janbu_simplified_fs,
     search_critical_circular_slip_surface,
     build_slope_stability_tile_url,
-    build_slope_stability_tile_url_template
+    build_slope_stability_tile_url_template,
+    InfiltrationPondingRegime,
+    RainfallHazardTier,
+    ATIAnomalyClass,
+    GREEN_AMPT_SOIL_METADATA,
+    RAINFALL_HAZARD_TIER_METADATA,
+    ATI_ANOMALY_METADATA,
+    NonCircularSlipSurface,
+    FredlundUnsaturatedShearParams,
+    RainfallHyetographPoint,
+    InfiltrationTimeStep,
+    RainfallInfiltrationRequest,
+    RainfallInfiltrationResponse,
+    ATIPoint,
+    ApparentThermalInertiaRequest,
+    ApparentThermalInertiaResponse,
+    classify_infiltration_hazard_tier,
+    classify_ati_anomaly,
+    calculate_fredlund_apparent_shear_strength,
+    calculate_green_ampt_infiltration,
+    calculate_apparent_thermal_inertia,
+    build_rainfall_infiltration_tile_url,
+    build_rainfall_infiltration_tile_url_template,
+    build_apparent_thermal_inertia_tile_url,
+    build_apparent_thermal_inertia_tile_url_template
 )
 from app.config import settings
 
@@ -6808,6 +6832,258 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         sim_unknown = calculate_bishops_simplified_fs({"soil_texture": "volcanic_lahar_unknown"})
         self.assertIn("slices", sim_unknown)
         self.assertGreater(sim_unknown["factor_of_safety"], 0.0)
+
+    def test_green_ampt_rainfall_infiltration_enums_and_metadata(self):
+        """Verify Cycle v2.5.14 infiltration enums and calibrated soil metadata."""
+        # Enums
+        self.assertEqual(InfiltrationPondingRegime.PRE_PONDING.value, "pre_ponding")
+        self.assertEqual(InfiltrationPondingRegime.UNSTEADY_PONDING.value, "unsteady_ponding")
+        self.assertEqual(InfiltrationPondingRegime.SATURATED_STEADY_STATE.value, "saturated_steady_state")
+        self.assertEqual(InfiltrationPondingRegime.POST_STORM_REDISTRIBUTION.value, "post_storm_redistribution")
+
+        self.assertEqual(RainfallHazardTier.LOW_INFILTRATION_HAZARD.value, "low_infiltration_hazard")
+        self.assertEqual(RainfallHazardTier.MODERATE_SUCTION_LOSS.value, "moderate_suction_loss")
+        self.assertEqual(RainfallHazardTier.ELEVATED_FAILURE_RISK.value, "elevated_failure_risk")
+        self.assertEqual(RainfallHazardTier.CRITICAL_INDUCED_SLIP.value, "critical_induced_slip")
+
+        self.assertEqual(ATIAnomalyClass.NORMAL_DRY_SHELL.value, "normal_dry_shell")
+        self.assertEqual(ATIAnomalyClass.MODERATE_ANTECEDENT_MOISTURE.value, "moderate_antecedent_moisture")
+        self.assertEqual(ATIAnomalyClass.ELEVATED_SEEPAGE_SATURATION.value, "elevated_seepage_saturation")
+        self.assertEqual(ATIAnomalyClass.CRITICAL_DAYLIGHTING_OUTFLOW.value, "critical_daylighting_outflow")
+
+        # Soil metadata
+        for texture in ["silt_tailings", "clay_core", "sandy_shell", "gravel_drain", "weathered_bedrock"]:
+            self.assertIn(texture, GREEN_AMPT_SOIL_METADATA)
+            meta = GREEN_AMPT_SOIL_METADATA[texture]
+            self.assertIn("theta_s", meta)
+            self.assertIn("suction_head_psi_f_mm", meta)
+            self.assertIn("ks_mm_hr", meta)
+            self.assertGreater(meta["theta_s"], 0.0)
+            self.assertGreater(meta["ks_mm_hr"], 0.0)
+
+        # Hazard tier metadata
+        for tier in RainfallHazardTier:
+            self.assertIn(tier.value, RAINFALL_HAZARD_TIER_METADATA)
+            m = RAINFALL_HAZARD_TIER_METADATA[tier.value]
+            self.assertIn("color", m)
+            self.assertIn("badge_class", m)
+            self.assertIn("action_protocol", m)
+
+        # ATI anomaly metadata
+        for ati_cls in ATIAnomalyClass:
+            self.assertIn(ati_cls.value, ATI_ANOMALY_METADATA)
+            am = ATI_ANOMALY_METADATA[ati_cls.value]
+            self.assertIn("color", am)
+            self.assertIn("narrative", am)
+
+    def test_green_ampt_implicit_infiltration_and_wetting_front_math(self):
+        """Verify Green-Ampt implicit Newton-Raphson infiltration solution and wetting front advancement."""
+        req = {
+            "dam_id": "TEST_DAM_INFIL",
+            "soil_texture": "silt_tailings",
+            "rainfall_intensity_mm_hr": 20.0,
+            "storm_duration_hr": 12.0,
+            "critical_slip_depth_m": 3.0,
+            "initial_suction_psi0_kpa": 35.0,
+            "phi_b_deg": 14.0,
+            "baseline_factor_of_safety": 1.55
+        }
+        res = calculate_green_ampt_infiltration(req)
+
+        self.assertIn("simulation_id", res)
+        self.assertIn("time_to_ponding_hr", res)
+        self.assertIsNotNone(res["time_to_ponding_hr"])
+        self.assertGreater(res["time_to_ponding_hr"], 0.0)
+        self.assertLess(res["time_to_ponding_hr"], 12.0)
+
+        # Infiltration and runoff conservation
+        self.assertGreater(res["total_cumulative_infiltration_mm"], 0.0)
+        self.assertGreater(res["total_surface_runoff_mm"], 0.0)
+        total_precip = req["rainfall_intensity_mm_hr"] * req["storm_duration_hr"]
+        self.assertAlmostEqual(res["total_cumulative_infiltration_mm"] + res["total_surface_runoff_mm"], total_precip, delta=5.0)
+
+        # Wetting front depth
+        self.assertGreater(res["final_wetting_front_depth_m"], 0.1)
+
+        # Time steps monotonicity and regime transition
+        time_steps = res["time_steps"]
+        self.assertGreater(len(time_steps), 5)
+        for i in range(1, len(time_steps)):
+            self.assertGreaterEqual(time_steps[i]["cumulative_infiltration_mm"], time_steps[i - 1]["cumulative_infiltration_mm"])
+            self.assertGreaterEqual(time_steps[i]["wetting_front_depth_m"], time_steps[i - 1]["wetting_front_depth_m"])
+
+        # Early step should be pre-ponding
+        self.assertEqual(time_steps[0]["ponding_regime"], "pre_ponding")
+        # Later step should be unsteady ponding or saturated steady state
+        self.assertIn(time_steps[-1]["ponding_regime"], ["unsteady_ponding", "saturated_steady_state"])
+
+    def test_transient_suction_decay_and_fredlund_shear_strength(self):
+        """Verify Fredlund (1978) unsaturated shear strength and transient Factor of Safety decay."""
+        # 1. Fredlund apparent shear strength formula
+        strength_dry = calculate_fredlund_apparent_shear_strength(
+            cohesion_prime_kpa=8.0,
+            friction_angle_prime_deg=30.0,
+            phi_b_deg=15.0,
+            matric_suction_psi_kpa=40.0,
+            normal_stress_kpa=50.0
+        )
+        self.assertEqual(strength_dry["cohesion_prime_kpa"], 8.0)
+        self.assertGreater(strength_dry["apparent_cohesion_kpa"], 8.0)
+        self.assertGreater(strength_dry["shear_strength_tau_kpa"], 8.0)
+
+        # At zero suction, apparent cohesion equals effective cohesion
+        strength_sat = calculate_fredlund_apparent_shear_strength(
+            cohesion_prime_kpa=8.0,
+            friction_angle_prime_deg=30.0,
+            phi_b_deg=15.0,
+            matric_suction_psi_kpa=0.0,
+            normal_stress_kpa=50.0
+        )
+        self.assertEqual(strength_sat["apparent_cohesion_kpa"], 8.0)
+        self.assertEqual(strength_sat["suction_cohesion_kpa"], 0.0)
+        self.assertLess(strength_sat["shear_strength_tau_kpa"], strength_dry["shear_strength_tau_kpa"])
+
+        # 2. Transient slope stability decay
+        req = {
+            "dam_id": "TEST_DAM_DECAY",
+            "soil_texture": "silt_tailings",
+            "rainfall_intensity_mm_hr": 25.0,
+            "storm_duration_hr": 24.0,
+            "critical_slip_depth_m": 2.0,
+            "initial_suction_psi0_kpa": 30.0,
+            "baseline_factor_of_safety": 1.60
+        }
+        res = calculate_green_ampt_infiltration(req)
+        self.assertLess(res["minimum_transient_fs"], 1.60)
+        self.assertLessEqual(res["final_transient_fs"], 1.60)
+
+        # Factor of safety classification
+        self.assertEqual(classify_infiltration_hazard_tier(1.55), RainfallHazardTier.LOW_INFILTRATION_HAZARD)
+        self.assertEqual(classify_infiltration_hazard_tier(1.40), RainfallHazardTier.MODERATE_SUCTION_LOSS)
+        self.assertEqual(classify_infiltration_hazard_tier(1.15), RainfallHazardTier.ELEVATED_FAILURE_RISK)
+        self.assertEqual(classify_infiltration_hazard_tier(0.92), RainfallHazardTier.CRITICAL_INDUCED_SLIP)
+
+    def test_apparent_thermal_inertia_physics_and_anomaly_classification(self):
+        """Verify Price (1985) Apparent Thermal Inertia formulas and seepage daylighting classification."""
+        # Classification thresholds
+        self.assertEqual(classify_ati_anomaly(0.015), ATIAnomalyClass.NORMAL_DRY_SHELL)
+        self.assertEqual(classify_ati_anomaly(0.035), ATIAnomalyClass.MODERATE_ANTECEDENT_MOISTURE)
+        self.assertEqual(classify_ati_anomaly(0.055), ATIAnomalyClass.ELEVATED_SEEPAGE_SATURATION)
+        self.assertEqual(classify_ati_anomaly(0.085), ATIAnomalyClass.CRITICAL_DAYLIGHTING_OUTFLOW)
+
+        req = {
+            "dam_id": "DAM_ATI_TEST",
+            "dam_name": "San Luis Dam",
+            "solar_correction_factor": 1.0,
+            "min_ati_threshold": 0.045,
+            "transect_points": [
+                {"station_x_m": 0.0, "albedo": 0.24, "day_lst_celsius": 38.0, "night_lst_celsius": 13.0},   # DTR=25, ATI=(1-0.24)/25 = 0.0304
+                {"station_x_m": 50.0, "albedo": 0.22, "day_lst_celsius": 37.0, "night_lst_celsius": 14.0},  # DTR=23, ATI=(1-0.22)/23 = 0.0339
+                {"station_x_m": 100.0, "albedo": 0.18, "day_lst_celsius": 34.0, "night_lst_celsius": 15.0}, # DTR=19, ATI=(1-0.18)/19 = 0.0432
+                {"station_x_m": 150.0, "albedo": 0.12, "day_lst_celsius": 24.0, "night_lst_celsius": 16.0}  # DTR=8, ATI=(1-0.12)/8 = 0.110 (outflow)
+            ]
+        }
+        res = calculate_apparent_thermal_inertia(req)
+
+        self.assertIn("analysis_id", res)
+        self.assertTrue(res["thermal_seepage_detected"])
+        self.assertGreater(res["max_apparent_thermal_inertia"], 0.070)
+        self.assertGreater(res["seepage_area_hectares"], 0.0)
+
+        # Point array check
+        pts = res["ati_points"]
+        self.assertEqual(len(pts), 4)
+        self.assertEqual(pts[0]["anomaly_class"], "moderate_antecedent_moisture")
+        self.assertEqual(pts[-1]["anomaly_class"], "critical_daylighting_outflow")
+        self.assertIn("type", res["anomaly_geojson"])
+        self.assertEqual(res["anomaly_geojson"]["type"], "FeatureCollection")
+
+    def test_non_circular_slip_surface_and_models(self):
+        """Verify NonCircularSlipSurface and FredlundUnsaturatedShearParams Pydantic schemas."""
+        poly_surf = NonCircularSlipSurface(
+            surface_id="SLIP_NONCIRC_01",
+            coordinates=[[10.0, 820.0], [30.0, 785.0], [70.0, 765.0], [120.0, 750.0]],
+            entry_x_m=10.0,
+            entry_y_m=820.0,
+            exit_x_m=120.0,
+            exit_y_m=750.0,
+            num_vertices=4
+        )
+        self.assertEqual(poly_surf.surface_id, "SLIP_NONCIRC_01")
+        dump = poly_surf.model_dump(by_alias=True)
+        self.assertEqual(dump["surfaceId"], "SLIP_NONCIRC_01")
+        self.assertEqual(dump["numVertices"], 4)
+
+        shear_model = FredlundUnsaturatedShearParams(
+            cohesion_prime_kpa=10.0,
+            friction_angle_prime_deg=28.0,
+            phi_b_deg=14.0,
+            matric_suction_psi_kpa=25.0,
+            apparent_cohesion_kpa=16.23
+        )
+        self.assertEqual(shear_model.apparent_cohesion_kpa, 16.23)
+        s_dump = shear_model.model_dump(by_alias=True)
+        self.assertEqual(s_dump["phiBDeg"], 14.0)
+
+    def test_rainfall_infiltration_and_ati_route_contracts_and_tile_urls(self):
+        """Verify route contracts and dynamic tile URLs for Cycle v2.5.14."""
+        # Route formatting
+        r1 = format_api_route("analysis_rainfall_infiltration")
+        self.assertEqual(r1, "/api/v1/analysis/geotechnical/rainfall-infiltration")
+
+        r2 = format_api_route("analysis_thermal_apparent_inertia")
+        self.assertEqual(r2, "/api/v1/analysis/thermal/apparent-inertia")
+
+        t1 = format_api_route("tiles_rainfall_infiltration", sim_id="SIM_999", z=12, x=2048, y=1024)
+        self.assertIn("SIM_999", t1)
+        self.assertIn("/12/2048/1024.png", t1)
+
+        t2 = format_api_route("tiles_rainfall_infiltration", sim_id="SIM_999", metric="wetting_front", z=12, x=2048, y=1024)
+        self.assertIn("wetting_front", t2)
+
+        t3 = format_api_route("tiles_thermal_apparent_inertia", sim_id="ATI_001", metric="dtr", z=14, x=4096, y=2048)
+        self.assertIn("dtr", t3)
+
+        # Tile URL builder helpers
+        u1 = build_rainfall_infiltration_tile_url("SIM_INF_01", "factor_of_safety", 12, 100, 200)
+        self.assertEqual(u1, "/api/v1/tiles/geotechnical/rainfall-infiltration/SIM_INF_01/factor_of_safety/12/100/200.png")
+
+        u2 = build_rainfall_infiltration_tile_url_template("SIM_INF_01", "suction")
+        self.assertEqual(u2, "/api/v1/tiles/geotechnical/rainfall-infiltration/SIM_INF_01/suction/{z}/{x}/{y}.png")
+
+        u3 = build_apparent_thermal_inertia_tile_url("ATI_01", "thermal_inertia", 11, 50, 75)
+        self.assertEqual(u3, "/api/v1/tiles/thermal/apparent-inertia/ATI_01/thermal_inertia/11/50/75.png")
+
+        u4 = build_apparent_thermal_inertia_tile_url_template("ATI_01", "seepage_anomaly")
+        self.assertEqual(u4, "/api/v1/tiles/thermal/apparent-inertia/ATI_01/seepage_anomaly/{z}/{x}/{y}.png")
+
+    def test_rainfall_infiltration_edge_cases_and_immutability(self):
+        """Verify edge cases: no ponding when rainfall <= Ks, dictionary immutability, and texture fallbacks."""
+        # 1. Rainfall <= Ks (no ponding during entire storm)
+        res_no_pond = calculate_green_ampt_infiltration({
+            "soil_texture": "sandy_shell",  # Ks = 36 mm/hr
+            "rainfall_intensity_mm_hr": 10.0,  # 10 < 36
+            "storm_duration_hr": 6.0
+        })
+        self.assertIsNone(res_no_pond["time_to_ponding_hr"])
+        self.assertEqual(res_no_pond["total_surface_runoff_mm"], 0.0)
+        self.assertAlmostEqual(res_no_pond["total_cumulative_infiltration_mm"], 60.0, delta=1.0)
+
+        # 2. Caller dictionary immutability
+        caller_dict = {"dam_id": "DAM_IMMUTABLE_INF", "soil_texture": "clay_core", "storm_duration_hr": 12.0}
+        dict_copy = dict(caller_dict)
+        _ = calculate_green_ampt_infiltration(caller_dict)
+        self.assertEqual(caller_dict, dict_copy)
+        self.assertNotIn("time_steps", caller_dict)
+
+        # 3. Mixed-case and hyphenated textures
+        res_hyphen = calculate_green_ampt_infiltration({"soil_texture": "SILT-TAILINGS"})
+        self.assertIn("time_steps", res_hyphen)
+
+        # 4. Unknown texture fallback
+        res_unknown = calculate_green_ampt_infiltration({"soil_texture": "unknown_lava_pumice"})
+        self.assertIn("time_steps", res_unknown)
+        self.assertGreater(res_unknown["final_wetting_front_depth_m"], 0.0)
 
 if __name__ == "__main__":
     unittest.main()

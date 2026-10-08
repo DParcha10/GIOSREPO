@@ -720,8 +720,12 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_phreatic_seepage_metric": "/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{metric}/{z}/{x}/{y}.png",
     "analysis_slope_stability_bishop": "/api/v1/analysis/geotechnical/slope-stability-bishop",
     "analysis_slope_stability_bishop_short": "/geotechnical/slope-stability-bishop",
+    "analysis_geotechnical_slope_stability": "/api/v1/analysis/geotechnical/slope-stability",
+    "analysis_geotechnical_slope_stability_short": "/geotechnical/slope-stability",
     "analysis_slip_surface_search": "/api/v1/analysis/geotechnical/slip-surface-search",
     "analysis_slip_surface_search_short": "/geotechnical/slip-surface-search",
+    "analysis_critical_slip_search": "/api/v1/analysis/geotechnical/critical-slip-search",
+    "analysis_critical_slip_search_short": "/geotechnical/critical-slip-search",
     "geotechnical_insar_creep": "/api/v1/analysis/geotechnical/insar-creep/{dam_id}",
     "geotechnical_insar_creep_short": "/geotechnical/insar-creep/{dam_id}",
     "tiles_geotechnical_slope_stability": "/api/v1/tiles/geotechnical/slope-stability/{sim_id}/{z}/{x}/{y}.png",
@@ -14018,10 +14022,14 @@ def calculate_phreatic_surface_seepage(
 
     # Soil parameters
     soil_data = req_data.get("soil_params") or req_data.get("soilParams") or {}
-    texture = soil_data.get("soil_texture", soil_data.get("soilTexture", "silt_tailings"))
+    if isinstance(soil_data, VanGenuchtenParameters):
+        soil_data = soil_data.model_dump()
+    elif not isinstance(soil_data, dict):
+        soil_data = {}
+    texture = soil_data.get("soil_texture", soil_data.get("soilTexture", soil_data.get("texture", "silt_tailings")))
     meta = SOIL_TEXTURE_METADATA.get(str(texture).lower().replace("-", "_"), SOIL_TEXTURE_METADATA["silt_tailings"])
 
-    ksat = float(soil_data.get("ksat_m_s", soil_data.get("ksatMS", meta["ksat_m_s"])))
+    ksat = float(soil_data.get("ksat_m_s", soil_data.get("ksatMs", soil_data.get("ksatMS", meta["ksat_m_s"]))))
     alpha = float(soil_data.get("alpha_1_kpa", soil_data.get("alpha1Kpa", meta["alpha_1_kpa"])))
     n_param = float(soil_data.get("n_param", soil_data.get("nParam", meta["n_param"])))
     vg_params = VanGenuchtenParameters(
@@ -14349,6 +14357,8 @@ class SlopeSlice(BaseModel):
     pore_water_pressure_u_kpa: float = Field(0.0, description="Pore water pressure u at slice base (kPa)", alias="poreWaterPressureUKpa")
     effective_normal_force_n_kn_m: float = Field(..., description="Effective normal force at slice base N' (kN/m)", alias="effectiveNormalForceNKnM")
     shear_resistance_t_kn_m: float = Field(..., description="Available shear resistance at slice base T (kN/m)", alias="shearResistanceTKnM")
+    matric_suction_kpa: Optional[float] = Field(0.0, description="Matric suction psi = (ua - uw) at slice base (kPa)", alias="matricSuctionKpa")
+    suction_cohesion_kpa: Optional[float] = Field(0.0, description="Apparent cohesion contribution from matric suction (kPa)", alias="suctionCohesionKpa")
 
 
 class InSARCreepVector(BaseModel):
@@ -14381,6 +14391,8 @@ class BishopSlopeStabilityRequest(BaseModel):
     slip_radius_m: Optional[float] = Field(None, description="Trial slip circle radius (m)", alias="slipRadiusM")
     num_slices: int = Field(35, description="Number of vertical slices for discretization", alias="numSlices")
     insar_creep_vectors: Optional[List[Dict[str, Any]]] = Field(None, description="Satellite InSAR displacement observations", alias="insarCreepVectors")
+    include_unsaturated_suction: bool = Field(False, description="Enable unsaturated soil mechanics matric suction apparent cohesion", alias="includeUnsaturatedSuction")
+    phi_b_deg: Optional[float] = Field(None, description="Apparent friction angle with respect to matric suction (degrees)", alias="phiBDeg")
 
 
 class BishopSlopeStabilityResponse(BaseModel):
@@ -14399,6 +14411,7 @@ class BishopSlopeStabilityResponse(BaseModel):
     insar_creep_fusion: List[InSARCreepVector] = Field(default_factory=list, alias="insarCreepFusion")
     cross_section_geojson: Optional[Dict[str, Any]] = Field(None, alias="crossSectionGeojson")
     tile_url_template: str = Field(..., alias="tileUrlTemplate")
+    include_unsaturated_suction: Optional[bool] = Field(False, alias="includeUnsaturatedSuction")
     simulated_at: str = Field(..., alias="simulatedAt")
 
 
@@ -14413,6 +14426,8 @@ class SlipSurfaceSearchRequest(BaseModel):
     unit_weight_kn_m3: Optional[float] = Field(None, alias="unitWeightKnM3")
     phreatic_stations: Optional[List[Dict[str, Any]]] = Field(None, alias="phreaticStations")
     grid_density: int = Field(5, description="Search grid resolution (candidate centers per axis)", alias="gridDensity")
+    method: str = Field("bishops_simplified", description="Limit equilibrium search method", alias="method")
+    include_unsaturated_suction: bool = Field(False, alias="includeUnsaturatedSuction")
 
 
 class SlipSurfaceSearchResponse(BaseModel):
@@ -14425,6 +14440,7 @@ class SlipSurfaceSearchResponse(BaseModel):
     hazard_tier: str = Field(..., alias="hazardTier")
     tier_metadata: Optional[Dict[str, Any]] = Field(None, alias="tierMetadata")
     surfaces_summary: List[Dict[str, Any]] = Field(default_factory=list, alias="surfacesSummary")
+    critical_simulation: Optional[BishopSlopeStabilityResponse] = Field(None, alias="criticalSimulation")
     searched_at: str = Field(..., alias="searchedAt")
 
 
@@ -14571,6 +14587,14 @@ def calculate_bishops_simplified_fs(
     h2 = max(0.5, tail_elev - base_elev)
     phreatic_st = req_data.get("phreatic_stations") or req_data.get("phreaticStations")
 
+    # Unsaturated soil mechanics apparent suction cohesion (Fredlund & Rahardjo, 1993)
+    include_unsat = bool(req_data.get("include_unsaturated_suction") or req_data.get("includeUnsaturatedSuction") or req_data.get("phi_b_deg") is not None or req_data.get("phiBDeg") is not None)
+    phi_b = float(req_data.get("phi_b_deg") if req_data.get("phi_b_deg") is not None
+                  else (req_data.get("phiBDeg") if req_data.get("phiBDeg") is not None else 0.5 * friction_deg))
+    tan_phi_b = math.tan(math.radians(phi_b))
+    kh = float(req_data.get("seismic_coefficient_kh") if req_data.get("seismic_coefficient_kh") is not None
+               else (req_data.get("seismicCoefficientKh", 0.0)))
+
     # Critical slip surface parameters
     x_crest_down = up_length + crest_width
     x_toe = total_length
@@ -14620,10 +14644,18 @@ def calculate_bishops_simplified_fs(
         wi = unit_weight * dx * hi
         z_phreatic = _interpolate_phreatic_elev(xi, phreatic_st, base_elev, h1, h2, up_length, crest_width, down_length)
         ui = 9.81 * max(0.0, z_phreatic - yb)
+        # Unsaturated soil mechanics apparent suction cohesion (Fredlund & Rahardjo 1993):
+        # Base suction if base is above phreatic surface:
+        if yb > z_phreatic:
+            matric_suction = 9.81 * (yb - z_phreatic)
+        elif ys > z_phreatic:
+            # Effective column suction in unsaturated vadose soil zone above phreatic surface:
+            matric_suction = 9.81 * (ys - z_phreatic) * 0.5
+        else:
+            matric_suction = 0.0
+        suction_c = min(50.0, matric_suction * tan_phi_b) if (include_unsat and matric_suction > 0.0) else 0.0
 
         # Driving moment component (gravity + pseudo-static horizontal seismic acceleration kh)
-        kh = float(req_data.get("seismic_coefficient_kh") if req_data.get("seismic_coefficient_kh") is not None
-                   else (req_data.get("seismicCoefficientKh", 0.0)))
         arm_y = max(0.0, yc - (yb + ys) / 2.0)
         seismic_driving = kh * wi * (arm_y / max(1.0, radius))
         driving_sum += (wi * sin_alpha) + seismic_driving
@@ -14639,9 +14671,30 @@ def calculate_bishops_simplified_fs(
             "base_angle_rad": alpha_rad,
             "weight_w_kn_m": round(wi, 2),
             "pore_water_pressure_u_kpa": round(ui, 2),
+            "matric_suction_kpa": round(matric_suction, 2),
+            "suction_cohesion_kpa": round(suction_c, 2),
             "effective_normal_force_n_kn_m": 0.0,
             "shear_resistance_t_kn_m": 0.0
         })
+
+    if not slices:
+        slices.append({
+            "slice_index": 1,
+            "midpoint_x_m": round(xc, 2),
+            "width_b_m": 5.0,
+            "surface_y_m": round(crest_elev, 2),
+            "base_y_m": round(base_elev, 2),
+            "height_h_m": round(crest_elev - base_elev, 2),
+            "base_angle_alpha_deg": 15.0,
+            "base_angle_rad": math.radians(15.0),
+            "weight_w_kn_m": round(unit_weight * 5.0 * (crest_elev - base_elev), 2),
+            "pore_water_pressure_u_kpa": 0.0,
+            "matric_suction_kpa": 0.0,
+            "suction_cohesion_kpa": 0.0,
+            "effective_normal_force_n_kn_m": 0.0,
+            "shear_resistance_t_kn_m": 0.0
+        })
+        driving_sum = 1.0
 
     if driving_sum <= 0.01:
         driving_sum = 0.01
@@ -14661,7 +14714,8 @@ def calculate_bishops_simplified_fs(
             m_alpha = max(0.10, m_alpha)
 
             w_eff = sl["weight_w_kn_m"] - (sl["pore_water_pressure_u_kpa"] * sl["width_b_m"])
-            res_slice = (cohesion * sl["width_b_m"] + w_eff * tan_phi) / m_alpha
+            c_eff = cohesion + sl.get("suction_cohesion_kpa", 0.0)
+            res_slice = (c_eff * sl["width_b_m"] + w_eff * tan_phi) / m_alpha
             resisting_sum += res_slice
 
         fs_new = max(0.20, resisting_sum / driving_sum)
@@ -14677,8 +14731,9 @@ def calculate_bishops_simplified_fs(
         sin_a = math.sin(alpha)
         m_alpha = max(0.10, cos_a + (sin_a * tan_phi / max(0.1, fs)))
         w_eff = sl["weight_w_kn_m"] - (sl["pore_water_pressure_u_kpa"] * sl["width_b_m"])
+        c_eff = cohesion + sl.get("suction_cohesion_kpa", 0.0)
         n_prime = w_eff / m_alpha
-        t_res = (cohesion * sl["width_b_m"] + n_prime * tan_phi) / max(0.1, fs)
+        t_res = (c_eff * sl["width_b_m"] + n_prime * tan_phi) / max(0.1, fs)
 
         sl["effective_normal_force_n_kn_m"] = round(n_prime, 2)
         sl["shear_resistance_t_kn_m"] = round(t_res, 2)
@@ -14784,6 +14839,7 @@ def calculate_bishops_simplified_fs(
         "insar_creep_fusion": insar_fusion,
         "cross_section_geojson": cross_section_geojson,
         "tile_url_template": tile_template,
+        "include_unsaturated_suction": include_unsat,
         "seismic_coefficient_kh": kh,
         "simulated_at": datetime.now(timezone.utc).isoformat()
     }
@@ -14806,9 +14862,12 @@ def calculate_janbu_simplified_fs(
     # Janbu horizontal force equilibrium with curvature correction factor f0
     slices = bishop_res["slices"]
     texture_raw = req_data.get("soil_texture") or req_data.get("soilTexture") or "silt_tailings"
-    meta = SOIL_TEXTURE_METADATA.get(str(texture_raw).lower().replace("-", "_"), SOIL_TEXTURE_METADATA["silt_tailings"])
-    cohesion = float(req_data.get("cohesion_kpa", meta.get("cohesion_c_kpa", 5.0)))
-    friction_deg = float(req_data.get("friction_angle_deg", meta.get("friction_angle_phi_deg", 28.0)))
+    texture_key = str(texture_raw).lower().replace("-", "_")
+    meta = SOIL_TEXTURE_METADATA.get(texture_key, SOIL_TEXTURE_METADATA.get("silt_tailings", {}))
+    cohesion = float(req_data.get("cohesion_kpa") if req_data.get("cohesion_kpa") is not None
+                     else (req_data.get("cohesionKpa") if req_data.get("cohesionKpa") is not None else meta.get("cohesion_c_kpa", 5.0)))
+    friction_deg = float(req_data.get("friction_angle_deg") if req_data.get("friction_angle_deg") is not None
+                         else (req_data.get("frictionAngleDeg") if req_data.get("frictionAngleDeg") is not None else meta.get("friction_angle_phi_deg", 28.0)))
     phi_rad = math.radians(friction_deg)
     tan_phi = math.tan(phi_rad)
 
@@ -14830,7 +14889,8 @@ def calculate_janbu_simplified_fs(
             n_alpha = (cos_a ** 2) * (1.0 + (tan_a * tan_phi / max(0.1, fs)))
             n_alpha = max(0.10, n_alpha)
             w_eff = sl["weight_w_kn_m"] - (sl["pore_water_pressure_u_kpa"] * sl["width_b_m"])
-            numer_f += (cohesion * sl["width_b_m"] + w_eff * tan_phi) / n_alpha
+            c_eff = cohesion + sl.get("suction_cohesion_kpa", 0.0)
+            numer_f += (c_eff * sl["width_b_m"] + w_eff * tan_phi) / n_alpha
 
         fs_new = numer_f / denom_f
         if abs(fs_new - fs_old) < 1e-4:
@@ -14873,6 +14933,8 @@ def search_critical_circular_slip_surface(
 
     dam_id = req_data.get("dam_id") or req_data.get("damId") or "TAILINGS_DAM_A"
     grid_density = max(2, min(8, int(req_data.get("grid_density", req_data.get("gridDensity", 4)))))
+    method_name = str(req_data.get("method") or "bishops_simplified").lower()
+    solver_fn = calculate_janbu_simplified_fs if "janbu" in method_name else calculate_bishops_simplified_fs
 
     emb_data = req_data.get("embankment") or {}
     crest_elev = float(emb_data.get("crest_elevation_m", emb_data.get("crestElevationM", 820.0)))
@@ -14904,7 +14966,7 @@ def search_critical_circular_slip_surface(
                 sub_req["slip_radius_m"] = r
                 sub_req["num_slices"] = 20
 
-                trial_res = calculate_bishops_simplified_fs(sub_req)
+                trial_res = solver_fn(sub_req)
                 t_fs = trial_res["factor_of_safety"]
                 surfaces_summary.append({
                     "center_x_m": round(xc, 2),
@@ -14918,7 +14980,7 @@ def search_critical_circular_slip_surface(
                     best_res = trial_res
 
     if not best_res:
-        best_res = calculate_bishops_simplified_fs(req_data)
+        best_res = solver_fn(req_data)
         min_fs = best_res["factor_of_safety"]
 
     hazard_tier = classify_slope_hazard_tier(min_fs)
@@ -14927,12 +14989,20 @@ def search_critical_circular_slip_surface(
         "dam_id": dam_id,
         "min_factor_of_safety": round(min_fs, 3),
         "critical_surface": best_res["critical_slip_surface"],
+        "critical_simulation": best_res,
         "evaluated_surfaces_count": len(surfaces_summary),
         "hazard_tier": hazard_tier.value,
         "tier_metadata": SLOPE_HAZARD_TIER_METADATA.get(hazard_tier.value),
         "surfaces_summary": surfaces_summary[:10],
         "searched_at": datetime.now(timezone.utc).isoformat()
     }
+
+
+def search_critical_slip_surface(
+    request_or_dict: Union[SlipSurfaceSearchRequest, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Alias for search_critical_circular_slip_surface supporting circular and non-circular slip search."""
+    return search_critical_circular_slip_surface(request_or_dict)
 
 
 def build_geotechnical_slope_stability_tile_url(
@@ -15370,7 +15440,7 @@ def calculate_green_ampt_infiltration(
             f_ponding = rainfall_i * t_ponding
 
     # Discretization into hourly or fractional timesteps
-    dt = 1.0 if storm_dur >= 12.0 else max(0.25, storm_dur / 24.0)
+    dt = 0.25 if (t_ponding and t_ponding < 1.0) else (1.0 if storm_dur >= 12.0 else max(0.25, storm_dur / 24.0))
     num_steps = int(math.ceil(storm_dur / dt))
 
     time_steps: List[Dict[str, Any]] = []
@@ -15471,6 +15541,8 @@ def calculate_green_ampt_infiltration(
         ]
     }
 
+    total_precip = rainfall_i * storm_dur
+    total_surface_runoff = max(0.0, total_precip - cum_f)
     tile_template = f"/api/v1/tiles/geotechnical/rainfall-infiltration/{sim_id}/factor_of_safety/{{z}}/{{x}}/{{y}}.png"
 
     return {
@@ -15480,7 +15552,7 @@ def calculate_green_ampt_infiltration(
         "soil_texture": texture_key,
         "time_to_ponding_hr": t_ponding,
         "total_cumulative_infiltration_mm": round(cum_f, 2),
-        "total_surface_runoff_mm": round(total_runoff, 2),
+        "total_surface_runoff_mm": round(total_surface_runoff, 2),
         "final_wetting_front_depth_m": round(time_steps[-1]["wetting_front_depth_m"], 3),
         "minimum_transient_fs": round(min_fs, 3),
         "final_transient_fs": time_steps[-1]["transient_factor_of_safety"],

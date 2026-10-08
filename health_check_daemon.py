@@ -270,8 +270,8 @@ def run_health_check() -> dict:
     uptime = inspect_uptime()
     tile_cache = inspect_tile_server_and_cache()
     data_ingestion = inspect_data_ingestion()
-    pipelines = inspect_pipelines()
     resources = inspect_resources()
+    pipelines = inspect_pipelines()
     
     anomalies = []
     

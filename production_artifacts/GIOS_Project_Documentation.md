@@ -1,5 +1,5 @@
 # GIOS: Global Intelligence & Observation System
-**Project Dossier & Scientific Specification (v2.5.12 Enterprise Release)**  
+**Project Dossier & Scientific Specification (v2.5.13 Enterprise Release)**  
 *Live Production: [https://gios-react.vercel.app](https://gios-react.vercel.app)*  
 *Backend Engine: FastAPI + rio-tiler + odc-stac + Leaflet Web GIS*
 
@@ -9,11 +9,12 @@
 
 The **Global Intelligence & Observation System (GIOS v2.5)** is an enterprise geospatial intelligence platform designed for critical infrastructure hazard monitoring, environmental anomaly detection, and real-time disaster response.
 
-GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10**, **v2.5.11**, and **v2.5.12** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
+GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10**, **v2.5.11**, **v2.5.12**, and **v2.5.13** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
 - **v2.5.10**: NodeODM Distributed Photogrammetry Processing Queue with 9-stage asynchronous state machine and stage-weighted progress telemetry, Multi-Temporal Quality Mosaic Cloud-Free Compositor Studio with pixel-rank temporal reductions (median, greenest, clearest, max-NDMI, min-LST) and dynamic XYZ tile streaming, and Multi-Hazard Live Telemetry Alert System with resilient USGS NWIS event bus and Server-Sent Events (SSE).
 - **v2.5.11**: Geotechnical Tailings Dam Hydrodynamic Inundation Simulation Engine with 2D shallow water Saint-Venant wave front routing, Froehlich (2008) peak breach discharge formulation ($Q_p = 0.607 \cdot V_w^{0.295} \cdot h_w^{1.24} \cdot \mu_{\text{mech}}$), Bingham plastic and Herschel-Bulkley non-Newtonian tailings slurry yield stress routing, Australian/USBR velocity-depth hazard intensity cross-product tiering ($v \cdot h$), dynamic downstream evacuation corridor buffer vectorization, critical infrastructure exposure scoring, and interactive Tailings Dam Breach Simulation Studio (`DamBreakModal.jsx`) with dynamic XYZ tile streaming (`/api/v1/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png`).
 - **v2.5.12**: Geotechnical Embankment Phreatic Surface Seepage Inversion, 2D Dupuit-Forchheimer unconfined seepage flow, Casagrande top-seepage line inversion, Van Genuchten (1980) Soil Water Retention Curve (SWRC) parameter optimization ($\theta(\psi) = \theta_r + \frac{\theta_s - \theta_r}{[1 + (\alpha \psi)^n]^m}$), Terzaghi critical piping Factor of Safety ($FS_{\text{piping}} = i_{\text{crit}} / i_{\text{exit}}$), in-situ multi-depth piezometer residual fusion, and interactive Phreatic Surface Seepage Studio (`PhreaticSeepageModal.jsx`) with dynamic hydrogeological XYZ tile streaming (`/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png`).
-- **v2.5.13 (Scaffolding Operational)**: Embankment Limit Equilibrium Slope Stability (Bishop's Simplified Picard iteration & Janbu empirical curvature correction $f_0$), 3D circular & non-circular critical slip surface grid search, Dupuit phreatic pore water pressure coupling ($u_i = \gamma_w \cdot \max(0, z_{\text{phreatic}} - y_{b,i})$), and Sentinel-1 InSAR satellite radar line-of-sight creep displacement vector fusion.
+- **v2.5.13**: Embankment Limit Equilibrium Slope Stability Engine (Bishop's Simplified Picard iteration with $m_\alpha \ge 0.10$ and Janbu's Simplified empirical curvature correction $f_0$), 3D circular & non-circular critical slip surface grid search optimization minimizing Factor of Safety ($FS_{\min}$), unsaturated soil mechanics apparent suction cohesion ($c_\psi = \psi \tan\phi^b$), coupled Dupuit-Casagrande phreatic pore water pressure ($u_i = \gamma_w \cdot \max(0, z_{\text{phreatic}} - y_{b,i})$), Sentinel-1 satellite radar line-of-sight InSAR creep vector fusion, interactive Embankment Slope Stability & Limit Equilibrium Studio (`SlopeStabilityModal.jsx`) featuring slices force polygon equilibrium inspector, real-time FS sensitivity radar, and dynamic geotechnical slope hazard XYZ tile streaming (`/api/v1/tiles/geotechnical/slope-stability/{sim_id}/{metric}/{z}/{x}/{y}.png`).
+- **v2.5.14 (Scaffolding Operational)**: Transient Rainfall Infiltration Green-Ampt unsteady ponding dynamics ($t_p = (K_s \cdot \psi_f \cdot \Delta\theta)/(i(i - K_s))$, implicit Newton-Raphson $F(t)$ solver, wetting front depth $z_w(t) = F/(\Delta\theta \cdot 1000)$, Fredlund apparent suction cohesion decay $\psi(t) = \psi_0(1 - (z_w/z_{\text{slip}})^2)$, and transient Factor of Safety decay $FS(t)$), and Remote Sensing split-window Apparent Thermal Inertia (ATI) based on Price (1985) ($ATI = (1 - \alpha)/\Delta T_{\text{DTR}}$) and thermal seepage anomaly classification for daylighting moisture tracing.
 
 ---
 
@@ -91,7 +92,7 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
     - Inverts Casagrande top-seepage line and computes maximum exit gradient $i_{\text{exit}} = \sin\beta$ and Terzaghi critical piping heave gradient $i_{\text{crit}} = \frac{G_s - 1}{1 + e}$.
     - Inverts Van Genuchten (1980) Soil Water Retention Curve (SWRC) parameters $(\alpha, n, \theta_r, \theta_s)$ and Mualem unsaturated relative hydraulic conductivity $k_r(S_e) = S_e^l [1 - (1 - S_e^{1/m})^m]^2$.
     - Fuses multi-depth in-situ vibrating wire piezometer heads ($h_{\text{meas}} = z_{\text{tip}} + \frac{u}{\gamma_w}$) with numerical simulated heads ($h_{\text{sim}}$), identifying residual deviations and classifying anomalies (`NORMAL_CONVERGENCE`, `ELEVATED_PRESSURE`, `EXCESS_PORE_PRESSURE`, `SENSOR_FAULT_DRIFT`).
-17. **Limit Equilibrium Slope Stability & InSAR Creep Fusion (v2.5.13 Scaffolding)**:
+17. **Limit Equilibrium Slope Stability & InSAR Creep Fusion (v2.5.13)**:
     - Formulates Bishop's Simplified method with Picard iterative solver ($m_\alpha \ge 0.10$, downstream sliding sign convention $\sin\alpha = (x_c - x_i)/R$, convergence tolerance $10^{-4}$): $FS = \frac{\sum [c' b_i + (W_i - u_i b_i) \tan\phi'] / m_\alpha}{\sum W_i \sin\alpha_i + \sum k_h W_i (y_i - y_c)/R}$.
     - Formulates Janbu's Simplified force equilibrium method with empirical curvature correction factor $f_0 = 1.0 + 0.5(d/L - 1.4(d/L)^2)$.
     - Optimizes circular slip surface geometry $(x_c, y_c, R)$ via 3D grid search minimizing Factor of Safety.
@@ -134,6 +135,7 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
   │  • Multi-Hazard Live Telemetry Alert Drawer & Severity Map Markers     │
   │  • Tailings Dam Breach Simulation Studio & Evacuation Corridors         │
   │  • Phreatic Surface Seepage Studio, SWRC Curve & Piezometer Drawer      │
+  │  • Embankment Slope Stability Studio, Force Polygons & Sensitivity Radar│
   │  • Interactive Pixel Inspector & Polygon Zonal Analysis Drawer          │
   └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -249,10 +251,12 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
 | `POST` | `/api/v1/analysis/geotechnical/swrc-inversion` | Van Genuchten (1980) soil water retention curve (SWRC) parameter inversion |
 | `GET` | `/api/v1/analysis/geotechnical/piezometers` | Multi-depth in-situ piezometric sensor telemetry & residual head analysis |
 | `GET` | `/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png` | Dynamic XYZ hydrogeological phreatic seepage & water table tile stream |
-| `POST` | `/api/v1/analysis/geotechnical/slope-stability/bishop` | Bishop's Simplified limit equilibrium Factor of Safety ($FS$) iteration |
-| `POST` | `/api/v1/analysis/geotechnical/slope-stability/search-critical` | 3D grid search for critical circular slip surface optimizing minimum $FS$ |
+| `POST` | `/api/v1/analysis/geotechnical/slope-stability` | Limit equilibrium slope stability Factor of Safety ($FS$) iteration (Bishop / Janbu) |
+| `GET` | `/api/v1/analysis/geotechnical/slope-stability/{sim_id}` | Cached geotechnical limit equilibrium simulation detail & slice analysis |
+| `POST` | `/api/v1/analysis/geotechnical/critical-slip-search` | 3D grid search for critical circular & non-circular slip surface optimizing minimum $FS$ |
 | `GET` | `/api/v1/analysis/geotechnical/insar-creep/{dam_id}` | Sentinel-1 satellite radar LOS creep displacement vector fusion |
 | `GET` | `/api/v1/tiles/geotechnical/slope-stability/{sim_id}/{z}/{x}/{y}.png` | Dynamic XYZ slope stability critical slip hazard tile stream |
+| `GET` | `/api/v1/tiles/geotechnical/slope-stability/{sim_id}/{metric}/{z}/{x}/{y}.png` | Dynamic XYZ slope stability metric tile stream (FS, pore pressure, suction, InSAR creep) |
 | `GET` | `/api/v1/annotations` | Geotechnical field inspection defect annotations (RFC 7946 GeoJSON) |
 | `POST` | `/api/v1/work-orders` | Automated maintenance work order dispatch & ticket tracking |
 | `GET` | `/api/v1/subscriptions` | Automated continuous AOI monitoring subscriptions & alert triggers |
@@ -265,10 +269,10 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
 
 ## 5. Verification & Quality Assurance
 
-- **Unit & Integration Test Suite**: 242 tests passing via pytest (54.67s) / 241 tests passing via unittest (44.27s) across `test_schemas.py` (159), `test_api.py` (71), `test_scientific_rigor.py` (7), `test_stac_signing.py` (1), and `test_tile_server.py` (4) with 0 failures, 0 regressions, and 0 warnings.
-- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,869 modules in 7.93s with 0 errors).
-- **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, cache storage, database integrity, and host system RAM. Latest single-pass inspection confirms System Status **HEALTHY** with 0 active anomalies.
+- **Unit & Integration Test Suite**: 252 tests passing via pytest (64.57s) across `test_schemas.py` (166), `test_api.py` (72), `test_scientific_rigor.py` (9), `test_stac_signing.py` (1), and `test_tile_server.py` (4) with 0 failures, 0 regressions, and 0 warnings.
+- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,870 modules in 24.51s with 0 errors).
+- **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, cache storage, database integrity, and host system RAM. Latest inspection confirms System Status **HEALTHY** with 0 active anomalies.
 - **Live Production Telemetry**: Continuous surveillance confirms System Status HEALTHY with 0 active anomalies and stable headroom.
 
 ---
-*GIOS v2.5.12 — Verified and Approved for Production Deployment.*
+*GIOS v2.5.13 — Verified and Approved for Production Deployment.*

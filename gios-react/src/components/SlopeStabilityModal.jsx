@@ -8,8 +8,7 @@ import {
 import { 
   simulateBishopSlopeStability,
   searchCriticalSlipSurface,
-  fetchInSARCreepVectors,
-  getSlopeStabilityTileUrlTemplate
+  fetchInSARCreepVectors
 } from '../api/giosApi';
 import { 
   SOIL_TEXTURE_CONFIGS,
@@ -287,7 +286,12 @@ export default function SlopeStabilityModal({
       });
       setSimulationResult(initial);
     }
-  }, [isOpen]);
+  }, [
+    isOpen, simulationResult, damId, damName, crestElevationM, baseElevationM,
+    crestWidthM, upstreamSlopeHV, downstreamSlopeHV, soilTexture, cohesionCKpa,
+    frictionAnglePhiDeg, unitWeightSatKnM3, reservoirPoolElevationM, tailwaterElevationM,
+    slipCenterXM, slipCenterYM, slipRadiusM, numSlices, seismicCoefficientKh, method
+  ]);
 
   // When soil texture changes, auto-fill shear parameters
   const handleSoilTextureChange = (e) => {
@@ -460,12 +464,41 @@ export default function SlopeStabilityModal({
     setInsarVectors(insarVectors.filter((_, i) => i !== idx));
   };
 
+  const [loadingRemoteInsar, setLoadingRemoteInsar] = useState(false);
+  const handleFetchRemoteInSAR = async () => {
+    setLoadingRemoteInsar(true);
+    try {
+      const remoteData = await fetchInSARCreepVectors(damId);
+      if (Array.isArray(remoteData) && remoteData.length > 0) {
+        setInsarVectors(remoteData.map((v, i) => ({
+          point_id: v.point_id || `INSAR-PS-${i + 1}`,
+          station_id: v.station_id || `STA ${v.embankment_station_m || v.station_x_m || (i * 50)}m`,
+          latitude: v.latitude || damCoords[1],
+          longitude: v.longitude || damCoords[0],
+          station_x_m: Number(v.embankment_station_m || v.station_x_m || (120 + i * 40)),
+          elevation_m: Number(v.elevation_m || (crestElevationM - i * 10)),
+          los_velocity_mm_yr: Number(v.los_velocity_mm_yr || -5.0),
+          vertical_velocity_mm_yr: Number(v.vertical_velocity_mm_yr || -5.5),
+          shear_strain_rate_microstrain_yr: Number(v.shear_strain_rate_microstrain_yr || 45.0),
+          temporal_coherence: Number(v.temporal_coherence || 0.90),
+          creep_status: v.creep_status || 'linear_steady_creep'
+        })));
+      }
+    } catch {
+      // Keep existing vectors if fetch fails
+    } finally {
+      setLoadingRemoteInsar(false);
+    }
+  };
+
   // Live Sensitivity Factor of Safety calculation based on sliders
   const sensitivityFs = useMemo(() => {
     if (!simulationResult) return 1.50;
     const effPhi = frictionAnglePhiDeg * sensFrictionMultiplier;
     const effC = cohesionCKpa * sensCohesionMultiplier;
     const effKh = sensKhSeismic;
+    const damHeight = Math.max(5.0, crestElevationM - baseElevationM);
+    const effPool = baseElevationM + damHeight * Math.max(0.2, Math.min(1.0, 0.4 + sensRuPorePressure * 1.5));
     
     // Quick recalculation with modified parameters
     const trial = calculateBishopsSimplifiedFs({
@@ -481,7 +514,7 @@ export default function SlopeStabilityModal({
       cohesion_kpa: effC,
       friction_angle_deg: effPhi,
       unit_weight_kn_m3: unitWeightSatKnM3,
-      reservoir_pool_elevation_m: reservoirPoolElevationM,
+      reservoir_pool_elevation_m: effPool,
       tailwater_elevation_m: tailwaterElevationM,
       slip_center_x_m: slipCenterXM,
       slip_center_y_m: slipCenterYM,
@@ -492,10 +525,10 @@ export default function SlopeStabilityModal({
 
     return trial.factor_of_safety;
   }, [
-    simulationResult, frictionAnglePhiDeg, cohesionCKpa, unitWeightSatKnM3,
-    sensFrictionMultiplier, sensCohesionMultiplier, sensKhSeismic,
+    simulationResult, damId, soilTexture, frictionAnglePhiDeg, cohesionCKpa, unitWeightSatKnM3,
+    sensFrictionMultiplier, sensCohesionMultiplier, sensKhSeismic, sensRuPorePressure,
     crestElevationM, baseElevationM, crestWidthM, upstreamSlopeHV, downstreamSlopeHV,
-    reservoirPoolElevationM, tailwaterElevationM, slipCenterXM, slipCenterYM, slipRadiusM
+    tailwaterElevationM, slipCenterXM, slipCenterYM, slipRadiusM
   ]);
 
   // Sensitivity radar data
@@ -1456,13 +1489,23 @@ export default function SlopeStabilityModal({
                     <Activity className="w-4 h-4 text-amber-400" />
                     Multi-Temporal InSAR Radar Surface Creep & Shear Strain Velocity Correlation
                   </h3>
-                  <button
-                    onClick={handleAddInsar}
-                    className="px-3 py-1 text-xs rounded-lg bg-cyan-600/30 border border-cyan-500 text-cyan-200 hover:bg-cyan-600/40 flex items-center gap-1 transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add Scatterer Point
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleFetchRemoteInSAR}
+                      disabled={loadingRemoteInsar}
+                      className="px-3 py-1 text-xs rounded-lg bg-purple-600/30 border border-purple-500 text-purple-200 hover:bg-purple-600/40 flex items-center gap-1 transition-colors"
+                    >
+                      {loadingRemoteInsar ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+                      Fetch InSAR Stack
+                    </button>
+                    <button
+                      onClick={handleAddInsar}
+                      className="px-3 py-1 text-xs rounded-lg bg-cyan-600/30 border border-cyan-500 text-cyan-200 hover:bg-cyan-600/40 flex items-center gap-1 transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Scatterer Point
+                    </button>
+                  </div>
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed">
                   Sentinel-1 C-band interferometric stacking identifies pre-failure tertiary creep patterns on the downstream face. Points exhibiting LOS deformation velocity exceeding 15 mm/yr or shear strain rate exceeding 150 µstrain/yr signal elevated shear mobilization.
@@ -1694,6 +1737,22 @@ export default function SlopeStabilityModal({
                         className="w-full accent-amber-500"
                       />
                     </div>
+
+                    <div>
+                      <div className="flex justify-between text-slate-400 mb-1">
+                        <span>Pore Pressure Ratio r_u: {sensRuPorePressure.toFixed(2)}</span>
+                        <span className="font-mono text-cyan-400 font-bold">{sensRuPorePressure > 0.3 ? 'Excess Pore Surge' : sensRuPorePressure > 0.15 ? 'Steady Seepage' : 'Drained Core'}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.00"
+                        max="0.45"
+                        step="0.05"
+                        value={sensRuPorePressure}
+                        onChange={(e) => setSensRuPorePressure(Number(e.target.value))}
+                        className="w-full accent-cyan-500"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1760,17 +1819,32 @@ export default function SlopeStabilityModal({
                   </div>
                 </div>
 
-                <div className="p-3 rounded-xl bg-slate-950 font-mono text-xs text-cyan-300 border border-slate-800 flex items-center justify-between">
-                  <span className="truncate">
-                    {getSlopeStabilityTileUrlTemplate(simulationResult?.simulation_id || 'SIM_BISHOP_ACTIVE', tilePreviewMetric)}
-                  </span>
-                  <button
-                    onClick={() => handleCopy(getSlopeStabilityTileUrlTemplate(simulationResult?.simulation_id || 'SIM_BISHOP_ACTIVE', tilePreviewMetric), 'tile_url')}
-                    className="ml-3 p-1 text-slate-400 hover:text-white transition-colors flex-shrink-0"
-                    title="Copy URL Template"
-                  >
-                    {copiedKey === 'tile_url' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  </button>
+                <div className="space-y-2">
+                  <div className="p-3 rounded-xl bg-slate-950 font-mono text-xs text-cyan-300 border border-slate-800 flex items-center justify-between">
+                    <span className="truncate">
+                      Template: {buildGeotechnicalSlopeStabilityTileUrlTemplate(simulationResult?.simulation_id || 'SIM_BISHOP_ACTIVE', tilePreviewMetric)}
+                    </span>
+                    <button
+                      onClick={() => handleCopy(buildGeotechnicalSlopeStabilityTileUrlTemplate(simulationResult?.simulation_id || 'SIM_BISHOP_ACTIVE', tilePreviewMetric), 'tile_url')}
+                      className="ml-3 p-1 text-slate-400 hover:text-white transition-colors flex-shrink-0"
+                      title="Copy URL Template"
+                    >
+                      {copiedKey === 'tile_url' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-950 font-mono text-xs text-slate-400 border border-slate-800 flex items-center justify-between">
+                    <span className="truncate">
+                      Sample Zoom 12 Tile: {buildGeotechnicalSlopeStabilityTileUrl(simulationResult?.simulation_id || 'SIM_BISHOP_ACTIVE', tilePreviewMetric, 12, 2048, 1024)}
+                    </span>
+                    <button
+                      onClick={() => handleCopy(buildGeotechnicalSlopeStabilityTileUrl(simulationResult?.simulation_id || 'SIM_BISHOP_ACTIVE', tilePreviewMetric, 12, 2048, 1024), 'sample_tile_url')}
+                      className="ml-3 p-1 text-slate-400 hover:text-white transition-colors flex-shrink-0"
+                      title="Copy Sample Tile URL"
+                    >
+                      {copiedKey === 'sample_tile_url' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 

@@ -25,7 +25,9 @@ import {
   calculatePhreaticSurfaceSeepage,
   calculateSwrcInversionCurve,
   calculateBishopsSimplifiedFs,
-  searchCriticalCircularSlipSurface
+  searchCriticalCircularSlipSurface,
+  calculateGreenAmptInfiltration,
+  calculateApparentThermalInertia
 } from '../config/constants.js';
 
 export {
@@ -357,7 +359,22 @@ export {
   buildGeotechnicalSlopeStabilityTileUrl,
   buildSlopeStabilityBishopTileUrl,
   buildGeotechnicalSlopeStabilityTileUrlTemplate,
-  buildSlopeStabilityBishopTileUrlTemplate
+  buildSlopeStabilityBishopTileUrlTemplate,
+  INFILTRATION_PONDING_REGIMES,
+  RAINFALL_HAZARD_TIERS,
+  ATI_ANOMALY_CLASSES,
+  GREEN_AMPT_SOIL_CONFIGS,
+  RAINFALL_HAZARD_TIER_CONFIGS,
+  ATI_ANOMALY_CONFIGS,
+  classifyInfiltrationHazardTier,
+  classifyAtiAnomaly,
+  calculateFredlundApparentShearStrength,
+  calculateGreenAmptInfiltration,
+  calculateApparentThermalInertia,
+  buildRainfallInfiltrationTileUrl,
+  buildRainfallInfiltrationTileUrlTemplate,
+  buildApparentThermalInertiaTileUrl,
+  buildApparentThermalInertiaTileUrlTemplate
 } from '../config/constants.js';
 
 /**
@@ -2325,6 +2342,16 @@ const demoAdapter = async (config) => {
             last_acquisition_utc: '2026-10-07T00:00:00Z'
           }
         ];
+      }
+      else if (url.includes('/api/v1/analysis/geotechnical/rainfall-infiltration') || url.includes('/geotechnical/rainfall-infiltration')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = calculateGreenAmptInfiltration(parsed);
+      }
+      else if (url.includes('/api/v1/analysis/thermal/apparent-inertia') || url.includes('/thermal/apparent-inertia')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = calculateApparentThermalInertia(parsed);
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -5762,6 +5789,70 @@ export const fetchInSARCreepVectors = async (damId) => {
 export const getSlopeStabilityTileUrlTemplate = (simId, metric = 'factor_of_safety') => {
   const base = import.meta?.env?.VITE_API_BASE_URL || '';
   return `${base}/api/v1/tiles/geotechnical/slope-stability/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+/**
+ * Simulates transient Green-Ampt rainfall infiltration, wetting front downward penetration,
+ * matric suction loss, and dynamic slope Factor of Safety decay curves.
+ * 
+ * @param {Object} params - Infiltration simulation parameters
+ * @param {string} [params.damId='TAILINGS_DAM_A'] - Dam facility identifier
+ * @param {string} [params.soilTexture='silt_tailings'] - Embankment shell soil texture
+ * @param {number} [params.rainfallIntensityMmHr=15.0] - Storm rainfall intensity (mm/hr)
+ * @param {number} [params.stormDurationHr=24.0] - Total duration of rainfall storm (hours)
+ * @param {number} [params.criticalSlipDepthM=3.5] - Depth of critical shear surface (m)
+ * @param {number} [params.initialSuctionPsi0Kpa=30.0] - Antecedent unsaturated matric suction (kPa)
+ * @param {number} [params.phiBDeg=14.0] - Fredlund suction friction angle (degrees)
+ * @param {number} [params.baselineFactorOfSafety=1.52] - Pre-storm slope Factor of Safety
+ * @returns {Promise<Object>} Infiltration response with time-steps, wetting front depth, minimum FS, and decay curve GeoJSON
+ */
+export const simulateRainfallInfiltration = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/rainfall-infiltration', params);
+  return response.data;
+};
+
+/**
+ * Computes Apparent Thermal Inertia (ATI) from diurnal optical/thermal remote sensing imagery
+ * and delineates anomalous high-inertia phreatic seepage daylighting zones.
+ * 
+ * @param {Object} params - Apparent Thermal Inertia analysis parameters
+ * @param {string} [params.damId='TAILINGS_DAM_A'] - Dam facility identifier
+ * @param {string} [params.daySceneId] - Daytime satellite scene identifier
+ * @param {string} [params.nightSceneId] - Nighttime satellite thermal scene identifier
+ * @param {number} [params.solarCorrectionFactor=1.0] - Insolation angle correction factor
+ * @param {number} [params.minAtiThreshold=0.045] - Seepage anomaly threshold
+ * @param {Array<Object>} [params.transectPoints] - Cross-sectional transect stations
+ * @returns {Promise<Object>} ATI response with anomaly classification, points array, and seepage footprint
+ */
+export const analyzeApparentThermalInertia = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/thermal/apparent-inertia', params);
+  return response.data;
+};
+
+export const fetchApparentThermalInertia = analyzeApparentThermalInertia;
+
+/**
+ * Constructs a dynamic XYZ tile streaming URL template for rainfall infiltration wetting front maps.
+ * 
+ * @param {string} simId - Infiltration simulation execution identifier
+ * @param {string} [metric='factor_of_safety'] - Raster metric ('factor_of_safety' | 'wetting_front' | 'suction' | 'infiltration_rate')
+ * @returns {string} Tile URL template
+ */
+export const getRainfallInfiltrationTileUrlTemplate = (simId, metric = 'factor_of_safety') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/geotechnical/rainfall-infiltration/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+/**
+ * Constructs a dynamic XYZ tile streaming URL template for Apparent Thermal Inertia maps.
+ * 
+ * @param {string} analysisId - ATI analysis execution identifier
+ * @param {string} [metric='thermal_inertia'] - Raster metric ('thermal_inertia' | 'seepage_anomaly' | 'dtr')
+ * @returns {string} Tile URL template
+ */
+export const getApparentThermalInertiaTileUrlTemplate = (analysisId, metric = 'thermal_inertia') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/thermal/apparent-inertia/${analysisId}/${metric}/{z}/{x}/{y}.png`;
 };
 
 export default giosApi;

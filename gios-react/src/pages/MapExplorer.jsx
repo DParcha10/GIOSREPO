@@ -5235,6 +5235,80 @@ export default function MapExplorer() {
               );
             })}
 
+            {/* T-138/T-140: Geotechnical Slope Stability Limit Equilibrium & Dynamic XYZ Tile Layers */}
+            {showSlopeStabilityLayer && slopeStabilitySimulation && !curtainActive && (
+              <TileLayer
+                key={`slope-stability-${slopeStabilitySimulation.simulation_id}-${slopeStabilityMetric}-${slopeStabilityOpacity}`}
+                url={buildSlopeStabilityBishopTileUrlTemplate(slopeStabilitySimulation.simulation_id, slopeStabilityMetric)}
+                opacity={slopeStabilityOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* Embankment Center / Cross-Section Slope Stability Marker */}
+            {showSlopeStabilityLayer && slopeStabilitySimulation?.dam_coordinates && (
+              <CircleMarker
+                center={[slopeStabilitySimulation.dam_coordinates[1], slopeStabilitySimulation.dam_coordinates[0]]}
+                radius={8}
+                pathOptions={{
+                  color: '#ffffff',
+                  fillColor: slopeStabilitySimulation.factor_of_safety < 1.0 ? '#ef4444' : (slopeStabilitySimulation.factor_of_safety < 1.3 ? '#f59e0b' : '#10b981'),
+                  fillOpacity: 0.95,
+                  weight: 2
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="font-bold text-cyan-400">⛰️ {slopeStabilitySimulation.dam_name || 'Embankment Slope Stability'}</div>
+                    <div>Simulation: {slopeStabilitySimulation.simulation_id}</div>
+                    <div>Method: <span className="uppercase">{slopeStabilitySimulation.method?.replace(/_/g, ' ')}</span></div>
+                    <div>Factor of Safety (FS): <strong className="text-emerald-300">{slopeStabilitySimulation.factor_of_safety}</strong></div>
+                    <div>Hazard Tier: <span className="font-bold uppercase text-cyan-300">{slopeStabilitySimulation.hazard_tier?.replace(/_/g, ' ')}</span></div>
+                    <div>Critical Radius: {slopeStabilitySimulation.critical_slip_surface?.radius_m} m</div>
+                    <div>Slice Count: {slopeStabilitySimulation.slices?.length || 35}</div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            )}
+
+            {/* InSAR Radar Creep Vector Markers */}
+            {showSlopeStabilityLayer && showInSARCreepMarkers && slopeStabilitySimulation?.dam_coordinates && slopeStabilitySimulation?.insar_creep_fusion?.map((vec, idx) => {
+              const damLat = slopeStabilitySimulation.dam_coordinates[1];
+              const damLon = slopeStabilitySimulation.dam_coordinates[0];
+              const offsetM = ((vec.station_x_m || 150) - 150);
+              const vLat = damLat - (offsetM / 111139.0);
+              const vLon = damLon + (offsetM / 111139.0) * 0.7;
+              const vAbs = Math.abs(Number(vec.los_velocity_mm_yr || 0));
+              const markerColor = vAbs >= 30 ? '#ef4444' : (vAbs >= 15 ? '#ea580c' : (vAbs >= 5 ? '#f59e0b' : '#10b981'));
+
+              return (
+                <CircleMarker
+                  key={`insar-vec-marker-${vec.point_id || idx}`}
+                  center={[vLat, vLon]}
+                  radius={6}
+                  pathOptions={{
+                    color: '#ffffff',
+                    fillColor: markerColor,
+                    fillOpacity: 0.9,
+                    weight: 1.5
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold text-amber-300">📡 {vec.point_id || `InSAR Vector #${idx + 1}`}</div>
+                      <div>Station: {vec.station_id || `${vec.station_x_m}m`}</div>
+                      <div>v_LOS: <strong style={{ color: markerColor }}>{vec.los_velocity_mm_yr} mm/yr</strong></div>
+                      <div>v_vert: {vec.vertical_velocity_mm_yr || 'N/A'} mm/yr</div>
+                      <div>Strain Rate: {vec.shear_strain_rate_microstrain_yr} µstrain/yr</div>
+                      <div>Creep Status: <span className="font-bold uppercase text-amber-200">{vec.creep_status?.replace(/_/g, ' ')}</span></div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
             {/* T-114/T-116: Automated Sub-Pixel Tie-Point Pins */}
             {(showRpcTiePointsLayer || showRpcLayer) && rpcTiePointPins.map((tp, idx) => {
               const baseLat = 37.0585;
@@ -6286,6 +6360,104 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-138/T-140 Slope Stability Limit Equilibrium Floating HUD Card */}
+          {showSlopeStabilityLayer && slopeStabilitySimulation && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[920] glass-panel px-5 py-3 rounded-2xl border-cyan-500/50 shadow-2xl bg-slate-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[580px] max-w-[92vw]">
+              {/* Header Row */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-cyan-500/20 text-cyan-400">
+                    <TrendingUp className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <span className="font-bold text-white tracking-wide">
+                    {slopeStabilitySimulation.dam_name || 'Slope Stability'}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-600/50 uppercase font-bold">
+                    {slopeStabilitySimulation.hazard_tier?.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSlopeStabilityModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowSlopeStabilityLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Telemetry Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-cyan-400 font-bold">
+                    Method: {slopeStabilitySimulation.method === 'janbu_simplified' ? 'Janbu' : "Bishop"}
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Radius: <strong className="text-amber-300">{slopeStabilitySimulation.critical_slip_surface?.radius_m?.toFixed(1) || '94.5'}m</strong>
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-300">
+                    Factor of Safety: <strong className={slopeStabilitySimulation.factor_of_safety < 1.0 ? 'text-red-400' : (slopeStabilitySimulation.factor_of_safety < 1.3 ? 'text-amber-300' : 'text-emerald-300')}>{slopeStabilitySimulation.factor_of_safety?.toFixed(3)}</strong>
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    InSAR PS: <strong className="text-cyan-300">{slopeStabilitySimulation.insar_creep_fusion?.length || 0}</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Controls Row */}
+              <div className="flex items-center justify-between text-xs font-mono pt-0.5">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowInSARCreepMarkers(!showInSARCreepMarkers)}
+                    className={`px-2 py-0.5 rounded text-[10px] border transition-all ${
+                      showInSARCreepMarkers ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50' : 'bg-slate-900 text-slate-500 border-slate-800'
+                    }`}
+                  >
+                    {showInSARCreepMarkers ? 'InSAR PS Visible' : 'InSAR PS Hidden'}
+                  </button>
+                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                    <span>Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={slopeStabilityOpacity}
+                      onChange={(e) => setSlopeStabilityOpacity(Number(e.target.value))}
+                      className="w-16 accent-cyan-500 h-1 bg-slate-800 rounded"
+                    />
+                  </div>
+                </div>
+
+                {/* Metric Switcher */}
+                <div className="flex rounded bg-slate-900 border border-slate-800 p-0.5">
+                  {['factor_of_safety', 'pore_pressure', 'shear_stress', 'mobilization'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setSlopeStabilityMetric(m)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold transition-all ${
+                        slopeStabilityMetric === m ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m === 'factor_of_safety' ? 'FS' : m === 'pore_pressure' ? 'u' : m === 'shear_stress' ? 'τ' : 'Mob'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -6995,6 +7167,18 @@ export default function MapExplorer() {
               >
                 <Droplets className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Phreatic Seepage (v2.5.12)</span>
+              </button>
+
+              {/* T-138/T-140 Slope Stability Limit Equilibrium Studio Shortcut (Cycle v2.5.13) */}
+              <button
+                onClick={() => setSlopeStabilityModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  slopeStabilityModalOpen || showSlopeStabilityLayer ? 'bg-cyan-600 text-white shadow-[0_0_12px_rgba(6,182,212,0.6)]' : ''
+                }`}
+                title="Geotechnical Embankment Circular & Non-Circular Slope Stability Limit Equilibrium Studio (Cycle v2.5.13)"
+              >
+                <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Slope Stability (v2.5.13)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -18531,6 +18715,27 @@ export default function MapExplorer() {
             setCustomFlyTarget({
               lat: opts.damCoordinates[1],
               lng: opts.damCoordinates[0],
+              zoom: 14
+            });
+          }
+        }}
+      />
+
+      {/* T-138/T-140: Geotechnical Embankment Slope Stability Limit Equilibrium Studio Modal */}
+      <SlopeStabilityModal
+        isOpen={slopeStabilityModalOpen}
+        onClose={() => setSlopeStabilityModalOpen(false)}
+        activeSimulation={slopeStabilitySimulation}
+        onApplySimulation={(sim, opts) => {
+          setSlopeStabilitySimulation(sim);
+          setShowSlopeStabilityLayer(true);
+          if (opts?.selectedMetric) {
+            setSlopeStabilityMetric(opts.selectedMetric);
+          }
+          if (sim?.dam_coordinates && Array.isArray(sim.dam_coordinates)) {
+            setCustomFlyTarget({
+              lat: sim.dam_coordinates[1],
+              lng: sim.dam_coordinates[0],
               zoom: 14
             });
           }

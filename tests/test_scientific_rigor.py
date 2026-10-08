@@ -219,5 +219,106 @@ class TestScientificRigor(unittest.TestCase):
         self.assertGreaterEqual(v_bridge, 0.0)
         self.assertLessEqual(v_bridge, 1.0)
 
+    def test_terzaghi_piping_and_dupuit_darcy_flow_physics(self):
+        """Task T-136: Verify Terzaghi critical piping exit gradient, Dupuit-Forchheimer unconfined discharge, and Van Genuchten SWRC."""
+        from app.models.schemas import (
+            calculate_phreatic_surface_seepage,
+            calculate_van_genuchten_swrc,
+            VanGenuchtenParameters
+        )
+
+        # 1. Dupuit unconfined phreatic seepage flow scaling
+        base_params = {
+            "dam_id": "DAM-TEST-DARCY",
+            "soil_params": {
+                "texture": "silt_tailings",
+                "ksatMs": 1.0e-6
+            },
+            "reservoir_pool_elevation_m": 810.0,
+            "tailwater_elevation_m": 750.0
+        }
+        res_low_k = calculate_phreatic_surface_seepage(base_params)
+
+        high_k_params = dict(base_params)
+        high_k_params["soil_params"] = {
+            "texture": "silt_tailings",
+            "ksatMs": 5.0e-6
+        }
+        res_high_k = calculate_phreatic_surface_seepage(high_k_params)
+
+        # Seepage discharge must scale linearly with saturated hydraulic conductivity k
+        self.assertGreater(res_high_k["seepage_discharge_m3s_m"], res_low_k["seepage_discharge_m3s_m"])
+        self.assertAlmostEqual(res_high_k["seepage_discharge_m3s_m"] / res_low_k["seepage_discharge_m3s_m"], 5.0, places=1)
+
+        # 2. Terzaghi piping exit gradient & factor of safety
+        self.assertGreater(res_low_k["exit_gradient_max"], 0.0)
+        self.assertGreater(res_low_k["factor_of_safety_piping"], 0.0)
+
+        # 3. Van Genuchten (1980) SWRC retention bounds & Mualem relative conductivity
+        vg_silt = VanGenuchtenParameters(
+            theta_s=0.45,
+            theta_r=0.035,
+            alpha_1_kpa=1.5,
+            n_param=1.40,
+            ksat_m_s=1e-6
+        )
+
+        pt_sat = calculate_van_genuchten_swrc(0.0, vg_silt)
+        self.assertEqual(pt_sat["effective_saturation"], 1.0)
+        self.assertEqual(pt_sat["volumetric_water_content"], 0.45)
+        self.assertEqual(pt_sat["relative_conductivity"], 1.0)
+
+        pt_dry = calculate_van_genuchten_swrc(500.0, vg_silt)
+        self.assertLess(pt_dry["effective_saturation"], 0.15)
+        self.assertLess(pt_dry["volumetric_water_content"], 0.10)
+        self.assertLess(pt_dry["relative_conductivity"], 0.01)
+
+    def test_bishops_limit_equilibrium_moment_closure_and_taylor_benchmark(self):
+        """Task T-142: Verify Bishop's Simplified Picard iteration convergence, moment balance closure, and seismic destabilization."""
+        from app.models.schemas import (
+            calculate_bishops_simplified_fs,
+            calculate_janbu_simplified_fs,
+            SlopeHazardTier
+        )
+
+        # 1. Limit equilibrium moment balance closure
+        sim = calculate_bishops_simplified_fs({
+            "dam_id": "DAM-MOMENT-01",
+            "soil_texture": "silt_tailings"
+        })
+        fs = sim["factor_of_safety"]
+        self.assertGreater(fs, 1.0)
+        self.assertLess(fs, 2.5)
+
+        # Resisting shear forces and slice equilibrium closure
+        slices = sim["slices"]
+        self.assertGreater(len(slices), 0)
+        sum_t = sum(s["shear_resistance_t_kn_m"] for s in slices)
+        sum_n = sum(s["effective_normal_force_n_kn_m"] for s in slices)
+        self.assertGreater(sum_t, 0.0, "Total mobilized shear resistance along slip arc must be positive")
+        self.assertGreater(sum_n, 0.0, "Total effective normal force along slip arc must be positive")
+
+        # Taylor / Coulomb shear strength scaling: increasing cohesion or friction angle must increase FS
+        sim_high_phi = calculate_bishops_simplified_fs({
+            "dam_id": "DAM-MOMENT-01",
+            "soil_texture": "silt_tailings",
+            "friction_angle_deg": 38.0
+        })
+        self.assertGreater(sim_high_phi["factor_of_safety"], fs, "Increasing friction angle phi' must increase Factor of Safety")
+
+        # 2. Monotonic destabilization with seismic coefficient kh
+        sim_seismic_0 = calculate_bishops_simplified_fs({"dam_id": "DAM-SEISMIC", "seismic_coefficient_kh": 0.0})
+        sim_seismic_1 = calculate_bishops_simplified_fs({"dam_id": "DAM-SEISMIC", "seismic_coefficient_kh": 0.10})
+        sim_seismic_2 = calculate_bishops_simplified_fs({"dam_id": "DAM-SEISMIC", "seismic_coefficient_kh": 0.20})
+
+        self.assertGreater(sim_seismic_0["factor_of_safety"], sim_seismic_1["factor_of_safety"])
+        self.assertGreater(sim_seismic_1["factor_of_safety"], sim_seismic_2["factor_of_safety"])
+
+        # 3. Janbu simplified non-circular curvature correction factor f0 >= 1.0
+        janbu = calculate_janbu_simplified_fs({"dam_id": "DAM-JANBU-02", "soil_texture": "silt_tailings"})
+        self.assertGreaterEqual(janbu["curvature_correction_f0"], 1.0)
+        self.assertLessEqual(janbu["curvature_correction_f0"], 1.3)
+
 if __name__ == "__main__":
     unittest.main()
+

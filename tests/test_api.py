@@ -2111,8 +2111,110 @@ class TestGIOSApi(unittest.TestCase):
             self.assertGreater(len(res_tile.content), 100)
             self.assertEqual(res_tile.content[:4], b"\x89PNG")
 
+    def test_geotechnical_phreatic_seepage_and_tiles_api(self):
+        """Test POST /api/v1/analysis/geotechnical/phreatic-seepage, aliases, GET details, SWRC inversion, piezometers, and dynamic XYZ tiles."""
+        payload = {
+            "simulationId": "SIM_TEST_SEEPAGE_QA",
+            "damId": "TAILINGS_DAM_A",
+            "damName": "North Tailings Impoundment",
+            "reservoirPoolElevationM": 812.0,
+            "tailwaterElevationM": 752.0,
+            "embankment": {
+                "crestElevationM": 820.0,
+                "baseElevationM": 750.0,
+                "crestWidthM": 12.0,
+                "upstreamSlopeHV": 2.5,
+                "downstreamSlopeHV": 2.0
+            },
+            "soilParams": {
+                "texture": "silt_tailings",
+                "ksatMs": 1.5e-6,
+                "thetaS": 0.46,
+                "thetaR": 0.035,
+                "alphaM1": 1.6,
+                "n": 1.38
+            },
+            "transectStationsCount": 50
+        }
+
+        # 1. Primary endpoint
+        res = self.client.post("/api/v1/analysis/geotechnical/phreatic-seepage", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data.get("simulationId") or data.get("simulation_id"), "SIM_TEST_SEEPAGE_QA")
+        self.assertEqual(data.get("damId") or data.get("dam_id"), "TAILINGS_DAM_A")
+        self.assertEqual(data.get("status"), "completed")
+        self.assertGreater(data.get("reservoirHeadM") or data.get("reservoir_head_m"), 0.0)
+        self.assertGreater(data.get("tailwaterHeadM") or data.get("tailwater_head_m"), 0.0)
+        self.assertGreater(data.get("seepageDischargeM3sM") or data.get("seepage_discharge_m3s_m"), 0.0)
+        self.assertGreater(data.get("exitGradientMax") or data.get("exit_gradient_max"), 0.0)
+        self.assertGreater(data.get("factorOfSafetyPiping") or data.get("factor_of_safety_piping"), 0.0)
+        self.assertTrue("tileUrlTemplate" in data or "tile_url_template" in data)
+
+        # 2. Route aliases
+        res_alias1 = self.client.post("/api/v1/geotechnical/phreatic-seepage", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/analysis/phreatic-seepage", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+        res_alias3 = self.client.post("/api/v1/geotechnical/phreatic_seepage", json=payload)
+        self.assertEqual(res_alias3.status_code, 200)
+
+        # 3. GET simulation detail
+        res_detail = self.client.get("/api/v1/analysis/geotechnical/phreatic-seepage/SIM_TEST_SEEPAGE_QA")
+        self.assertEqual(res_detail.status_code, 200)
+        detail_data = res_detail.json()
+        self.assertEqual(detail_data.get("simulationId") or detail_data.get("simulation_id"), "SIM_TEST_SEEPAGE_QA")
+
+        res_detail_alias = self.client.get("/api/v1/geotechnical/phreatic-seepage/SIM_TEST_SEEPAGE_QA")
+        self.assertEqual(res_detail_alias.status_code, 200)
+
+        # 4. SWRC Inversion endpoint & aliases
+        swrc_payload = {
+            "soilTexture": "silt_tailings",
+            "matricSuctionRangeKpa": [0.1, 1000.0],
+            "numEvaluationPoints": 50
+        }
+        res_swrc = self.client.post("/api/v1/analysis/geotechnical/swrc-inversion", json=swrc_payload)
+        self.assertEqual(res_swrc.status_code, 200)
+        swrc_data = res_swrc.json()
+        self.assertEqual(swrc_data.get("soilTexture") or swrc_data.get("soil_texture"), "silt_tailings")
+        self.assertGreater(len(swrc_data.get("curvePoints") or swrc_data.get("curve_points") or []), 0)
+
+        res_swrc_alias = self.client.post("/api/v1/geotechnical/swrc-inversion", json=swrc_payload)
+        self.assertEqual(res_swrc_alias.status_code, 200)
+
+        # 5. In-situ piezometers endpoint & aliases
+        res_piezo = self.client.get("/api/v1/analysis/geotechnical/piezometers/TAILINGS_DAM_A")
+        self.assertEqual(res_piezo.status_code, 200)
+        piezo_data = res_piezo.json()
+        self.assertIsInstance(piezo_data, list)
+        self.assertGreater(len(piezo_data), 0)
+
+        res_piezo_alias = self.client.get("/api/v1/geotechnical/piezometers/TAILINGS_DAM_A")
+        self.assertEqual(res_piezo_alias.status_code, 200)
+
+        # 6. Dynamic XYZ Tile Streaming across metrics
+        sim_id = "SIM_TEST_SEEPAGE_QA"
+        tile_urls = [
+            f"/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/saturation/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/pore_pressure/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/gradient/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/hydraulic_head/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/suction/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/phreatic-seepage/{sim_id}/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/phreatic-seepage/{sim_id}/saturation/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

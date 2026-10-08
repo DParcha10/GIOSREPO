@@ -138,9 +138,36 @@ DEFAULT_INDEX_RANGES = {
     "exit_gradient": (0.0, 1.0),
     "gradient": (0.0, 1.0),
     "hydraulic_head": (750.0, 825.0),
-    "total_head": (750.0, 825.0),
     "suction": (0.0, 500.0),
-    "matric_suction": (0.0, 500.0)
+    "matric_suction": (0.0, 500.0),
+    "slope_stability": (0.8, 2.5),
+    "factor_of_safety": (0.8, 2.5),
+    "fs": (0.8, 2.5),
+    "geotechnical_slope_stability": (0.8, 2.5),
+    "shear_resistance": (0.0, 200.0),
+    "shear_stress": (0.0, 200.0),
+    "effective_normal_force": (0.0, 400.0),
+    "slip_surface": (0.0, 1.0),
+    "insar_creep": (-35.0, 5.0),
+    "suction_cohesion": (0.0, 50.0),
+    "rainfall_infiltration": (0.8, 2.2),
+    "transient_factor_of_safety": (0.8, 2.2),
+    "wetting_front_depth": (0.0, 5.0),
+    "wetting_front": (0.0, 5.0),
+    "infiltration_rate": (0.0, 50.0),
+    "cumulative_infiltration": (0.0, 150.0),
+    "runoff_rate": (0.0, 30.0),
+    "apparent_thermal_inertia": (0.010, 0.080),
+    "thermal_apparent_inertia": (0.010, 0.080),
+    "thermal_inertia": (0.010, 0.080),
+    "ati": (0.010, 0.080),
+    "dtr": (5.0, 25.0),
+    "dtr_celsius": (5.0, 25.0),
+    "day_lst": (15.0, 45.0),
+    "night_lst": (5.0, 25.0),
+    "t_day": (15.0, 45.0),
+    "t_night": (5.0, 25.0),
+    "albedo": (0.05, 0.35)
 }
 
 class TileService:
@@ -231,7 +258,7 @@ class TileService:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
         raw_idx = str(index.value if hasattr(index, "value") else index).lower().strip() if index else "rgb"
-        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
+        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
             idx_clean = raw_idx
         else:
             idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
@@ -580,6 +607,195 @@ class TileService:
                     val = np.where(~is_saturated, np.clip(-depth_below_water * 9.81, 0.0, 600.0), 0.0)
                 else:
                     val = np.where(is_saturated, 1.0, 0.2)
+            elif col_clean in {"geotechnical_slope_stability", "slope_stability_geotechnical"} or (col_clean == "slope_stability" and (idx_clean in {"factor_of_safety", "fs", "slip_surface", "shear_resistance", "shear_stress", "effective_normal_force", "apparent_cohesion", "suction_cohesion", "insar_creep"} or "sim" in item_id.lower())) or idx_clean in {"geotechnical_slope_stability", "factor_of_safety", "fs", "slip_surface", "shear_resistance", "shear_stress", "effective_normal_force", "apparent_cohesion", "suction_cohesion", "insar_creep"}:
+                # 2D Geotechnical slope stability limit equilibrium & InSAR creep field
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                # Geometry: base elevation 750m, crest elevation 820m
+                dam_base = 750.0
+                dam_crest = 820.0
+                dam_height = 70.0
+                # Embankment cross-section profile (upstream, crest, downstream)
+                surf_elev = np.where(
+                    u_s < 0.35,
+                    dam_base + (u_s / 0.35) * dam_height,
+                    np.where(
+                        u_s <= 0.45,
+                        dam_crest,
+                        np.where(
+                            u_s <= 0.95,
+                            dam_crest - ((u_s - 0.45) / 0.50) * dam_height,
+                            dam_base
+                        )
+                    )
+                )
+
+                current_elev = dam_base + v_s * (dam_height + 15.0)
+
+                # Dupuit-Forchheimer phreatic surface
+                h1_rel = 62.0
+                h2_rel = 2.0
+                x_entry = 0.25
+                x_exit = 0.85
+                seep_span = max(0.1, x_exit - x_entry)
+                frac_s = np.clip((u_s - x_entry) / seep_span, 0.0, 1.0)
+                y_sq = np.maximum(h2_rel**2, h1_rel**2 - (h1_rel**2 - h2_rel**2) * frac_s)
+                h_rel = np.where(u_s < x_entry, h1_rel, np.where(u_s > x_exit, h2_rel, np.sqrt(y_sq)))
+                phreatic_elev = dam_base + h_rel
+
+                # Critical circular slip surface geometry
+                xc_norm = 0.60
+                yc_elev = dam_crest + 0.70 * dam_height
+                r_norm = dam_height * 1.35
+                dx_m = (u_s - xc_norm) * 200.0
+                dy_m = current_elev - yc_elev
+                dist_to_center = np.sqrt(dx_m**2 + dy_m**2)
+                slip_surface_base = yc_elev - np.sqrt(np.maximum(0.0, r_norm**2 - dx_m**2))
+
+                depth_below_ground = np.maximum(0.0, surf_elev - current_elev)
+                inside_embankment = (current_elev <= surf_elev) & (current_elev >= dam_base - 10.0)
+                in_slip_mass = inside_embankment & (current_elev >= slip_surface_base) & (u_s >= 0.40) & (u_s <= 0.95)
+
+                pore_press = np.where(
+                    current_elev <= phreatic_elev,
+                    np.clip((phreatic_elev - current_elev) * 9.81, 0.0, 450.0),
+                    0.0
+                )
+                matric_suction = np.where(
+                    current_elev > phreatic_elev,
+                    np.clip((current_elev - phreatic_elev) * 9.81, 0.0, 400.0),
+                    0.0
+                )
+
+                if idx_clean in {"factor_of_safety", "fs", "slope_stability", "geotechnical_slope_stability"}:
+                    dist_to_slip_arc = np.abs(dist_to_center - r_norm)
+                    shear_band_proximity = np.exp(-(dist_to_slip_arc / 8.0)**2)
+                    local_fs = np.where(
+                        in_slip_mass,
+                        1.18 + 0.35 * (depth_below_ground / dam_height) - 0.20 * shear_band_proximity + (pore_press / 450.0) * (-0.15),
+                        np.where(
+                            inside_embankment,
+                            1.75 + 0.40 * (1.0 - u_s),
+                            2.50
+                        )
+                    )
+                    val = np.clip(local_fs + (base_variation - 0.5) * 0.04, 0.60, 3.00)
+                elif idx_clean in {"pore_pressure", "pressure", "u", "pore_water_pressure"}:
+                    val = np.where(inside_embankment, pore_press, 0.0)
+                elif idx_clean in {"suction", "matric_suction", "psi", "suction_cohesion", "apparent_cohesion"}:
+                    val = np.where(inside_embankment, matric_suction * 0.25, 0.0)
+                elif idx_clean in {"shear_resistance", "shear_stress", "shear_strength", "mobilized_shear"}:
+                    sigma_v = np.clip(depth_below_ground * 19.5, 0.0, 600.0)
+                    sigma_eff = np.maximum(0.0, sigma_v - pore_press)
+                    c_eff = 5.0 + np.where(current_elev > phreatic_elev, matric_suction * 0.25, 0.0)
+                    tau_f = c_eff + sigma_eff * np.tan(np.radians(28.0))
+                    val = np.where(inside_embankment, np.clip(tau_f, 0.0, 300.0), 0.0)
+                elif idx_clean in {"effective_normal_force", "effective_stress", "normal_force"}:
+                    sigma_v = np.clip(depth_below_ground * 19.5, 0.0, 600.0)
+                    sigma_eff = np.maximum(0.0, sigma_v - pore_press)
+                    val = np.where(inside_embankment, np.clip(sigma_eff, 0.0, 500.0), 0.0)
+                elif idx_clean in {"insar_creep", "creep_velocity", "displacement"}:
+                    toe_creep = np.exp(-((u_s - 0.85) / 0.12)**2) * (-28.0)
+                    crest_settle = np.exp(-((u_s - 0.40) / 0.10)**2) * (-8.0)
+                    val = np.clip(toe_creep + crest_settle + (base_variation - 0.5) * 2.0, -35.0, 2.0)
+                elif idx_clean in {"slip_surface", "critical_slip", "contours"}:
+                    dist_to_slip_arc = np.abs(dist_to_center - r_norm)
+                    val = np.where(inside_embankment, np.exp(-(dist_to_slip_arc / 5.0)**2), 0.0)
+                else:
+                    val = base_variation
+            elif col_clean in {"geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration"} or (col_clean in {"slope_stability", "geotechnical_slope_stability"} and idx_clean in {"wetting_front", "wetting_front_depth", "infiltration_rate", "cumulative_infiltration", "runoff_rate", "transient_factor_of_safety"}) or idx_clean in {"rainfall_infiltration", "wetting_front", "wetting_front_depth", "infiltration_rate", "cumulative_infiltration", "runoff_rate", "transient_factor_of_safety"}:
+                # 2D Green-Ampt transient rainfall infiltration & wetting front slope stability decay
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                dam_base = 750.0
+                dam_crest = 820.0
+                dam_height = 70.0
+                surf_elev = np.where(
+                    u_s < 0.35,
+                    dam_base + (u_s / 0.35) * dam_height,
+                    np.where(
+                        u_s <= 0.45,
+                        dam_crest,
+                        np.where(
+                            u_s <= 0.95,
+                            dam_crest - ((u_s - 0.45) / 0.50) * dam_height,
+                            dam_base
+                        )
+                    )
+                )
+                current_elev = dam_base + v_s * (dam_height + 15.0)
+                depth_below_ground = np.maximum(0.0, surf_elev - current_elev)
+                inside_embankment = (current_elev <= surf_elev) & (current_elev >= dam_base - 10.0)
+
+                # Wetting front advancement from slope face
+                slope_angle_factor = np.where((u_s >= 0.45) & (u_s <= 0.95), 0.75, 1.0)
+                zw_depth = np.clip(1.85 * slope_angle_factor * (0.85 + 0.30 * base_variation), 0.0, 5.0)
+                is_wetted = inside_embankment & (depth_below_ground <= zw_depth)
+
+                # Critical slip surface (xc=0.60, yc=crest+0.7*H, r=1.35*H)
+                xc_norm = 0.60
+                yc_elev = dam_crest + 0.70 * dam_height
+                r_norm = dam_height * 1.35
+                dx_m = (u_s - xc_norm) * 200.0
+                dy_m = current_elev - yc_elev
+                dist_to_center = np.sqrt(dx_m**2 + dy_m**2)
+                slip_surface_base = yc_elev - np.sqrt(np.maximum(0.0, r_norm**2 - dx_m**2))
+                in_slip_mass = inside_embankment & (current_elev >= slip_surface_base) & (u_s >= 0.40) & (u_s <= 0.95)
+
+                if idx_clean in {"factor_of_safety", "fs", "transient_factor_of_safety", "rainfall_infiltration"}:
+                    dist_to_slip_arc = np.abs(dist_to_center - r_norm)
+                    shear_band = np.exp(-(dist_to_slip_arc / 8.0)**2)
+                    suction_loss_factor = np.where(is_wetted, 0.32, 0.05)
+                    local_fs = np.where(
+                        in_slip_mass,
+                        1.28 - suction_loss_factor - 0.15 * shear_band + 0.25 * (depth_below_ground / dam_height),
+                        np.where(inside_embankment, 1.80 - 0.15 * suction_loss_factor, 2.50)
+                    )
+                    val = np.clip(local_fs + (base_variation - 0.5) * 0.05, 0.70, 2.50)
+                elif idx_clean in {"wetting_front", "wetting_front_depth", "depth"}:
+                    val = np.where(inside_embankment, zw_depth, 0.0)
+                elif idx_clean in {"infiltration_rate", "rate"}:
+                    val = np.where(inside_embankment, np.clip(18.5 * slope_angle_factor * (0.8 + 0.4 * base_variation), 0.0, 50.0), 0.0)
+                elif idx_clean in {"cumulative_infiltration", "cum_f", "f"}:
+                    val = np.where(inside_embankment, np.clip(85.0 * slope_angle_factor * (0.85 + 0.3 * base_variation), 0.0, 180.0), 0.0)
+                elif idx_clean in {"runoff_rate", "runoff"}:
+                    val = np.where(inside_embankment, np.clip(12.0 * (1.0 - slope_angle_factor * 0.8) + base_variation * 3.0, 0.0, 35.0), 0.0)
+                elif idx_clean in {"suction", "slip_surface_suction", "matric_suction"}:
+                    suction_val = np.where(is_wetted, 2.5 + base_variation * 3.0, 32.0 - depth_below_ground * 4.0)
+                    val = np.where(inside_embankment, np.clip(suction_val, 0.0, 50.0), 0.0)
+                else:
+                    val = np.clip(1.25 + (base_variation - 0.5) * 0.4, 0.8, 2.5)
+
+            elif col_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati"} or idx_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal_inertia", "ati", "dtr", "dtr_celsius", "day_lst", "night_lst", "t_day", "t_night", "albedo"}:
+                # 2D Remote sensing Apparent Thermal Inertia (ATI) phreatic moisture tracing & daylighting seepage
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                seepage_corridor = np.exp(-((u_s - 0.80) / 0.08)**2) * (0.85 + 0.15 * np.cos(v_s * 4.0 * math.pi))
+                albedo_grid = np.clip(0.22 - 0.12 * seepage_corridor + (base_variation - 0.5) * 0.03, 0.06, 0.35)
+
+                day_lst_grid = 38.0 - 14.0 * seepage_corridor + (base_variation - 0.5) * 3.0
+                night_lst_grid = 13.5 + 4.5 * seepage_corridor + (base_variation - 0.5) * 1.5
+                dtr_grid = np.maximum(2.0, day_lst_grid - night_lst_grid)
+
+                ati_grid = np.clip((1.0 - albedo_grid) / dtr_grid, 0.008, 0.095)
+
+                if idx_clean in {"thermal_inertia", "apparent_thermal_inertia", "thermal_apparent_inertia", "ati"}:
+                    val = ati_grid
+                elif idx_clean in {"dtr", "dtr_celsius", "diurnal_temperature_range"}:
+                    val = dtr_grid
+                elif idx_clean in {"day_lst", "t_day", "day_temperature"}:
+                    val = day_lst_grid
+                elif idx_clean in {"night_lst", "t_night", "night_temperature"}:
+                    val = night_lst_grid
+                elif idx_clean in {"albedo", "alpha"}:
+                    val = albedo_grid
+                elif idx_clean in {"seepage_saturation", "anomaly", "thermal_seepage"}:
+                    val = np.clip(seepage_corridor, 0.0, 1.0)
+                else:
+                    val = ati_grid
             else:
                 val = base_variation
 
@@ -665,6 +881,12 @@ class TileService:
                 rgba[flood_extent & (val >= 1.0), 3] = 225
             elif col_clean in {"phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface"} or idx_clean in {"phreatic_seepage", "saturation", "effective_saturation", "pore_pressure", "exit_gradient", "gradient", "hydraulic_head", "total_head", "matric_suction", "suction"}:
                 rgba[:, :, 3] = 220
+            elif col_clean in {"geotechnical_slope_stability", "slope_stability_geotechnical"} or (col_clean == "slope_stability" and (idx_clean in {"factor_of_safety", "fs", "slip_surface", "shear_resistance", "shear_stress", "effective_normal_force", "apparent_cohesion", "suction_cohesion", "insar_creep"} or "sim" in item_id.lower())) or idx_clean in {"geotechnical_slope_stability", "factor_of_safety", "fs", "slip_surface", "shear_resistance", "shear_stress", "effective_normal_force", "apparent_cohesion", "suction_cohesion", "insar_creep"}:
+                rgba[:, :, 3] = 220
+            elif col_clean in {"geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration"} or idx_clean in {"rainfall_infiltration", "wetting_front", "wetting_front_depth", "infiltration_rate", "cumulative_infiltration", "runoff_rate", "transient_factor_of_safety"}:
+                rgba[:, :, 3] = 220
+            elif col_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati"} or idx_clean in {"thermal_apparent_inertia", "apparent_thermal_inertia", "thermal_inertia", "ati", "dtr", "dtr_celsius", "day_lst", "night_lst", "t_day", "t_night", "albedo"}:
+                rgba[:, :, 3] = 230
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
@@ -786,19 +1008,33 @@ class TileService:
 
     def render_slope_stability_tile(
         self,
-        z: int,
-        x: int,
-        y: int,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
         colormap: str = "rdylbu",
-        rescale: Optional[str] = "0.8,2.5"
+        rescale: Optional[str] = "0.8,2.5",
+        sim_id: Optional[str] = None,
+        metric: Optional[str] = None,
+        **kwargs
     ) -> bytes:
-        """Renders 256x256 RGBA tile for infinite slope Factor of Safety (FS)."""
+        """Renders 256x256 RGBA tile for infinite slope Factor of Safety or geotechnical limit equilibrium."""
+        if sim_id or metric:
+            return self.render_geotechnical_slope_stability_tile(
+                sim_id=sim_id or "SIM_SLOPE_001",
+                z=z,
+                x=x,
+                y=y,
+                metric=metric or "factor_of_safety",
+                colormap=colormap,
+                rescale=rescale,
+                **kwargs
+            )
         return self.render_tile(
             collection="slope_stability",
             item_id="slope_stability",
-            z=z,
-            x=x,
-            y=y,
+            z=int(z),
+            x=int(x),
+            y=int(y),
             index="slope_stability",
             colormap=colormap or "rdylbu",
             rescale=rescale or "0.8,2.5"
@@ -1691,6 +1927,223 @@ class TileService:
         return self.render_tile(
             collection="phreatic_seepage",
             item_id=sim_id or "SIM_SEEPAGE_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_geotechnical_slope_stability_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "factor_of_safety",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for geotechnical slope stability limit equilibrium simulation."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "factor_of_safety"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"factor_of_safety", "fs", "slope_stability"}:
+                chosen_cmap = "rdylbu"
+            elif metric_clean in {"pore_pressure", "pressure", "u", "pore_water_pressure"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"suction", "matric_suction", "psi", "suction_cohesion", "apparent_cohesion"}:
+                chosen_cmap = "cividis"
+            elif metric_clean in {"shear_resistance", "shear_stress", "shear_strength", "mobilized_shear"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"effective_normal_force", "effective_stress", "normal_force"}:
+                chosen_cmap = "magma"
+            elif metric_clean in {"insar_creep", "creep_velocity", "displacement"}:
+                chosen_cmap = "turbo"
+            elif metric_clean in {"slip_surface", "critical_slip", "contours"}:
+                chosen_cmap = "hot"
+            else:
+                chosen_cmap = "rdylbu"
+        else:
+            chosen_cmap = colormap
+
+        if not rescale:
+            if metric_clean in {"factor_of_safety", "fs", "slope_stability"}:
+                chosen_rescale = "0.8,2.5"
+            elif metric_clean in {"pore_pressure", "pressure", "u", "pore_water_pressure"}:
+                chosen_rescale = "0.0,300.0"
+            elif metric_clean in {"suction", "matric_suction", "psi", "suction_cohesion", "apparent_cohesion"}:
+                chosen_rescale = "0.0,100.0"
+            elif metric_clean in {"shear_resistance", "shear_stress", "shear_strength", "mobilized_shear"}:
+                chosen_rescale = "0.0,200.0"
+            elif metric_clean in {"effective_normal_force", "effective_stress", "normal_force"}:
+                chosen_rescale = "0.0,400.0"
+            elif metric_clean in {"insar_creep", "creep_velocity", "displacement"}:
+                chosen_rescale = "-35.0,5.0"
+            elif metric_clean in {"slip_surface", "critical_slip", "contours"}:
+                chosen_rescale = "0.0,1.0"
+            else:
+                chosen_rescale = "0.8,2.5"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="geotechnical_slope_stability",
+            item_id=sim_id or "SIM_SLOPE_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_rainfall_infiltration_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "factor_of_safety",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for transient Green-Ampt rainfall infiltration & slope stability simulation."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "factor_of_safety"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"factor_of_safety", "fs", "transient_factor_of_safety", "rainfall_infiltration"}:
+                chosen_cmap = "rdylbu"
+            elif metric_clean in {"wetting_front", "wetting_front_depth", "depth"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"infiltration_rate", "rate"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"cumulative_infiltration", "cum_f", "f"}:
+                chosen_cmap = "cividis"
+            elif metric_clean in {"runoff_rate", "runoff"}:
+                chosen_cmap = "magma"
+            elif metric_clean in {"suction", "slip_surface_suction", "matric_suction"}:
+                chosen_cmap = "cividis"
+            else:
+                chosen_cmap = "rdylbu"
+        else:
+            chosen_cmap = colormap
+
+        if not rescale:
+            if metric_clean in {"factor_of_safety", "fs", "transient_factor_of_safety", "rainfall_infiltration"}:
+                chosen_rescale = "0.8,2.2"
+            elif metric_clean in {"wetting_front", "wetting_front_depth", "depth"}:
+                chosen_rescale = "0.0,5.0"
+            elif metric_clean in {"infiltration_rate", "rate"}:
+                chosen_rescale = "0.0,50.0"
+            elif metric_clean in {"cumulative_infiltration", "cum_f", "f"}:
+                chosen_rescale = "0.0,150.0"
+            elif metric_clean in {"runoff_rate", "runoff"}:
+                chosen_rescale = "0.0,30.0"
+            elif metric_clean in {"suction", "slip_surface_suction", "matric_suction"}:
+                chosen_rescale = "0.0,50.0"
+            else:
+                chosen_rescale = "0.8,2.2"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="geotechnical_rainfall_infiltration",
+            item_id=sim_id or "SIM_INFILTRATION_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_apparent_thermal_inertia_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "thermal_inertia",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for remote sensing Apparent Thermal Inertia (ATI) phreatic moisture analysis."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "thermal_inertia"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"thermal_inertia", "apparent_thermal_inertia", "thermal_apparent_inertia", "ati"}:
+                chosen_cmap = "turbo"
+            elif metric_clean in {"dtr", "dtr_celsius", "diurnal_temperature_range"}:
+                chosen_cmap = "inferno"
+            elif metric_clean in {"day_lst", "t_day", "day_temperature"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"night_lst", "t_night", "night_temperature"}:
+                chosen_cmap = "cividis"
+            elif metric_clean in {"albedo", "alpha"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"seepage_saturation", "anomaly", "thermal_seepage"}:
+                chosen_cmap = "magma"
+            else:
+                chosen_cmap = "turbo"
+        else:
+            chosen_cmap = colormap
+
+        if not rescale:
+            if metric_clean in {"thermal_inertia", "apparent_thermal_inertia", "thermal_apparent_inertia", "ati"}:
+                chosen_rescale = "0.010,0.080"
+            elif metric_clean in {"dtr", "dtr_celsius", "diurnal_temperature_range"}:
+                chosen_rescale = "5.0,25.0"
+            elif metric_clean in {"day_lst", "t_day", "day_temperature"}:
+                chosen_rescale = "15.0,45.0"
+            elif metric_clean in {"night_lst", "t_night", "night_temperature"}:
+                chosen_rescale = "5.0,25.0"
+            elif metric_clean in {"albedo", "alpha"}:
+                chosen_rescale = "0.05,0.35"
+            elif metric_clean in {"seepage_saturation", "anomaly", "thermal_seepage"}:
+                chosen_rescale = "0.0,1.0"
+            else:
+                chosen_rescale = "0.010,0.080"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="thermal_apparent_inertia",
+            item_id=sim_id or "ATI_SEEPAGE_001",
             z=actual_z,
             x=actual_x,
             y=actual_y,

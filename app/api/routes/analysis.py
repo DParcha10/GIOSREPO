@@ -396,10 +396,50 @@ from app.models.schemas import (
     calculate_van_genuchten_swrc,
     calculate_swrc_inversion_curve,
     classify_seepage_hazard_tier,
-    classify_piezometer_anomaly,
     calculate_phreatic_surface_seepage,
     build_phreatic_seepage_tile_url,
-    build_phreatic_seepage_tile_url_template
+    build_phreatic_seepage_tile_url_template,
+    SlopeStabilityMethod,
+    SlopeHazardTier,
+    InSARCreepStatus,
+    SLOPE_HAZARD_TIER_METADATA,
+    INSAR_CREEP_METADATA,
+    CircularSlipSurface,
+    SlopeSlice,
+    InSARCreepVector,
+    BishopSlopeStabilityRequest,
+    BishopSlopeStabilityResponse,
+    SlipSurfaceSearchRequest,
+    SlipSurfaceSearchResponse,
+    classify_slope_hazard_tier,
+    classify_insar_creep_status,
+    calculate_bishops_simplified_fs,
+    calculate_janbu_simplified_fs,
+    search_critical_circular_slip_surface,
+    search_critical_slip_surface,
+    build_slope_stability_tile_url,
+    build_slope_stability_tile_url_template,
+    InfiltrationPondingRegime,
+    RainfallHazardTier,
+    ATIAnomalyClass,
+    GREEN_AMPT_SOIL_METADATA,
+    RAINFALL_HAZARD_TIER_METADATA,
+    ATI_ANOMALY_METADATA,
+    RainfallHyetographPoint,
+    InfiltrationTimeStep,
+    RainfallInfiltrationRequest,
+    RainfallInfiltrationResponse,
+    ATIPoint,
+    ApparentThermalInertiaRequest,
+    ApparentThermalInertiaResponse,
+    calculate_green_ampt_infiltration,
+    calculate_apparent_thermal_inertia,
+    classify_infiltration_hazard_tier,
+    classify_ati_anomaly,
+    build_rainfall_infiltration_tile_url,
+    build_rainfall_infiltration_tile_url_template,
+    build_apparent_thermal_inertia_tile_url,
+    build_apparent_thermal_inertia_tile_url_template
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -6386,6 +6426,425 @@ def get_analysis_phreatic_seepage_tile_metric(
     rescale: Optional[str] = None
 ):
     return get_phreatic_seepage_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# CYCLE v2.5.13: LIMIT EQUILIBRIUM SLOPE STABILITY (BISHOP/JANBU), PHREATIC PORE
+# PRESSURE COUPLING, CRITICAL SLIP SURFACE SEARCH & INSAR CREEP FUSION PIPELINES
+# ============================================================================
+
+SLOPE_STABILITY_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_SLOPE_STABILITY_STORE_SIZE = 100
+
+
+def _store_slope_stability_simulation(sim_res: Dict[str, Any]):
+    """Caches limit equilibrium slope stability simulation run with bounded LRU memory retention."""
+    sim_id = sim_res.get("simulation_id")
+    if not sim_id:
+        return
+    if len(SLOPE_STABILITY_STORE) >= MAX_SLOPE_STABILITY_STORE_SIZE:
+        oldest_key = next(iter(SLOPE_STABILITY_STORE))
+        SLOPE_STABILITY_STORE.pop(oldest_key, None)
+    SLOPE_STABILITY_STORE[sim_id] = sim_res
+    gc.collect()
+
+
+@router.post("/geotechnical/slope-stability", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False)
+@router.post("/geotechnical/slope-stability-bishop", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/geotechnical/slope_stability", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/geotechnical/slope_stability_bishop", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/slope-stability", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/slope-stability-bishop", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/slope-stability", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/slope-stability-bishop", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/slope_stability", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/slope_stability_bishop", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+def simulate_geotechnical_slope_stability(req: BishopSlopeStabilityRequest):
+    """Executes circular or non-circular limit equilibrium slope stability simulation (Bishop's Simplified or Janbu), phreatic pore pressure coupling, and InSAR creep vector fusion."""
+    method_str = (req.method or "bishops_simplified").lower()
+    if "janbu" in method_str:
+        sim_res = calculate_janbu_simplified_fs(req)
+    else:
+        sim_res = calculate_bishops_simplified_fs(req)
+    _store_slope_stability_simulation(sim_res)
+    return BishopSlopeStabilityResponse(**sim_res)
+
+
+@router.get("/geotechnical/slope-stability/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False)
+@router.get("/geotechnical/slope-stability-bishop/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/geotechnical/slope_stability/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/geotechnical/slope_stability_bishop/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/slope-stability/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/slope-stability-bishop/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/slope-stability/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/slope-stability-bishop/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/slope_stability/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/slope_stability_bishop/{sim_id}", response_model=BishopSlopeStabilityResponse, response_model_by_alias=False, include_in_schema=False)
+def get_slope_stability_simulation_detail(sim_id: str):
+    """Retrieves full slope stability simulation telemetry, slice parameter breakdown, and InSAR creep vectors for given run."""
+    sim_res = SLOPE_STABILITY_STORE.get(sim_id)
+    if not sim_res:
+        sim_res = calculate_bishops_simplified_fs({"simulation_id": sim_id})
+        _store_slope_stability_simulation(sim_res)
+    return BishopSlopeStabilityResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@router.post("/geotechnical/critical-slip-search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False)
+@router.post("/geotechnical/slip-surface-search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/geotechnical/critical_slip_search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/geotechnical/slip_surface_search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/critical-slip-search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/slip-surface-search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/critical-slip-search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/slip-surface-search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/critical_slip_search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/slip_surface_search", response_model=SlipSurfaceSearchResponse, response_model_by_alias=False, include_in_schema=False)
+def search_critical_slip_surface_endpoint(req: SlipSurfaceSearchRequest):
+    """Performs 3D grid search optimization discovering the critical circular slip surface with the minimum Factor of Safety."""
+    search_res = search_critical_circular_slip_surface(req)
+    return SlipSurfaceSearchResponse(**search_res)
+
+
+@router.get("/geotechnical/insar-creep/{dam_id}", response_model=List[InSARCreepVector], response_model_by_alias=False)
+@router.get("/geotechnical/insar_creep/{dam_id}", response_model=List[InSARCreepVector], response_model_by_alias=False, include_in_schema=False)
+@router.get("/insar-creep/{dam_id}", response_model=List[InSARCreepVector], response_model_by_alias=False, include_in_schema=False)
+@router.get("/insar_creep/{dam_id}", response_model=List[InSARCreepVector], response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/insar-creep/{dam_id}", response_model=List[InSARCreepVector], response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/insar_creep/{dam_id}", response_model=List[InSARCreepVector], response_model_by_alias=False, include_in_schema=False)
+def get_dam_insar_creep_vectors(dam_id: str):
+    """Retrieves multi-temporal satellite InSAR radar line-of-sight displacement vectors, vertical velocity, shear strain rates, and creep regime classifications."""
+    for sim in SLOPE_STABILITY_STORE.values():
+        if sim.get("dam_id") == dam_id and sim.get("insar_creep_fusion"):
+            vectors = sim.get("insar_creep_fusion", [])
+            return [v if isinstance(v, InSARCreepVector) else InSARCreepVector(**v) for v in vectors]
+
+    sim_res = calculate_bishops_simplified_fs({"dam_id": dam_id})
+    _store_slope_stability_simulation(sim_res)
+    vectors = sim_res.get("insar_creep_fusion", [])
+    return [v if isinstance(v, InSARCreepVector) else InSARCreepVector(**v) for v in vectors]
+
+
+@tiles_router.get("/geotechnical/slope-stability/{sim_id}/{z}/{x}/{y}.png")
+def get_slope_stability_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "rdylbu",
+    rescale: Optional[str] = "0.8,2.5"
+):
+    """Dynamic XYZ tile streaming for geotechnical slope stability Factor of Safety heatmap."""
+    png_bytes = tile_service.render_geotechnical_slope_stability_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="factor_of_safety",
+        colormap=colormap or "rdylbu",
+        rescale=rescale or "0.8,2.5"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Slope-Stability-LE-v2.5"}
+    )
+
+
+@tiles_router.get("/geotechnical/slope-stability/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_slope_stability_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for geotechnical slope stability with selected analytical metric."""
+    png_bytes = tile_service.render_geotechnical_slope_stability_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Slope-Stability-{metric}"}
+    )
+
+
+@router.get("/tiles/geotechnical/slope-stability/{sim_id}/{z}/{x}/{y}.png")
+def get_analysis_slope_stability_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "rdylbu",
+    rescale: Optional[str] = "0.8,2.5"
+):
+    return get_slope_stability_tile_default(sim_id=sim_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@router.get("/tiles/geotechnical/slope-stability/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_analysis_slope_stability_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_slope_stability_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# CYCLE v2.5.14: TRANSIENT RAINFALL INFILTRATION (GREEN-AMPT), WETTING FRONT
+# ADVANCEMENT, SUCTION LOSS DYNAMICS & APPARENT THERMAL INERTIA (ATI) PIPELINES
+# ============================================================================
+
+RAINFALL_INFILTRATION_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_RAINFALL_INFILTRATION_STORE_SIZE = 100
+
+APPARENT_THERMAL_INERTIA_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_APPARENT_THERMAL_INERTIA_STORE_SIZE = 100
+
+
+def _store_rainfall_infiltration_simulation(sim_res: Dict[str, Any]):
+    """Caches transient rainfall infiltration simulation run with bounded LRU memory retention."""
+    sim_id = sim_res.get("simulation_id")
+    if not sim_id:
+        return
+    if len(RAINFALL_INFILTRATION_STORE) >= MAX_RAINFALL_INFILTRATION_STORE_SIZE:
+        oldest_key = next(iter(RAINFALL_INFILTRATION_STORE))
+        RAINFALL_INFILTRATION_STORE.pop(oldest_key, None)
+    RAINFALL_INFILTRATION_STORE[sim_id] = sim_res
+    gc.collect()
+
+
+def _store_apparent_thermal_inertia_analysis(analysis_res: Dict[str, Any]):
+    """Caches Apparent Thermal Inertia analysis run with bounded LRU memory retention."""
+    analysis_id = analysis_res.get("analysis_id")
+    if not analysis_id:
+        return
+    if len(APPARENT_THERMAL_INERTIA_STORE) >= MAX_APPARENT_THERMAL_INERTIA_STORE_SIZE:
+        oldest_key = next(iter(APPARENT_THERMAL_INERTIA_STORE))
+        APPARENT_THERMAL_INERTIA_STORE.pop(oldest_key, None)
+    APPARENT_THERMAL_INERTIA_STORE[analysis_id] = analysis_res
+    gc.collect()
+
+
+@router.post("/geotechnical/rainfall-infiltration", response_model=RainfallInfiltrationResponse, response_model_by_alias=False)
+@router.post("/geotechnical/rainfall_infiltration", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/rainfall-infiltration", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/rainfall_infiltration", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/rainfall-infiltration", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/rainfall_infiltration", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+def simulate_rainfall_infiltration_endpoint(req: RainfallInfiltrationRequest):
+    """Simulates transient Green-Ampt rainfall infiltration, wetting front advancement, and slope FS decay."""
+    sim_res = calculate_green_ampt_infiltration(req)
+    _store_rainfall_infiltration_simulation(sim_res)
+    return RainfallInfiltrationResponse(**sim_res)
+
+
+@router.get("/geotechnical/rainfall-infiltration/{sim_id}", response_model=RainfallInfiltrationResponse, response_model_by_alias=False)
+@router.get("/geotechnical/rainfall_infiltration/{sim_id}", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/rainfall-infiltration/{sim_id}", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/rainfall_infiltration/{sim_id}", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/rainfall-infiltration/{sim_id}", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/rainfall_infiltration/{sim_id}", response_model=RainfallInfiltrationResponse, response_model_by_alias=False, include_in_schema=False)
+def get_rainfall_infiltration_simulation_detail(sim_id: str):
+    """Retrieves full transient rainfall infiltration simulation time steps and wetting front curve for given run."""
+    sim_res = RAINFALL_INFILTRATION_STORE.get(sim_id)
+    if not sim_res:
+        sim_res = calculate_green_ampt_infiltration({"simulation_id": sim_id})
+        _store_rainfall_infiltration_simulation(sim_res)
+    return RainfallInfiltrationResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@router.post("/thermal/apparent-inertia", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False)
+@router.post("/thermal/apparent_inertia", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/apparent-inertia", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/apparent_inertia", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_apparent_thermal_inertia_endpoint(req: ApparentThermalInertiaRequest):
+    """Computes Apparent Thermal Inertia (ATI) and identifies phreatic seepage daylighting anomalies."""
+    analysis_res = calculate_apparent_thermal_inertia(req)
+    _store_apparent_thermal_inertia_analysis(analysis_res)
+    return ApparentThermalInertiaResponse(**analysis_res)
+
+
+@router.get("/thermal/apparent-inertia/{analysis_id}", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False)
+@router.get("/thermal/apparent_inertia/{analysis_id}", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/apparent-inertia/{analysis_id}", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/apparent_inertia/{analysis_id}", response_model=ApparentThermalInertiaResponse, response_model_by_alias=False, include_in_schema=False)
+def get_apparent_thermal_inertia_analysis_detail(analysis_id: str):
+    """Retrieves Apparent Thermal Inertia analysis profile and anomaly classification for given run."""
+    analysis_res = APPARENT_THERMAL_INERTIA_STORE.get(analysis_id)
+    if not analysis_res:
+        analysis_res = calculate_apparent_thermal_inertia({"analysis_id": analysis_id})
+        _store_apparent_thermal_inertia_analysis(analysis_res)
+    return ApparentThermalInertiaResponse(**analysis_res) if isinstance(analysis_res, dict) else analysis_res
+
+
+@tiles_router.get("/geotechnical/rainfall-infiltration/{sim_id}/{z}/{x}/{y}.png")
+def get_rainfall_infiltration_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "rdylbu",
+    rescale: Optional[str] = "0.8,2.2"
+):
+    """Dynamic XYZ tile streaming for transient rainfall infiltration Factor of Safety decay heatmap."""
+    png_bytes = tile_service.render_rainfall_infiltration_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="factor_of_safety",
+        colormap=colormap or "rdylbu",
+        rescale=rescale or "0.8,2.2"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Infiltration-GreenAmpt-v2.5"}
+    )
+
+
+@tiles_router.get("/geotechnical/rainfall-infiltration/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_rainfall_infiltration_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for transient rainfall infiltration with selected metric."""
+    png_bytes = tile_service.render_rainfall_infiltration_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Infiltration-{metric}"}
+    )
+
+
+@router.get("/tiles/geotechnical/rainfall-infiltration/{sim_id}/{z}/{x}/{y}.png")
+def get_analysis_rainfall_infiltration_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "rdylbu",
+    rescale: Optional[str] = "0.8,2.2"
+):
+    return get_rainfall_infiltration_tile_default(sim_id=sim_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@router.get("/tiles/geotechnical/rainfall-infiltration/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_analysis_rainfall_infiltration_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_rainfall_infiltration_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@tiles_router.get("/thermal/apparent-inertia/{sim_id}/{z}/{x}/{y}.png")
+def get_apparent_thermal_inertia_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.010,0.080"
+):
+    """Dynamic XYZ tile streaming for remote sensing Apparent Thermal Inertia (ATI) phreatic moisture heatmap."""
+    png_bytes = tile_service.render_apparent_thermal_inertia_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="thermal_inertia",
+        colormap=colormap or "turbo",
+        rescale=rescale or "0.010,0.080"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Thermal-ATI-v2.5"}
+    )
+
+
+@tiles_router.get("/thermal/apparent-inertia/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_apparent_thermal_inertia_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for remote sensing Apparent Thermal Inertia with selected metric."""
+    png_bytes = tile_service.render_apparent_thermal_inertia_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Thermal-ATI-{metric}"}
+    )
+
+
+@router.get("/tiles/thermal/apparent-inertia/{sim_id}/{z}/{x}/{y}.png")
+def get_analysis_apparent_thermal_inertia_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.010,0.080"
+):
+    return get_apparent_thermal_inertia_tile_default(sim_id=sim_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@router.get("/tiles/thermal/apparent-inertia/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_analysis_apparent_thermal_inertia_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_apparent_thermal_inertia_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
 
 
 

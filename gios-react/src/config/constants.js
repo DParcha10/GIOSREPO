@@ -1104,6 +1104,14 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'TILES_GEOTECHNICAL_SLOPE_STABILITY_METRIC':
       case 'TILES_SLOPE_STABILITY_BISHOP_METRIC':
         return endpoint(params.simId || params.sim_id || 'SIM_BISHOP_001', params.metric || 'factor_of_safety', params.z, params.x, params.y);
+      case 'TILES_RAINFALL_INFILTRATION':
+        return endpoint(params.simId || params.sim_id || 'SIM_INFILTRATION_001', params.z, params.x, params.y);
+      case 'TILES_RAINFALL_INFILTRATION_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_INFILTRATION_001', params.metric || 'factor_of_safety', params.z, params.x, params.y);
+      case 'TILES_THERMAL_APPARENT_INERTIA':
+        return endpoint(params.simId || params.sim_id || 'ATI_SEEPAGE_001', params.z, params.x, params.y);
+      case 'TILES_THERMAL_APPARENT_INERTIA_METRIC':
+        return endpoint(params.simId || params.sim_id || 'ATI_SEEPAGE_001', params.metric || 'thermal_inertia', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -9799,6 +9807,457 @@ export const buildGeotechnicalSlopeStabilityTileUrlTemplate = (simId, metric = '
 };
 
 export const buildSlopeStabilityBishopTileUrlTemplate = buildGeotechnicalSlopeStabilityTileUrlTemplate;
+
+// ============================================================================
+// CYCLE v2.5.14: TRANSIENT RAINFALL INFILTRATION (GREEN-AMPT), UNSATURATED SUCTION LOSS
+// & APPARENT THERMAL INERTIA (ATI) GEOTHERMAL/OPTICAL MOISTURE TRACING CONTRACTS
+// ============================================================================
+
+export const INFILTRATION_PONDING_REGIMES = {
+  PRE_PONDING: 'pre_ponding',
+  UNSTEADY_PONDING: 'unsteady_ponding',
+  SATURATED_STEADY_STATE: 'saturated_steady_state',
+  POST_STORM_REDISTRIBUTION: 'post_storm_redistribution'
+};
+
+export const RAINFALL_HAZARD_TIERS = {
+  LOW_INFILTRATION_HAZARD: 'low_infiltration_hazard',
+  MODERATE_SUCTION_LOSS: 'moderate_suction_loss',
+  ELEVATED_FAILURE_RISK: 'elevated_failure_risk',
+  CRITICAL_INDUCED_SLIP: 'critical_induced_slip'
+};
+
+export const ATI_ANOMALY_CLASSES = {
+  NORMAL_DRY_SHELL: 'normal_dry_shell',
+  MODERATE_ANTECEDENT_MOISTURE: 'moderate_antecedent_moisture',
+  ELEVATED_SEEPAGE_SATURATION: 'elevated_seepage_saturation',
+  CRITICAL_DAYLIGHTING_OUTFLOW: 'critical_daylighting_outflow'
+};
+
+export const GREEN_AMPT_SOIL_CONFIGS = {
+  silt_tailings: {
+    id: 'silt_tailings',
+    name: 'Hydraulic Silt Tailings',
+    theta_s: 0.44,
+    theta_i_default: 0.18,
+    delta_theta: 0.26,
+    suction_head_psi_f_mm: 190.0,
+    suction_head_psi_f_kpa: 1.86,
+    ks_mm_hr: 3.6,
+    ks_m_s: 1.0e-6,
+    porosity: 0.46
+  },
+  clay_core: {
+    id: 'clay_core',
+    name: 'Compacted Clay Core',
+    theta_s: 0.48,
+    theta_i_default: 0.32,
+    delta_theta: 0.16,
+    suction_head_psi_f_mm: 320.0,
+    suction_head_psi_f_kpa: 3.14,
+    ks_mm_hr: 0.36,
+    ks_m_s: 1.0e-7,
+    porosity: 0.50
+  },
+  sandy_shell: {
+    id: 'sandy_shell',
+    name: 'Compacted Sand / Gravel Shell',
+    theta_s: 0.40,
+    theta_i_default: 0.10,
+    delta_theta: 0.30,
+    suction_head_psi_f_mm: 60.0,
+    suction_head_psi_f_kpa: 0.59,
+    ks_mm_hr: 36.0,
+    ks_m_s: 1.0e-5,
+    porosity: 0.42
+  },
+  gravel_drain: {
+    id: 'gravel_drain',
+    name: 'Coarse Free-Draining Rockfill',
+    theta_s: 0.35,
+    theta_i_default: 0.05,
+    delta_theta: 0.30,
+    suction_head_psi_f_mm: 20.0,
+    suction_head_psi_f_kpa: 0.20,
+    ks_mm_hr: 360.0,
+    ks_m_s: 1.0e-4,
+    porosity: 0.38
+  },
+  weathered_bedrock: {
+    id: 'weathered_bedrock',
+    name: 'Fractured Weathered Bedrock',
+    theta_s: 0.32,
+    theta_i_default: 0.12,
+    delta_theta: 0.20,
+    suction_head_psi_f_mm: 140.0,
+    suction_head_psi_f_kpa: 1.37,
+    ks_mm_hr: 7.2,
+    ks_m_s: 2.0e-6,
+    porosity: 0.35
+  }
+};
+
+export const RAINFALL_HAZARD_TIER_CONFIGS = {
+  low_infiltration_hazard: {
+    id: 'low_infiltration_hazard',
+    name: 'Low Infiltration Hazard (FS >= 1.50)',
+    label: 'Low Infiltration Hazard (FS >= 1.50)',
+    min_fs: 1.50,
+    max_fs: null,
+    color: '#10B981',
+    badge_class: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    stability_narrative: 'Wetting front has not reached critical shear plane; suction buffer maintains apparent cohesion.',
+    action_protocol: 'Continue standard automated meteorological and piezometric logging.'
+  },
+  moderate_suction_loss: {
+    id: 'moderate_suction_loss',
+    name: 'Moderate Suction Loss (1.30 <= FS < 1.50)',
+    label: 'Moderate Suction Loss (1.30 <= FS < 1.50)',
+    min_fs: 1.30,
+    max_fs: 1.50,
+    color: '#3B82F6',
+    badge_class: 'bg-blue-500/20 text-blue-300 border border-blue-500/40',
+    stability_narrative: 'Infiltration front propagating through unsaturated shell; partial dissipation of matric suction.',
+    action_protocol: 'Activate automated hourly pore pressure logging; inspect crest tension crack seals.'
+  },
+  elevated_failure_risk: {
+    id: 'elevated_failure_risk',
+    name: 'Elevated Failure Risk (1.00 <= FS < 1.30)',
+    label: 'Elevated Failure Risk (1.00 <= FS < 1.30)',
+    min_fs: 1.00,
+    max_fs: 1.30,
+    color: '#F59E0B',
+    badge_class: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    stability_narrative: 'Wetting front intersects slip surface; matric suction depleted to near zero; significant reduction in safety margin.',
+    action_protocol: 'Mobilize geotechnical dam safety team; restrict heavy equipment traffic along crest road.'
+  },
+  critical_induced_slip: {
+    id: 'critical_induced_slip',
+    name: 'Critical Rainfall-Induced Slip (FS < 1.00)',
+    label: 'Critical Rainfall-Induced Slip (FS < 1.00)',
+    min_fs: 0.0,
+    max_fs: 1.00,
+    color: '#DC2626',
+    badge_class: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    stability_narrative: 'Complete saturation of shear zone; positive pore pressures generated; imminent slope failure or flowslide.',
+    action_protocol: 'Trigger immediate civil defense emergency warning sirens and begin staged downstream evacuations.'
+  }
+};
+
+export const ATI_ANOMALY_CONFIGS = {
+  normal_dry_shell: {
+    id: 'normal_dry_shell',
+    name: 'Normal Dry Embankment Shell',
+    label: 'Normal Dry Embankment Shell',
+    max_ati: 0.025,
+    color: '#10B981',
+    badge_class: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+    narrative: 'Low apparent thermal inertia consistent with dry granular rockfill and standard diurnal temperature swings.',
+    action_protocol: 'Baseline background thermal regime; no seepage indications.'
+  },
+  moderate_antecedent_moisture: {
+    id: 'moderate_antecedent_moisture',
+    name: 'Moderate Antecedent Moisture',
+    label: 'Moderate Antecedent Moisture',
+    max_ati: 0.045,
+    color: '#3B82F6',
+    badge_class: 'bg-blue-500/20 text-blue-300 border border-blue-500/40',
+    narrative: 'Intermediate thermal inertia typical of capillary fringe or recent rainfall moisture retention.',
+    action_protocol: 'Correlate with recent precipitation records and soil water retention curve.'
+  },
+  elevated_seepage_saturation: {
+    id: 'elevated_seepage_saturation',
+    name: 'Elevated Subsurface Seepage Saturation',
+    label: 'Elevated Subsurface Seepage Saturation',
+    max_ati: 0.070,
+    color: '#F59E0B',
+    badge_class: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+    narrative: 'High thermal inertia suppressing diurnal thermal amplitude; dampens LST swing indicating near-surface phreatic saturation.',
+    action_protocol: 'Schedule drone FLIR thermal survey; cross-reference piezometric pore water pressure readings.'
+  },
+  critical_daylighting_outflow: {
+    id: 'critical_daylighting_outflow',
+    name: 'Critical Daylighting Seepage Outflow / Piping Boil',
+    label: 'Critical Daylighting Seepage Outflow / Piping Boil',
+    max_ati: null,
+    color: '#DC2626',
+    badge_class: 'bg-rose-950/80 text-rose-200 border border-rose-600 animate-pulse',
+    narrative: 'Extreme thermal inertia anomaly indicative of continuous water daylighting, seepage boiling, or internal piping emergence.',
+    action_protocol: 'Deploy immediate emergency on-site inspection; construct inverted gravel filter berm.'
+  }
+};
+
+export const classifyInfiltrationHazardTier = (fs) => {
+  const val = Number(fs);
+  if (val < 1.00) return RAINFALL_HAZARD_TIER_CONFIGS.critical_induced_slip;
+  if (val < 1.30) return RAINFALL_HAZARD_TIER_CONFIGS.elevated_failure_risk;
+  if (val < 1.50) return RAINFALL_HAZARD_TIER_CONFIGS.moderate_suction_loss;
+  return RAINFALL_HAZARD_TIER_CONFIGS.low_infiltration_hazard;
+};
+
+export const classifyAtiAnomaly = (ati) => {
+  const val = Number(ati);
+  if (val >= 0.070) return ATI_ANOMALY_CONFIGS.critical_daylighting_outflow;
+  if (val >= 0.045) return ATI_ANOMALY_CONFIGS.elevated_seepage_saturation;
+  if (val >= 0.025) return ATI_ANOMALY_CONFIGS.moderate_antecedent_moisture;
+  return ATI_ANOMALY_CONFIGS.normal_dry_shell;
+};
+
+export const calculateFredlundApparentShearStrength = (
+  cohesionPrimeKpa,
+  frictionAnglePrimeDeg,
+  phiBDeg,
+  matricSuctionPsiKpa,
+  normalStressKpa = 50.0
+) => {
+  const cPrime = Math.max(0, Number(cohesionPrimeKpa) || 5.0);
+  const phiPrimeRad = (Number(frictionAnglePrimeDeg) || 28.0) * (Math.PI / 180.0);
+  const phiBRad = (Number(phiBDeg) || 14.0) * (Math.PI / 180.0);
+  const psi = Math.max(0, Number(matricSuctionPsiKpa) || 0.0);
+  const sigmaN = Math.max(0, Number(normalStressKpa) || 50.0);
+
+  const suctionCohesion = psi * Math.tan(phiBRad);
+  const apparentCohesion = cPrime + suctionCohesion;
+  const shearStrength = apparentCohesion + sigmaN * Math.tan(phiPrimeRad);
+
+  return {
+    cohesion_prime_kpa: Number(cPrime.toFixed(2)),
+    suction_cohesion_kpa: Number(suctionCohesion.toFixed(2)),
+    apparent_cohesion_kpa: Number(apparentCohesion.toFixed(2)),
+    shear_strength_tau_kpa: Number(shearStrength.toFixed(2))
+  };
+};
+
+export const calculateGreenAmptInfiltration = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `SIM_INFILTRATION_${Date.now()}`;
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const damName = options.dam_name || options.damName || 'North Tailings Impoundment';
+
+  const textureRaw = options.soil_texture || options.soilTexture || 'silt_tailings';
+  const textureKey = String(textureRaw).toLowerCase().replace(/-/g, '_');
+  const meta = GREEN_AMPT_SOIL_CONFIGS[textureKey] || GREEN_AMPT_SOIL_CONFIGS.silt_tailings;
+
+  const thetaS = Number(options.saturated_moisture_theta_s || options.saturatedMoistureThetaS || meta.theta_s);
+  const thetaI = Number(options.initial_moisture_theta_i || options.initialMoistureThetaI || meta.theta_i_default);
+  const deltaTheta = Math.max(0.05, thetaS - thetaI);
+
+  const psiF = Number(options.suction_head_psi_f_mm || options.suctionHeadPsiFMm || meta.suction_head_psi_f_mm);
+  const ks = Number(options.hydraulic_conductivity_ks_mm_hr || options.hydraulicConductivityKsMmHr || meta.ks_mm_hr);
+  const rainfallI = Number(options.rainfall_intensity_mm_hr || options.rainfallIntensityMmHr || 15.0);
+  const stormDur = Math.max(1.0, Number(options.storm_duration_hr || options.stormDurationHr || 24.0));
+  const zSlip = Math.max(0.5, Number(options.critical_slip_depth_m || options.criticalSlipDepthM || 3.5));
+  const psi0 = Math.max(1.0, Number(options.initial_suction_psi0_kpa || options.initialSuctionPsi0Kpa || 30.0));
+  const phiB = Number(options.phi_b_deg || options.phiBDeg || 14.0);
+  const fsBaseline = Math.max(1.0, Number(options.baseline_factor_of_safety || options.baselineFactorOfSafety || 1.52));
+
+  const sw = psiF * deltaTheta;
+
+  let tPonding = null;
+  let fPonding = 0.0;
+  if (rainfallI > ks) {
+    const tpCalc = (ks * sw) / (rainfallI * (rainfallI - ks));
+    if (tpCalc < stormDur) {
+      tPonding = Number(Math.max(0.1, tpCalc).toFixed(2));
+      fPonding = rainfallI * tPonding;
+    }
+  }
+
+  const dt = (tPonding !== null && tPonding < 1.0) ? 0.25 : (stormDur >= 12.0 ? 1.0 : Math.max(0.25, stormDur / 24.0));
+  const numSteps = Math.ceil(stormDur / dt);
+
+  const timeSteps = [];
+  let cumF = 0.0;
+  let minFs = fsBaseline;
+
+  for (let step = 1; step <= numSteps; step++) {
+    const tCurr = Math.min(stormDur, step * dt);
+    let fRate;
+    let runoffRate = 0.0;
+    let regime;
+
+    if (tPonding === null || tCurr <= tPonding) {
+      fRate = rainfallI;
+      cumF = rainfallI * tCurr;
+      runoffRate = 0.0;
+      regime = INFILTRATION_PONDING_REGIMES.PRE_PONDING;
+    } else {
+      const cTarget = (fPonding - sw * Math.log(1.0 + fPonding / Math.max(0.1, sw))) + ks * (tCurr - tPonding);
+      let fGuess = Math.max(fPonding + ks * (tCurr - tPonding), cumF);
+
+      for (let iter = 0; iter < 20; iter++) {
+        const gVal = fGuess - sw * Math.log(1.0 + fGuess / Math.max(0.1, sw)) - cTarget;
+        const gPrime = fGuess / Math.max(0.01, fGuess + sw);
+        if (Math.abs(gVal) < 1e-4 || gPrime < 1e-6) break;
+        fGuess = Math.max(fPonding, fGuess - gVal / gPrime);
+      }
+
+      cumF = fGuess;
+      fRate = ks * (1.0 + sw / Math.max(0.1, cumF));
+      runoffRate = Math.max(0, rainfallI - fRate);
+      regime = fRate > 1.25 * ks ? INFILTRATION_PONDING_REGIMES.UNSTEADY_PONDING : INFILTRATION_PONDING_REGIMES.SATURATED_STEADY_STATE;
+    }
+
+    const zwM = cumF / (1000.0 * deltaTheta);
+    const penetrationRatio = Math.min(1.0, zwM / zSlip);
+    const psiT = Math.max(0, psi0 * (1.0 - Math.pow(penetrationRatio, 2)));
+
+    const tanPhiB = Math.tan(phiB * (Math.PI / 180.0));
+    const tanPhiPrime = Math.tan(28.0 * (Math.PI / 180.0));
+    const sigmaN = 60.0;
+    const cPrime = 5.0;
+    const initStrength = cPrime + psi0 * tanPhiB + sigmaN * tanPhiPrime;
+    const currStrength = cPrime + psiT * tanPhiB + sigmaN * tanPhiPrime;
+    const fsT = Number(Math.max(0.20, fsBaseline * (currStrength / Math.max(0.1, initStrength))).toFixed(3));
+
+    if (fsT < minFs) minFs = fsT;
+
+    timeSteps.push({
+      time_hr: Number(tCurr.toFixed(2)),
+      rainfall_intensity_mm_hr: Number(rainfallI.toFixed(2)),
+      infiltration_rate_mm_hr: Number(fRate.toFixed(2)),
+      cumulative_infiltration_mm: Number(cumF.toFixed(2)),
+      runoff_rate_mm_hr: Number(runoffRate.toFixed(2)),
+      wetting_front_depth_m: Number(zwM.toFixed(3)),
+      slip_surface_suction_kpa: Number(psiT.toFixed(2)),
+      transient_factor_of_safety: fsT,
+      ponding_regime: regime
+    });
+  }
+
+  const hazardTier = classifyInfiltrationHazardTier(minFs);
+  const totalPrecip = rainfallI * stormDur;
+  const totalSurfaceRunoff = Math.max(0, totalPrecip - cumF);
+
+  return {
+    simulation_id: simId,
+    dam_id: damId,
+    dam_name: damName,
+    soil_texture: textureKey,
+    time_to_ponding_hr: tPonding,
+    total_cumulative_infiltration_mm: Number(cumF.toFixed(2)),
+    total_surface_runoff_mm: Number(totalSurfaceRunoff.toFixed(2)),
+    final_wetting_front_depth_m: Number(timeSteps[timeSteps.length - 1].wetting_front_depth_m.toFixed(3)),
+    minimum_transient_fs: Number(minFs.toFixed(3)),
+    final_transient_fs: timeSteps[timeSteps.length - 1].transient_factor_of_safety,
+    hazard_tier: hazardTier.id,
+    tier_metadata: hazardTier,
+    time_steps: timeSteps,
+    decay_curve_geojson: {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: timeSteps.map(ts => [ts.time_hr, ts.transient_factor_of_safety])
+          },
+          properties: { feature_type: 'fs_decay_curve', dam_id: damId, minimum_fs: minFs }
+        }
+      ]
+    },
+    tile_url_template: `/api/v1/tiles/geotechnical/rainfall-infiltration/${simId}/factor_of_safety/{z}/{x}/{y}.png`,
+    simulated_at: new Date().toISOString()
+  };
+};
+
+export const calculateApparentThermalInertia = (options = {}) => {
+  const analysisId = options.analysis_id || options.analysisId || `ATI_SEEPAGE_${Date.now()}`;
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const damName = options.dam_name || options.damName || 'North Tailings Impoundment';
+  const solarCorr = Number(options.solar_correction_factor || options.solarCorrectionFactor || 1.0);
+  const minThreshold = Number(options.min_ati_threshold || options.minAtiThreshold || 0.045);
+
+  const rawPoints = options.transect_points || options.transectPoints || [
+    { station_x_m: 0.0, albedo: 0.22, day_lst_celsius: 36.5, night_lst_celsius: 14.0 },
+    { station_x_m: 45.0, albedo: 0.20, day_lst_celsius: 38.0, night_lst_celsius: 13.5 },
+    { station_x_m: 90.0, albedo: 0.19, day_lst_celsius: 37.2, night_lst_celsius: 14.2 },
+    { station_x_m: 135.0, albedo: 0.15, day_lst_celsius: 29.5, night_lst_celsius: 16.8 },
+    { station_x_m: 180.0, albedo: 0.11, day_lst_celsius: 23.0, night_lst_celsius: 17.5 }
+  ];
+
+  const atiPoints = [];
+  let atiSum = 0.0;
+  let maxAti = 0.0;
+  const counts = {
+    normal_dry_shell: 0,
+    moderate_antecedent_moisture: 0,
+    elevated_seepage_saturation: 0,
+    critical_daylighting_outflow: 0
+  };
+
+  rawPoints.forEach(pt => {
+    const stX = Number(pt.station_x_m || pt.stationXM || 0.0);
+    const alb = Math.max(0.01, Math.min(0.95, Number(pt.albedo || 0.18)));
+    const tDay = Number(pt.day_lst_celsius || pt.dayLstCelsius || 35.0);
+    const tNight = Number(pt.night_lst_celsius || pt.nightLstCelsius || 15.0);
+
+    const dtr = Math.max(1.0, tDay - tNight);
+    const atiVal = Number(((solarCorr * (1.0 - alb)) / dtr).toFixed(4));
+    const tier = classifyAtiAnomaly(atiVal);
+
+    atiSum += atiVal;
+    if (atiVal > maxAti) maxAti = atiVal;
+    counts[tier.id] = (counts[tier.id] || 0) + 1;
+
+    atiPoints.push({
+      station_x_m: Number(stX.toFixed(2)),
+      albedo: Number(alb.toFixed(3)),
+      day_lst_celsius: Number(tDay.toFixed(2)),
+      night_lst_celsius: Number(tNight.toFixed(2)),
+      dtr_celsius: Number(dtr.toFixed(2)),
+      apparent_thermal_inertia: atiVal,
+      anomaly_class: tier.id
+    });
+  });
+
+  const meanAti = Number((atiSum / Math.max(1, atiPoints.length)).toFixed(4));
+  const seepageDetected = maxAti >= minThreshold;
+  const seepageAreaHa = Number(((counts.critical_daylighting_outflow + counts.elevated_seepage_saturation) * 0.45).toFixed(2));
+
+  return {
+    analysis_id: analysisId,
+    dam_id: damId,
+    dam_name: damName,
+    mean_apparent_thermal_inertia: meanAti,
+    max_apparent_thermal_inertia: maxAti,
+    thermal_seepage_detected: seepageDetected,
+    seepage_area_hectares: seepageAreaHa,
+    anomaly_distribution: counts,
+    ati_points: atiPoints,
+    anomaly_geojson: {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: atiPoints.map(p => [p.station_x_m, p.apparent_thermal_inertia])
+          },
+          properties: { feature_type: 'ati_transect_profile', dam_id: damId, mean_ati: meanAti, max_ati: maxAti }
+        }
+      ]
+    },
+    tile_url_template: `/api/v1/tiles/thermal/apparent-inertia/${analysisId}/thermal_inertia/{z}/{x}/{y}.png`,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const buildRainfallInfiltrationTileUrl = (simId, metric = 'factor_of_safety', z = 12, x = 2048, y = 1024) => {
+  return `/api/v1/tiles/geotechnical/rainfall-infiltration/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildRainfallInfiltrationTileUrlTemplate = (simId, metric = 'factor_of_safety') => {
+  return `/api/v1/tiles/geotechnical/rainfall-infiltration/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildApparentThermalInertiaTileUrl = (simId, metric = 'thermal_inertia', z = 12, x = 2048, y = 1024) => {
+  return `/api/v1/tiles/thermal/apparent-inertia/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildApparentThermalInertiaTileUrlTemplate = (simId, metric = 'thermal_inertia') => {
+  return `/api/v1/tiles/thermal/apparent-inertia/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
 
 
 
