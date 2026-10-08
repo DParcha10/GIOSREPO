@@ -2427,6 +2427,119 @@ class TestGIOSApi(unittest.TestCase):
             self.assertGreater(len(res_tile.content), 100)
             self.assertEqual(res_tile.content[:4], b"\x89PNG")
 
+    def test_geotechnical_liquefaction_and_tiles_api(self):
+        """Task T-154: Verify dynamic seismic liquefaction, Vs30 proxy, pore pressure, SPT soundings, and tile endpoints."""
+        payload = {
+            "dam_id": "DAM-LIQ-TEST-01",
+            "dam_name": "San Luis Tailings Impoundment",
+            "pga_g": 0.38,
+            "earthquake_magnitude": 7.5,
+            "dam_height_m": 42.0,
+            "impounded_volume_m3": 9500000.0,
+            "reach_angle_deg": 5.2,
+            "downstream_valley_slope_deg": 2.0,
+            "topographic_slope_deg": 5.5,
+            "spt_soundings": [
+                {"depth_m": 4.0, "spt_n_blows": 8.0, "effective_overburden_kpa": 60.0, "fines_content_pct": 18.0},
+                {"depth_m": 8.0, "spt_n_blows": 12.0, "effective_overburden_kpa": 115.0, "fines_content_pct": 20.0},
+                {"depth_m": 12.0, "spt_n_blows": 15.0, "effective_overburden_kpa": 170.0, "fines_content_pct": 15.0}
+            ]
+        }
+
+        # 1. Primary liquefaction endpoint
+        res = self.client.post("/api/v1/analysis/geotechnical/liquefaction-susceptibility", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        sim_id = data["simulation_id"]
+        self.assertEqual(data["dam_id"], "DAM-LIQ-TEST-01")
+        self.assertIn("minimum_factor_of_safety_liq", data)
+        self.assertIn("overall_liquefaction_hazard_tier", data)
+        self.assertIn("dynamic_pore_pressure", data)
+        self.assertIn("vs30_proxy", data)
+        self.assertIn("flow_slide_runout", data)
+        self.assertIn("spt_sounding_points", data)
+        self.assertEqual(len(data["spt_sounding_points"]), 3)
+
+        # 2. Route alias
+        res_alias = self.client.post("/api/v1/analysis/liquefaction", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # 3. Simulation detail lookup
+        res_detail = self.client.get(f"/api/v1/analysis/geotechnical/liquefaction/{sim_id}")
+        self.assertEqual(res_detail.status_code, 200)
+        self.assertEqual(res_detail.json()["simulation_id"], sim_id)
+
+        # 4. Dynamic pore pressure standalone endpoint
+        pp_payload = {
+            "dam_id": "DAM-LIQ-TEST-01",
+            "sigma_v0_eff_kpa": 110.0,
+            "factor_of_safety_liq": 0.88
+        }
+        res_pp = self.client.post("/api/v1/analysis/geotechnical/dynamic-pore-pressure", json=pp_payload)
+        self.assertEqual(res_pp.status_code, 200)
+        pp_data = res_pp.json()
+        self.assertTrue(pp_data["liquefaction_triggered"])
+        self.assertEqual(pp_data["excess_pore_pressure_ratio_ru"], 1.0)
+        self.assertEqual(pp_data["post_cyclic_effective_stress_kpa"], 0.0)
+
+        # 5. Satellite Vs30 proxy endpoint (GET and POST)
+        res_vs_get = self.client.get("/api/v1/analysis/geotechnical/vs30-proxy/37.05/-121.05?slope_deg=5.0")
+        self.assertEqual(res_vs_get.status_code, 200)
+        vs_data = res_vs_get.json()
+        self.assertIn("vs30_m_s", vs_data)
+        self.assertIn("nehrp_site_class", vs_data)
+
+        res_vs_post = self.client.post("/api/v1/analysis/geotechnical/vs30-proxy", json={
+            "latitude": 37.05,
+            "longitude": -121.05,
+            "slope_deg": 5.0
+        })
+        self.assertEqual(res_vs_post.status_code, 200)
+
+        # 6. SPT sounding standalone endpoint
+        spt_payload = {
+            "dam_id": "DAM-LIQ-TEST-01",
+            "soundings": [
+                {"depth_m": 5.0, "spt_n_blows": 9.0, "effective_overburden_kpa": 75.0, "fines_content_pct": 15.0}
+            ]
+        }
+        res_spt = self.client.post("/api/v1/analysis/geotechnical/liquefaction/spt-sounding", json=spt_payload)
+        self.assertIn("points", res_spt.json())
+        self.assertIn("min_fs_liq", res_spt.json())
+
+        # 7. Flow slide runout standalone endpoint
+        runout_payload = {
+            "dam_id": "DAM-LIQ-TEST-01",
+            "dam_height_m": 42.0,
+            "impounded_volume_m3": 9500000.0,
+            "reach_angle_deg": 5.2
+        }
+        res_runout = self.client.post("/api/v1/analysis/geotechnical/liquefaction/flow-slide-runout", json=runout_payload)
+        self.assertEqual(res_runout.status_code, 200)
+        self.assertIn("runout_distance_m", res_runout.json())
+        self.assertIn("mobility_tier", res_runout.json())
+
+        # 8. Lateral spreading GET endpoint
+        res_lat = self.client.get(f"/api/v1/analysis/geotechnical/liquefaction/lateral-spreading/DAM-LIQ-TEST-01")
+        self.assertEqual(res_lat.status_code, 200)
+
+        # 9. Dynamic XYZ Tile Streaming across metrics
+        tile_urls = [
+            f"/api/v1/tiles/geotechnical/liquefaction/{sim_id}/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/liquefaction/{sim_id}/factor_of_safety/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/liquefaction/{sim_id}/excess_pore_pressure/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/liquefaction/{sim_id}/vs30/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/liquefaction/{sim_id}/runout_envelope/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/liquefaction/{sim_id}/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/liquefaction/{sim_id}/factor_of_safety/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
 if __name__ == "__main__":
     unittest.main()
 

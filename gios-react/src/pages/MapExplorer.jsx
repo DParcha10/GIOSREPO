@@ -14,7 +14,7 @@ import {
   Wrench, ShieldAlert, MapPin, Grid, GitCompare, Gauge, Waves,
   Thermometer, Sun, Sprout, Wind,
   Move, Trees, Cloud, HardDrive, ArrowUpRight, TrendingUp, CloudSnow,
-  Cpu, Bell, CloudRain
+  Cpu, Bell, CloudRain, Zap
 } from 'lucide-react';
 import useAuthStore from '../store/authStore';
 import { useNavigate, Link } from 'react-router-dom';
@@ -178,7 +178,8 @@ import giosApi, {
   buildPhreaticSeepageTileUrlTemplate,
   buildSlopeStabilityBishopTileUrlTemplate,
   buildRainfallInfiltrationTileUrlTemplate,
-  buildApparentThermalInertiaTileUrlTemplate
+  buildApparentThermalInertiaTileUrlTemplate,
+  buildLiquefactionTileUrlTemplate
 } from '../api/giosApi';
 import useJarvisStore from '../store/jarvisStore';
 import {
@@ -212,6 +213,7 @@ import DamBreakSimulationModal from '../components/DamBreakSimulationModal';
 import PhreaticSeepageModal from '../components/PhreaticSeepageModal';
 import SlopeStabilityModal from '../components/SlopeStabilityModal';
 import RainfallInfiltrationModal from '../components/RainfallInfiltrationModal';
+import LiquefactionModal from '../components/LiquefactionModal';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -1204,6 +1206,13 @@ export default function MapExplorer() {
   const [atiAnalysisResult, setAtiAnalysisResult] = useState(null);
   const [atiMetric, setAtiMetric] = useState('thermal_inertia');
   const [atiOpacity, setAtiOpacity] = useState(0.85);
+
+  // T-150 & T-152: Dynamic Seismic Liquefaction & Flow Slide States (Cycle v2.5.15)
+  const [liquefactionModalOpen, setLiquefactionModalOpen] = useState(false);
+  const [showLiquefactionLayer, setShowLiquefactionLayer] = useState(false);
+  const [liquefactionSimulation, setLiquefactionSimulation] = useState(null);
+  const [liquefactionMetric, setLiquefactionMetric] = useState('factor_of_safety');
+  const [liquefactionOpacity, setLiquefactionOpacity] = useState(0.85);
 
   // T-53 Embankment Transect Cross-Section State
   const [drawingTransect, setDrawingTransect] = useState(false);
@@ -5373,6 +5382,44 @@ export default function MapExplorer() {
               </CircleMarker>
             )}
 
+            {/* T-150/T-152: Dynamic Seismic Liquefaction & Hazard Tile Layers (Cycle v2.5.15) */}
+            {showLiquefactionLayer && liquefactionSimulation && !curtainActive && (
+              <TileLayer
+                key={`liquefaction-tile-${liquefactionSimulation.simulation_id}-${liquefactionMetric}-${liquefactionOpacity}`}
+                url={buildLiquefactionTileUrlTemplate(liquefactionSimulation.simulation_id, liquefactionMetric)}
+                opacity={liquefactionOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* Embankment Center / Liquefaction Simulation Marker */}
+            {showLiquefactionLayer && liquefactionSimulation?.dam_coordinates && (
+              <CircleMarker
+                center={[liquefactionSimulation.dam_coordinates[1], liquefactionSimulation.dam_coordinates[0]]}
+                radius={9}
+                pathOptions={{
+                  color: '#ffffff',
+                  fillColor: liquefactionSimulation.minimum_factor_of_safety_liq < 1.0 ? '#ef4444' : (liquefactionSimulation.minimum_factor_of_safety_liq < 1.15 ? '#f59e0b' : '#10b981'),
+                  fillOpacity: 0.95,
+                  weight: 2
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="font-bold text-amber-400">⚡ {liquefactionSimulation.dam_name || 'Tailings Liquefaction'}</div>
+                    <div>Simulation: {liquefactionSimulation.simulation_id}</div>
+                    <div>Min Factor of Safety: <strong className={liquefactionSimulation.minimum_factor_of_safety_liq < 1.0 ? 'text-rose-400' : 'text-emerald-300'}>{liquefactionSimulation.minimum_factor_of_safety_liq}</strong></div>
+                    <div>Critical Depth: {liquefactionSimulation.critical_liquefaction_depth_m} m</div>
+                    <div>PGA: {liquefactionSimulation.pga_g} g (Mw {liquefactionSimulation.earthquake_magnitude_mw})</div>
+                    <div>Hazard Tier: <span className="font-bold uppercase text-amber-300">{liquefactionSimulation.overall_liquefaction_hazard_tier?.replace(/_/g, ' ')}</span></div>
+                    <div>Runout Distance: <strong className="text-purple-300">{liquefactionSimulation.flow_slide_runout?.runout_distance_m || 'N/A'} m</strong></div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            )}
+
             {/* T-114/T-116: Automated Sub-Pixel Tie-Point Pins */}
             {(showRpcTiePointsLayer || showRpcLayer) && rpcTiePointPins.map((tp, idx) => {
               const baseLat = 37.0585;
@@ -6719,6 +6766,105 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-150/T-152 Dynamic Seismic Liquefaction & Flow Slide Floating HUD Card (Cycle v2.5.15) */}
+          {showLiquefactionLayer && liquefactionSimulation && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[920] glass-panel px-5 py-3 rounded-2xl border-amber-500/50 shadow-2xl bg-slate-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[620px] max-w-[92vw]">
+              {/* Header Row */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-amber-500/20 text-amber-400">
+                    <Activity className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <span className="font-bold text-white tracking-wide">
+                    {liquefactionSimulation.dam_name || 'Dynamic Seismic Liquefaction'}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-600/50 uppercase font-bold">
+                    {liquefactionSimulation.overall_liquefaction_hazard_tier?.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setLiquefactionModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowLiquefactionLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Telemetry Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-amber-400 font-bold">
+                    PGA: {liquefactionSimulation.pga_g}g
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Mw: <strong className="text-amber-300">{liquefactionSimulation.earthquake_magnitude_mw}</strong>
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Critical Depth: <strong className="text-cyan-300">{liquefactionSimulation.critical_liquefaction_depth_m}m</strong>
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-300">
+                    Min FS: <strong className={liquefactionSimulation.minimum_factor_of_safety_liq < 1.0 ? 'text-rose-400' : (liquefactionSimulation.minimum_factor_of_safety_liq < 1.15 ? 'text-amber-300' : 'text-emerald-300')}>{liquefactionSimulation.minimum_factor_of_safety_liq}</strong>
+                  </span>
+                  <span className="text-slate-500">|</span>
+                  <span className="text-slate-300">
+                    Runout: <strong className="text-purple-300">{liquefactionSimulation.flow_slide_runout?.runout_distance_m || 'N/A'}m</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Controls Row */}
+              <div className="flex items-center justify-between text-xs font-mono pt-0.5">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                    <span>Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={liquefactionOpacity}
+                      onChange={(e) => setLiquefactionOpacity(Number(e.target.value))}
+                      className="w-16 accent-amber-500 h-1 bg-slate-800 rounded"
+                    />
+                  </div>
+                </div>
+
+                {/* Metric Switcher */}
+                <div className="flex rounded bg-slate-900 border border-slate-800 p-0.5">
+                  {[
+                    { id: 'factor_of_safety', label: 'FS' },
+                    { id: 'excess_pore_pressure', label: 'ru' },
+                    { id: 'vs30', label: 'Vs30' },
+                    { id: 'runout_envelope', label: 'Runout' }
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => setLiquefactionMetric(m.id)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold transition-all ${
+                        liquefactionMetric === m.id ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -7452,6 +7598,18 @@ export default function MapExplorer() {
               >
                 <CloudRain className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Rainfall & Infiltration (v2.5.14)</span>
+              </button>
+
+              {/* T-150/T-152 Dynamic Seismic Liquefaction & Flow Slide Studio Shortcut (Cycle v2.5.15) */}
+              <button
+                onClick={() => setLiquefactionModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-amber-300 hover:text-white hover:bg-amber-500/20 border border-amber-500/30 ${
+                  liquefactionModalOpen || showLiquefactionLayer ? 'bg-amber-600 text-white shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
+                }`}
+                title="Dynamic Seismic Liquefaction (Seed-Idriss), Vs30 Proxy & Flow Slide Runout Studio (Cycle v2.5.15)"
+              >
+                <Activity className="w-3.5 h-3.5 text-amber-400" />
+                <span>Liquefaction (v2.5.15)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -19037,6 +19195,30 @@ export default function MapExplorer() {
         onApplyAtiAnalysis={(ati) => {
           setAtiAnalysisResult(ati);
           setShowAtiLayer(true);
+        }}
+      />
+
+      {/* T-150/T-152: Dynamic Seismic Liquefaction & Flow Slide Studio Modal (Cycle v2.5.15) */}
+      <LiquefactionModal
+        isOpen={liquefactionModalOpen}
+        onClose={() => setLiquefactionModalOpen(false)}
+        activeSimulation={liquefactionSimulation}
+        onApplySimulation={(sim, opts) => {
+          setLiquefactionSimulation(sim);
+          setShowLiquefactionLayer(true);
+          if (opts?.selectedMetric) {
+            setLiquefactionMetric(opts.selectedMetric);
+          }
+          if (opts?.opacity !== undefined) {
+            setLiquefactionOpacity(opts.opacity);
+          }
+          if (sim?.dam_coordinates && Array.isArray(sim.dam_coordinates)) {
+            setCustomFlyTarget({
+              lat: sim.dam_coordinates[1],
+              lng: sim.dam_coordinates[0],
+              zoom: 14
+            });
+          }
         }}
       />
 

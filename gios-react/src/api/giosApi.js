@@ -2392,6 +2392,13 @@ const demoAdapter = async (config) => {
       else if (url.includes('/liquefaction-susceptibility') || url.includes('/geotechnical/liquefaction')) {
         let parsed = {};
         try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (!parsed.simulation_id && !parsed.simulationId) {
+          const parts = url.split('/');
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && !lastPart.includes('liquefaction')) {
+            parsed.simulation_id = lastPart;
+          }
+        }
         data = calculateTailingsLiquefactionAnalysis(parsed);
       }
       else if (url.includes('/dynamic-pore-pressure')) {
@@ -6031,6 +6038,17 @@ export const analyzeLiquefactionSusceptibility = async (params) => {
 };
 
 export const simulateTailingsLiquefaction = analyzeLiquefactionSusceptibility;
+
+/**
+ * Retrieves a previously computed tailings dynamic liquefaction simulation by ID.
+ * 
+ * @param {string} simId - Liquefaction simulation execution identifier
+ * @returns {Promise<Object>} Stored simulation results, depth profiles, and runout envelope
+ */
+export const fetchLiquefactionSimulation = async (simId) => {
+  const response = await giosApi.get(`/api/v1/analysis/geotechnical/liquefaction/${simId}`);
+  return response.data;
+};
 
 /**
  * Evaluates dynamic excess pore water pressure generation, effective stress loss, and liquefaction triggering.

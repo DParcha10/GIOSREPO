@@ -944,6 +944,8 @@ export const API_ENDPOINTS = {
   ANALYSIS_LIQUEFACTION_LATERAL_SPREADING_SHORT: (damId) => `/geotechnical/lateral-spreading/${damId}`,
   TILES_LIQUEFACTION: (simId, z, x, y) => `/api/v1/tiles/geotechnical/liquefaction/${simId}/${z}/${x}/${y}.png`,
   TILES_LIQUEFACTION_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/liquefaction/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_LIQUEFACTION_DETAIL: (simId) => `/api/v1/analysis/geotechnical/liquefaction/${simId}`,
+  ANALYSIS_LIQUEFACTION_DETAIL_SHORT: (simId) => `/geotechnical/liquefaction/${simId}`,
   ANALYSIS_LIQUEFACTION_SUSCEPTIBILITY: '/api/v1/analysis/geotechnical/liquefaction-susceptibility',
   ANALYSIS_LIQUEFACTION_SUSCEPTIBILITY_SHORT: '/geotechnical/liquefaction-susceptibility',
   ANALYSIS_DYNAMIC_PORE_PRESSURE: '/api/v1/analysis/geotechnical/dynamic-pore-pressure',
@@ -1143,6 +1145,9 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.simId || params.sim_id || 'SIM_LIQ_001', params.z, params.x, params.y);
       case 'TILES_LIQUEFACTION_METRIC':
         return endpoint(params.simId || params.sim_id || 'SIM_LIQ_001', params.metric || 'factor_of_safety', params.z, params.x, params.y);
+      case 'ANALYSIS_LIQUEFACTION_DETAIL':
+      case 'ANALYSIS_LIQUEFACTION_DETAIL_SHORT':
+        return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_LIQ_001');
       default:
         return endpoint(params);
     }
@@ -10665,6 +10670,212 @@ export const FLOW_SLIDE_MOBILITY_CONFIGS = {
     badgeClass: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
     narrative: 'Non-liquefied frictional rotational or translational slump with limited travel distance beyond the slope footprint.',
     actionProtocol: 'Standard geotechnical slope stabilization and toe regrading.'
+  }
+};
+
+export const TAILINGS_LIQUEFACTION_PRESETS = {
+  brumadinho_upstream_slimes: {
+    id: 'brumadinho_upstream_slimes',
+    name: 'Brumadinho Analog Upstream Slimes (Contractive)',
+    label: 'Brumadinho Analog Upstream Slimes (Contractive)',
+    description: 'Very loose, saturated, contractive iron ore slimes with high static brittleness.',
+    pgaG: 0.15,
+    pga_g: 0.15,
+    earthquakeMagnitudeMw: 6.5,
+    earthquake_magnitude_mw: 6.5,
+    groundwaterDepthM: 1.5,
+    groundwater_depth_m: 1.5,
+    unitWeightKnM3: 17.5,
+    unit_weight_kn_m3: 17.5,
+    saturatedUnitWeightKnM3: 19.5,
+    saturated_unit_weight_kn_m3: 19.5,
+    representativeCptQcMpa: 1.4,
+    representative_cpt_qc_mpa: 1.4,
+    sleeveFrictionFsKpa: 18.0,
+    sleeve_friction_fs_kpa: 18.0,
+    finesContentPct: 45.0,
+    fines_content_pct: 45.0,
+    stateParameterPsi: 0.08,
+    state_parameter_psi: 0.08,
+    tauPeakKpa: 42.0,
+    tau_peak_kpa: 42.0,
+    tauYieldKpa: 15.0,
+    tau_yield_kpa: 15.0,
+    drivingShearStressKpa: 28.0,
+    driving_shear_stress_kpa: 28.0,
+    insarObservedDisplacementM: 0.12,
+    insar_observed_displacement_m: 0.12
+  },
+  fundao_iron_ore_tailings: {
+    id: 'fundao_iron_ore_tailings',
+    name: 'Fundão Silty Sand Tailings Benchmark',
+    label: 'Fundão Silty Sand Tailings Benchmark',
+    description: 'Silty sand tailings deposited upstream; sensitive to saturation and dynamic loading.',
+    pgaG: 0.20,
+    pga_g: 0.20,
+    earthquakeMagnitudeMw: 7.0,
+    earthquake_magnitude_mw: 7.0,
+    groundwaterDepthM: 3.0,
+    groundwater_depth_m: 3.0,
+    unitWeightKnM3: 18.0,
+    unit_weight_kn_m3: 18.0,
+    saturatedUnitWeightKnM3: 20.0,
+    saturated_unit_weight_kn_m3: 20.0,
+    representativeCptQcMpa: 2.8,
+    representative_cpt_qc_mpa: 2.8,
+    sleeveFrictionFsKpa: 26.0,
+    sleeve_friction_fs_kpa: 26.0,
+    finesContentPct: 28.0,
+    fines_content_pct: 28.0,
+    stateParameterPsi: 0.03,
+    state_parameter_psi: 0.03,
+    tauPeakKpa: 65.0,
+    tau_peak_kpa: 65.0,
+    tauYieldKpa: 30.0,
+    tau_yield_kpa: 30.0,
+    drivingShearStressKpa: 34.0,
+    driving_shear_stress_kpa: 34.0,
+    insarObservedDisplacementM: 0.08,
+    insar_observed_displacement_m: 0.08
+  },
+  san_luis_denser_shell: {
+    id: 'san_luis_denser_shell',
+    name: 'San Luis Forebay Dense Rockfill / Compacted Shell',
+    label: 'San Luis Forebay Dense Rockfill / Compacted Shell',
+    description: 'Compacted, dense granular shell with dilative behavior and high cyclic resistance.',
+    pgaG: 0.35,
+    pga_g: 0.35,
+    earthquakeMagnitudeMw: 7.5,
+    earthquake_magnitude_mw: 7.5,
+    groundwaterDepthM: 6.0,
+    groundwater_depth_m: 6.0,
+    unitWeightKnM3: 19.5,
+    unit_weight_kn_m3: 19.5,
+    saturatedUnitWeightKnM3: 21.5,
+    saturated_unit_weight_kn_m3: 21.5,
+    representativeCptQcMpa: 11.5,
+    representative_cpt_qc_mpa: 11.5,
+    sleeveFrictionFsKpa: 90.0,
+    sleeve_friction_fs_kpa: 90.0,
+    finesContentPct: 8.0,
+    fines_content_pct: 8.0,
+    stateParameterPsi: -0.14,
+    state_parameter_psi: -0.14,
+    tauPeakKpa: 160.0,
+    tau_peak_kpa: 160.0,
+    tauYieldKpa: 140.0,
+    tau_yield_kpa: 140.0,
+    drivingShearStressKpa: 55.0,
+    driving_shear_stress_kpa: 55.0,
+    insarObservedDisplacementM: 0.015,
+    insar_observed_displacement_m: 0.015
+  },
+  cadia_tailings_layer: {
+    id: 'cadia_tailings_layer',
+    name: 'Cadia Analog Weak Tailings Foundation Interlayer',
+    label: 'Cadia Analog Weak Tailings Foundation Interlayer',
+    description: 'Stratified low-permeability foundation layer susceptible to localized flow liquefaction.',
+    pgaG: 0.18,
+    pga_g: 0.18,
+    earthquakeMagnitudeMw: 6.8,
+    earthquake_magnitude_mw: 6.8,
+    groundwaterDepthM: 2.2,
+    groundwater_depth_m: 2.2,
+    unitWeightKnM3: 17.8,
+    unit_weight_kn_m3: 17.8,
+    saturatedUnitWeightKnM3: 19.8,
+    saturated_unit_weight_kn_m3: 19.8,
+    representativeCptQcMpa: 1.9,
+    representative_cpt_qc_mpa: 1.9,
+    sleeveFrictionFsKpa: 22.0,
+    sleeve_friction_fs_kpa: 22.0,
+    finesContentPct: 38.0,
+    fines_content_pct: 38.0,
+    stateParameterPsi: 0.05,
+    state_parameter_psi: 0.05,
+    tauPeakKpa: 50.0,
+    tau_peak_kpa: 50.0,
+    tauYieldKpa: 19.0,
+    tau_yield_kpa: 19.0,
+    drivingShearStressKpa: 31.0,
+    driving_shear_stress_kpa: 31.0,
+    insarObservedDisplacementM: 0.095,
+    insar_observed_displacement_m: 0.095
+  }
+};
+
+export const LIQUEFACTION_TILE_METRICS = {
+  factor_of_safety: {
+    id: 'factor_of_safety',
+    name: 'Liquefaction Factor of Safety (FS_liq)',
+    unit: 'ratio',
+    min: 0.2,
+    max: 2.5,
+    colormap: 'rdylbu_r',
+    description: 'Seed-Idriss dynamic Factor of Safety (FS_liq = CRR7.5 * MSF / CSR)'
+  },
+  excess_pore_pressure: {
+    id: 'excess_pore_pressure',
+    name: 'Excess Pore Pressure Ratio (ru)',
+    unit: 'ratio',
+    min: 0.0,
+    max: 1.0,
+    colormap: 'plasma',
+    description: 'Cyclic excess pore water pressure ratio ru = delta_u / sigma_v0_eff'
+  },
+  dynamic_pore_pressure: {
+    id: 'dynamic_pore_pressure',
+    name: 'Dynamic Pore Pressure (delta_u)',
+    unit: 'kPa',
+    min: 0.0,
+    max: 150.0,
+    colormap: 'turbo',
+    description: 'Absolute cyclic excess pore pressure delta_u generated at critical depth'
+  },
+  cyclic_stress_ratio: {
+    id: 'cyclic_stress_ratio',
+    name: 'Cyclic Stress Ratio (CSR)',
+    unit: 'ratio',
+    min: 0.05,
+    max: 0.60,
+    colormap: 'magma',
+    description: 'Induced earthquake cyclic shear stress ratio'
+  },
+  cyclic_resistance_ratio: {
+    id: 'cyclic_resistance_ratio',
+    name: 'Cyclic Resistance Ratio (CRR7.5)',
+    unit: 'ratio',
+    min: 0.05,
+    max: 0.80,
+    colormap: 'viridis',
+    description: 'Normalized cyclic shear resistance from clean-sand equivalent SPT/CPTu'
+  },
+  vs30: {
+    id: 'vs30',
+    name: 'Shear Wave Velocity (Vs30)',
+    unit: 'm/s',
+    min: 100.0,
+    max: 800.0,
+    colormap: 'spectral',
+    description: 'Upper 30m average shear wave velocity from satellite DEM slope proxy'
+  },
+  flow_slide_runout: {
+    id: 'flow_slide_runout',
+    name: 'Flow Slide Runout Corridor',
+    unit: 'intensity',
+    min: 0.0,
+    max: 1.0,
+    colormap: 'hot',
+    description: 'Fahrböschung reach angle runout mobility envelope'
+  },
+  lateral_spreading: {
+    id: 'lateral_spreading',
+    name: 'Lateral Spreading Displacement (DH)',
+    unit: 'm',
+    min: 0.0,
+    max: 3.0,
+    colormap: 'plasma',
+    description: 'Predicted horizontal ground displacement from LDI integration'
   }
 };
 

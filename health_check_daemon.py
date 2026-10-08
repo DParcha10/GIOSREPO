@@ -209,16 +209,24 @@ def inspect_data_ingestion() -> dict:
 def inspect_pipelines() -> dict:
     results = {}
     
-    # Run test suite to verify pipeline integrity
+    # Run test suite to verify pipeline integrity (prefer pytest for full 268-test coverage)
     t0 = time.time()
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
+            [sys.executable, "-m", "pytest", "-q"],
             cwd=SCRIPT_DIR,
             capture_output=True,
             text=True,
             timeout=180
         )
+        if proc.returncode != 0 and "pytest: error" in (proc.stderr or ""):
+            proc = subprocess.run(
+                [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
+                cwd=SCRIPT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=180
+            )
         elapsed_sec = round(time.time() - t0, 2)
         results["test_suite"] = {
             "passed": proc.returncode == 0,

@@ -1,5 +1,5 @@
 # GIOS: Global Intelligence & Observation System
-**Project Dossier & Scientific Specification (v2.5.14 Enterprise Release)**  
+**Project Dossier & Scientific Specification (v2.5.15 Enterprise Release)**  
 *Live Production: [https://gios-react.vercel.app](https://gios-react.vercel.app)*  
 *Backend Engine: FastAPI + rio-tiler + odc-stac + Leaflet Web GIS*
 
@@ -9,13 +9,14 @@
 
 The **Global Intelligence & Observation System (GIOS v2.5)** is an enterprise geospatial intelligence platform designed for critical infrastructure hazard monitoring, environmental anomaly detection, and real-time disaster response.
 
-GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10**, **v2.5.11**, **v2.5.12**, **v2.5.13**, and **v2.5.14** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
+GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10**, **v2.5.11**, **v2.5.12**, **v2.5.13**, **v2.5.14**, and **v2.5.15** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
 - **v2.5.10**: NodeODM Distributed Photogrammetry Processing Queue with 9-stage asynchronous state machine and stage-weighted progress telemetry, Multi-Temporal Quality Mosaic Cloud-Free Compositor Studio with pixel-rank temporal reductions (median, greenest, clearest, max-NDMI, min-LST) and dynamic XYZ tile streaming, and Multi-Hazard Live Telemetry Alert System with resilient USGS NWIS event bus and Server-Sent Events (SSE).
 - **v2.5.11**: Geotechnical Tailings Dam Hydrodynamic Inundation Simulation Engine with 2D shallow water Saint-Venant wave front routing, Froehlich (2008) peak breach discharge formulation ($Q_p = 0.607 \cdot V_w^{0.295} \cdot h_w^{1.24} \cdot \mu_{\text{mech}}$), Bingham plastic and Herschel-Bulkley non-Newtonian tailings slurry yield stress routing, Australian/USBR velocity-depth hazard intensity cross-product tiering ($v \cdot h$), dynamic downstream evacuation corridor buffer vectorization, critical infrastructure exposure scoring, and interactive Tailings Dam Breach Simulation Studio (`DamBreakModal.jsx`) with dynamic XYZ tile streaming (`/api/v1/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png`).
 - **v2.5.12**: Geotechnical Embankment Phreatic Surface Seepage Inversion, 2D Dupuit-Forchheimer unconfined seepage flow, Casagrande top-seepage line inversion, Van Genuchten (1980) Soil Water Retention Curve (SWRC) parameter optimization ($\theta(\psi) = \theta_r + \frac{\theta_s - \theta_r}{[1 + (\alpha \psi)^n]^m}$), Terzaghi critical piping Factor of Safety ($FS_{\text{piping}} = i_{\text{crit}} / i_{\text{exit}}$), in-situ multi-depth piezometer residual fusion, and interactive Phreatic Surface Seepage Studio (`PhreaticSeepageModal.jsx`) with dynamic hydrogeological XYZ tile streaming (`/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png`).
 - **v2.5.13**: Embankment Limit Equilibrium Slope Stability Engine (Bishop's Simplified Picard iteration with $m_\alpha \ge 0.10$ and Janbu's Simplified empirical curvature correction $f_0$), 3D circular & non-circular critical slip surface grid search optimization minimizing Factor of Safety ($FS_{\min}$), unsaturated soil mechanics apparent suction cohesion ($c_\psi = \psi \tan\phi^b$), coupled Dupuit-Casagrande phreatic pore water pressure ($u_i = \gamma_w \cdot \max(0, z_{\text{phreatic}} - y_{b,i})$), Sentinel-1 satellite radar line-of-sight InSAR creep vector fusion, interactive Embankment Slope Stability & Limit Equilibrium Studio (`SlopeStabilityModal.jsx`) featuring slices force polygon equilibrium inspector, real-time FS sensitivity radar, and dynamic geotechnical slope hazard XYZ tile streaming (`/api/v1/tiles/geotechnical/slope-stability/{sim_id}/{metric}/{z}/{x}/{y}.png`).
 - **v2.5.14**: Transient Rainfall Infiltration Green-Ampt unsteady ponding dynamics ($t_p = (K_s \cdot \psi_f \cdot \Delta\theta)/(i(i - K_s))$, implicit Newton-Raphson $F(t)$ solver, wetting front depth $z_w(t) = F/(\Delta\theta \cdot 1000)$, Fredlund apparent suction cohesion decay $\psi(t) = \psi_0(1 - (z_w/z_{\text{slip}})^2)$, and transient Factor of Safety decay $FS(t)$), Remote Sensing split-window Apparent Thermal Inertia (ATI) based on Price (1985) ($ATI = (1 - \alpha)/\Delta T_{\text{DTR}}$) and thermal seepage anomaly classification (`normal_dry_shell`, `moderate_antecedent_moisture`, `elevated_seepage_saturation`, `critical_daylighting_outflow`), interactive Transient Rainfall Hyetograph & Wetting Front Infiltration Studio (`RainfallInfiltrationModal.jsx`) featuring dynamic hyetograph editor, 2D wetting front depth profile animator, and transient FS decay curve, and dynamic thermal moisture tracing XYZ tile streaming (`/api/v1/tiles/thermal/apparent-inertia/{sim_id}/{z}/{x}/{y}.png`).
-- **v2.5.15 (Scaffolding Operational)**: Seed-Idriss Simplified Dynamic Liquefaction Factor of Safety ($FS_{\text{liq}} = CRR_{7.5} \cdot MSF / CSR$), Youd et al. (2001) Magnitude Scaling Factor ($MSF$), In-situ SPT/CPT overburden correction $C_N = \min(1.7, \sqrt{P_a / \sigma'_{v0}})$, Satellite Topographic Slope $V_{s30}$ Shear Wave Velocity Proxy (Wald & Allen 2007) mapping to NEHRP Site Classes (A–F), Excess Pore Pressure Ratio $r_u = \Delta u / \sigma'_{v0}$, and Scheidegger Post-Liquefaction Flow Slide Runout Distance ($L = H / \tan \alpha_r$).
+- **v2.5.15**: Seed-Idriss Simplified Dynamic Liquefaction Factor of Safety ($FS_{\text{liq}} = CRR_{7.5} \cdot MSF / CSR$), Youd et al. (2001) Magnitude Scaling Factor ($MSF$), In-situ SPT/CPT overburden correction $C_N = \min(1.7, \sqrt{P_a / \sigma'_{v0}})$, Satellite Topographic Slope $V_{s30}$ Shear Wave Velocity Proxy (Wald & Allen 2007) mapping to NEHRP Site Classes (A–F), Excess Pore Pressure Ratio $r_u = \Delta u / \sigma'_{v0}$ and effective stress collapse, Scheidegger Post-Liquefaction Flow Slide Runout Distance ($L = H / \tan \alpha_r$), interactive Earthquake Ground Motion & Geotechnical Liquefaction Studio (`LiquefactionModal.jsx`), and dynamic geotechnical liquefaction hazard XYZ tile streaming (`/api/v1/tiles/geotechnical/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png`).
+- **v2.5.16 (Scaffolding Operational)**: Post-Liquefaction Volumetric Reconsolidation Strain ($\varepsilon_v$, Ishihara & Yoshimine 1992), Crest Settlement Integration ($S = \int \varepsilon_v dz$, Tokimatsu & Seed 1987), Differential Embankment Distortion & InSAR Vertical Displacement Fusion.
 
 ---
 
@@ -263,6 +264,14 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
 | `POST` | `/api/v1/analysis/thermal/apparent-inertia` | Split-window Apparent Thermal Inertia (ATI) and daylighting moisture tracing |
 | `GET` | `/api/v1/analysis/thermal/apparent-inertia/{sim_id}` | Cached apparent thermal inertia simulation results & anomaly metrics |
 | `GET` | `/api/v1/tiles/thermal/apparent-inertia/{sim_id}/{z}/{x}/{y}.png` | Dynamic XYZ split-window thermal inertia moisture tracing tile stream |
+| `POST` | `/api/v1/analysis/geotechnical/liquefaction-susceptibility` | Seed-Idriss dynamic seismic liquefaction Factor of Safety ($FS_{\text{liq}}$) & cyclic stress evaluation |
+| `GET` | `/api/v1/analysis/geotechnical/liquefaction/{sim_id}` | Cached dynamic seismic liquefaction simulation results & sounding profiles |
+| `POST` | `/api/v1/analysis/geotechnical/dynamic-pore-pressure` | Excess pore water pressure ratio $r_u = \Delta u / \sigma'_{v0}$ & effective stress loss |
+| `GET` | `/api/v1/analysis/geotechnical/vs30-proxy/{lat}/{lon}` | Satellite DEM topographic slope $V_{s30}$ shear wave velocity proxy & NEHRP site class |
+| `POST` | `/api/v1/analysis/geotechnical/liquefaction/spt-sounding` | Multi-depth SPT/CPT sounding overburden normalization & clean-sand equivalent $CRR_{7.5}$ |
+| `POST` | `/api/v1/analysis/geotechnical/liquefaction/flow-slide-runout` | Scheidegger Fahrböschung reach angle post-liquefaction flow slide runout envelope |
+| `GET` | `/api/v1/analysis/geotechnical/liquefaction/lateral-spreading/{dam_id}` | Youd et al. empirical multi-linear regression lateral spreading displacement |
+| `GET` | `/api/v1/tiles/geotechnical/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png` | Dynamic XYZ seismic liquefaction hazard tile stream (FS, pore pressure, $V_{s30}$, runout) |
 | `GET` | `/api/v1/annotations` | Geotechnical field inspection defect annotations (RFC 7946 GeoJSON) |
 | `POST` | `/api/v1/work-orders` | Automated maintenance work order dispatch & ticket tracking |
 | `GET` | `/api/v1/subscriptions` | Automated continuous AOI monitoring subscriptions & alert triggers |
@@ -275,10 +284,10 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
 
 ## 5. Verification & Quality Assurance
 
-- **Unit & Integration Test Suite**: 267 tests passing via pytest across `test_schemas.py` (175), `test_api.py` (75), `test_scientific_rigor.py` (12), `test_stac_signing.py` (1), and `test_tile_server.py` (4) with 0 failures, 0 regressions, and 0 warnings.
-- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,871 modules in 11.53s with 0 errors).
+- **Unit & Integration Test Suite**: 268 tests passing via pytest across `test_schemas.py` (175), `test_api.py` (76), `test_scientific_rigor.py` (12), `test_stac_signing.py` (1), and `test_tile_server.py` (4) with 0 failures, 0 regressions, and 0 warnings.
+- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,872 modules in 8.22s with 0 errors).
 - **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, USGS NWIS/Earthquake feeds, cache storage, database integrity, and host system RAM. Latest inspection confirms System Status **HEALTHY** with 0 active anomalies.
 - **Live Production Telemetry**: Continuous surveillance confirms System Status HEALTHY with 0 active anomalies and stable headroom.
 
 ---
-*GIOS v2.5.14 — Verified and Approved for Production Deployment.*
+*GIOS v2.5.15 — Verified and Approved for Production Deployment.*
