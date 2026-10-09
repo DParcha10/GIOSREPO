@@ -32,7 +32,16 @@ import {
   calculateDynamicPorePressure,
   calculateVs30Proxy,
   calculateSptSoundingProfile,
-  calculateFlowSlideRunoutDistance
+  calculateFlowSlideRunoutDistance,
+  calculatePostLiquefactionSettlementAnalysis,
+  calculateAngularDistortion,
+  calculateStratigraphicSettlement,
+  calculateInSARDisplacementFusion,
+  calculateClothSimulationFilter,
+  calculateCutAndFillDifferencing,
+  calculateCrestSlumpingProfile,
+  calculateTopographicTransectDelta,
+  calculateDroneEpipolarDifferential
 } from '../config/constants.js';
 
 export {
@@ -410,7 +419,40 @@ export {
   calculateLateralSpreadingDisplacement,
   calculateTailingsLiquefactionAnalysis,
   buildLiquefactionTileUrl,
-  buildLiquefactionTileUrlTemplate
+  buildLiquefactionTileUrlTemplate,
+  SETTLEMENT_METHODS,
+  ANGULAR_DISTORTION_HAZARD_TIERS,
+  SETTLEMENT_HAZARD_TIERS,
+  ANGULAR_DISTORTION_HAZARD_CONFIGS,
+  SETTLEMENT_HAZARD_CONFIGS,
+  SETTLEMENT_TILE_METRICS,
+  calculateRelativeDensityFromSpt,
+  calculatePostLiquefactionVolumetricStrain,
+  classifyAngularDistortionHazardTier,
+  classifySettlementHazardTier,
+  calculateStratigraphicSettlement,
+  calculateAngularDistortion,
+  calculateInSARDisplacementFusion,
+  calculateTimeConsolidationDissipation,
+  calculatePostLiquefactionSettlementAnalysis,
+  buildSettlementTileUrl,
+  buildSettlementTileUrlTemplate,
+  CUT_FILL_CALCULATION_MODES,
+  TOPOGRAPHIC_DELTA_HAZARD_TIERS,
+  CREST_SLUMP_HAZARD_TIERS,
+  EPIPOLAR_DISPARITY_QUALITIES,
+  TOPOGRAPHIC_DELTA_HAZARD_CONFIGS,
+  CREST_SLUMP_HAZARD_CONFIGS,
+  TOPOGRAPHIC_DELTA_TILE_METRICS,
+  classifyTopographicDeltaHazardTier,
+  classifyCrestSlumpHazardTier,
+  classifyEpipolarDisparityQuality,
+  calculateCutAndFillDifferencing,
+  calculateCrestSlumpingProfile,
+  calculateTopographicTransectDelta,
+  calculateDroneEpipolarDifferential,
+  buildTopographicElevationDeltaTileUrl,
+  buildTopographicElevationDeltaTileUrlTemplate
 } from '../config/constants.js';
 
 /**
@@ -2431,6 +2473,75 @@ const demoAdapter = async (config) => {
         const damId = parsed.dam_id || parsed.damId || 'TAILINGS_DAM_A';
         const damName = parsed.dam_name || parsed.damName || 'North Tailings Impoundment';
         data = calculateFlowSlideRunoutDistance(damH, impV, rAng, 1.5, lat, lon, damId, damName);
+      }
+      else if (url.includes('/reconsolidation-settlement') || (url.includes('/geotechnical/settlement') && !url.includes('/soil-column') && !url.includes('/insar-fusion'))) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (!parsed.simulation_id && !parsed.simulationId) {
+          const parts = url.split('/');
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && !lastPart.includes('settlement')) {
+            parsed.simulation_id = lastPart;
+          }
+        }
+        data = calculatePostLiquefactionSettlementAnalysis(parsed);
+      }
+      else if (url.includes('/angular-distortion')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const sA = parsed.settlement_a_m !== undefined ? parsed.settlement_a_m : (parsed.settlementAM !== undefined ? parsed.settlementAM : 0.25);
+        const sB = parsed.settlement_b_m !== undefined ? parsed.settlement_b_m : (parsed.settlementBM !== undefined ? parsed.settlementBM : 0.08);
+        const dist = parsed.distance_m !== undefined ? parsed.distance_m : (parsed.distanceM !== undefined ? parsed.distanceM : 40.0);
+        const stA = parsed.station_a_id || parsed.stationAId || 'STA_01';
+        const stB = parsed.station_b_id || parsed.stationBId || 'STA_02';
+        data = calculateAngularDistortion(sA, sB, dist, stA, stB);
+      }
+      else if (url.includes('/settlement/soil-column')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const layers = parsed.stratigraphic_layers || parsed.stratigraphicLayers || [];
+        const method = parsed.calculation_method || parsed.calculationMethod || 'ishihara_yoshimine_1992';
+        data = calculateStratigraphicSettlement(layers, method);
+      }
+      else if (url.includes('/settlement/insar-fusion')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const modS = parsed.modeled_settlement_m !== undefined ? parsed.modeled_settlement_m : (parsed.modeledSettlementM !== undefined ? parsed.modeledSettlementM : 0.22);
+        const insS = parsed.insar_displacement_m !== undefined ? parsed.insar_displacement_m : (parsed.insarDisplacementM !== undefined ? parsed.insarDisplacementM : 0.18);
+        const coh = parsed.insar_coherence !== undefined ? parsed.insar_coherence : (parsed.insarCoherence !== undefined ? parsed.insarCoherence : 0.75);
+        data = calculateInSARDisplacementFusion(modS, insS, coh);
+      }
+      else if (url.includes('/topography/csf-ground-filter')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = calculateClothSimulationFilter(parsed);
+      }
+      else if (url.includes('/topography/cut-and-fill')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (!parsed.simulation_id && !parsed.simulationId) {
+          const parts = url.split('/');
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && !lastPart.includes('cut-and-fill')) {
+            parsed.simulation_id = lastPart;
+          }
+        }
+        data = calculateCutAndFillDifferencing(parsed);
+      }
+      else if (url.includes('/topography/crest-slump')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = calculateCrestSlumpingProfile(parsed);
+      }
+      else if (url.includes('/topography/transect-delta')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = calculateTopographicTransectDelta(parsed);
+      }
+      else if (url.includes('/topography/epipolar-differential')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = calculateDroneEpipolarDifferential(parsed);
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -6109,6 +6220,197 @@ export const getLiquefactionTileUrlTemplate = (simId, metric = 'factor_of_safety
 };
 
 export const buildLiquefactionTileUrlTemplateInternal = getLiquefactionTileUrlTemplate;
+
+/**
+ * @typedef {Object} SoilStratigraphicSublayer
+ * @property {string} layer_id - Sublayer identifier, e.g. 'LYR_01'
+ * @property {string} [soil_type='tailings_sand'] - Geotechnical soil classification
+ * @property {number} depth_top_m - Depth to top of sublayer (m)
+ * @property {number} depth_bottom_m - Depth to bottom of sublayer (m)
+ * @property {number} spt_n1_60cs - Normalized clean-sand equivalent SPT blowcount
+ * @property {number} factor_of_safety_liq - Dynamic liquefaction Factor of Safety (FS_liq)
+ * @property {number} [relative_density_pct] - Soil relative density Dr (%)
+ */
+
+/**
+ * @typedef {Object} PostLiquefactionSettlementRequest
+ * @property {string} [simulation_id] - Optional simulation execution identifier
+ * @property {string} [dam_id='TAILINGS_DAM_A'] - Tailings facility asset identifier
+ * @property {string} [dam_name='North Tailings Impoundment'] - Asset name
+ * @property {number} [crest_length_m=500.0] - Total crest length along centerline (m)
+ * @property {number} [pga_g=0.25] - Peak Ground Acceleration (g)
+ * @property {number} [earthquake_magnitude_mw=7.0] - Moment magnitude Mw
+ * @property {number} [groundwater_depth_m=2.5] - Depth to phreatic water table (m)
+ * @property {string} [calculation_method='ishihara_yoshimine_1992'] - Volumetric strain formulation
+ * @property {SoilStratigraphicSublayer[]} [stratigraphic_layers] - Multi-layer soil column definition
+ * @property {number} [insar_coherence=0.72] - Satellite InSAR coherence
+ * @property {number} [insar_displacement_m] - Observed InSAR vertical displacement (m)
+ * @property {number} [t50_days=14.0] - Days to 50% excess pore pressure dissipation
+ * @property {number} [elapsed_days=7.0] - Elapsed days since seismic event
+ */
+
+/**
+ * Evaluates comprehensive post-liquefaction volumetric reconsolidation strain (Ishihara & Yoshimine 1992),
+ * crest settlement stratigraphic depth integration (Tokimatsu & Seed 1987), differential angular distortion,
+ * and satellite InSAR vertical displacement fusion.
+ * 
+ * @param {PostLiquefactionSettlementRequest} params - Post-liquefaction settlement simulation parameters
+ * @returns {Promise<Object>} Cumulative crest settlement, angular distortion, InSAR fusion, and hazard GeoJSON
+ */
+export const analyzeReconsolidationSettlement = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/reconsolidation-settlement', params);
+  return response.data;
+};
+
+export const simulateReconsolidationSettlement = analyzeReconsolidationSettlement;
+
+/**
+ * Retrieves a previously computed post-liquefaction reconsolidation settlement simulation by ID.
+ * 
+ * @param {string} simId - Settlement simulation execution identifier
+ * @returns {Promise<Object>} Stored simulation results, stratigraphic settlement, and crest profile
+ */
+export const fetchSettlementSimulation = async (simId) => {
+  const response = await giosApi.get(`/api/v1/analysis/geotechnical/reconsolidation-settlement/${simId}`);
+  return response.data;
+};
+
+/**
+ * Evaluates embankment crest differential settlement and angular distortion beta = Delta S / L
+ * against Bjerrum (1963) and ICOLD regulatory cracking thresholds.
+ * 
+ * @param {Object} params - Settlement at stations A and B, and horizontal span distance
+ * @returns {Promise<Object>} Angular distortion ratio, hazard tier, and mitigation action
+ */
+export const analyzeAngularDistortion = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/angular-distortion', params);
+  return response.data;
+};
+
+/**
+ * Evaluates multi-layer soil column stratigraphic depth integration for post-liquefaction reconsolidation settlement.
+ * 
+ * @param {Object} params - Stratigraphic sublayers and calculation method
+ * @returns {Promise<Object>} Total settlement and per-sublayer strain/settlement breakdown
+ */
+export const analyzeStratigraphicSoilColumn = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/settlement/soil-column', params);
+  return response.data;
+};
+
+/**
+ * Fuses modeled geotechnical settlement with satellite InSAR observation via coherence-weighted fusion.
+ * 
+ * @param {Object} params - Modeled settlement, InSAR observed displacement, and coherence
+ * @returns {Promise<Object>} Fused settlement, residual, and agreement quality
+ */
+export const analyzeInSARDisplacementFusion = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/settlement/insar-fusion', params);
+  return response.data;
+};
+
+/**
+ * Constructs a dynamic XYZ tile streaming URL template for post-liquefaction settlement hazard maps.
+ * 
+ * @param {string} simId - Settlement simulation execution identifier
+ * @param {string} [metric='total_settlement'] - Raster metric ('total_settlement' | 'volumetric_strain' | 'angular_distortion' | 'differential_settlement')
+ * @returns {string} Tile URL template
+ */
+export const getSettlementTileUrlTemplate = (simId, metric = 'total_settlement') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/geotechnical/settlement/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildSettlementTileUrlTemplateInternal = getSettlementTileUrlTemplate;
+
+/**
+ * Executes Cloth Simulation Filter (CSF) algorithm on 3D point cloud coordinates (Zhang et al. 2016)
+ * to separate ground returns from non-ground/canopy/structure returns.
+ * 
+ * @param {Object} params - Point coordinates, cloth resolution, rigidness, time step, and class threshold
+ * @returns {Promise<Object>} Filtered ground point indices, canopy indices, iteration count, and execution summary
+ */
+export const analyzeCsfGroundFilter = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/topography/csf-ground-filter', params);
+  return response.data;
+};
+
+/**
+ * Computes 2.5D prismatic cut-and-fill volumetric differencing between pre-event baseline (DTM/DSM)
+ * and post-event survey surfaces, classifying net volume balance and hazard tiers.
+ * 
+ * @param {Object} params - Pre-event raster grid, post-event raster grid, cell resolution, compaction factor
+ * @returns {Promise<Object>} Cut/fill volumetric totals, net balance, hazard tier, and spatial cell matrix
+ */
+export const analyzeCutAndFillDifferential = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/topography/cut-and-fill', params);
+  return response.data;
+};
+
+export const simulateCutAndFillDifferential = analyzeCutAndFillDifferential;
+export const analyzeCutAndFill = analyzeCutAndFillDifferential;
+export const simulateCutAndFill = simulateCutAndFillDifferential;
+
+/**
+ * Retrieves a previously computed 2.5D cut-and-fill volumetric differential simulation by ID.
+ * 
+ * @param {string} simId - Cut-and-fill simulation execution identifier
+ * @returns {Promise<Object>} Stored simulation results, volumetric prism summary, and grid cells
+ */
+export const fetchCutAndFillSimulation = async (simId) => {
+  const response = await giosApi.get(`/api/v1/analysis/topography/cut-and-fill/${simId}`);
+  return response.data;
+};
+
+/**
+ * Evaluates embankment crest slumping profile along longitudinal survey stations,
+ * calculating maximum slump, post-settlement freeboard loss, and hazard tier classification.
+ * 
+ * @param {Object} params - Longitudinal stations (chainage, design crest elevation, post-event elevation)
+ * @returns {Promise<Object>} Max crest slump, min residual freeboard, overtopping risk, and station delta breakdown
+ */
+export const analyzeCrestSlump = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/topography/crest-slump', params);
+  return response.data;
+};
+
+/**
+ * Extracts 1D transverse/longitudinal topographic elevation profiles across multi-temporal DEMs,
+ * computing point-by-point elevation difference, slope gradient, and volumetric displacement.
+ * 
+ * @param {Object} params - Transect polyline coordinates and DEM surface identifiers/arrays
+ * @returns {Promise<Object>} Transect nodes, cumulative distance, elevation delta profile, and statistics
+ */
+export const analyzeTopographicTransectDelta = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/topography/transect-delta', params);
+  return response.data;
+};
+
+/**
+ * Analyzes drone stereo-pair epipolar geometry and disparity residuals to evaluate
+ * multi-temporal photogrammetric deformation and reconstruction alignment quality.
+ * 
+ * @param {Object} params - Stereo image pair metadata, baseline distance, focal length, and disparity grid
+ * @returns {Promise<Object>} Mean disparity, parallax shift, depth error bounds, and reconstruction quality tier
+ */
+export const analyzeDroneEpipolarDifferential = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/topography/epipolar-differential', params);
+  return response.data;
+};
+
+/**
+ * Constructs a dynamic XYZ tile streaming URL template for 2.5D topographic elevation delta and cut/fill raster maps.
+ * 
+ * @param {string} simId - Topographic simulation execution identifier
+ * @param {string} [metric='elevation_delta'] - Raster metric ('elevation_delta' | 'cut_depth' | 'fill_depth' | 'hazard_tier')
+ * @returns {string} Tile URL template
+ */
+export const getTopographicElevationDeltaTileUrlTemplate = (simId, metric = 'elevation_delta') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/topography/elevation-delta/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildTopographicElevationDeltaTileUrlTemplateInternal = getTopographicElevationDeltaTileUrlTemplate;
 
 export default giosApi;
 

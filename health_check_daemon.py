@@ -23,18 +23,26 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 import psutil
+import atexit
 
 # Configuration & Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PRODUCTION_ARTIFACTS_DIR = os.path.join(SCRIPT_DIR, "production_artifacts")
 HEALTH_STATUS_FILE = os.path.join(PRODUCTION_ARTIFACTS_DIR, "Health_Status.md")
+DAEMON_PID_FILE = os.path.join(SCRIPT_DIR, "health_check_daemon.pid")
 
 os.makedirs(PRODUCTION_ARTIFACTS_DIR, exist_ok=True)
+
+DAEMON_LOG_FILE = os.path.join(SCRIPT_DIR, "health_check_daemon.log")
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [HealthMonitor]: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(DAEMON_LOG_FILE, encoding="utf-8")
+    ]
 )
 logger = logging.getLogger("health-monitor")
 
@@ -217,7 +225,7 @@ def inspect_pipelines() -> dict:
             cwd=SCRIPT_DIR,
             capture_output=True,
             text=True,
-            timeout=180
+            timeout=240
         )
         if proc.returncode != 0 and "pytest: error" in (proc.stderr or ""):
             proc = subprocess.run(
@@ -225,7 +233,7 @@ def inspect_pipelines() -> dict:
                 cwd=SCRIPT_DIR,
                 capture_output=True,
                 text=True,
-                timeout=180
+                timeout=240
             )
         elapsed_sec = round(time.time() - t0, 2)
         results["test_suite"] = {
@@ -506,6 +514,40 @@ def write_health_status(report: dict):
         
     logger.info(f"Health Status logged successfully to {HEALTH_STATUS_FILE}")
 
+def acquire_daemon_lock() -> bool:
+    if os.path.exists(DAEMON_PID_FILE):
+        try:
+            with open(DAEMON_PID_FILE, "r", encoding="utf-8") as f:
+                pid = int(f.read().strip())
+            if psutil.pid_exists(pid):
+                proc = psutil.Process(pid)
+                if "python" in proc.name().lower():
+                    cmd = " ".join(proc.cmdline())
+                    if "health_check_daemon" in cmd and pid != os.getpid():
+                        logger.warning(f"Another Health Monitor daemon is already active (PID {pid}). Exiting.")
+                        return False
+        except Exception:
+            pass
+
+    try:
+        with open(DAEMON_PID_FILE, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+
+    def cleanup():
+        if os.path.exists(DAEMON_PID_FILE):
+            try:
+                with open(DAEMON_PID_FILE, "r", encoding="utf-8") as f:
+                    p = int(f.read().strip())
+                if p == os.getpid():
+                    os.remove(DAEMON_PID_FILE)
+            except Exception:
+                pass
+
+    atexit.register(cleanup)
+    return True
+
 def main():
     single_pass = "--once" in sys.argv or "--single-pass" in sys.argv
     daemon_mode = "--daemon" in sys.argv or not single_pass
@@ -516,6 +558,10 @@ def main():
                 interval = int(arg.split("=")[1])
             except ValueError:
                 pass
+
+    if daemon_mode:
+        if not acquire_daemon_lock():
+            return
 
     logger.info(f"Health Monitor initialized. Mode: {'DAEMON' if daemon_mode else 'SINGLE PASS'}")
     

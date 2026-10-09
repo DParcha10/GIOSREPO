@@ -660,7 +660,77 @@ from app.models.schemas import (
     classify_lateral_spreading_hazard_tier,
     calculate_tailings_liquefaction_analysis,
     build_liquefaction_tile_url,
-    build_liquefaction_tile_url_template
+    build_liquefaction_tile_url_template,
+    SettlementCalculationMethod,
+    AngularDistortionHazardTier,
+    SettlementHazardTier,
+    ANGULAR_DISTORTION_HAZARD_CONFIGS,
+    SETTLEMENT_HAZARD_CONFIGS,
+    SETTLEMENT_TILE_METRICS,
+    SoilStratigraphicSublayer,
+    SoilLayerSettlementDetail,
+    CrestStationSettlement,
+    AngularDistortionSegment,
+    InSARSettlementFusionDetail,
+    TimeConsolidationDissipation,
+    PostLiquefactionSettlementRequest,
+    PostLiquefactionSettlementResponse,
+    AngularDistortionAnalysisRequest,
+    AngularDistortionAnalysisResponse,
+    InSARSettlementFusionRequest,
+    InSARSettlementFusionResponse,
+    StratigraphicColumnSettlementRequest,
+    StratigraphicColumnSettlementResponse,
+    calculate_relative_density_from_spt,
+    calculate_post_liquefaction_volumetric_strain,
+    calculate_stratigraphic_settlement,
+    classify_angular_distortion_hazard_tier,
+    classify_settlement_hazard_tier,
+    calculate_angular_distortion,
+    calculate_insar_displacement_fusion,
+    calculate_time_consolidation_dissipation,
+    calculate_post_liquefaction_settlement_analysis,
+    build_settlement_tile_url,
+    build_settlement_tile_url_template,
+    CSFRigidness,
+    CSF_TIER_METADATA,
+    CSFPointSample,
+    CSFPointFilterRequest,
+    CSFPointFilterResponse,
+    classify_csf_ground_tier,
+    calculate_cloth_simulation_filter,
+    build_csf_point_filter_tile_url,
+    CutFillCalculationMode,
+    TopographicDeltaHazardTier,
+    TOPOGRAPHIC_DELTA_HAZARD_CONFIGS,
+    CrestSlumpHazardTier,
+    CREST_SLUMP_HAZARD_CONFIGS,
+    EpipolarDisparityQuality,
+    EPIPOLAR_DISPARITY_QUALITY_CONFIGS,
+    CutFillGridCell,
+    CutFillPrismSummary,
+    CrestSlumpStation,
+    CrestSlumpAnalysisSummary,
+    TopographicTransectNode,
+    EpipolarDifferentialPair,
+    CutAndFillAnalysisRequest,
+    CutAndFillAnalysisResponse,
+    CrestSlumpAnalysisRequest,
+    CrestSlumpAnalysisResponse,
+    TopographicTransectDeltaRequest,
+    TopographicTransectDeltaResponse,
+    DroneEpipolarDifferentialRequest,
+    DroneEpipolarDifferentialResponse,
+    classify_topographic_delta_hazard_tier,
+    classify_crest_slump_hazard_tier,
+    classify_epipolar_disparity_quality,
+    calculate_cut_and_fill_differencing,
+    calculate_crest_slumping_profile,
+    calculate_crest_slump_analysis,
+    calculate_topographic_transect_delta,
+    calculate_drone_epipolar_differential,
+    build_topographic_elevation_delta_tile_url,
+    build_topographic_elevation_delta_tile_url_template
 )
 from app.config import settings
 
@@ -7503,8 +7573,677 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertLess(extreme_res["minimum_factor_of_safety_liq"], 1.0)
         self.assertEqual(extreme_res["overall_liquefaction_hazard_tier"], "critical_cyclic_collapse")
 
+    def test_settlement_enums_and_config_catalogs(self):
+        """Verify Cycle v2.5.16 enums, hazard tiers, and catalog configurations."""
+        # 1. Enums
+        self.assertEqual(SettlementCalculationMethod.ISHIHARA_YOSHIMINE_1992.value, "ishihara_yoshimine_1992")
+        self.assertEqual(SettlementCalculationMethod.TOKIMATSU_SEED_1987.value, "tokimatsu_seed_1987")
+        self.assertEqual(SettlementCalculationMethod.HYBRID_ENSEMBLE.value, "hybrid_ensemble")
+
+        self.assertEqual(AngularDistortionHazardTier.NEGLIGIBLE.value, "negligible")
+        self.assertEqual(AngularDistortionHazardTier.SLIGHT.value, "slight")
+        self.assertEqual(AngularDistortionHazardTier.MODERATE.value, "moderate")
+        self.assertEqual(AngularDistortionHazardTier.SEVERE.value, "severe")
+        self.assertEqual(AngularDistortionHazardTier.CRITICAL_BREACH_RISK.value, "critical_breach_risk")
+
+        self.assertEqual(SettlementHazardTier.LOW.value, "low")
+        self.assertEqual(SettlementHazardTier.MODERATE.value, "moderate")
+        self.assertEqual(SettlementHazardTier.HIGH.value, "high")
+        self.assertEqual(SettlementHazardTier.VERY_HIGH.value, "very_high")
+        self.assertEqual(SettlementHazardTier.EXTREME.value, "extreme")
+
+        # 2. Config Catalogs
+        self.assertIn("negligible", ANGULAR_DISTORTION_HAZARD_CONFIGS)
+        self.assertIn("severe", ANGULAR_DISTORTION_HAZARD_CONFIGS)
+        self.assertIn("critical_breach_risk", ANGULAR_DISTORTION_HAZARD_CONFIGS)
+        self.assertEqual(ANGULAR_DISTORTION_HAZARD_CONFIGS["critical_breach_risk"]["badge"], "CRITICAL")
+        self.assertEqual(ANGULAR_DISTORTION_HAZARD_CONFIGS["negligible"]["badge"], "SAFE")
+
+        self.assertIn("low", SETTLEMENT_HAZARD_CONFIGS)
+        self.assertIn("extreme", SETTLEMENT_HAZARD_CONFIGS)
+        self.assertEqual(SETTLEMENT_HAZARD_CONFIGS["low"]["max_settlement_cm"], 5.0)
+
+        # 3. Dynamic Tile Metrics Catalog
+        self.assertIn("total_settlement", SETTLEMENT_TILE_METRICS)
+        self.assertIn("volumetric_strain", SETTLEMENT_TILE_METRICS)
+        self.assertIn("angular_distortion", SETTLEMENT_TILE_METRICS)
+        self.assertIn("differential_settlement", SETTLEMENT_TILE_METRICS)
+        self.assertIn("insar_residual", SETTLEMENT_TILE_METRICS)
+        self.assertIn("reconsolidation_rate", SETTLEMENT_TILE_METRICS)
+        self.assertEqual(SETTLEMENT_TILE_METRICS["total_settlement"]["unit"], "m")
+        self.assertEqual(SETTLEMENT_TILE_METRICS["volumetric_strain"]["unit"], "%")
+
+    def test_relative_density_and_volumetric_strain_ishihara_yoshimine(self):
+        """Verify relative density from SPT and Ishihara & Yoshimine (1992) volumetric strain."""
+        # 1. Relative density from SPT Dr = sqrt(N / 46) * 100
+        dr_10 = calculate_relative_density_from_spt(10.0)
+        self.assertAlmostEqual(dr_10, 46.6, delta=0.2)
+
+        dr_46 = calculate_relative_density_from_spt(46.0)
+        self.assertEqual(dr_46, 100.0)
+
+        # Clamping
+        dr_low = calculate_relative_density_from_spt(0.5)
+        self.assertEqual(dr_low, 15.0)
+        dr_high = calculate_relative_density_from_spt(60.0)
+        self.assertEqual(dr_high, 100.0)
+
+        # 2. Volumetric strain: FS >= 2.0 has zero strain
+        eps_safe = calculate_post_liquefaction_volumetric_strain(2.2, 12.0)
+        self.assertEqual(eps_safe, 0.0)
+
+        # Dense sand (N >= 32): negligible strain <= 0.05%
+        eps_dense = calculate_post_liquefaction_volumetric_strain(0.8, 35.0)
+        self.assertEqual(eps_dense, 0.05)
+        eps_dense_safe = calculate_post_liquefaction_volumetric_strain(1.5, 35.0)
+        self.assertEqual(eps_dense_safe, 0.0)
+
+        # Monotonicity with FS: lower FS -> higher volumetric strain
+        eps_fs_15 = calculate_post_liquefaction_volumetric_strain(1.5, 10.0)
+        eps_fs_10 = calculate_post_liquefaction_volumetric_strain(1.0, 10.0)
+        eps_fs_06 = calculate_post_liquefaction_volumetric_strain(0.6, 10.0)
+        eps_fs_03 = calculate_post_liquefaction_volumetric_strain(0.3, 10.0)
+
+        self.assertGreater(eps_fs_10, eps_fs_15)
+        self.assertGreater(eps_fs_06, eps_fs_10)
+        self.assertGreaterEqual(eps_fs_03, eps_fs_06)
+
+        # Monotonicity with N: looser sand -> higher volumetric strain
+        eps_loose = calculate_post_liquefaction_volumetric_strain(0.6, 6.0)
+        eps_med = calculate_post_liquefaction_volumetric_strain(0.6, 16.0)
+        eps_stiff = calculate_post_liquefaction_volumetric_strain(0.6, 26.0)
+        self.assertGreater(eps_loose, eps_med)
+        self.assertGreater(eps_med, eps_stiff)
+
+        # Tokimatsu-Seed and Hybrid variants
+        eps_tok = calculate_post_liquefaction_volumetric_strain(0.6, 10.0, method="tokimatsu_seed_1987")
+        eps_hyb = calculate_post_liquefaction_volumetric_strain(0.6, 10.0, method="hybrid_ensemble")
+        self.assertGreater(eps_tok, 0.0)
+        self.assertGreater(eps_hyb, 0.0)
+
+    def test_stratigraphic_depth_integration_tokimatsu_seed(self):
+        """Verify multi-layer stratigraphic depth integration for settlement."""
+        layers = [
+            {"layer_id": "L1", "depth_top_m": 0.0, "depth_bottom_m": 2.0, "spt_n1_60cs": 25.0, "factor_of_safety_liq": 1.5},
+            {"layer_id": "L2", "depth_top_m": 2.0, "depth_bottom_m": 5.0, "spt_n1_60cs": 8.0, "factor_of_safety_liq": 0.65},
+            {"layer_id": "L3", "depth_top_m": 5.0, "depth_bottom_m": 10.0, "spt_n1_60cs": 32.0, "factor_of_safety_liq": 2.0}
+        ]
+
+        res = calculate_stratigraphic_settlement(layers)
+        self.assertIn("total_settlement_m", res)
+        self.assertIn("total_settlement_cm", res)
+        self.assertIn("critical_layer_id", res)
+        self.assertEqual(res["critical_layer_id"], "L2")  # loosest layer with lowest FS
+        self.assertEqual(len(res["layers"]), 3)
+
+        # Total settlement equals sum of layer settlements
+        sub_sum = sum(l["sublayer_settlement_m"] for l in res["layers"])
+        self.assertAlmostEqual(res["total_settlement_m"], sub_sum, places=3)
+
+        # Total contribution pct sums to 100%
+        contrib_sum = sum(l["contribution_pct"] for l in res["layers"])
+        self.assertAlmostEqual(contrib_sum, 100.0, delta=0.5)
+
+        # Empty layers test
+        empty_res = calculate_stratigraphic_settlement([])
+        self.assertEqual(empty_res["total_settlement_m"], 0.0)
+        self.assertEqual(empty_res["critical_layer_id"], "NONE")
+
+    def test_angular_distortion_and_bjerrum_thresholds(self):
+        """Verify angular distortion beta = Delta S / L and Bjerrum (1963) hazard classification."""
+        # 1. Negligible (< 1/750): Delta S = 0.04m, L = 50m -> beta = 0.0008 (1/1250)
+        ang_neg = calculate_angular_distortion(0.14, 0.10, 50.0, "S1", "S2")
+        self.assertEqual(ang_neg["hazard_tier"], "negligible")
+        self.assertEqual(ang_neg["angular_distortion_ratio"], "1/1250")
+        self.assertEqual(classify_angular_distortion_hazard_tier(0.0008), AngularDistortionHazardTier.NEGLIGIBLE)
+
+        # 2. Slight (1/750 to 1/500): Delta S = 0.08m, L = 50m -> beta = 0.0016 (1/625)
+        ang_sli = calculate_angular_distortion(0.18, 0.10, 50.0, "S1", "S2")
+        self.assertEqual(ang_sli["hazard_tier"], "slight")
+        self.assertEqual(ang_sli["angular_distortion_ratio"], "1/625")
+        self.assertEqual(classify_angular_distortion_hazard_tier(0.0016), AngularDistortionHazardTier.SLIGHT)
+
+        # 3. Moderate (1/500 to 1/300): Delta S = 0.12m, L = 50m -> beta = 0.0024 (1/417)
+        ang_mod = calculate_angular_distortion(0.22, 0.10, 50.0, "S1", "S2")
+        self.assertEqual(ang_mod["hazard_tier"], "moderate")
+        self.assertEqual(ang_mod["angular_distortion_ratio"], "1/417")
+        self.assertEqual(classify_angular_distortion_hazard_tier(0.0024), AngularDistortionHazardTier.MODERATE)
+
+        # 4. Severe (1/300 to 1/150): Delta S = 0.25m, L = 50m -> beta = 0.0050 (1/200)
+        ang_sev = calculate_angular_distortion(0.35, 0.10, 50.0, "S1", "S2")
+        self.assertEqual(ang_sev["hazard_tier"], "severe")
+        self.assertEqual(ang_sev["angular_distortion_ratio"], "1/200")
+        self.assertEqual(classify_angular_distortion_hazard_tier(0.0050), AngularDistortionHazardTier.SEVERE)
+
+        # 5. Critical Breach Risk (>= 1/150): Delta S = 0.40m, L = 50m -> beta = 0.0080 (1/125)
+        ang_crit = calculate_angular_distortion(0.50, 0.10, 50.0, "S1", "S2")
+        self.assertEqual(ang_crit["hazard_tier"], "critical_breach_risk")
+        self.assertEqual(ang_crit["angular_distortion_ratio"], "1/125")
+        self.assertEqual(classify_angular_distortion_hazard_tier(0.0080), AngularDistortionHazardTier.CRITICAL_BREACH_RISK)
+
+        # Zero distortion
+        ang_zero = calculate_angular_distortion(0.10, 0.10, 50.0)
+        self.assertEqual(ang_zero["angular_distortion_ratio"], "0")
+
+    def test_insar_vertical_displacement_fusion_and_time_consolidation(self):
+        """Verify InSAR coherence-weighted displacement fusion and time-rate dissipation."""
+        # 1. InSAR Fusion: High coherence (0.85) -> 80% InSAR weight
+        f_high = calculate_insar_displacement_fusion(0.30, 0.25, coherence=0.85)
+        self.assertEqual(f_high["insar_weight"], 0.80)
+        self.assertEqual(f_high["model_weight"], 0.20)
+        self.assertAlmostEqual(f_high["fused_settlement_m"], 0.20 * 0.30 + 0.80 * 0.25, places=3)
+        self.assertAlmostEqual(f_high["residual_m"], 0.05, places=3)
+        self.assertEqual(f_high["agreement_quality"], "high_confidence_insar_agreement")
+
+        # Low coherence (0.25) -> 85% model weight
+        f_low = calculate_insar_displacement_fusion(0.30, 0.10, coherence=0.25)
+        self.assertEqual(f_low["insar_weight"], 0.15)
+        self.assertEqual(f_low["model_weight"], 0.85)
+        self.assertEqual(f_low["agreement_quality"], "low_coherence_geotechnical_prioritized")
+
+        # 2. Time Consolidation: Sridharan & Rao hyperbolic U(t) = t / (t + t50)
+        t_0 = calculate_time_consolidation_dissipation(0.40, t50_days=14.0, elapsed_days=0.0)
+        self.assertEqual(t_0["degree_of_consolidation_pct"], 0.0)
+        self.assertEqual(t_0["current_settlement_m"], 0.0)
+
+        t_50 = calculate_time_consolidation_dissipation(0.40, t50_days=14.0, elapsed_days=14.0)
+        self.assertEqual(t_50["degree_of_consolidation_pct"], 50.0)
+        self.assertEqual(t_50["current_settlement_m"], 0.20)
+        self.assertEqual(t_50["remaining_settlement_m"], 0.20)
+        self.assertGreater(t_50["reconsolidation_rate_mm_day"], 0.0)
+
+    def test_post_liquefaction_settlement_pydantic_models(self):
+        """Verify Pydantic serialization, camelCase alias validation, and field constraints."""
+        # 1. SoilStratigraphicSublayer
+        sub = SoilStratigraphicSublayer(
+            layerId="L_TEST",
+            soilType="tailings_slimes",
+            depthTopM=2.0,
+            depthBottomM=4.5,
+            sptN160cs=9.5,
+            factorOfSafetyLiq=0.78
+        )
+        self.assertEqual(sub.layer_id, "L_TEST")
+        self.assertEqual(sub.spt_n1_60cs, 9.5)
+        self.assertEqual(sub.factor_of_safety_liq, 0.78)
+
+        # 2. PostLiquefactionSettlementRequest
+        req = PostLiquefactionSettlementRequest(
+            damId="DAM_TEST_01",
+            crestLengthM=650.0,
+            pgaG=0.32,
+            earthquakeMagnitudeMw=7.2,
+            calculationMethod=SettlementCalculationMethod.ISHIHARA_YOSHIMINE_1992,
+            stratigraphicLayers=[sub]
+        )
+        self.assertEqual(req.dam_id, "DAM_TEST_01")
+        self.assertEqual(req.crest_length_m, 650.0)
+        self.assertEqual(len(req.stratigraphic_layers), 1)
+
+        # 3. Standalone Angular Distortion Request
+        ang_req = AngularDistortionAnalysisRequest(
+            settlementAM=0.22,
+            settlementBM=0.09,
+            distanceM=45.0
+        )
+        self.assertEqual(ang_req.settlement_a_m, 0.22)
+
+        # 4. Standalone InSAR Fusion Request
+        ins_req = InSARSettlementFusionRequest(
+            modeledSettlementM=0.25,
+            insarDisplacementM=0.20,
+            insarCoherence=0.82
+        )
+        self.assertEqual(ins_req.insar_coherence, 0.82)
+
+    def test_post_liquefaction_settlement_orchestrator(self):
+        """Verify end-to-end calculate_post_liquefaction_settlement_analysis orchestrator."""
+        req = {
+            "dam_id": "CADIA_TSF",
+            "dam_name": "Cadia Southern Tailings Facility",
+            "crest_length_m": 600.0,
+            "pga_g": 0.28,
+            "earthquake_magnitude_mw": 7.1,
+            "groundwater_depth_m": 2.0
+        }
+        res = calculate_post_liquefaction_settlement_analysis(req)
+
+        self.assertIn("simulation_id", res)
+        self.assertEqual(res["dam_id"], "CADIA_TSF")
+        self.assertGreater(res["total_crest_settlement_m"], 0.0)
+        self.assertGreater(res["max_crest_settlement_m"], 0.0)
+        self.assertIn("critical_layer_id", res)
+        self.assertIn("overall_settlement_hazard_tier", res)
+        self.assertIn("max_angular_distortion", res)
+        self.assertIn("worst_distortion_hazard_tier", res)
+
+        # Crest profile with stations
+        self.assertGreaterEqual(len(res["crest_profile"]), 5)
+        for st in res["crest_profile"]:
+            self.assertIn("station_id", st)
+            self.assertIn("chainage_m", st)
+            self.assertIn("total_settlement_m", st)
+            self.assertIn("hazard_tier", st)
+
+        # Angular distortion segments
+        self.assertGreaterEqual(len(res["angular_distortion_segments"]), 4)
+
+        # InSAR fusion and time consolidation
+        self.assertIsNotNone(res["insar_fusion"])
+        self.assertIn("fused_settlement_m", res["insar_fusion"])
+        self.assertIsNotNone(res["time_consolidation"])
+        self.assertIn("degree_of_consolidation_pct", res["time_consolidation"])
+
+        # GeoJSON FeatureCollection
+        self.assertIn("settlement_hazard_geojson", res)
+        self.assertEqual(res["settlement_hazard_geojson"]["type"], "FeatureCollection")
+        self.assertGreater(len(res["settlement_hazard_geojson"]["features"]), 2)
+
+    def test_settlement_canonical_route_contracts_and_tile_urls(self):
+        """Verify API route contracts and tile URL templates for Cycle v2.5.16."""
+        # 1. API route formatting
+        r1 = format_api_route("analysis_reconsolidation_settlement")
+        self.assertEqual(r1, "/api/v1/analysis/geotechnical/reconsolidation-settlement")
+
+        r2 = format_api_route("analysis_reconsolidation_settlement_short")
+        self.assertEqual(r2, "/geotechnical/reconsolidation-settlement")
+
+        r3 = format_api_route("analysis_settlement")
+        self.assertEqual(r3, "/api/v1/analysis/geotechnical/reconsolidation-settlement")
+
+        r4 = format_api_route("analysis_settlement_detail", simulation_id="SETTLE_SIM_001")
+        self.assertEqual(r4, "/api/v1/analysis/geotechnical/reconsolidation-settlement/SETTLE_SIM_001")
+
+        r5 = format_api_route("analysis_angular_distortion")
+        self.assertEqual(r5, "/api/v1/analysis/geotechnical/angular-distortion")
+
+        r6 = format_api_route("analysis_settlement_soil_column")
+        self.assertEqual(r6, "/api/v1/analysis/geotechnical/settlement/soil-column")
+
+        r7 = format_api_route("analysis_settlement_insar_fusion")
+        self.assertEqual(r7, "/api/v1/analysis/geotechnical/settlement/insar-fusion")
+
+        # 2. Tile URLs
+        t1 = build_settlement_tile_url("SETTLE_001", "total_settlement", 12, 100, 200)
+        self.assertEqual(t1, "/api/v1/tiles/geotechnical/settlement/SETTLE_001/total_settlement/12/100/200.png")
+
+        t2 = build_settlement_tile_url_template("SETTLE_001", "volumetric_strain")
+        self.assertEqual(t2, "/api/v1/tiles/geotechnical/settlement/SETTLE_001/volumetric_strain/{z}/{x}/{y}.png")
+
+        # 3. format_api_route for tiles_settlement
+        r_tile = format_api_route("tiles_settlement", sim_id="SETTLE_001", z=12, x=100, y=200)
+        self.assertEqual(r_tile, "/api/v1/tiles/geotechnical/settlement/SETTLE_001/12/100/200.png")
+
+        r_tile_metric = format_api_route("tiles_settlement", sim_id="SETTLE_001", metric="angular_distortion", z=12, x=100, y=200)
+        self.assertEqual(r_tile_metric, "/api/v1/tiles/geotechnical/settlement/SETTLE_001/angular_distortion/12/100/200.png")
+
+    def test_settlement_edge_cases_and_immutability(self):
+        """Verify settlement caller dict immutability, extreme shaking, and dense non-liquefiable behavior."""
+        # 1. Immutability
+        caller_dict = {
+            "dam_id": "DAM_IMMUTABLE_SETTLE",
+            "pga_g": 0.22,
+            "earthquake_magnitude_mw": 6.9
+        }
+        dict_copy = dict(caller_dict)
+        _ = calculate_post_liquefaction_settlement_analysis(caller_dict)
+        self.assertEqual(caller_dict, dict_copy)
+
+        # 2. Dense soil (N=40, FS=2.5) -> minimal settlement
+        dense_layers = [
+            {"layer_id": "D1", "depth_top_m": 0.0, "depth_bottom_m": 10.0, "spt_n1_60cs": 40.0, "factor_of_safety_liq": 2.5}
+        ]
+        res_dense = calculate_stratigraphic_settlement(dense_layers)
+        self.assertEqual(res_dense["total_settlement_m"], 0.0)
+        self.assertEqual(classify_settlement_hazard_tier(res_dense["total_settlement_m"]), SettlementHazardTier.LOW)
+
+        # 3. Severe liquefaction in thick loose deposit -> high/very high settlement
+        loose_layers = [
+            {"layer_id": "L1", "depth_top_m": 0.0, "depth_bottom_m": 12.0, "spt_n1_60cs": 6.0, "factor_of_safety_liq": 0.4}
+        ]
+        res_loose = calculate_stratigraphic_settlement(loose_layers)
+        self.assertGreater(res_loose["total_settlement_m"], 0.35)
+        self.assertIn(classify_settlement_hazard_tier(res_loose["total_settlement_m"]), [SettlementHazardTier.VERY_HIGH, SettlementHazardTier.EXTREME])
+
+    def test_cloth_simulation_filtering_csf_schemas_and_ground_extraction(self):
+        """Verify Cloth Simulation Filtering (CSF) models, enums, ground classification, and DTM generation."""
+        # 1. Enums & rigidness configuration
+        self.assertEqual(CSFRigidness.FLAT_TERRAIN.value, "flat_terrain")
+        self.assertEqual(CSFRigidness.RELIEF_SLOPE.value, "relief_slope")
+        self.assertEqual(CSFRigidness.STEEP_MOUNTAIN.value, "steep_mountain")
+
+        # 2. Config metadata catalog
+        self.assertIn("excellent_bare_earth_isolation", CSF_TIER_METADATA)
+        self.assertIn("moderate_ground_extraction", CSF_TIER_METADATA)
+        self.assertIn("coarse_ground_residual", CSF_TIER_METADATA)
+        self.assertIn("high_occlusion_uncertainty", CSF_TIER_METADATA)
+
+        # 3. Quality tier classification logic
+        t_high = classify_csf_ground_tier(0.68, 0.12)
+        self.assertEqual(t_high.value, "excellent_bare_earth_isolation")
+
+        t_mod = classify_csf_ground_tier(0.48, 0.28)
+        self.assertEqual(t_mod.value, "moderate_ground_extraction")
+
+        t_coarse = classify_csf_ground_tier(0.32, 0.55)
+        self.assertEqual(t_coarse.value, "coarse_ground_residual")
+
+        t_occ = classify_csf_ground_tier(0.18, 0.85)
+        self.assertEqual(t_occ.value, "high_occlusion_uncertainty")
+
+        # 4. Pydantic request / response model validation with camelCase alias support
+        req = CSFPointFilterRequest(
+            cloud_id="POINTCLOUD_TEST_01",
+            cloth_resolution_m=1.2,
+            rigidness=CSFRigidness.RELIEF_SLOPE,
+            classification_threshold_m=0.30,
+            time_step=0.7,
+            max_iterations=600,
+            post_slope_smooth=True
+        )
+        self.assertEqual(req.cloud_id, "POINTCLOUD_TEST_01")
+        self.assertEqual(req.cloth_resolution_m, 1.2)
+        self.assertEqual(req.rigidness, CSFRigidness.RELIEF_SLOPE)
+
+        req_camel = CSFPointFilterRequest.model_validate({
+            "cloudId": "POINTCLOUD_CAMEL_01",
+            "clothResolutionM": 1.5,
+            "rigidness": "flat_terrain",
+            "classificationThresholdM": 0.25,
+            "timeStep": 0.5,
+            "maxIterations": 400,
+            "postSlopeSmooth": False
+        })
+        self.assertEqual(req_camel.cloud_id, "POINTCLOUD_CAMEL_01")
+        self.assertEqual(req_camel.cloth_resolution_m, 1.5)
+        self.assertEqual(req_camel.rigidness, CSFRigidness.FLAT_TERRAIN)
+        self.assertFalse(req_camel.post_slope_smooth)
+
+        # 5. Solver calculation
+        csf_res = calculate_cloth_simulation_filter(
+            cloud_id="POINTCLOUD_SOLVER_01",
+            cloth_resolution_m=1.0,
+            rigidness=CSFRigidness.RELIEF_SLOPE,
+            classification_threshold_m=0.35,
+            sample_count=80
+        )
+        self.assertEqual(csf_res["cloud_id"], "POINTCLOUD_SOLVER_01")
+        self.assertIn("ground_fraction", csf_res)
+        self.assertIn("mean_ground_elevation_m", csf_res)
+        self.assertIn("mean_canopy_height_m", csf_res)
+        self.assertIn("sample_points", csf_res)
+        self.assertGreaterEqual(len(csf_res["sample_points"]), 20)
+
+        # 6. Response model round-trip
+        resp_model = CSFPointFilterResponse.model_validate(csf_res)
+        self.assertEqual(resp_model.cloud_id, "POINTCLOUD_SOLVER_01")
+        self.assertGreater(resp_model.total_points, 0)
+
+        # 7. Tile URL builder
+        tile_url = build_csf_point_filter_tile_url("POINTCLOUD_SOLVER_01", z=15, x=1024, y=512)
+        self.assertIn("/api/v1/tiles/pointcloud/csf/POINTCLOUD_SOLVER_01/15/1024/512.png", tile_url)
+
+    def test_25d_raster_dem_cut_and_fill_differencing_math(self):
+        """Verify 2.5D raster DEM cut-and-fill volumetric integration and hazard tiering."""
+        # 1. Calculation mode enum
+        self.assertEqual(CutFillCalculationMode.CELL_DIFFERENCING.value, "cell_differencing")
+        self.assertEqual(CutFillCalculationMode.TRAPEZOIDAL_PRISM.value, "trapezoidal_prism")
+        self.assertEqual(CutFillCalculationMode.TIN_DIFFERENTIAL.value, "tin_differential")
+
+        # 2. Hazard tiers & configs
+        self.assertEqual(TopographicDeltaHazardTier.NEGLIGIBLE_CHANGE.value, "negligible_change")
+        self.assertEqual(TopographicDeltaHazardTier.CRITICAL_CREST_BREACH_SLUMP.value, "critical_crest_breach_slump")
+        self.assertIn("negligible_change", TOPOGRAPHIC_DELTA_HAZARD_CONFIGS)
+        self.assertIn("critical_crest_breach_slump", TOPOGRAPHIC_DELTA_HAZARD_CONFIGS)
+
+        # 3. Hazard tier classifier
+        h_neg = classify_topographic_delta_hazard_tier(300.0, 0.10)
+        self.assertEqual(h_neg, TopographicDeltaHazardTier.NEGLIGIBLE_CHANGE)
+
+        h_min = classify_topographic_delta_hazard_tier(1200.0, 0.35)
+        self.assertEqual(h_min, TopographicDeltaHazardTier.MINOR_SURFACE_RAISING_OR_CREEP)
+
+        h_mod = classify_topographic_delta_hazard_tier(8000.0, 0.85)
+        self.assertEqual(h_mod, TopographicDeltaHazardTier.MODERATE_SURFACE_EROSION)
+
+        h_sev = classify_topographic_delta_hazard_tier(25000.0, 2.10)
+        self.assertEqual(h_sev, TopographicDeltaHazardTier.SEVERE_EMBANKMENT_DEFORMATION)
+
+        h_crit = classify_topographic_delta_hazard_tier(65000.0, 3.80)
+        self.assertEqual(h_crit, TopographicDeltaHazardTier.CRITICAL_CREST_BREACH_SLUMP)
+
+        # 4. Request model validation with aliases
+        req = CutAndFillAnalysisRequest.model_validate({
+            "simulationId": "SIM_CUTFILL_001",
+            "assetId": "TAILINGS_SHELL_NORTH",
+            "assetName": "North Shell Embankment",
+            "demPreId": "DEM_20260701",
+            "demPostId": "DEM_20260930",
+            "gridResolutionM": 1.0,
+            "calculationMode": "cell_differencing",
+            "deadbandThresholdM": 0.05,
+            "gridSidePoints": 20
+        })
+        self.assertEqual(req.simulation_id, "SIM_CUTFILL_001")
+        self.assertEqual(req.asset_id, "TAILINGS_SHELL_NORTH")
+        self.assertEqual(req.grid_resolution_m, 1.0)
+
+        # 5. Volumetric solver calculation
+        res = calculate_cut_and_fill_differencing(req)
+        self.assertEqual(res["simulation_id"], "SIM_CUTFILL_001")
+        self.assertIn("summary", res)
+        summary = res["summary"]
+        self.assertGreater(summary["cell_count_total"], 0)
+        self.assertGreaterEqual(summary["gross_cut_volume_m3"], 0.0)
+        self.assertGreaterEqual(summary["gross_fill_volume_m3"], 0.0)
+        self.assertAlmostEqual(summary["net_volume_change_m3"], summary["gross_fill_volume_m3"] - summary["gross_cut_volume_m3"], places=2)
+        self.assertIn("hazard_tier", res)
+        self.assertIn("tile_url_template", res)
+        self.assertIn("cut_fill_geojson", res)
+
+        # 6. Response model round-trip
+        resp_model = CutAndFillAnalysisResponse.model_validate(res)
+        self.assertEqual(resp_model.simulation_id, "SIM_CUTFILL_001")
+
+    def test_embankment_crest_slump_and_freeboard_hazard_classification(self):
+        """Verify embankment crest slump profile, freeboard loss, and overtopping hazard classification."""
+        # 1. Enums & configs
+        self.assertEqual(CrestSlumpHazardTier.STABLE_FREEBOARD.value, "stable_freeboard")
+        self.assertEqual(CrestSlumpHazardTier.ADVISORY_SETTLEMENT.value, "advisory_settlement")
+        self.assertEqual(CrestSlumpHazardTier.HEIGHTENED_OVERTOPPING_RISK.value, "heightened_overtopping_risk")
+        self.assertEqual(CrestSlumpHazardTier.CRITICAL_CREST_LOSS.value, "critical_crest_loss")
+        self.assertIn("stable_freeboard", CREST_SLUMP_HAZARD_CONFIGS)
+        self.assertIn("critical_crest_loss", CREST_SLUMP_HAZARD_CONFIGS)
+
+        # 2. Classifier
+        self.assertEqual(classify_crest_slump_hazard_tier(0.08), CrestSlumpHazardTier.STABLE_FREEBOARD)
+        self.assertEqual(classify_crest_slump_hazard_tier(0.32), CrestSlumpHazardTier.ADVISORY_SETTLEMENT)
+        self.assertEqual(classify_crest_slump_hazard_tier(0.95), CrestSlumpHazardTier.HEIGHTENED_OVERTOPPING_RISK)
+        self.assertEqual(classify_crest_slump_hazard_tier(1.85), CrestSlumpHazardTier.CRITICAL_CREST_LOSS)
+
+        # 3. Request validation with alias support
+        req = CrestSlumpAnalysisRequest.model_validate({
+            "damId": "DAM_TEST_01",
+            "damName": "Tailings Dam Crest Alpha",
+            "crestLengthM": 500.0,
+            "designFreeboardM": 4.0,
+            "reservoirPoolElevationM": 325.0
+        })
+        self.assertEqual(req.dam_id, "DAM_TEST_01")
+        self.assertEqual(req.crest_length_m, 500.0)
+        self.assertEqual(req.design_freeboard_m, 4.0)
+
+        # 4. Slumping profile solver
+        res1 = calculate_crest_slumping_profile(req)
+        res2 = calculate_crest_slump_analysis(req)  # Alias test
+        self.assertEqual(res1["dam_id"], "DAM_TEST_01")
+        self.assertEqual(res2["dam_id"], "DAM_TEST_01")
+        self.assertIn("summary", res1)
+        self.assertIn("stations", res1)
+        self.assertIn("slump_geojson", res1)
+        self.assertGreater(len(res1["stations"]), 3)
+
+        summary = res1["summary"]
+        self.assertGreater(summary["max_freeboard_loss_m"], 0.0)
+        self.assertLess(summary["min_residual_freeboard_m"], req.design_freeboard_m)
+        self.assertIn("critical_station_id", summary)
+
+        # 5. Response model validation
+        resp_model = CrestSlumpAnalysisResponse.model_validate(res1)
+        self.assertEqual(resp_model.dam_id, "DAM_TEST_01")
+
+    def test_topographic_elevation_transect_delta_profiler(self):
+        """Verify multi-temporal DEM transect cross-section elevation and slope angle differencing."""
+        # 1. Request model
+        req = TopographicTransectDeltaRequest.model_validate({
+            "assetId": "TRANSECT_01",
+            "coordinates": [[-121.050, 37.050], [-121.045, 37.055]],
+            "sampleSpacingM": 5.0,
+            "demPreId": "DEM_BASELINE",
+            "demPostId": "DEM_RECENT"
+        })
+        self.assertEqual(req.asset_id, "TRANSECT_01")
+        self.assertEqual(req.sample_spacing_m, 5.0)
+
+        # 2. Solver calculation
+        res = calculate_topographic_transect_delta(req)
+        self.assertEqual(res["asset_id"], "TRANSECT_01")
+        self.assertIn("nodes", res)
+        self.assertIn("gross_cut_volume_m3", res)
+        self.assertIn("gross_fill_volume_m3", res)
+        self.assertIn("net_volume_m3", res)
+        self.assertGreater(res["node_count"], 10)
+
+        # Check nodes structure
+        first_node = res["nodes"][0]
+        self.assertIn("node_id", first_node)
+        self.assertIn("distance_m", first_node)
+        self.assertIn("z_pre_m", first_node)
+        self.assertIn("z_post_m", first_node)
+        self.assertIn("delta_z_m", first_node)
+        self.assertIn("slope_pre_deg", first_node)
+        self.assertIn("slope_post_deg", first_node)
+
+        # 3. Response model validation
+        resp_model = TopographicTransectDeltaResponse.model_validate(res)
+        self.assertEqual(resp_model.asset_id, "TRANSECT_01")
+        self.assertEqual(len(resp_model.nodes), res["node_count"])
+
+    def test_drone_epipolar_differential_and_disparity_quality(self):
+        """Verify UAV stereo epipolar disparity, photo-consistency, and reconstruction quality classification."""
+        # 1. Enums & configs
+        self.assertEqual(EpipolarDisparityQuality.SUB_PIXEL_CONVERGENCE.value, "sub_pixel_convergence")
+        self.assertEqual(EpipolarDisparityQuality.STANDARD_STEREO_ACCURACY.value, "standard_stereo_accuracy")
+        self.assertEqual(EpipolarDisparityQuality.COARSE_EPIPOLAR_RESIDUAL.value, "coarse_epipolar_residual")
+        self.assertEqual(EpipolarDisparityQuality.DECORRELATION_FAILURE.value, "decorrelation_failure")
+        self.assertIn("sub_pixel_convergence", EPIPOLAR_DISPARITY_QUALITY_CONFIGS)
+        self.assertIn("decorrelation_failure", EPIPOLAR_DISPARITY_QUALITY_CONFIGS)
+
+        # 2. Quality classifier
+        q_opt = classify_epipolar_disparity_quality(0.35, inlier_ratio_pct=92.0)
+        self.assertEqual(q_opt, EpipolarDisparityQuality.SUB_PIXEL_CONVERGENCE)
+
+        q_std = classify_epipolar_disparity_quality(0.95, inlier_ratio_pct=85.0)
+        self.assertEqual(q_std, EpipolarDisparityQuality.STANDARD_STEREO_ACCURACY)
+
+        q_coarse = classify_epipolar_disparity_quality(2.20, inlier_ratio_pct=72.0)
+        self.assertEqual(q_coarse, EpipolarDisparityQuality.COARSE_EPIPOLAR_RESIDUAL)
+
+        q_fail = classify_epipolar_disparity_quality(3.50, inlier_ratio_pct=40.0)
+        self.assertEqual(q_fail, EpipolarDisparityQuality.DECORRELATION_FAILURE)
+
+        # 3. Request validation with alias support
+        req = DroneEpipolarDifferentialRequest.model_validate({
+            "flightPreId": "FLIGHT_PRE_01",
+            "flightPostId": "FLIGHT_POST_01",
+            "cameraModel": "HASSELBLAD_L2D_20C",
+            "stereoPairCount": 6
+        })
+        self.assertEqual(req.flight_pre_id, "FLIGHT_PRE_01")
+        self.assertEqual(req.stereo_pair_count, 6)
+
+        # 4. Epipolar solver calculation
+        res = calculate_drone_epipolar_differential(req)
+        self.assertEqual(res["flight_pre_id"], "FLIGHT_PRE_01")
+        self.assertIn("differential_pairs", res)
+        self.assertEqual(res["stereo_pairs_evaluated"], 6)
+        self.assertIn("mean_disparity_px", res)
+        self.assertIn("disparity_rmse_px", res)
+        self.assertIn("overall_inlier_ratio_pct", res)
+        self.assertIn("overall_quality", res)
+
+        # 5. Response model validation
+        resp_model = DroneEpipolarDifferentialResponse.model_validate(res)
+        self.assertEqual(resp_model.flight_pre_id, "FLIGHT_PRE_01")
+        self.assertEqual(len(resp_model.differential_pairs), 6)
+
+    def test_topographic_canonical_route_contracts_and_tile_urls(self):
+        """Verify API route contracts and tile URL templates for Cycle v2.5.17."""
+        # 1. API route formatting
+        r1 = format_api_route("analysis_topography_csf_ground_filter")
+        self.assertEqual(r1, "/api/v1/analysis/topography/csf-ground-filter")
+
+        r2 = format_api_route("analysis_topography_cut_and_fill")
+        self.assertEqual(r2, "/api/v1/analysis/topography/cut-and-fill")
+
+        r3 = format_api_route("analysis_topography_cut_and_fill_detail", simulation_id="CUTFILL_SIM_001")
+        self.assertEqual(r3, "/api/v1/analysis/topography/cut-and-fill/CUTFILL_SIM_001")
+
+        r4 = format_api_route("analysis_topography_crest_slump")
+        self.assertEqual(r4, "/api/v1/analysis/topography/crest-slump")
+
+        r5 = format_api_route("analysis_topography_transect_delta")
+        self.assertEqual(r5, "/api/v1/analysis/topography/transect-delta")
+
+        r6 = format_api_route("analysis_topography_epipolar_differential")
+        self.assertEqual(r6, "/api/v1/analysis/topography/epipolar-differential")
+
+        # 2. Tile URLs
+        t1 = build_topographic_elevation_delta_tile_url("TOPO_001", "elevation_delta", 12, 1024, 2048)
+        self.assertEqual(t1, "/api/v1/tiles/topography/elevation-delta/TOPO_001/elevation_delta/12/1024/2048.png")
+
+        t2 = build_topographic_elevation_delta_tile_url_template("TOPO_001", "cut_depth")
+        self.assertEqual(t2, "/api/v1/tiles/topography/elevation-delta/TOPO_001/cut_depth/{z}/{x}/{y}.png")
+
+        # 3. format_api_route for tiles_topography_elevation_delta
+        r_tile = format_api_route("tiles_topography_elevation_delta", sim_id="TOPO_001", metric="elevation_delta", z=14, x=512, y=256)
+        self.assertEqual(r_tile, "/api/v1/tiles/topography/elevation-delta/TOPO_001/elevation_delta/14/512/256.png")
+
+    def test_topographic_delta_edge_cases_and_immutability(self):
+        """Verify topographic differencing caller dict immutability, zero deadband, and extreme cut volumes."""
+        # 1. Immutability
+        caller_dict = {
+            "simulation_id": "SIM_IMMUTABLE_01",
+            "asset_id": "IMMUTABLE_ASSET",
+            "grid_resolution_m": 1.0,
+            "deadband_threshold_m": 0.05
+        }
+        dict_copy = dict(caller_dict)
+        _ = calculate_cut_and_fill_differencing(caller_dict)
+        self.assertEqual(caller_dict, dict_copy)
+
+        # 2. Slump immutability
+        slump_dict = {
+            "dam_id": "DAM_IMMUTABLE_SLUMP",
+            "crest_length_m": 300.0,
+            "design_freeboard_m": 3.0
+        }
+        slump_copy = dict(slump_dict)
+        _ = calculate_crest_slumping_profile(slump_dict)
+        self.assertEqual(slump_dict, slump_copy)
+
+        # 3. High deadband suppresses trivial cut/fill cells
+        high_deadband_req = {
+            "grid_side_points": 10,
+            "deadband_threshold_m": 5.0  # Huge deadband
+        }
+        res_high_db = calculate_cut_and_fill_differencing(high_deadband_req)
+        self.assertEqual(res_high_db["summary"]["gross_cut_volume_m3"], 0.0)
+        self.assertEqual(res_high_db["summary"]["gross_fill_volume_m3"], 0.0)
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

@@ -470,7 +470,64 @@ from app.models.schemas import (
     calculate_flow_slide_runout_distance,
     calculate_spt_sounding_profile,
     build_liquefaction_tile_url,
-    build_liquefaction_tile_url_template
+    build_liquefaction_tile_url_template,
+    PostLiquefactionSettlementRequest,
+    PostLiquefactionSettlementResponse,
+    AngularDistortionAnalysisRequest,
+    AngularDistortionAnalysisResponse,
+    InSARSettlementFusionRequest,
+    InSARSettlementFusionResponse,
+    StratigraphicColumnSettlementRequest,
+    StratigraphicColumnSettlementResponse,
+    calculate_post_liquefaction_settlement_analysis,
+    calculate_angular_distortion,
+    calculate_stratigraphic_settlement,
+    calculate_insar_displacement_fusion,
+    calculate_time_consolidation_dissipation,
+    calculate_post_liquefaction_volumetric_strain,
+    calculate_relative_density_from_spt,
+    build_settlement_tile_url,
+    build_settlement_tile_url_template,
+    CSFRigidness,
+    CSF_TIER_METADATA,
+    CSFPointSample,
+    CSFPointFilterRequest,
+    CSFPointFilterResponse,
+    classify_csf_ground_tier,
+    calculate_cloth_simulation_filter,
+    build_csf_point_filter_tile_url,
+    CutFillCalculationMode,
+    TopographicDeltaHazardTier,
+    TOPOGRAPHIC_DELTA_HAZARD_CONFIGS,
+    TOPOGRAPHIC_DELTA_TILE_METRICS,
+    CutFillGridCell,
+    CutFillPrismSummary,
+    CutAndFillAnalysisRequest,
+    CutAndFillAnalysisResponse,
+    classify_topographic_delta_hazard_tier,
+    calculate_cut_and_fill_differencing,
+    CrestSlumpHazardTier,
+    CREST_SLUMP_HAZARD_CONFIGS,
+    CrestSlumpStation,
+    CrestSlumpAnalysisSummary,
+    CrestSlumpAnalysisRequest,
+    CrestSlumpAnalysisResponse,
+    classify_crest_slump_hazard_tier,
+    calculate_crest_slumping_profile,
+    calculate_crest_slump_analysis,
+    TopographicTransectNode,
+    TopographicTransectDeltaRequest,
+    TopographicTransectDeltaResponse,
+    calculate_topographic_transect_delta,
+    EpipolarDisparityQuality,
+    EPIPOLAR_DISPARITY_QUALITY_CONFIGS,
+    EpipolarDifferentialPair,
+    DroneEpipolarDifferentialRequest,
+    DroneEpipolarDifferentialResponse,
+    classify_epipolar_disparity_quality,
+    calculate_drone_epipolar_differential,
+    build_topographic_elevation_delta_tile_url,
+    build_topographic_elevation_delta_tile_url_template
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -488,6 +545,7 @@ preprocessing_router = APIRouter(prefix="/preprocessing", tags=["Preprocessing &
 sar_router = APIRouter(prefix="/sar", tags=["SAR Analytics"])
 geotechnical_router = APIRouter(prefix="/geotechnical", tags=["Geotechnical & Dam Safety"])
 thermal_router = APIRouter(prefix="/thermal", tags=["Thermal Remote Sensing"])
+topography_router = APIRouter(prefix="/topography", tags=["Topography & Elevation"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -7118,6 +7176,175 @@ def get_analysis_liquefaction_tile_metric(
     rescale: Optional[str] = None
 ):
     return get_liquefaction_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# Post-Liquefaction Reconsolidation Settlement & Differential Distortion Endpoints
+# Task T-157: Agent 7 (@backend)
+# ============================================================================
+
+SETTLEMENT_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_SETTLEMENT_STORE_SIZE = 100
+
+
+def _store_settlement_simulation(sim_res: Dict[str, Any]):
+    """Caches post-liquefaction settlement simulation run with bounded LRU memory retention."""
+    sim_id = sim_res.get("simulation_id")
+    if not sim_id:
+        return
+    if len(SETTLEMENT_STORE) >= MAX_SETTLEMENT_STORE_SIZE:
+        oldest_key = next(iter(SETTLEMENT_STORE))
+        SETTLEMENT_STORE.pop(oldest_key, None)
+    SETTLEMENT_STORE[sim_id] = sim_res
+    gc.collect()
+
+
+@router.post("/geotechnical/reconsolidation-settlement", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False)
+@router.post("/geotechnical/settlement", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/reconsolidation-settlement", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/settlement", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/reconsolidation-settlement", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/settlement", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_reconsolidation_settlement_endpoint(req: PostLiquefactionSettlementRequest):
+    """Evaluates post-liquefaction volumetric reconsolidation strain (Ishihara-Yoshimine 1992), multi-layer depth integration (Tokimatsu-Seed 1987), crest settlement profile, and InSAR fusion."""
+    sim_res = calculate_post_liquefaction_settlement_analysis(req)
+    _store_settlement_simulation(sim_res)
+    return PostLiquefactionSettlementResponse(**sim_res)
+
+
+@router.get("/geotechnical/reconsolidation-settlement/{sim_id}", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False)
+@router.get("/geotechnical/settlement/{sim_id}", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/reconsolidation-settlement/{sim_id}", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/settlement/{sim_id}", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/reconsolidation-settlement/{sim_id}", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/settlement/{sim_id}", response_model=PostLiquefactionSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+def get_reconsolidation_settlement_detail(sim_id: str):
+    """Retrieves post-liquefaction reconsolidation settlement simulation by simulation ID."""
+    sim_res = SETTLEMENT_STORE.get(sim_id)
+    if not sim_res:
+        sim_res = calculate_post_liquefaction_settlement_analysis({"simulation_id": sim_id})
+        _store_settlement_simulation(sim_res)
+    return PostLiquefactionSettlementResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@router.post("/geotechnical/angular-distortion", response_model=AngularDistortionAnalysisResponse, response_model_by_alias=False)
+@router.post("/angular-distortion", response_model=AngularDistortionAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/angular-distortion", response_model=AngularDistortionAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_angular_distortion_endpoint(req: AngularDistortionAnalysisRequest):
+    """Evaluates differential embankment settlement and angular distortion beta = delta S / L against Bjerrum (1963) and ICOLD thresholds."""
+    res = calculate_angular_distortion(
+        settlement_a_m=req.settlement_a_m,
+        settlement_b_m=req.settlement_b_m,
+        distance_m=req.distance_m,
+        station_a_id=req.station_a_id,
+        station_b_id=req.station_b_id
+    )
+    return AngularDistortionAnalysisResponse(**res)
+
+
+@router.post("/geotechnical/settlement/soil-column", response_model=StratigraphicColumnSettlementResponse, response_model_by_alias=False)
+@router.post("/settlement/soil-column", response_model=StratigraphicColumnSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/settlement/soil-column", response_model=StratigraphicColumnSettlementResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_stratigraphic_soil_column_endpoint(req: StratigraphicColumnSettlementRequest):
+    """Performs multi-layer soil column stratigraphic depth integration (Tokimatsu-Seed 1987) for reconsolidation settlement."""
+    layers_data = [lyr.model_dump() if hasattr(lyr, "model_dump") else dict(lyr) for lyr in req.stratigraphic_layers]
+    method = req.calculation_method.value if hasattr(req.calculation_method, "value") else str(req.calculation_method)
+    res = calculate_stratigraphic_settlement(layers=layers_data, method=method)
+    return StratigraphicColumnSettlementResponse(**res)
+
+
+@router.post("/geotechnical/settlement/insar-fusion", response_model=InSARSettlementFusionResponse, response_model_by_alias=False)
+@router.post("/settlement/insar-fusion", response_model=InSARSettlementFusionResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/settlement/insar-fusion", response_model=InSARSettlementFusionResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_insar_displacement_fusion_endpoint(req: InSARSettlementFusionRequest):
+    """Fuses geotechnical modeled settlement with satellite InSAR observation via coherence-weighted fusion."""
+    res = calculate_insar_displacement_fusion(
+        modeled_settlement_m=req.modeled_settlement_m,
+        insar_displacement_m=req.insar_displacement_m,
+        coherence=req.insar_coherence
+    )
+    return InSARSettlementFusionResponse(**res)
+
+
+@tiles_router.get("/geotechnical/settlement/{sim_id}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/settlement/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_settlement_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,1.5"
+):
+    """Dynamic XYZ tile streaming for geotechnical post-liquefaction reconsolidation settlement raster."""
+    png_bytes = tile_service.render_settlement_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="total_settlement",
+        colormap=colormap or "turbo",
+        rescale=rescale or "0.0,1.5"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Settlement-v2.5"}
+    )
+
+
+@tiles_router.get("/geotechnical/settlement/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/settlement/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_settlement_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for geotechnical post-liquefaction reconsolidation settlement with selected metric."""
+    png_bytes = tile_service.render_settlement_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Settlement-{metric}"}
+    )
+
+
+@router.get("/tiles/geotechnical/settlement/{sim_id}/{z}/{x}/{y}.png")
+def get_analysis_settlement_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "turbo",
+    rescale: Optional[str] = "0.0,1.5"
+):
+    return get_settlement_tile_default(sim_id=sim_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@router.get("/tiles/geotechnical/settlement/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_analysis_settlement_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_settlement_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
 
 
 

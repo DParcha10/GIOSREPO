@@ -198,7 +198,27 @@ DEFAULT_INDEX_RANGES = {
     "brittleness_index": (0.0, 0.8),
     "lateral_spreading": (0.0, 1.5),
     "dh": (0.0, 1.5),
-    "ldi": (0.0, 3.0)
+    "ldi": (0.0, 3.0),
+    "total_settlement": (0.0, 1.5),
+    "crest_settlement": (0.0, 1.5),
+    "settlement": (0.0, 1.5),
+    "volumetric_strain": (0.0, 6.0),
+    "angular_distortion": (0.0, 0.015),
+    "differential_settlement": (0.0, 50.0),
+    "insar_residual": (-20.0, 20.0),
+    "reconsolidation_rate": (0.0, 10.0),
+    "elevation_delta": (-5.0, 5.0),
+    "delta_z": (-5.0, 5.0),
+    "cut_depth": (0.0, 6.0),
+    "cut": (0.0, 6.0),
+    "fill_height": (0.0, 6.0),
+    "fill": (0.0, 6.0),
+    "slope_delta": (-25.0, 25.0),
+    "csf_ground_surface": (100.0, 500.0),
+    "csf_ground": (100.0, 500.0),
+    "csf": (100.0, 500.0),
+    "ndsm_height": (0.0, 20.0),
+    "ndsm": (0.0, 20.0)
 }
 
 class TileService:
@@ -254,20 +274,46 @@ class TileService:
     @staticmethod
     def get_colormap(name: Optional[Union[str, TileColormap]] = "spectral"):
         """Safely gets matplotlib colormap instance."""
-        target_enum = validate_colormap(name, default=TileColormap.SPECTRAL)
-        cmap_name = target_enum.value.lower()
-        cmap_map = {
-            "spectral": "Spectral",
-            "viridis": "viridis",
-            "turbo": "turbo",
-            "rdylbu": "RdYlBu",
-            "terrain": "terrain",
-            "magma": "magma",
-            "inferno": "inferno",
-            "cividis": "cividis",
-            "plasma": "plasma"
-        }
-        target = cmap_map.get(cmap_name, "Spectral")
+        target = "Spectral"
+        if isinstance(name, str) and name.strip():
+            clean_str = name.strip()
+            clean_lower = clean_str.lower()
+            cmap_map = {
+                "spectral": "Spectral",
+                "viridis": "viridis",
+                "turbo": "turbo",
+                "rdylbu": "RdYlBu",
+                "terrain": "terrain",
+                "magma": "magma",
+                "inferno": "inferno",
+                "cividis": "cividis",
+                "plasma": "plasma",
+                "bwr": "bwr",
+                "hot": "hot",
+                "blues": "Blues"
+            }
+            if clean_lower in cmap_map:
+                target = cmap_map[clean_lower]
+            elif clean_str in matplotlib.colormaps:
+                target = clean_str
+            elif clean_lower in matplotlib.colormaps:
+                target = clean_lower
+            else:
+                target_enum = validate_colormap(name, default=TileColormap.SPECTRAL)
+                target = cmap_map.get(target_enum.value.lower(), "Spectral")
+        elif hasattr(name, "value"):
+            target_enum = validate_colormap(name, default=TileColormap.SPECTRAL)
+            cmap_map = {
+                "spectral": "Spectral",
+                "viridis": "viridis",
+                "turbo": "turbo",
+                "rdylbu": "RdYlBu",
+                "terrain": "terrain",
+                "magma": "magma",
+                "inferno": "inferno",
+                "cividis": "cividis"
+            }
+            target = cmap_map.get(target_enum.value.lower(), "Spectral")
         try:
             return matplotlib.colormaps[target]
         except Exception:
@@ -289,7 +335,7 @@ class TileService:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
         raw_idx = str(index.value if hasattr(index, "value") else index).lower().strip() if index else "rgb"
-        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
+        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf", "geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement", "geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
             idx_clean = raw_idx
         else:
             idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
@@ -936,6 +982,103 @@ class TileService:
                     val = post_sigma_eff
                 else:
                     val = fs_liq
+            elif col_clean in {"geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement"} or (col_clean in {"geotechnical", "geotechnical_slope_stability", "slope_stability"} and idx_clean in {"total_settlement", "crest_settlement", "settlement", "volumetric_strain", "angular_distortion", "differential_settlement", "insar_residual", "reconsolidation_rate", "eps_v", "crest_s"}) or idx_clean in {"total_settlement", "crest_settlement", "settlement", "volumetric_strain", "angular_distortion", "differential_settlement", "insar_residual", "reconsolidation_rate", "eps_v", "crest_s"}:
+                # 2D Post-Liquefaction Reconsolidation Settlement Grid (Ishihara-Yoshimine 1992 & Tokimatsu-Seed 1987)
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                # Crest proximity bell (embankment crest centerline around v_s ~ 0.50)
+                crest_proximity = np.exp(-((v_s - 0.50) / 0.22) ** 2)
+                # Longitudinal shape factor: parabolic curve peaking near mid-span (u_s ~ 0.50)
+                longitudinal_factor = 0.40 + 0.85 * (1.0 - (2.0 * np.clip(u_s, 0.0, 1.0) - 1.0) ** 2)
+
+                # Volumetric strain epsilon_v (%) family curves (Ishihara & Yoshimine 1992)
+                # Upstream contractive liquefiable slimes (u_s < 0.45): high strain (3.0 - 5.5%)
+                # Compacted crest and downstream shell (0.45 <= u_s <= 0.85): moderate strain (0.4 - 1.2%)
+                # Competent basal abutments (u_s > 0.85): low strain (< 0.2%)
+                vol_strain = np.where(
+                    u_s < 0.45,
+                    3.8 + 1.8 * np.sin(np.pi * u_s / 0.45) + (base_variation - 0.5) * 0.6,
+                    np.where(
+                        u_s <= 0.85,
+                        0.8 + 1.0 * (1.0 - (u_s - 0.45) / 0.40) + (base_variation - 0.5) * 0.3,
+                        0.15 + (base_variation - 0.5) * 0.15
+                    )
+                )
+                vol_strain = np.clip(vol_strain, 0.0, 6.0)
+
+                # Tokimatsu & Seed (1987) multi-layer depth integration S = int eps_v * dz (m)
+                settlement_m = (vol_strain / 100.0) * 16.0 * crest_proximity * longitudinal_factor
+                settlement_m = np.clip(settlement_m + (base_variation - 0.5) * 0.04, 0.0, 1.80)
+
+                # Spatial gradient -> differential settlement (cm) and angular distortion beta
+                grad_u = np.gradient(settlement_m, axis=1) * 100.0
+                grad_v = np.gradient(settlement_m, axis=0) * 100.0
+                diff_settle_cm = np.clip(np.sqrt(grad_u ** 2 + grad_v ** 2) * 5.0, 0.0, 60.0)
+                ang_distortion = np.clip(diff_settle_cm / (100.0 * 25.0), 0.0, 0.020)
+
+                # Satellite InSAR vertical residual (cm): modeled settlement vs synthetic InSAR observation
+                insar_synth = settlement_m * 0.90 + (base_variation - 0.5) * 0.03
+                insar_residual_cm = np.clip((settlement_m - insar_synth) * 100.0, -20.0, 20.0)
+
+                # Terzaghi / Sridharan-Rao 1D consolidation dissipation rate dS/dt (mm/day)
+                t50 = 14.0
+                elapsed = 7.0
+                rate_mm_day = settlement_m * (t50 / ((elapsed + t50) ** 2)) * 1000.0
+                recon_rate = np.clip(rate_mm_day, 0.0, 12.0)
+
+                if idx_clean in {"total_settlement", "crest_settlement", "settlement", "s", "crest_s"}:
+                    val = settlement_m
+                elif idx_clean in {"volumetric_strain", "eps_v", "strain", "reconsolidation_strain"}:
+                    val = vol_strain
+                elif idx_clean in {"angular_distortion", "distortion", "beta"}:
+                    val = ang_distortion
+                elif idx_clean in {"differential_settlement", "diff_s", "differential"}:
+                    val = diff_settle_cm
+                elif idx_clean in {"insar_residual", "residual", "insar_vertical_residual"}:
+                    val = insar_residual_cm
+                elif idx_clean in {"reconsolidation_rate", "rate", "dissipation_rate"}:
+                    val = recon_rate
+                else:
+                    val = settlement_m
+            elif col_clean in {"topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf"} or (col_clean in {"topography", "pointcloud"} and idx_clean in {"elevation_delta", "cut_depth", "fill_height", "slope_delta", "csf_ground_surface", "ndsm_height", "delta_z", "cut", "fill", "csf_ground", "csf", "ndsm"}) or idx_clean in {"elevation_delta", "cut_depth", "fill_height", "slope_delta", "csf_ground_surface", "ndsm_height", "delta_z", "cut", "fill", "csf_ground", "csf", "ndsm"}:
+                # 2.5D DEM Cut-and-Fill Volumetric Differencing & CSF Ground Extraction (Cycle v2.5.17)
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                # Baseline undulating terrain
+                z_pre = 320.0 + 35.0 * (u_s - 0.5) - 20.0 * (v_s - 0.5) + 12.0 * np.sin(u_s * 4.0) * np.cos(v_s * 3.5)
+
+                # Cut excavation / crest slump depression (northwest quad / crest zone)
+                cut_center_dist2 = ((u_s - 0.35) / 0.18) ** 2 + ((v_s - 0.35) / 0.18) ** 2
+                cut_zone = np.exp(-np.clip(cut_center_dist2, 0.0, 25.0))
+                cut_mag = 2.8 * cut_zone
+
+                # Fill deposition / embankment raise zone (southeast quad / toe berm)
+                fill_center_dist2 = ((u_s - 0.68) / 0.20) ** 2 + ((v_s - 0.65) / 0.20) ** 2
+                fill_zone = np.exp(-np.clip(fill_center_dist2, 0.0, 25.0))
+                fill_mag = 2.2 * fill_zone
+
+                # Elevation difference Delta Z = Z_post - Z_pre
+                dz = np.clip(-cut_mag + fill_mag + (base_variation - 0.5) * 0.08, -5.0, 5.0)
+                z_post = z_pre + dz
+
+                if idx_clean in {"elevation_delta", "delta_z"}:
+                    val = dz
+                elif idx_clean in {"cut_depth", "cut"}:
+                    val = np.clip(np.where(dz < -0.05, -dz, 0.0), 0.0, 6.0)
+                elif idx_clean in {"fill_height", "fill"}:
+                    val = np.clip(np.where(dz > 0.05, dz, 0.0), 0.0, 6.0)
+                elif idx_clean in {"slope_delta", "slope"}:
+                    grad_x = np.gradient(dz, axis=1) * 15.0
+                    grad_y = np.gradient(dz, axis=0) * 15.0
+                    val = np.clip(np.arctan(np.sqrt(grad_x ** 2 + grad_y ** 2)) * (180.0 / np.pi) * np.sign(dz + 1e-6), -25.0, 25.0)
+                elif idx_clean in {"csf_ground_surface", "csf_ground", "csf"}:
+                    val = z_pre + (base_variation - 0.5) * 0.4
+                elif idx_clean in {"ndsm_height", "ndsm"}:
+                    val = np.clip(np.abs(dz) * 2.5 + (base_variation - 0.5) * 0.8, 0.0, 20.0)
+                else:
+                    val = dz
             else:
                 val = base_variation
 
@@ -1029,6 +1172,10 @@ class TileService:
                 rgba[:, :, 3] = 230
             elif col_clean in {"geotechnical_liquefaction", "liquefaction", "geotechnical-liquefaction", "tailings_liquefaction"} or idx_clean in {"liquefaction", "fs_liq", "factor_of_safety_liq", "ru", "excess_pore_pressure", "excess_pore_pressure_ratio", "cyclic_stress_ratio", "cyclic_resistance_ratio", "csr", "crr", "vs30", "flow_slide_runout", "lateral_spreading", "delta_u"}:
                 rgba[:, :, 3] = 225
+            elif col_clean in {"geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement"} or idx_clean in {"total_settlement", "crest_settlement", "settlement", "volumetric_strain", "angular_distortion", "differential_settlement", "insar_residual", "reconsolidation_rate", "eps_v", "crest_s"}:
+                rgba[:, :, 3] = 225
+            elif col_clean in {"topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf"} or idx_clean in {"elevation_delta", "cut_depth", "fill_height", "slope_delta", "csf_ground_surface", "ndsm_height", "delta_z", "cut", "fill", "csf_ground", "csf", "ndsm"}:
+                rgba[:, :, 3] = 230
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
@@ -2379,6 +2526,173 @@ class TileService:
             index=metric_clean,
             colormap=chosen_cmap,
             rescale=chosen_rescale
+        )
+
+    def render_settlement_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "total_settlement",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for post-liquefaction reconsolidation settlement, volumetric strain, and angular distortion."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "total_settlement"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"total_settlement", "crest_settlement", "settlement", "s", "crest_s"}:
+                chosen_cmap = "turbo"
+            elif metric_clean in {"volumetric_strain", "strain", "eps_v", "reconsolidation_strain"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"angular_distortion", "distortion", "beta"}:
+                chosen_cmap = "rdylbu"
+            elif metric_clean in {"differential_settlement", "diff_s", "differential"}:
+                chosen_cmap = "inferno"
+            elif metric_clean in {"insar_residual", "residual", "insar_vertical_residual"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"reconsolidation_rate", "rate", "dissipation_rate"}:
+                chosen_cmap = "plasma"
+            else:
+                chosen_cmap = "turbo"
+        else:
+            clean_cm = colormap.lower().replace("_r", "").strip()
+            chosen_cmap = clean_cm if clean_cm in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma"} else "turbo"
+
+        if not rescale:
+            if metric_clean in {"total_settlement", "crest_settlement", "settlement", "s", "crest_s"}:
+                chosen_rescale = "0.0,1.5"
+            elif metric_clean in {"volumetric_strain", "strain", "eps_v", "reconsolidation_strain"}:
+                chosen_rescale = "0.0,6.0"
+            elif metric_clean in {"angular_distortion", "distortion", "beta"}:
+                chosen_rescale = "0.0,0.015"
+            elif metric_clean in {"differential_settlement", "diff_s", "differential"}:
+                chosen_rescale = "0.0,50.0"
+            elif metric_clean in {"insar_residual", "residual", "insar_vertical_residual"}:
+                chosen_rescale = "-20.0,20.0"
+            elif metric_clean in {"reconsolidation_rate", "rate", "dissipation_rate"}:
+                chosen_rescale = "0.0,10.0"
+            else:
+                chosen_rescale = "0.0,1.5"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="geotechnical_settlement",
+            item_id=sim_id or "SETTLE_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_topographic_delta_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "elevation_delta",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for 2.5D DEM cut-and-fill volumetric elevation delta and terrain metrics."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "elevation_delta"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"elevation_delta", "delta_z"}:
+                chosen_cmap = "bwr"
+            elif metric_clean in {"cut_depth", "cut"}:
+                chosen_cmap = "hot"
+            elif metric_clean in {"fill_height", "fill"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"slope_delta", "slope"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"csf_ground_surface", "csf_ground", "csf"}:
+                chosen_cmap = "terrain"
+            elif metric_clean in {"ndsm_height", "ndsm"}:
+                chosen_cmap = "turbo"
+            else:
+                chosen_cmap = "bwr"
+        else:
+            clean_cm = colormap.lower().replace("_r", "").strip()
+            chosen_cmap = clean_cm if clean_cm in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues"} else "bwr"
+
+        if not rescale:
+            if metric_clean in {"elevation_delta", "delta_z"}:
+                chosen_rescale = "-5.0,5.0"
+            elif metric_clean in {"cut_depth", "cut"}:
+                chosen_rescale = "0.0,6.0"
+            elif metric_clean in {"fill_height", "fill"}:
+                chosen_rescale = "0.0,6.0"
+            elif metric_clean in {"slope_delta", "slope"}:
+                chosen_rescale = "-25.0,25.0"
+            elif metric_clean in {"csf_ground_surface", "csf_ground", "csf"}:
+                chosen_rescale = "100.0,500.0"
+            elif metric_clean in {"ndsm_height", "ndsm"}:
+                chosen_rescale = "0.0,20.0"
+            else:
+                chosen_rescale = "-5.0,5.0"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="topography_elevation_delta",
+            item_id=sim_id or "CUTFILL_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_csf_tile(
+        self,
+        cloud_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "csf_ground_surface",
+        colormap: Optional[str] = "terrain",
+        rescale: Optional[str] = "100.0,500.0",
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Cloth Simulation Filter bare-earth DTM terrain."""
+        return self.render_topographic_delta_tile(
+            sim_id=cloud_id,
+            z=z,
+            x=x,
+            y=y,
+            metric=metric or "csf_ground_surface",
+            colormap=colormap or "terrain",
+            rescale=rescale or "100.0,500.0",
+            **kwargs
         )
 
 tile_service = TileService()

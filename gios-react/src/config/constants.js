@@ -955,7 +955,45 @@ export const API_ENDPOINTS = {
   ANALYSIS_LIQUEFACTION_SPT: '/api/v1/analysis/geotechnical/liquefaction/spt-sounding',
   ANALYSIS_LIQUEFACTION_SPT_SHORT: '/geotechnical/spt-sounding',
   ANALYSIS_FLOW_SLIDE_RUNOUT: '/api/v1/analysis/geotechnical/liquefaction/flow-slide-runout',
-  ANALYSIS_FLOW_SLIDE_RUNOUT_SHORT: '/geotechnical/flow-slide-runout'
+  ANALYSIS_FLOW_SLIDE_RUNOUT_SHORT: '/geotechnical/flow-slide-runout',
+  ANALYSIS_RECONSOLIDATION_SETTLEMENT: '/api/v1/analysis/geotechnical/reconsolidation-settlement',
+  ANALYSIS_RECONSOLIDATION_SETTLEMENT_SHORT: '/geotechnical/reconsolidation-settlement',
+  ANALYSIS_SETTLEMENT: '/api/v1/analysis/geotechnical/reconsolidation-settlement',
+  ANALYSIS_SETTLEMENT_SHORT: '/geotechnical/settlement',
+  ANALYSIS_SETTLEMENT_DETAIL: (simId) => `/api/v1/analysis/geotechnical/reconsolidation-settlement/${simId}`,
+  ANALYSIS_SETTLEMENT_DETAIL_SHORT: (simId) => `/geotechnical/reconsolidation-settlement/${simId}`,
+  ANALYSIS_ANGULAR_DISTORTION: '/api/v1/analysis/geotechnical/angular-distortion',
+  ANALYSIS_ANGULAR_DISTORTION_SHORT: '/geotechnical/angular-distortion',
+  ANALYSIS_SETTLEMENT_SOIL_COLUMN: '/api/v1/analysis/geotechnical/settlement/soil-column',
+  ANALYSIS_SETTLEMENT_SOIL_COLUMN_SHORT: '/geotechnical/settlement/soil-column',
+  ANALYSIS_SETTLEMENT_INSAR_FUSION: '/api/v1/analysis/geotechnical/settlement/insar-fusion',
+  ANALYSIS_SETTLEMENT_INSAR_FUSION_SHORT: '/geotechnical/settlement/insar-fusion',
+  TILES_SETTLEMENT: (simId, z, x, y) => `/api/v1/tiles/geotechnical/settlement/${simId}/${z}/${x}/${y}.png`,
+  TILES_SETTLEMENT_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/settlement/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_TOPOGRAPHY_CSF_GROUND_FILTER: '/api/v1/analysis/topography/csf-ground-filter',
+  ANALYSIS_TOPOGRAPHY_CSF_GROUND_FILTER_SHORT: '/topography/csf-ground-filter',
+  ANALYSIS_TOPOGRAPHY_CUT_AND_FILL: '/api/v1/analysis/topography/cut-and-fill',
+  ANALYSIS_TOPOGRAPHY_CUT_AND_FILL_SHORT: '/topography/cut-and-fill',
+  ANALYSIS_TOPOGRAPHY_CUT_AND_FILL_DETAIL: (simId) => `/api/v1/analysis/topography/cut-and-fill/${simId}`,
+  ANALYSIS_TOPOGRAPHY_CUT_AND_FILL_DETAIL_SHORT: (simId) => `/topography/cut-and-fill/${simId}`,
+  ANALYSIS_TOPOGRAPHY_CREST_SLUMP: '/api/v1/analysis/topography/crest-slump',
+  ANALYSIS_TOPOGRAPHY_CREST_SLUMP_SHORT: '/topography/crest-slump',
+  ANALYSIS_TOPOGRAPHY_TRANSECT_DELTA: '/api/v1/analysis/topography/transect-delta',
+  ANALYSIS_TOPOGRAPHY_TRANSECT_DELTA_SHORT: '/topography/transect-delta',
+  ANALYSIS_TOPOGRAPHY_EPIPOLAR_DIFFERENTIAL: '/api/v1/analysis/topography/epipolar-differential',
+  ANALYSIS_TOPOGRAPHY_EPIPOLAR_DIFFERENTIAL_SHORT: '/topography/epipolar-differential',
+  TILES_TOPOGRAPHY_ELEVATION_DELTA: (simId, z, x, y) => `/api/v1/tiles/topography/elevation-delta/${simId}/${z}/${x}/${y}.png`,
+  TILES_TOPOGRAPHY_ELEVATION_DELTA_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/topography/elevation-delta/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_DAM_BREACH_HYDROGRAPH: '/api/v1/analysis/hydrodynamic/dam-breach-hydrograph',
+  ANALYSIS_DAM_BREACH_HYDROGRAPH_SHORT: '/hydrodynamic/dam-breach-hydrograph',
+  ANALYSIS_INUNDATION_ROUTING: '/api/v1/analysis/hydrodynamic/inundation-routing',
+  ANALYSIS_INUNDATION_ROUTING_SHORT: '/hydrodynamic/inundation-routing',
+  ANALYSIS_DAM_BREACH_INUNDATION: '/api/v1/analysis/hydrodynamic/dam-breach-inundation',
+  ANALYSIS_DAM_BREACH_INUNDATION_SHORT: '/hydrodynamic/dam-breach-inundation',
+  ANALYSIS_DAM_BREACH_DETAIL: (simId) => `/api/v1/analysis/hydrodynamic/dam-breach-inundation/${simId}`,
+  ANALYSIS_DAM_BREACH_DETAIL_SHORT: (simId) => `/hydrodynamic/dam-breach-inundation/${simId}`,
+  TILES_HYDRODYNAMIC_INUNDATION: (simId, z, x, y) => `/api/v1/tiles/hydrodynamic/inundation/${simId}/${z}/${x}/${y}.png`,
+  TILES_HYDRODYNAMIC_INUNDATION_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/hydrodynamic/inundation/${simId}/${metric}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1148,6 +1186,27 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'ANALYSIS_LIQUEFACTION_DETAIL':
       case 'ANALYSIS_LIQUEFACTION_DETAIL_SHORT':
         return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_LIQ_001');
+      case 'TILES_SETTLEMENT':
+        return endpoint(params.simId || params.sim_id || 'SIM_SETTLE_001', params.z, params.x, params.y);
+      case 'TILES_SETTLEMENT_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_SETTLE_001', params.metric || 'total_settlement', params.z, params.x, params.y);
+      case 'ANALYSIS_SETTLEMENT_DETAIL':
+      case 'ANALYSIS_SETTLEMENT_DETAIL_SHORT':
+        return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_SETTLE_001');
+      case 'TILES_TOPOGRAPHY_ELEVATION_DELTA':
+        return endpoint(params.simId || params.sim_id || 'SIM_CUTFILL_001', params.z, params.x, params.y);
+      case 'TILES_TOPOGRAPHY_ELEVATION_DELTA_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_CUTFILL_001', params.metric || 'elevation_delta', params.z, params.x, params.y);
+      case 'ANALYSIS_TOPOGRAPHY_CUT_AND_FILL_DETAIL':
+      case 'ANALYSIS_TOPOGRAPHY_CUT_AND_FILL_DETAIL_SHORT':
+        return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_CUTFILL_001');
+      case 'TILES_HYDRODYNAMIC_INUNDATION':
+        return endpoint(params.simId || params.sim_id || 'SIM_BREACH_001', params.z, params.x, params.y);
+      case 'TILES_HYDRODYNAMIC_INUNDATION_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_BREACH_001', params.metric || 'inundation_depth', params.z, params.x, params.y);
+      case 'ANALYSIS_DAM_BREACH_DETAIL':
+      case 'ANALYSIS_DAM_BREACH_DETAIL_SHORT':
+        return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_BREACH_001');
       default:
         return endpoint(params);
     }
@@ -7182,6 +7241,8 @@ export const CSF_CLASSIFICATION_TIERS = {
   }
 };
 
+export const CSF_TIER_METADATA = CSF_CLASSIFICATION_TIERS;
+
 export const classifyCsfGroundTier = (groundFraction, meanResidualM) => {
   const gf = Number(groundFraction) || 0.0;
   const res = Number(meanResidualM) || 0.0;
@@ -11551,6 +11612,1237 @@ export const buildLiquefactionTileUrl = (simId, metric = 'factor_of_safety', z =
 export const buildLiquefactionTileUrlTemplate = (simId, metric = 'factor_of_safety') => {
   return `/api/v1/tiles/geotechnical/liquefaction/${simId}/${metric}/{z}/{x}/{y}.png`;
 };
+
+// ==============================================================================
+// CYCLE v2.5.16: POST-LIQUEFACTION VOLUMETRIC RECONSOLIDATION STRAIN, CREST SETTLEMENT
+// INTEGRATION, DIFFERENTIAL EMBANKMENT DISTORTION & INSAR VERTICAL DISPLACEMENT CONTRACTS (T-156)
+// ==============================================================================
+
+export const SETTLEMENT_METHODS = {
+  ISHIHARA_YOSHIMINE_1992: 'ishihara_yoshimine_1992',
+  TOKIMATSU_SEED_1987: 'tokimatsu_seed_1987',
+  HYBRID_ENSEMBLE: 'hybrid_ensemble'
+};
+
+export const ANGULAR_DISTORTION_HAZARD_TIERS = {
+  NEGLIGIBLE: 'negligible',
+  SLIGHT: 'slight',
+  MODERATE: 'moderate',
+  SEVERE: 'severe',
+  CRITICAL_BREACH_RISK: 'critical_breach_risk'
+};
+
+export const SETTLEMENT_HAZARD_TIERS = {
+  LOW: 'low',
+  MODERATE: 'moderate',
+  HIGH: 'high',
+  VERY_HIGH: 'very_high',
+  EXTREME: 'extreme'
+};
+
+export const ANGULAR_DISTORTION_HAZARD_CONFIGS = {
+  negligible: {
+    id: 'negligible',
+    max_distortion: 0.001333,
+    label: 'Negligible (< 1/750)',
+    ratio_threshold: '1/750',
+    description: 'No visible distortion or cracking; crest freeboard completely intact.',
+    color: '#10b981',
+    badge: 'SAFE',
+    action: 'Routine surveillance and normal monitoring cadence.'
+  },
+  slight: {
+    id: 'slight',
+    max_distortion: 0.0020,
+    label: 'Slight (1/750 - 1/500)',
+    ratio_threshold: '1/500',
+    description: 'Minor architectural or superficial cracking; minor crest grading adjustment.',
+    color: '#3b82f6',
+    badge: 'MONITOR',
+    action: 'Visual crest walk-through inspection and baseline survey re-measurement.'
+  },
+  moderate: {
+    id: 'moderate',
+    max_distortion: 0.003333,
+    label: 'Moderate (1/500 - 1/300)',
+    ratio_threshold: '1/300',
+    description: 'Structural distortion; visible longitudinal cracking along crest road; potential drainage reversal.',
+    color: '#f59e0b',
+    badge: 'CAUTION',
+    action: 'Crack sealing, piezometer survey verification, and internal drainage inspection.'
+  },
+  severe: {
+    id: 'severe',
+    max_distortion: 0.006667,
+    label: 'Severe (1/300 - 1/150)',
+    ratio_threshold: '1/150',
+    description: 'Deep transverse cracking through embankment crest; loss of freeboard; elevated piping risk.',
+    color: '#f97316',
+    badge: 'WARNING',
+    action: 'Lower impoundment pool, continuous 24/7 piezometric observation, and geotechnical crest buttressing.'
+  },
+  critical_breach_risk: {
+    id: 'critical_breach_risk',
+    max_distortion: 999.0,
+    label: 'Critical Breach Risk (>= 1/150)',
+    ratio_threshold: '>= 1/150',
+    description: 'Major crest sag; potential overtopping or catastrophic breaching along differential crack zone.',
+    color: '#ef4444',
+    badge: 'CRITICAL',
+    action: 'Emergency action plan trigger, downstream evacuation alert, and immediate emergency crest stabilization.'
+  }
+};
+
+export const SETTLEMENT_HAZARD_CONFIGS = {
+  low: {
+    id: 'low',
+    max_settlement_cm: 5.0,
+    label: 'Low (< 5 cm)',
+    color: '#10b981',
+    description: 'Minor post-cyclic densification within tolerable freeboard tolerance.'
+  },
+  moderate: {
+    id: 'moderate',
+    max_settlement_cm: 15.0,
+    label: 'Moderate (5 - 15 cm)',
+    color: '#3b82f6',
+    description: 'Moderate settlement; inspect crest instrumentation and survey monuments.'
+  },
+  high: {
+    id: 'high',
+    max_settlement_cm: 30.0,
+    label: 'High (15 - 30 cm)',
+    color: '#f59e0b',
+    description: 'Substantial settlement consuming freeboard; assess cracking and seepage.'
+  },
+  very_high: {
+    id: 'very_high',
+    max_settlement_cm: 60.0,
+    label: 'Very High (30 - 60 cm)',
+    color: '#f97316',
+    description: 'Severe crest subsidence; significant loss of reservoir flood retention margin.'
+  },
+  extreme: {
+    id: 'extreme',
+    max_settlement_cm: 9999.0,
+    label: 'Extreme (>= 60 cm)',
+    color: '#ef4444',
+    description: 'Catastrophic crest sag exceeding design freeboard; severe breach hazard.'
+  }
+};
+
+export const SETTLEMENT_TILE_METRICS = {
+  total_settlement: {
+    id: 'total_settlement',
+    name: 'Crest Total Settlement',
+    unit: 'm',
+    min: 0.0,
+    max: 1.5,
+    colormap: 'turbo',
+    description: 'Post-seismic cumulative crest reconsolidation settlement (m)'
+  },
+  volumetric_strain: {
+    id: 'volumetric_strain',
+    name: 'Volumetric Reconsolidation Strain',
+    unit: '%',
+    min: 0.0,
+    max: 6.0,
+    colormap: 'viridis',
+    description: 'Post-liquefaction volumetric reconsolidation strain (Ishihara-Yoshimine 1992)'
+  },
+  angular_distortion: {
+    id: 'angular_distortion',
+    name: 'Angular Distortion Ratio',
+    unit: 'ratio',
+    min: 0.0,
+    max: 0.015,
+    colormap: 'rdylbu_r',
+    description: 'Differential angular distortion ratio beta = delta S / L'
+  },
+  differential_settlement: {
+    id: 'differential_settlement',
+    name: 'Differential Settlement',
+    unit: 'cm',
+    min: 0.0,
+    max: 50.0,
+    colormap: 'inferno',
+    description: 'Differential settlement between adjacent crest blocks (cm)'
+  },
+  insar_residual: {
+    id: 'insar_residual',
+    name: 'InSAR Vertical Residual',
+    unit: 'cm',
+    min: -20.0,
+    max: 20.0,
+    colormap: 'bwr',
+    description: 'Residual between geotechnical modeled settlement and InSAR observation (cm)'
+  },
+  reconsolidation_rate: {
+    id: 'reconsolidation_rate',
+    name: 'Reconsolidation Dissipation Rate',
+    unit: 'mm/day',
+    min: 0.0,
+    max: 10.0,
+    colormap: 'plasma',
+    description: 'Dissipation rate of excess pore pressure and reconsolidation (mm/day)'
+  }
+};
+
+export const calculateRelativeDensityFromSpt = (n1_60cs) => {
+  const val = Math.max(1.0, Number(n1_60cs));
+  const dr = Math.sqrt(val / 46.0) * 100.0;
+  return Number(Math.min(100.0, Math.max(15.0, dr)).toFixed(1));
+};
+
+export const calculatePostLiquefactionVolumetricStrain = (fsLiq, n1_60cs, method = 'ishihara_yoshimine_1992') => {
+  const fs = Number(fsLiq);
+  const n = Math.max(1.0, Number(n1_60cs));
+  const methodStr = String(method).toLowerCase();
+
+  if (n >= 32.0) {
+    return fs <= 1.0 ? 0.05 : 0.0;
+  }
+
+  const epsVMax = Math.max(0.10, 5.0 - 0.15 * n);
+  let epsV = 0.0;
+
+  if (fs >= 2.0) {
+    epsV = 0.0;
+  } else if (fs > 1.0) {
+    const epsVOnset = 0.25 * epsVMax;
+    const decayFactor = Math.pow((2.0 - fs) / 1.0, 2.0);
+    epsV = epsVOnset * decayFactor;
+  } else {
+    const epsVOnset = 0.25 * epsVMax;
+    const progress = Math.min(1.0, Math.max(0.0, (1.0 - fs) / 0.6));
+    epsV = epsVOnset + (epsVMax - epsVOnset) * Math.pow(progress, 0.6);
+  }
+
+  if (methodStr.includes('tokimatsu') || methodStr.includes('seed')) {
+    const adj = fs < 1.0 ? 1.05 : 0.95;
+    epsV *= adj;
+  } else if (methodStr.includes('ensemble') || methodStr.includes('hybrid')) {
+    const adj = fs < 1.0 ? 1.025 : 0.975;
+    epsV *= adj;
+  }
+
+  return Number(Math.min(6.0, Math.max(0.0, epsV)).toFixed(3));
+};
+
+export const classifyAngularDistortionHazardTier = (angularDistortion) => {
+  const beta = Number(angularDistortion);
+  if (beta < 0.001333) return ANGULAR_DISTORTION_HAZARD_CONFIGS.negligible;
+  if (beta < 0.0020) return ANGULAR_DISTORTION_HAZARD_CONFIGS.slight;
+  if (beta < 0.003333) return ANGULAR_DISTORTION_HAZARD_CONFIGS.moderate;
+  if (beta < 0.006667) return ANGULAR_DISTORTION_HAZARD_CONFIGS.severe;
+  return ANGULAR_DISTORTION_HAZARD_CONFIGS.critical_breach_risk;
+};
+
+export const classifySettlementHazardTier = (settlementM) => {
+  const s = Number(settlementM);
+  if (s < 0.05) return SETTLEMENT_HAZARD_CONFIGS.low;
+  if (s < 0.15) return SETTLEMENT_HAZARD_CONFIGS.moderate;
+  if (s < 0.30) return SETTLEMENT_HAZARD_CONFIGS.high;
+  if (s < 0.60) return SETTLEMENT_HAZARD_CONFIGS.very_high;
+  return SETTLEMENT_HAZARD_CONFIGS.extreme;
+};
+
+export const calculateStratigraphicSettlement = (layers, method = 'ishihara_yoshimine_1992') => {
+  if (!Array.isArray(layers) || layers.length === 0) {
+    return {
+      total_settlement_m: 0.0,
+      total_settlement_cm: 0.0,
+      critical_layer_id: 'NONE',
+      critical_layer_depth_m: 0.0,
+      layers: []
+    };
+  }
+
+  const layerDetails = [];
+  let totalSM = 0.0;
+  let maxSubSM = -1.0;
+  let critLayerId = '';
+  let critDepth = 0.0;
+
+  for (const lyr of layers) {
+    const lId = String(lyr.layer_id || lyr.layerId || 'LYR');
+    const sType = String(lyr.soil_type || lyr.soilType || 'tailings_sand');
+    const zTop = Number(lyr.depth_top_m !== undefined ? lyr.depth_top_m : (lyr.depthTopM !== undefined ? lyr.depthTopM : 0.0));
+    const zBot = Number(lyr.depth_bottom_m !== undefined ? lyr.depth_bottom_m : (lyr.depthBottomM !== undefined ? lyr.depthBottomM : zTop + 1.0));
+    const dz = Math.max(0.01, zBot - zTop);
+    const nCs = Number(lyr.spt_n1_60cs !== undefined ? lyr.spt_n1_60cs : (lyr.sptN160cs !== undefined ? lyr.sptN160cs : 12.0));
+    const fs = Number(lyr.factor_of_safety_liq !== undefined ? lyr.factor_of_safety_liq : (lyr.factorOfSafetyLiq !== undefined ? lyr.factorOfSafetyLiq : 1.0));
+    const dr = Number(lyr.relative_density_pct !== undefined ? lyr.relative_density_pct : (lyr.relativeDensityPct !== undefined ? lyr.relativeDensityPct : calculateRelativeDensityFromSpt(nCs)));
+
+    const epsV = calculatePostLiquefactionVolumetricStrain(fs, nCs, method);
+    const subSM = (epsV / 100.0) * dz;
+    totalSM += subSM;
+
+    if (subSM > maxSubSM) {
+      maxSubSM = subSM;
+      critLayerId = lId;
+      critDepth = Number(((zTop + zBot) / 2.0).toFixed(2));
+    }
+
+    layerDetails.push({
+      layer_id: lId,
+      soil_type: sType,
+      depth_top_m: Number(zTop.toFixed(2)),
+      depth_bottom_m: Number(zBot.toFixed(2)),
+      thickness_m: Number(dz.toFixed(2)),
+      spt_n1_60cs: Number(nCs.toFixed(1)),
+      relative_density_pct: Number(dr.toFixed(1)),
+      factor_of_safety_liq: Number(fs.toFixed(2)),
+      volumetric_strain_pct: epsV,
+      sublayer_settlement_m: Number(subSM.toFixed(4)),
+      sublayer_settlement_cm: Number((subSM * 100.0).toFixed(2)),
+      contribution_pct: 0.0
+    });
+  }
+
+  for (const ld of layerDetails) {
+    ld.contribution_pct = Number(((ld.sublayer_settlement_m / Math.max(1e-6, totalSM)) * 100.0).toFixed(1));
+  }
+
+  return {
+    total_settlement_m: Number(totalSM.toFixed(4)),
+    total_settlement_cm: Number((totalSM * 100.0).toFixed(2)),
+    critical_layer_id: critLayerId,
+    critical_layer_depth_m: critDepth,
+    layers: layerDetails
+  };
+};
+
+export const calculateAngularDistortion = (
+  settlementAM,
+  settlementBM,
+  distanceM,
+  stationAId = 'STA_A',
+  stationBId = 'STA_B'
+) => {
+  const sA = Number(settlementAM);
+  const sB = Number(settlementBM);
+  const dist = Math.max(0.1, Number(distanceM));
+  const deltaS = Math.abs(sA - sB);
+  const beta = deltaS / dist;
+
+  let ratioStr = '0';
+  if (beta >= 1e-6) {
+    const denom = Math.round(1.0 / beta);
+    ratioStr = `1/${denom}`;
+  }
+
+  const tier = classifyAngularDistortionHazardTier(beta);
+
+  return {
+    station_a_id: stationAId,
+    station_b_id: stationBId,
+    distance_m: Number(dist.toFixed(2)),
+    differential_settlement_m: Number(deltaS.toFixed(4)),
+    differential_settlement_cm: Number((deltaS * 100.0).toFixed(2)),
+    angular_distortion: Number(beta.toFixed(6)),
+    angular_distortion_ratio: ratioStr,
+    hazard_tier: tier.id,
+    action_recommendation: tier.action,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateInSARDisplacementFusion = (
+  modeledSettlementM,
+  insarDisplacementM,
+  coherence = 0.70
+) => {
+  const modS = Number(modeledSettlementM);
+  const insS = Math.abs(Number(insarDisplacementM));
+  const gamma = Math.min(1.0, Math.max(0.0, Number(coherence)));
+
+  let wIns = 0.50;
+  let wMod = 0.50;
+  let qual = 'moderate_coherence_balanced_fusion';
+
+  if (gamma >= 0.70) {
+    wIns = 0.80;
+    wMod = 0.20;
+    qual = 'high_confidence_insar_agreement';
+  } else if (gamma < 0.40) {
+    wIns = 0.15;
+    wMod = 0.85;
+    qual = 'low_coherence_geotechnical_prioritized';
+  }
+
+  const fusedS = wMod * modS + wIns * insS;
+  const residual = modS - insS;
+
+  return {
+    modeled_settlement_m: Number(modS.toFixed(4)),
+    insar_observed_m: Number(insS.toFixed(4)),
+    coherence: Number(gamma.toFixed(2)),
+    fused_settlement_m: Number(fusedS.toFixed(4)),
+    residual_m: Number(residual.toFixed(4)),
+    residual_cm: Number((residual * 100.0).toFixed(2)),
+    insar_weight: wIns,
+    model_weight: wMod,
+    agreement_quality: qual,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateTimeConsolidationDissipation = (
+  totalSettlementM,
+  t50Days = 14.0,
+  elapsedDays = 7.0
+) => {
+  const sUlt = Math.max(0.001, Number(totalSettlementM));
+  const t50 = Math.max(0.5, Number(t50Days));
+  const t = Math.max(0.0, Number(elapsedDays));
+
+  const uT = t / (t + t50);
+  const degPct = Number((uT * 100.0).toFixed(1));
+  const curS = sUlt * uT;
+  const remS = sUlt - curS;
+
+  const dsDtMDay = sUlt * (t50 / Math.pow(t + t50, 2.0));
+  const rateMmDay = dsDtMDay * 1000.0;
+
+  return {
+    t50_days: Number(t50.toFixed(1)),
+    elapsed_days: Number(t.toFixed(1)),
+    degree_of_consolidation_pct: degPct,
+    current_settlement_m: Number(curS.toFixed(4)),
+    remaining_settlement_m: Number(remS.toFixed(4)),
+    reconsolidation_rate_mm_day: Number(rateMmDay.toFixed(2))
+  };
+};
+
+export const calculatePostLiquefactionSettlementAnalysis = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `SETTLE_${Date.now()}`;
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const damName = options.dam_name || options.damName || 'North Tailings Impoundment';
+  const crestLen = Number(options.crest_length_m || options.crestLengthM || 500.0);
+  const method = String(options.calculation_method || options.calculationMethod || 'ishihara_yoshimine_1992');
+  const t50 = Number(options.t50_days || options.t50Days || 14.0);
+  const elapsed = Number(options.elapsed_days || options.elapsedDays || 7.0);
+  const insarCoh = Number(options.insar_coherence !== undefined ? options.insar_coherence : (options.insarCoherence !== undefined ? options.insarCoherence : 0.72));
+
+  let layersIn = options.stratigraphic_layers || options.stratigraphicLayers;
+  if (!layersIn || !Array.isArray(layersIn) || layersIn.length === 0) {
+    layersIn = [
+      { layer_id: 'LYR_01', soil_type: 'crest_compacted_fill', depth_top_m: 0.0, depth_bottom_m: 2.5, spt_n1_60cs: 28.0, factor_of_safety_liq: 1.65 },
+      { layer_id: 'LYR_02', soil_type: 'upper_tailings_beach', depth_top_m: 2.5, depth_bottom_m: 5.0, spt_n1_60cs: 16.0, factor_of_safety_liq: 1.15 },
+      { layer_id: 'LYR_03', soil_type: 'contractive_slimes', depth_top_m: 5.0, depth_bottom_m: 8.0, spt_n1_60cs: 8.0, factor_of_safety_liq: 0.72 },
+      { layer_id: 'LYR_04', soil_type: 'liquefiable_sandy_silt', depth_top_m: 8.0, depth_bottom_m: 11.5, spt_n1_60cs: 10.0, factor_of_safety_liq: 0.85 },
+      { layer_id: 'LYR_05', soil_type: 'intermediate_tailings', depth_top_m: 11.5, depth_bottom_m: 15.0, spt_n1_60cs: 14.0, factor_of_safety_liq: 1.05 },
+      { layer_id: 'LYR_06', soil_type: 'dense_basal_alluvium', depth_top_m: 15.0, depth_bottom_m: 20.0, spt_n1_60cs: 35.0, factor_of_safety_liq: 2.10 }
+    ];
+  }
+
+  const stratCalc = calculateStratigraphicSettlement(layersIn, method);
+  const baseSM = stratCalc.total_settlement_m;
+
+  const stationsIn = options.crest_stations || options.crestStations;
+  const crestProfile = [];
+
+  if (!stationsIn || !Array.isArray(stationsIn) || stationsIn.length === 0) {
+    const numStations = 6;
+    const spacing = crestLen / (numStations - 1);
+    for (let i = 0; i < numStations; i++) {
+      const ch = Number((i * spacing).toFixed(1));
+      const relPos = ch / crestLen;
+      const shapeFactor = 0.40 + 0.85 * (1.0 - Math.pow(2.0 * relPos - 1.0, 2.0));
+      const stSM = Number((baseSM * shapeFactor).toFixed(4));
+      const stTier = classifySettlementHazardTier(stSM);
+
+      crestProfile.push({
+        station_id: `STA_0${i + 1}`,
+        chainage_m: ch,
+        latitude: Number((37.05 + 0.0005 * i).toFixed(5)),
+        longitude: Number((-121.05 + 0.001 * i).toFixed(5)),
+        total_settlement_m: stSM,
+        total_settlement_cm: Number((stSM * 100.0).toFixed(2)),
+        insar_displacement_m: Number((stSM * 0.92).toFixed(4)),
+        fused_settlement_m: Number((stSM * 0.95).toFixed(4)),
+        hazard_tier: stTier.id
+      });
+    }
+  } else {
+    for (const st of stationsIn) {
+      crestProfile.push({ ...st });
+    }
+  }
+
+  const distortionSegments = [];
+  let maxBeta = 0.0;
+  let worstDistortionTier = ANGULAR_DISTORTION_HAZARD_CONFIGS.negligible;
+  let worstRatioStr = '0';
+
+  for (let i = 0; i < crestProfile.length - 1; i++) {
+    const staA = crestProfile[i];
+    const staB = crestProfile[i + 1];
+    const dist = Math.abs(staB.chainage_m - staA.chainage_m);
+    const angRes = calculateAngularDistortion(
+      staA.total_settlement_m,
+      staB.total_settlement_m,
+      dist,
+      staA.station_id,
+      staB.station_id
+    );
+    distortionSegments.push(angRes);
+
+    const betaVal = angRes.angular_distortion;
+    if (betaVal > maxBeta) {
+      maxBeta = betaVal;
+      worstDistortionTier = classifyAngularDistortionHazardTier(betaVal);
+      worstRatioStr = angRes.angular_distortion_ratio;
+    }
+  }
+
+  const allSM = crestProfile.map(st => st.total_settlement_m);
+  const maxSM = allSM.length > 0 ? Math.max(...allSM) : baseSM;
+  const sumSM = allSM.reduce((acc, v) => acc + v, 0);
+  const meanSM = allSM.length > 0 ? sumSM / allSM.length : baseSM;
+  const overallSettleTier = classifySettlementHazardTier(maxSM);
+
+  const insarDispIn = options.insar_displacement_m !== undefined ? options.insar_displacement_m : options.insarDisplacementM;
+  const insarObsM = insarDispIn !== undefined ? Number(insarDispIn) : Number((maxSM * 0.88).toFixed(4));
+  const insarFusionRes = calculateInSARDisplacementFusion(maxSM, insarObsM, insarCoh);
+
+  const timeConsRes = calculateTimeConsolidationDissipation(maxSM, t50, elapsed);
+
+  const geojson = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: crestProfile.map(st => [st.longitude, st.latitude])
+        },
+        properties: {
+          feature_type: 'embankment_crest_settlement_profile',
+          dam_id: damId,
+          max_settlement_m: Number(maxSM.toFixed(4)),
+          max_angular_distortion: Number(maxBeta.toFixed(6)),
+          max_distortion_ratio: worstRatioStr,
+          worst_hazard_tier: worstDistortionTier.id
+        }
+      },
+      ...crestProfile.map(st => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [st.longitude, st.latitude]
+        },
+        properties: {
+          feature_type: 'crest_monitoring_station',
+          station_id: st.station_id,
+          chainage_m: st.chainage_m,
+          total_settlement_m: st.total_settlement_m,
+          total_settlement_cm: st.total_settlement_cm,
+          hazard_tier: st.hazard_tier
+        }
+      }))
+    ]
+  };
+
+  const tileTemplate = `/api/v1/tiles/geotechnical/settlement/${simId}/total_settlement/{z}/{x}/{y}.png`;
+
+  return {
+    simulation_id: simId,
+    dam_id: damId,
+    dam_name: damName,
+    calculation_method: method,
+    total_crest_settlement_m: Number(baseSM.toFixed(4)),
+    total_crest_settlement_cm: Number((baseSM * 100.0).toFixed(2)),
+    max_crest_settlement_m: Number(maxSM.toFixed(4)),
+    max_crest_settlement_cm: Number((maxSM * 100.0).toFixed(2)),
+    mean_crest_settlement_m: Number(meanSM.toFixed(4)),
+    critical_layer_id: stratCalc.critical_layer_id,
+    critical_layer_depth_m: stratCalc.critical_layer_depth_m,
+    overall_settlement_hazard_tier: overallSettleTier.id,
+    max_angular_distortion: Number(maxBeta.toFixed(6)),
+    max_angular_distortion_ratio: worstRatioStr,
+    worst_distortion_hazard_tier: worstDistortionTier.id,
+    stratigraphic_profile: stratCalc.layers,
+    crest_profile: crestProfile,
+    angular_distortion_segments: distortionSegments,
+    insar_fusion: insarFusionRes,
+    time_consolidation: timeConsRes,
+    settlement_hazard_geojson: geojson,
+    tile_url_template: tileTemplate,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const buildSettlementTileUrl = (simId, metric = 'total_settlement', z = 12, x = 2048, y = 1024) => {
+  return `/api/v1/tiles/geotechnical/settlement/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildSettlementTileUrlTemplate = (simId, metric = 'total_settlement') => {
+  return `/api/v1/tiles/geotechnical/settlement/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+
+// ==============================================================================
+// CYCLE v2.5.17: CLOTH SIMULATION FILTERING (CSF) GROUND POINT EXTRACTION,
+// 2.5D DEM CUT-AND-FILL VOLUMETRIC DIFFERENCING & DRONE EPIPOLAR DIFFERENTIAL MODELS
+// ==============================================================================
+
+export const CUT_FILL_CALCULATION_MODES = {
+  CELL_DIFFERENCING: 'cell_differencing',
+  TRAPEZOIDAL_PRISM: 'trapezoidal_prism',
+  TIN_DIFFERENTIAL: 'tin_differential'
+};
+
+export const TOPOGRAPHIC_DELTA_HAZARD_TIERS = {
+  NEGLIGIBLE_CHANGE: 'negligible_change',
+  MINOR_SURFACE_RAISING_OR_CREEP: 'minor_surface_raising_or_creep',
+  MODERATE_SURFACE_EROSION: 'moderate_surface_erosion',
+  SEVERE_EMBANKMENT_DEFORMATION: 'severe_embankment_deformation',
+  CRITICAL_CREST_BREACH_SLUMP: 'critical_crest_breach_slump'
+};
+
+export const CREST_SLUMP_HAZARD_TIERS = {
+  STABLE_FREEBOARD: 'stable_freeboard',
+  ADVISORY_SETTLEMENT: 'advisory_settlement',
+  HEIGHTENED_OVERTOPPING_RISK: 'heightened_overtopping_risk',
+  CRITICAL_CREST_LOSS: 'critical_crest_loss'
+};
+
+export const EPIPOLAR_DISPARITY_QUALITIES = {
+  SUB_PIXEL_CONVERGENCE: 'sub_pixel_convergence',
+  STANDARD_STEREO_ACCURACY: 'standard_stereo_accuracy',
+  COARSE_EPIPOLAR_RESIDUAL: 'coarse_epipolar_residual',
+  DECORRELATION_FAILURE: 'decorrelation_failure'
+};
+
+export const EPIPOLAR_DISPARITY_QUALITY_CONFIGS = {
+  sub_pixel_convergence: {
+    id: 'sub_pixel_convergence',
+    label: 'Sub-Pixel Stereo Convergence',
+    max_rmse_px: 0.5,
+    color: '#10b981',
+    badge: 'OPTIMAL',
+    description: 'High-precision sub-pixel epipolar alignment suitable for millimeter-grade deformation detection.'
+  },
+  standard_stereo_accuracy: {
+    id: 'standard_stereo_accuracy',
+    label: 'Standard Photogrammetric Accuracy',
+    max_rmse_px: 1.5,
+    color: '#3b82f6',
+    badge: 'STANDARD',
+    description: 'Nominal multi-view stereo disparity accuracy for routine DSM surface generation.'
+  },
+  coarse_epipolar_residual: {
+    id: 'coarse_epipolar_residual',
+    label: 'Coarse Epipolar Residual',
+    max_rmse_px: 3.0,
+    color: '#f59e0b',
+    badge: 'ELEVATED_RESIDUAL',
+    description: 'Elevated parallax residual from flight motion blur, rolling shutter, or low visual texture.'
+  },
+  decorrelation_failure: {
+    id: 'decorrelation_failure',
+    label: 'Decorrelation / Matching Failure',
+    max_rmse_px: 9999.0,
+    color: '#ef4444',
+    badge: 'FAILURE',
+    description: 'Severe radiometric decorrelation, specular reflection, or water surface preventing stereo matching.'
+  }
+};
+
+export const TOPOGRAPHIC_DELTA_HAZARD_CONFIGS = {
+  negligible_change: {
+    id: 'negligible_change',
+    max_cut_m3: 500.0,
+    max_abs_delta_z_m: 0.15,
+    label: 'Negligible Topographic Change',
+    color: '#10b981',
+    badge: 'NORMAL',
+    description: 'Minor surface elevation fluctuations within photogrammetric noise limits.',
+    action: 'Routine seasonal UAV / LiDAR monitoring schedule.'
+  },
+  minor_surface_raising_or_creep: {
+    id: 'minor_surface_raising_or_creep',
+    max_cut_m3: 3000.0,
+    max_abs_delta_z_m: 0.50,
+    label: 'Minor Raising or Creep',
+    color: '#3b82f6',
+    badge: 'INFORMATIONAL',
+    description: 'Localized fill deposition or mild superficial creep on downstream embankment slope.',
+    action: 'Inspect crest monuments and verify UAV flight GCP ground alignment.'
+  },
+  moderate_surface_erosion: {
+    id: 'moderate_surface_erosion',
+    max_cut_m3: 15000.0,
+    max_abs_delta_z_m: 1.50,
+    label: 'Moderate Surface Erosion / Gullying',
+    color: '#f59e0b',
+    badge: 'CAUTION',
+    description: 'Progressive rill/gully washouts or localized slope material loss along shell.',
+    action: 'Deploy erosion control blankets, regrade runoff channels, and inspect berm drainage.'
+  },
+  severe_embankment_deformation: {
+    id: 'severe_embankment_deformation',
+    max_cut_m3: 50000.0,
+    max_abs_delta_z_m: 3.0,
+    label: 'Severe Embankment Deformation / Slumping',
+    color: '#f97316',
+    badge: 'WARNING',
+    description: 'Substantial slope displacement, toe bulging, or major crest slumping compromising geometry.',
+    action: 'Dispatch emergency geotechnical engineering team; verify piezometer heads and lower impoundment pool.'
+  },
+  critical_crest_breach_slump: {
+    id: 'critical_crest_breach_slump',
+    max_cut_m3: 99999999.0,
+    max_abs_delta_z_m: 9999.0,
+    label: 'Critical Crest Breach / Catastrophic Slump',
+    color: '#ef4444',
+    badge: 'CRITICAL',
+    description: 'Massive volumetric void or severe crest depression threatening immediate overtopping breach.',
+    action: 'Activate Emergency Action Plan (EAP), sound downstream evacuation alarm, deploy crest sandbag barriers.'
+  }
+};
+
+export const CREST_SLUMP_HAZARD_CONFIGS = {
+  stable_freeboard: {
+    id: 'stable_freeboard',
+    max_loss_m: 0.15,
+    label: 'Stable Freeboard (< 0.15 m loss)',
+    color: '#10b981',
+    badge: 'STABLE',
+    description: 'Embankment crest elevation within baseline design tolerance.',
+    action: 'Maintain scheduled piezometric and topographic surveying.'
+  },
+  advisory_settlement: {
+    id: 'advisory_settlement',
+    max_loss_m: 0.50,
+    label: 'Advisory Crest Settlement (0.15 - 0.50 m loss)',
+    color: '#3b82f6',
+    badge: 'ADVISORY',
+    description: 'Moderate freeboard encroachment along embankment segment.',
+    action: 'Conduct daily visual crest patrols and check settlement plates.'
+  },
+  heightened_overtopping_risk: {
+    id: 'heightened_overtopping_risk',
+    max_loss_m: 1.50,
+    label: 'Heightened Overtopping Risk (0.50 - 1.50 m loss)',
+    color: '#f59e0b',
+    badge: 'WARNING',
+    description: 'Severe reduction of hydraulic freeboard margin during storm surcharge.',
+    action: 'Raise crest emergency bund with compacted fill; regulate spillway outflow.'
+  },
+  critical_crest_loss: {
+    id: 'critical_crest_loss',
+    max_loss_m: 9999.0,
+    label: 'Critical Crest Freeboard Loss (>= 1.50 m loss)',
+    color: '#ef4444',
+    badge: 'CRITICAL',
+    description: 'Catastrophic crest sag; imminent breach or wave overtopping risk.',
+    action: 'Emergency spillway maximum drawdown and downstream evacuation protocol.'
+  }
+};
+
+export const TOPOGRAPHIC_DELTA_TILE_METRICS = {
+  elevation_delta: {
+    id: 'elevation_delta',
+    name: 'Elevation Difference (Z_post - Z_pre)',
+    unit: 'm',
+    min: -5.0,
+    max: 5.0,
+    colormap: 'bwr',
+    description: 'Differential elevation raster (blue = deposition/fill, red = excavation/slump)'
+  },
+  cut_depth: {
+    id: 'cut_depth',
+    name: 'Cut Depth (Excavation / Loss)',
+    unit: 'm',
+    min: 0.0,
+    max: 6.0,
+    colormap: 'hot',
+    description: 'Magnitude of surface material removal or crest void (m)'
+  },
+  fill_height: {
+    id: 'fill_height',
+    name: 'Fill Height (Deposition / Raising)',
+    unit: 'm',
+    min: 0.0,
+    max: 6.0,
+    colormap: 'viridis',
+    description: 'Magnitude of surface accumulation or embankment raise (m)'
+  },
+  slope_delta: {
+    id: 'slope_delta',
+    name: 'Slope Angle Difference',
+    unit: 'deg',
+    min: -25.0,
+    max: 25.0,
+    colormap: 'plasma',
+    description: 'Differential slope inclination change (degrees)'
+  },
+  csf_ground_surface: {
+    id: 'csf_ground_surface',
+    name: 'CSF Bare Earth DTM',
+    unit: 'm',
+    min: 100.0,
+    max: 500.0,
+    colormap: 'terrain',
+    description: 'Cloth Simulation Filter classified bare-earth terrain surface (m)'
+  },
+  ndsm_height: {
+    id: 'ndsm_height',
+    name: 'Normalized DSM Height (nDSM)',
+    unit: 'm',
+    min: 0.0,
+    max: 20.0,
+    colormap: 'turbo',
+    description: 'Height above terrain for structures, vegetation, and embankment features (m)'
+  }
+};
+
+export const classifyTopographicDeltaHazardTier = (grossCutM3, maxAbsDeltaZM) => {
+  const cut = Number(grossCutM3) || 0;
+  const dz = Math.abs(Number(maxAbsDeltaZM) || 0);
+  if (cut >= 50000.0 || dz >= 3.0) return TOPOGRAPHIC_DELTA_HAZARD_CONFIGS.critical_crest_breach_slump;
+  if (cut >= 15000.0 || dz >= 1.50) return TOPOGRAPHIC_DELTA_HAZARD_CONFIGS.severe_embankment_deformation;
+  if (cut >= 3000.0 || dz >= 0.50) return TOPOGRAPHIC_DELTA_HAZARD_CONFIGS.moderate_surface_erosion;
+  if (cut >= 500.0 || dz >= 0.15) return TOPOGRAPHIC_DELTA_HAZARD_CONFIGS.minor_surface_raising_or_creep;
+  return TOPOGRAPHIC_DELTA_HAZARD_CONFIGS.negligible_change;
+};
+
+export const classifyCrestSlumpHazardTier = (freeboardLossM) => {
+  const loss = Math.max(0, Number(freeboardLossM) || 0);
+  if (loss >= 1.50) return CREST_SLUMP_HAZARD_CONFIGS.critical_crest_loss;
+  if (loss >= 0.50) return CREST_SLUMP_HAZARD_CONFIGS.heightened_overtopping_risk;
+  if (loss >= 0.15) return CREST_SLUMP_HAZARD_CONFIGS.advisory_settlement;
+  return CREST_SLUMP_HAZARD_CONFIGS.stable_freeboard;
+};
+
+export const classifyEpipolarDisparityQuality = (disparityRmsePx, inlierRatioPct = 85.0) => {
+  const rmse = Number(disparityRmsePx) || 0;
+  const inlier = Number(inlierRatioPct) || 0;
+  if (inlier < 50.0 || rmse >= 3.0) return EPIPOLAR_DISPARITY_QUALITIES.DECORRELATION_FAILURE;
+  if (rmse >= 1.5) return EPIPOLAR_DISPARITY_QUALITIES.COARSE_EPIPOLAR_RESIDUAL;
+  if (rmse >= 0.5) return EPIPOLAR_DISPARITY_QUALITIES.STANDARD_STEREO_ACCURACY;
+  return EPIPOLAR_DISPARITY_QUALITIES.SUB_PIXEL_CONVERGENCE;
+};
+
+export const calculateCutAndFillDifferencing = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `CUTFILL_${Date.now()}`;
+  const assetId = options.asset_id || options.assetId || 'EMBANKMENT_ZONE_A';
+  const assetName = options.asset_name || options.assetName || 'North Tailings Embankment';
+  const demPreId = options.dem_pre_id || options.demPreId || 'DEM_PRE_20260815';
+  const demPostId = options.dem_post_id || options.demPostId || 'DEM_POST_20261001';
+  const gridRes = Math.max(0.05, Number(options.grid_resolution_m || options.gridResolutionM || 1.0));
+  const calcMode = String(options.calculation_mode || options.calculationMode || 'cell_differencing').toLowerCase();
+  const deadband = Math.max(0.0, Number(options.deadband_threshold_m || options.deadbandThresholdM || 0.05));
+  const sidePts = Math.max(4, Math.min(150, parseInt(options.grid_side_points || options.gridSidePoints || 24, 10)));
+
+  const cellArea = gridRes * gridRes;
+  const cells = [];
+  const cutCells = [];
+  const fillCells = [];
+  const unchangedCells = [];
+
+  let grossCut = 0.0;
+  let grossFill = 0.0;
+  const allDeltaZ = [];
+
+  for (let r = 0; r < sidePts; r++) {
+    for (let c = 0; c < sidePts; c++) {
+      const x = Number((c * gridRes).toFixed(2));
+      const y = Number((r * gridRes).toFixed(2));
+      const cellId = `CELL_R${String(r).padStart(2, '0')}_C${String(c).padStart(2, '0')}`;
+
+      const zPre = Number((320.0 + 0.12 * x - 0.05 * y + 1.8 * Math.sin(x / 12.0) * Math.cos(y / 15.0)).toFixed(3));
+
+      const relX = c / (sidePts - 1);
+      const relY = r / (sidePts - 1);
+      let dz = 0.0;
+
+      if (relX < 0.45 && relY < 0.45) {
+        const distFactor = (1.0 - relX / 0.45) * (1.0 - relY / 0.45);
+        dz = -Number((0.20 + 2.60 * distFactor).toFixed(3));
+      } else if (relX > 0.55 && relY > 0.55) {
+        const distFactor = ((relX - 0.55) / 0.45) * ((relY - 0.55) / 0.45);
+        dz = Number((0.15 + 2.05 * distFactor).toFixed(3));
+      } else {
+        dz = Number((0.03 * Math.sin(c * 1.5) * Math.cos(r * 1.8)).toFixed(3));
+      }
+
+      const zPost = Number((zPre + dz).toFixed(3));
+      allDeltaZ.push(dz);
+
+      let status = 'unchanged';
+      let cVol = 0.0;
+      let fVol = 0.0;
+
+      if (dz < -deadband) {
+        status = 'cut';
+        cVol = Number((Math.abs(dz) * cellArea).toFixed(3));
+        grossCut += cVol;
+      } else if (dz > deadband) {
+        status = 'fill';
+        fVol = Number((dz * cellArea).toFixed(3));
+        grossFill += fVol;
+      }
+
+      const cellObj = {
+        cell_id: cellId,
+        row_idx: r,
+        col_idx: c,
+        x_m: x,
+        y_m: y,
+        z_pre_m: zPre,
+        z_post_m: zPost,
+        delta_z_m: dz,
+        cell_area_m2: cellArea,
+        cut_volume_m3: cVol,
+        fill_volume_m3: fVol,
+        status
+      };
+
+      if (status === 'cut') cutCells.push(cellObj);
+      else if (status === 'fill') fillCells.push(cellObj);
+      else unchangedCells.push(cellObj);
+
+      cells.push(cellObj);
+    }
+  }
+
+  const cutCellsSorted = [...cutCells].sort((a, b) => b.cut_volume_m3 - a.cut_volume_m3);
+  const fillCellsSorted = [...fillCells].sort((a, b) => b.fill_volume_m3 - a.fill_volume_m3);
+
+  const totCells = cells.length;
+  const cntCut = cutCells.length;
+  const cntFill = fillCells.length;
+  const cntUnchanged = unchangedCells.length;
+
+  const areaCutHa = Number(((cntCut * cellArea) / 10000.0).toFixed(4));
+  const areaFillHa = Number(((cntFill * cellArea) / 10000.0).toFixed(4));
+  const areaUnchangedHa = Number(((cntUnchanged * cellArea) / 10000.0).toFixed(4));
+  const totAreaHa = Number(((totCells * cellArea) / 10000.0).toFixed(4));
+
+  const netVol = Number((grossFill - grossCut).toFixed(3));
+  const maxCutD = cutCells.length > 0 ? Number(Math.max(...cutCells.map(c => Math.abs(c.delta_z_m))).toFixed(3)) : 0.0;
+  const maxFillH = fillCells.length > 0 ? Number(Math.max(...fillCells.map(c => c.delta_z_m)).toFixed(3)) : 0.0;
+  const meanDz = Number((allDeltaZ.reduce((a, b) => a + b, 0) / Math.max(1, allDeltaZ.length)).toFixed(3));
+
+  const hazardMeta = classifyTopographicDeltaHazardTier(grossCut, maxCutD);
+
+  const summary = {
+    cell_count_total: totCells,
+    cell_count_cut: cntCut,
+    cell_count_fill: cntFill,
+    cell_count_unchanged: cntUnchanged,
+    area_cut_ha: areaCutHa,
+    area_fill_ha: areaFillHa,
+    area_unchanged_ha: areaUnchangedHa,
+    total_area_ha: totAreaHa,
+    gross_cut_volume_m3: Number(grossCut.toFixed(3)),
+    gross_fill_volume_m3: Number(grossFill.toFixed(3)),
+    net_volume_change_m3: netVol,
+    max_cut_depth_m: maxCutD,
+    max_fill_height_m: maxFillH,
+    mean_elevation_change_m: meanDz
+  };
+
+  const geojson = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[
+            [-121.050, 37.050],
+            [-121.045, 37.050],
+            [-121.045, 37.055],
+            [-121.050, 37.055],
+            [-121.050, 37.050]
+          ]]
+        },
+        properties: {
+          feature_type: 'cut_and_fill_analysis_envelope',
+          simulation_id: simId,
+          asset_id: assetId,
+          gross_cut_volume_m3: Number(grossCut.toFixed(3)),
+          gross_fill_volume_m3: Number(grossFill.toFixed(3)),
+          net_volume_change_m3: netVol,
+          hazard_tier: hazardMeta.id
+        }
+      }
+    ]
+  };
+
+  return {
+    simulation_id: simId,
+    asset_id: assetId,
+    asset_name: assetName,
+    dem_pre_id: demPreId,
+    dem_post_id: demPostId,
+    calculation_mode: calcMode,
+    grid_resolution_m: gridRes,
+    summary,
+    hazard_tier: hazardMeta.id,
+    hazard_metadata: hazardMeta,
+    top_cut_cells: cutCellsSorted.slice(0, 15),
+    top_fill_cells: fillCellsSorted.slice(0, 15),
+    cut_fill_geojson: geojson,
+    tile_url_template: `/api/v1/tiles/topography/elevation-delta/${simId}/elevation_delta/{z}/{x}/{y}.png`,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateCrestSlumpingProfile = (options = {}) => {
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_A';
+  const damName = options.dam_name || options.damName || 'North Tailings Impoundment';
+  const crestLen = Number(options.crest_length_m || options.crestLengthM || 450.0);
+  const desFb = Number(options.design_freeboard_m || options.designFreeboardM || 3.5);
+  const poolElev = Number(options.reservoir_pool_elevation_m || options.reservoirPoolElevationM || 320.0);
+
+  const stationsIn = options.stations;
+  const crestStations = [];
+
+  if (!stationsIn || !Array.isArray(stationsIn) || stationsIn.length === 0) {
+    const numStations = 7;
+    const spacing = crestLen / (numStations - 1);
+    for (let i = 0; i < numStations; i++) {
+      const ch = Number((i * spacing).toFixed(1));
+      const zPre = Number((poolElev + desFb).toFixed(2));
+      const relPos = ch / crestLen;
+      const midFactor = 4.0 * relPos * (1.0 - relPos);
+      const slumpDz = -Number((0.10 + 1.55 * midFactor).toFixed(3));
+      const zPost = Number((zPre + slumpDz).toFixed(2));
+      const fbLoss = Math.max(0, -slumpDz);
+      const fbPost = Number((desFb - fbLoss).toFixed(2));
+      const tierConfig = classifyCrestSlumpHazardTier(fbLoss);
+
+      crestStations.push({
+        station_id: `STA_${String(i + 1).padStart(2, '0')}`,
+        chainage_m: ch,
+        latitude: Number((37.05 + 0.0004 * i).toFixed(5)),
+        longitude: Number((-121.05 + 0.0008 * i).toFixed(5)),
+        z_pre_m: zPre,
+        z_post_m: zPost,
+        delta_z_m: slumpDz,
+        freeboard_pre_m: desFb,
+        freeboard_post_m: fbPost,
+        freeboard_loss_m: fbLoss,
+        hazard_tier: tierConfig.id
+      });
+    }
+  } else {
+    for (const st of stationsIn) {
+      crestStations.push({ ...st });
+    }
+  }
+
+  const losses = crestStations.map(st => st.freeboard_loss_m);
+  const maxLoss = losses.length > 0 ? Math.max(...losses) : 0.0;
+  const sumLoss = losses.reduce((a, b) => a + b, 0);
+  const meanLoss = losses.length > 0 ? Number((sumLoss / losses.length).toFixed(2)) : 0.0;
+  const minResFb = crestStations.length > 0 ? Number(Math.min(...crestStations.map(st => st.freeboard_post_m)).toFixed(2)) : desFb;
+
+  let critSt = 'STA_01';
+  for (const st of crestStations) {
+    if (st.freeboard_loss_m === maxLoss) {
+      critSt = st.station_id;
+      break;
+    }
+  }
+
+  const crestWidth = 8.0;
+  let totSlumpVol = 0.0;
+  for (let i = 0; i < crestStations.length - 1; i++) {
+    const s1 = crestStations[i];
+    const s2 = crestStations[i + 1];
+    const ds = Math.abs(s2.chainage_m - s1.chainage_m);
+    const avgLoss = (s1.freeboard_loss_m + s2.freeboard_loss_m) / 2.0;
+    totSlumpVol += avgLoss * crestWidth * ds;
+  }
+
+  const overallTier = classifyCrestSlumpHazardTier(maxLoss);
+
+  const summary = {
+    dam_id: damId,
+    crest_length_m: crestLen,
+    design_freeboard_m: desFb,
+    min_residual_freeboard_m: minResFb,
+    max_freeboard_loss_m: Number(maxLoss.toFixed(2)),
+    mean_freeboard_loss_m: meanLoss,
+    critical_station_id: critSt,
+    total_slump_volume_m3: Number(totSlumpVol.toFixed(2)),
+    hazard_tier: overallTier.id,
+    action_recommendation: overallTier.action
+  };
+
+  const geojson = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: crestStations.map(st => [st.longitude, st.latitude])
+        },
+        properties: {
+          feature_type: 'embankment_crest_slump_centerline',
+          dam_id: damId,
+          max_freeboard_loss_m: Number(maxLoss.toFixed(2)),
+          hazard_tier: overallTier.id
+        }
+      }
+    ]
+  };
+
+  return {
+    dam_id: damId,
+    dam_name: damName,
+    summary,
+    stations: crestStations,
+    slump_geojson: geojson,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateCrestSlumpAnalysis = calculateCrestSlumpingProfile;
+
+export const calculateTopographicTransectDelta = (options = {}) => {
+  const assetId = options.asset_id || options.assetId || 'EMBANKMENT_SECTION_A';
+  const coords = options.coordinates || [[-121.050, 37.050], [-121.045, 37.055]];
+  const spacing = Math.max(0.5, Number(options.sample_spacing_m || options.sampleSpacingM || 5.0));
+  const demPreId = options.dem_pre_id || options.demPreId || 'DEM_PRE_20260815';
+  const demPostId = options.dem_post_id || options.demPostId || 'DEM_POST_20261001';
+
+  const nodes = [];
+  const totDist = 200.0;
+  const numNodes = Math.ceil(totDist / spacing) + 1;
+
+  let grossCut = 0.0;
+  let grossFill = 0.0;
+  const unitWidth = 1.0;
+
+  for (let i = 0; i < numNodes; i++) {
+    const dist = Number((i * spacing).toFixed(1));
+    const rel = Math.min(1.0, dist / Math.max(1.0, totDist));
+    const zPre = Number((340.0 - 0.25 * dist + 1.2 * Math.sin(dist / 20.0)).toFixed(2));
+    let dz = 0.0;
+
+    if (dist >= 25.0 && dist <= 75.0) {
+      dz = -Number((0.40 + 1.80 * Math.sin(((dist - 25.0) / 50.0) * Math.PI)).toFixed(3));
+    } else if (dist >= 130.0 && dist <= 185.0) {
+      dz = Number((0.20 + 1.25 * Math.sin(((dist - 130.0) / 55.0) * Math.PI)).toFixed(3));
+    } else {
+      dz = Number((0.02 * Math.cos(dist / 10.0)).toFixed(3));
+    }
+
+    const zPost = Number((zPre + dz).toFixed(2));
+    const slopePre = Number((14.0 + 3.0 * Math.cos(dist / 25.0)).toFixed(1));
+    const slopePost = Number((slopePre + (dz < 0 ? 2.5 : -1.5)).toFixed(1));
+
+    const segCut = dz < 0 ? Number((Math.abs(dz) * spacing * unitWidth).toFixed(2)) : 0.0;
+    const segFill = dz > 0 ? Number((dz * spacing * unitWidth).toFixed(2)) : 0.0;
+    grossCut += segCut;
+    grossFill += segFill;
+
+    nodes.push({
+      node_id: `NODE_${String(i + 1).padStart(3, '0')}`,
+      distance_m: dist,
+      latitude: Number((coords[0][1] + rel * (coords[coords.length - 1][1] - coords[0][1])).toFixed(6)),
+      longitude: Number((coords[0][0] + rel * (coords[coords.length - 1][0] - coords[0][0])).toFixed(6)),
+      z_pre_m: zPre,
+      z_post_m: zPost,
+      delta_z_m: dz,
+      slope_pre_deg: slopePre,
+      slope_post_deg: slopePost,
+      segment_cut_m3: segCut,
+      segment_fill_m3: segFill
+    });
+  }
+
+  const cutNodes = nodes.filter(n => n.delta_z_m < 0);
+  const fillNodes = nodes.filter(n => n.delta_z_m > 0);
+  const maxCut = cutNodes.length > 0 ? Number(Math.max(...cutNodes.map(n => Math.abs(n.delta_z_m))).toFixed(3)) : 0.0;
+  const maxFill = fillNodes.length > 0 ? Number(Math.max(...fillNodes.map(n => n.delta_z_m)).toFixed(3)) : 0.0;
+  const netVol = Number((grossFill - grossCut).toFixed(2));
+
+  return {
+    asset_id: assetId,
+    dem_pre_id: demPreId,
+    dem_post_id: demPostId,
+    total_distance_m: Number(((numNodes - 1) * spacing).toFixed(1)),
+    node_count: nodes.length,
+    gross_cut_volume_m3: Number(grossCut.toFixed(2)),
+    gross_fill_volume_m3: Number(grossFill.toFixed(2)),
+    net_volume_m3: netVol,
+    max_cut_depth_m: maxCut,
+    max_fill_height_m: maxFill,
+    nodes,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateDroneEpipolarDifferential = (options = {}) => {
+  const preId = options.flight_pre_id || options.flightPreId || 'UAV_SURVEY_20260815';
+  const postId = options.flight_post_id || options.flightPostId || 'UAV_SURVEY_20261001';
+  const cam = options.camera_model || options.cameraModel || 'DJI_ZENMUSE_P1_35MM';
+  const pairCount = Math.max(2, Math.min(50, parseInt(options.stereo_pair_count || options.stereoPairCount || 8, 10)));
+
+  const pairs = [];
+  const rmseVals = [];
+  const inlierVals = [];
+
+  for (let i = 0; i < pairCount; i++) {
+    const pairId = `STEREO_PAIR_${String(i + 1).padStart(2, '0')}`;
+    const baseline = Number((25.0 + 8.5 * Math.sin(i * 0.9)).toFixed(2));
+    const rmsePx = Number((0.42 + 0.18 * Math.sin(i * 1.3)).toFixed(3));
+    const meanDisp = Number((12.5 + 2.2 * Math.cos(i * 0.7)).toFixed(2));
+    const inlierPct = Number((92.5 - 4.5 * Math.cos(i * 1.1)).toFixed(1));
+
+    const qual = classifyEpipolarDisparityQuality(rmsePx, inlierPct);
+    rmseVals.push(rmsePx);
+    inlierVals.push(inlierPct);
+
+    pairs.push({
+      pair_id: pairId,
+      image_pre_id: `IMG_PRE_${String(i + 1).padStart(4, '0')}`,
+      image_post_id: `IMG_POST_${String(i + 1).padStart(4, '0')}`,
+      baseline_distance_m: baseline,
+      mean_disparity_px: meanDisp,
+      disparity_rmse_px: rmsePx,
+      inlier_ratio_pct: inlierPct,
+      quality: qual
+    });
+  }
+
+  const avgRmse = Number((rmseVals.reduce((a, b) => a + b, 0) / Math.max(1, rmseVals.length)).toFixed(3));
+  const avgInlier = Number((inlierVals.reduce((a, b) => a + b, 0) / Math.max(1, inlierVals.length)).toFixed(1));
+  const overallQ = classifyEpipolarDisparityQuality(avgRmse, avgInlier);
+
+  return {
+    flight_pre_id: preId,
+    flight_post_id: postId,
+    camera_model: cam,
+    stereo_pairs_evaluated: pairs.length,
+    mean_disparity_px: Number((pairs.reduce((acc, p) => acc + p.mean_disparity_px, 0) / Math.max(1, pairs.length)).toFixed(2)),
+    disparity_rmse_px: avgRmse,
+    overall_inlier_ratio_pct: avgInlier,
+    overall_quality: overallQ,
+    differential_pairs: pairs,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const buildTopographicElevationDeltaTileUrl = (simId, metric = 'elevation_delta', z = 12, x = 2048, y = 1024, basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/topography/elevation-delta/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildTopographicElevationDeltaTileUrlTemplate = (simId, metric = 'elevation_delta', basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/topography/elevation-delta/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+
 
 
 

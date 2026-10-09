@@ -548,6 +548,164 @@ class TestScientificRigor(unittest.TestCase):
         self.assertIn("cyclic_stress_ratio_csr", res["spt_sounding_points"][0])
         self.assertIn("cyclic_resistance_ratio_crr75", res["spt_sounding_points"][0])
 
+    def test_ishihara_yoshimine_volumetric_strain_and_tokimatsu_seed_settlement(self):
+        """Task T-160: Verify post-liquefaction volumetric strain, stratigraphic integration, angular distortion, and InSAR fusion."""
+        from app.models.schemas import (
+            calculate_post_liquefaction_volumetric_strain,
+            calculate_stratigraphic_settlement,
+            classify_angular_distortion_hazard_tier,
+            classify_settlement_hazard_tier,
+            calculate_angular_distortion,
+            calculate_insar_displacement_fusion,
+            calculate_time_consolidation_dissipation,
+            calculate_post_liquefaction_settlement_analysis,
+            SettlementCalculationMethod,
+            AngularDistortionHazardTier,
+            SettlementHazardTier
+        )
+
+        # 1. Ishihara & Yoshimine (1992) Volumetric Strain (eps_v)
+        # Safe soil (FS >= 2.0) exhibits zero post-liquefaction reconsolidation strain
+        self.assertEqual(calculate_post_liquefaction_volumetric_strain(fs_liq=2.0, n1_60cs=12.0), 0.0)
+        self.assertEqual(calculate_post_liquefaction_volumetric_strain(fs_liq=2.5, n1_60cs=8.0), 0.0)
+
+        # Dense dilatant sand (N1_60cs >= 32) exhibits negligible strain even if triggered
+        self.assertEqual(calculate_post_liquefaction_volumetric_strain(fs_liq=1.5, n1_60cs=35.0), 0.0)
+        self.assertLessEqual(calculate_post_liquefaction_volumetric_strain(fs_liq=0.8, n1_60cs=34.0), 0.05)
+
+        # Monotonicity with decreasing Factor of Safety (higher shaking / lower resistance -> higher strain)
+        eps_v_fs06 = calculate_post_liquefaction_volumetric_strain(fs_liq=0.6, n1_60cs=10.0)
+        eps_v_fs09 = calculate_post_liquefaction_volumetric_strain(fs_liq=0.9, n1_60cs=10.0)
+        eps_v_fs13 = calculate_post_liquefaction_volumetric_strain(fs_liq=1.3, n1_60cs=10.0)
+        self.assertGreater(eps_v_fs06, eps_v_fs09, "Strain must increase monotonically as FS drops below 1.0")
+        self.assertGreater(eps_v_fs09, eps_v_fs13, "Strain must increase monotonically as FS drops from 1.3 to 0.9")
+
+        # Monotonicity with relative density (lower blow count -> higher contractive volumetric strain)
+        eps_v_loose = calculate_post_liquefaction_volumetric_strain(fs_liq=0.75, n1_60cs=6.0)
+        eps_v_medium = calculate_post_liquefaction_volumetric_strain(fs_liq=0.75, n1_60cs=14.0)
+        eps_v_dense = calculate_post_liquefaction_volumetric_strain(fs_liq=0.75, n1_60cs=25.0)
+        self.assertGreater(eps_v_loose, eps_v_medium, "Loose contractive tailings must strain more than medium tailings")
+        self.assertGreater(eps_v_medium, eps_v_dense, "Medium tailings must strain more than dense tailings")
+
+        # Tokimatsu & Seed (1987) calibration adjustment test
+        eps_v_tokimatsu = calculate_post_liquefaction_volumetric_strain(fs_liq=0.8, n1_60cs=10.0, method="tokimatsu_seed_1987")
+        self.assertGreater(eps_v_tokimatsu, 0.0)
+
+        # 2. Tokimatsu & Seed (1987) Multi-Layer Stratigraphic Settlement Integration (S = sum eps_v * dz)
+        test_stratigraphy = [
+            {"layer_id": "L1_CAP", "soil_type": "compacted_cap", "depth_top_m": 0.0, "depth_bottom_m": 3.0, "spt_n1_60cs": 28.0, "factor_of_safety_liq": 1.90},
+            {"layer_id": "L2_BEACH", "soil_type": "tailings_beach", "depth_top_m": 3.0, "depth_bottom_m": 8.0, "spt_n1_60cs": 12.0, "factor_of_safety_liq": 1.05},
+            {"layer_id": "L3_SLIMES", "soil_type": "slimes_deposit", "depth_top_m": 8.0, "depth_bottom_m": 15.0, "spt_n1_60cs": 5.0, "factor_of_safety_liq": 0.60},
+            {"layer_id": "L4_BASE", "soil_type": "basal_gravel", "depth_top_m": 15.0, "depth_bottom_m": 20.0, "spt_n1_60cs": 35.0, "factor_of_safety_liq": 2.20}
+        ]
+        strat_res = calculate_stratigraphic_settlement(test_stratigraphy, method="ishihara_yoshimine_1992")
+        self.assertIn("total_settlement_m", strat_res)
+        self.assertIn("layers", strat_res)
+        self.assertEqual(len(strat_res["layers"]), 4)
+
+        # Mathematical verification: Total settlement must exactly equal the sum of sublayer settlements
+        sublayer_sum_m = sum(lyr["sublayer_settlement_m"] for lyr in strat_res["layers"])
+        self.assertAlmostEqual(strat_res["total_settlement_m"], sublayer_sum_m, places=4,
+                               msg="Integrated total crest settlement must equal the sum of sublayer settlements")
+        self.assertAlmostEqual(strat_res["total_settlement_cm"], strat_res["total_settlement_m"] * 100.0, places=2)
+
+        # Critical layer identification (L3_SLIMES is thickest and lowest FS -> greatest settlement)
+        self.assertEqual(strat_res["critical_layer_id"], "L3_SLIMES")
+        self.assertEqual(strat_res["critical_layer_depth_m"], 11.5)  # (8.0 + 15.0) / 2 = 11.5m
+
+        # Contribution percentages must sum to 100%
+        contrib_sum = sum(lyr["contribution_pct"] for lyr in strat_res["layers"])
+        self.assertAlmostEqual(contrib_sum, 100.0, delta=0.5)
+
+        # 3. Embankment Angular Distortion beta = Delta S / L (Bjerrum 1963)
+        # Negligible: Delta S = 0.01m over 10m -> beta = 0.001 < 1/750 (0.001333)
+        dist_neg = calculate_angular_distortion(settlement_a_m=0.10, settlement_b_m=0.11, distance_m=10.0, station_a_id="STA_0", station_b_id="STA_1")
+        self.assertEqual(dist_neg["hazard_tier"], AngularDistortionHazardTier.NEGLIGIBLE.value)
+        self.assertAlmostEqual(dist_neg["angular_distortion"], 0.001, places=4)
+
+        # Slight: beta = 0.017 / 10 = 0.0017 (between 1/750 and 1/500)
+        dist_slight = calculate_angular_distortion(settlement_a_m=0.10, settlement_b_m=0.117, distance_m=10.0)
+        self.assertEqual(dist_slight["hazard_tier"], AngularDistortionHazardTier.SLIGHT.value)
+
+        # Moderate: beta = 0.025 / 10 = 0.0025 (between 1/500 and 1/300)
+        dist_mod = calculate_angular_distortion(settlement_a_m=0.10, settlement_b_m=0.125, distance_m=10.0)
+        self.assertEqual(dist_mod["hazard_tier"], AngularDistortionHazardTier.MODERATE.value)
+
+        # Severe: beta = 0.05 / 10 = 0.0050 (between 1/300 and 1/150)
+        dist_sev = calculate_angular_distortion(settlement_a_m=0.10, settlement_b_m=0.150, distance_m=10.0)
+        self.assertEqual(dist_sev["hazard_tier"], AngularDistortionHazardTier.SEVERE.value)
+
+        # Critical Breach Risk: Delta S = 0.15m over 15m -> beta = 0.010 > 1/150 (0.006667)
+        dist_crit = calculate_angular_distortion(settlement_a_m=0.10, settlement_b_m=0.25, distance_m=15.0)
+        self.assertEqual(dist_crit["hazard_tier"], AngularDistortionHazardTier.CRITICAL_BREACH_RISK.value)
+        self.assertEqual(dist_crit["angular_distortion_ratio"], "1/100")
+
+        # Settlement Hazard Tier classification
+        self.assertEqual(classify_settlement_hazard_tier(0.03), SettlementHazardTier.LOW)
+        self.assertEqual(classify_settlement_hazard_tier(0.12), SettlementHazardTier.MODERATE)
+        self.assertEqual(classify_settlement_hazard_tier(0.25), SettlementHazardTier.HIGH)
+        self.assertEqual(classify_settlement_hazard_tier(0.45), SettlementHazardTier.VERY_HIGH)
+        self.assertEqual(classify_settlement_hazard_tier(0.85), SettlementHazardTier.EXTREME)
+
+        # 4. Satellite InSAR Displacement Fusion
+        # High coherence (gamma >= 0.70) -> InSAR weight 0.80, Model weight 0.20
+        fusion_high = calculate_insar_displacement_fusion(modeled_settlement_m=0.40, insar_displacement_m=0.50, coherence=0.82)
+        self.assertEqual(fusion_high["insar_weight"], 0.80)
+        self.assertEqual(fusion_high["model_weight"], 0.20)
+        self.assertAlmostEqual(fusion_high["insar_weight"] + fusion_high["model_weight"], 1.00, places=4)
+        # Expected fused: 0.20 * 0.40 + 0.80 * 0.50 = 0.08 + 0.40 = 0.48 m
+        self.assertAlmostEqual(fusion_high["fused_settlement_m"], 0.48, places=4)
+        self.assertEqual(fusion_high["agreement_quality"], "high_confidence_insar_agreement")
+
+        # Moderate coherence (gamma = 0.55) -> 50/50 balanced fusion
+        fusion_mod = calculate_insar_displacement_fusion(modeled_settlement_m=0.30, insar_displacement_m=0.40, coherence=0.55)
+        self.assertEqual(fusion_mod["insar_weight"], 0.50)
+        self.assertEqual(fusion_mod["model_weight"], 0.50)
+        self.assertAlmostEqual(fusion_mod["fused_settlement_m"], 0.35, places=4)
+
+        # Low coherence (gamma = 0.25) -> Prioritize geotechnical model (85% model, 15% InSAR)
+        fusion_low = calculate_insar_displacement_fusion(modeled_settlement_m=0.30, insar_displacement_m=0.60, coherence=0.25)
+        self.assertEqual(fusion_low["model_weight"], 0.85)
+        self.assertEqual(fusion_low["insar_weight"], 0.15)
+        self.assertEqual(fusion_low["agreement_quality"], "low_coherence_geotechnical_prioritized")
+
+        # 5. Time-Dependent Consolidation Dissipation (Sridharan & Rao 1981)
+        # U(t) = t / (t + t50). At t = t50, degree of consolidation must equal 50.0%
+        dissip_t50 = calculate_time_consolidation_dissipation(total_settlement_m=0.60, t50_days=20.0, elapsed_days=20.0)
+        self.assertEqual(dissip_t50["degree_of_consolidation_pct"], 50.0)
+        self.assertAlmostEqual(dissip_t50["current_settlement_m"], 0.30, places=4)
+        self.assertAlmostEqual(dissip_t50["remaining_settlement_m"], 0.30, places=4)
+
+        # Dissipation rate should decrease as time progresses
+        dissip_early = calculate_time_consolidation_dissipation(total_settlement_m=0.60, t50_days=20.0, elapsed_days=5.0)
+        dissip_late = calculate_time_consolidation_dissipation(total_settlement_m=0.60, t50_days=20.0, elapsed_days=40.0)
+        self.assertGreater(dissip_early["reconsolidation_rate_mm_day"], dissip_late["reconsolidation_rate_mm_day"])
+
+        # 6. End-to-End Post-Liquefaction Reconsolidation Analysis Synthesis
+        full_payload = {
+            "dam_id": "DAM-BRUMADINHO-B1",
+            "dam_name": "Brumadinho Tailings Impoundment",
+            "crest_length_m": 400.0,
+            "pga_g": 0.28,
+            "earthquake_magnitude_mw": 7.0,
+            "calculation_method": "ishihara_yoshimine_1992",
+            "insar_coherence": 0.78,
+            "insar_displacement_m": 0.42,
+            "t50_days": 14.0,
+            "elapsed_days": 10.0,
+            "stratigraphic_layers": test_stratigraphy
+        }
+        full_res = calculate_post_liquefaction_settlement_analysis(full_payload)
+        self.assertEqual(full_res["dam_id"], "DAM-BRUMADINHO-B1")
+        self.assertIn("max_crest_settlement_m", full_res)
+        self.assertIn("max_angular_distortion", full_res)
+        self.assertIn("crest_profile", full_res)
+        self.assertIn("angular_distortion_segments", full_res)
+        self.assertIn("time_consolidation", full_res)
+        self.assertIn("insar_fusion", full_res)
+        self.assertGreater(len(full_res["crest_profile"]), 3)
+        self.assertGreater(len(full_res["angular_distortion_segments"]), 2)
+
 if __name__ == "__main__":
     unittest.main()
 

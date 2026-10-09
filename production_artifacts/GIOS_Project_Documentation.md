@@ -1,5 +1,5 @@
 # GIOS: Global Intelligence & Observation System
-**Project Dossier & Scientific Specification (v2.5.15 Enterprise Release)**  
+**Project Dossier & Scientific Specification (v2.5.16 Enterprise Release)**  
 *Live Production: [https://gios-react.vercel.app](https://gios-react.vercel.app)*  
 *Backend Engine: FastAPI + rio-tiler + odc-stac + Leaflet Web GIS*
 
@@ -9,14 +9,15 @@
 
 The **Global Intelligence & Observation System (GIOS v2.5)** is an enterprise geospatial intelligence platform designed for critical infrastructure hazard monitoring, environmental anomaly detection, and real-time disaster response.
 
-GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10**, **v2.5.11**, **v2.5.12**, **v2.5.13**, **v2.5.14**, and **v2.5.15** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
+GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10**, **v2.5.11**, **v2.5.12**, **v2.5.13**, **v2.5.14**, **v2.5.15**, and **v2.5.16** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
 - **v2.5.10**: NodeODM Distributed Photogrammetry Processing Queue with 9-stage asynchronous state machine and stage-weighted progress telemetry, Multi-Temporal Quality Mosaic Cloud-Free Compositor Studio with pixel-rank temporal reductions (median, greenest, clearest, max-NDMI, min-LST) and dynamic XYZ tile streaming, and Multi-Hazard Live Telemetry Alert System with resilient USGS NWIS event bus and Server-Sent Events (SSE).
 - **v2.5.11**: Geotechnical Tailings Dam Hydrodynamic Inundation Simulation Engine with 2D shallow water Saint-Venant wave front routing, Froehlich (2008) peak breach discharge formulation ($Q_p = 0.607 \cdot V_w^{0.295} \cdot h_w^{1.24} \cdot \mu_{\text{mech}}$), Bingham plastic and Herschel-Bulkley non-Newtonian tailings slurry yield stress routing, Australian/USBR velocity-depth hazard intensity cross-product tiering ($v \cdot h$), dynamic downstream evacuation corridor buffer vectorization, critical infrastructure exposure scoring, and interactive Tailings Dam Breach Simulation Studio (`DamBreakModal.jsx`) with dynamic XYZ tile streaming (`/api/v1/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png`).
 - **v2.5.12**: Geotechnical Embankment Phreatic Surface Seepage Inversion, 2D Dupuit-Forchheimer unconfined seepage flow, Casagrande top-seepage line inversion, Van Genuchten (1980) Soil Water Retention Curve (SWRC) parameter optimization ($\theta(\psi) = \theta_r + \frac{\theta_s - \theta_r}{[1 + (\alpha \psi)^n]^m}$), Terzaghi critical piping Factor of Safety ($FS_{\text{piping}} = i_{\text{crit}} / i_{\text{exit}}$), in-situ multi-depth piezometer residual fusion, and interactive Phreatic Surface Seepage Studio (`PhreaticSeepageModal.jsx`) with dynamic hydrogeological XYZ tile streaming (`/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png`).
 - **v2.5.13**: Embankment Limit Equilibrium Slope Stability Engine (Bishop's Simplified Picard iteration with $m_\alpha \ge 0.10$ and Janbu's Simplified empirical curvature correction $f_0$), 3D circular & non-circular critical slip surface grid search optimization minimizing Factor of Safety ($FS_{\min}$), unsaturated soil mechanics apparent suction cohesion ($c_\psi = \psi \tan\phi^b$), coupled Dupuit-Casagrande phreatic pore water pressure ($u_i = \gamma_w \cdot \max(0, z_{\text{phreatic}} - y_{b,i})$), Sentinel-1 satellite radar line-of-sight InSAR creep vector fusion, interactive Embankment Slope Stability & Limit Equilibrium Studio (`SlopeStabilityModal.jsx`) featuring slices force polygon equilibrium inspector, real-time FS sensitivity radar, and dynamic geotechnical slope hazard XYZ tile streaming (`/api/v1/tiles/geotechnical/slope-stability/{sim_id}/{metric}/{z}/{x}/{y}.png`).
 - **v2.5.14**: Transient Rainfall Infiltration Green-Ampt unsteady ponding dynamics ($t_p = (K_s \cdot \psi_f \cdot \Delta\theta)/(i(i - K_s))$, implicit Newton-Raphson $F(t)$ solver, wetting front depth $z_w(t) = F/(\Delta\theta \cdot 1000)$, Fredlund apparent suction cohesion decay $\psi(t) = \psi_0(1 - (z_w/z_{\text{slip}})^2)$, and transient Factor of Safety decay $FS(t)$), Remote Sensing split-window Apparent Thermal Inertia (ATI) based on Price (1985) ($ATI = (1 - \alpha)/\Delta T_{\text{DTR}}$) and thermal seepage anomaly classification (`normal_dry_shell`, `moderate_antecedent_moisture`, `elevated_seepage_saturation`, `critical_daylighting_outflow`), interactive Transient Rainfall Hyetograph & Wetting Front Infiltration Studio (`RainfallInfiltrationModal.jsx`) featuring dynamic hyetograph editor, 2D wetting front depth profile animator, and transient FS decay curve, and dynamic thermal moisture tracing XYZ tile streaming (`/api/v1/tiles/thermal/apparent-inertia/{sim_id}/{z}/{x}/{y}.png`).
 - **v2.5.15**: Seed-Idriss Simplified Dynamic Liquefaction Factor of Safety ($FS_{\text{liq}} = CRR_{7.5} \cdot MSF / CSR$), Youd et al. (2001) Magnitude Scaling Factor ($MSF$), In-situ SPT/CPT overburden correction $C_N = \min(1.7, \sqrt{P_a / \sigma'_{v0}})$, Satellite Topographic Slope $V_{s30}$ Shear Wave Velocity Proxy (Wald & Allen 2007) mapping to NEHRP Site Classes (A–F), Excess Pore Pressure Ratio $r_u = \Delta u / \sigma'_{v0}$ and effective stress collapse, Scheidegger Post-Liquefaction Flow Slide Runout Distance ($L = H / \tan \alpha_r$), interactive Earthquake Ground Motion & Geotechnical Liquefaction Studio (`LiquefactionModal.jsx`), and dynamic geotechnical liquefaction hazard XYZ tile streaming (`/api/v1/tiles/geotechnical/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png`).
-- **v2.5.16 (Scaffolding Operational)**: Post-Liquefaction Volumetric Reconsolidation Strain ($\varepsilon_v$, Ishihara & Yoshimine 1992), Crest Settlement Integration ($S = \int \varepsilon_v dz$, Tokimatsu & Seed 1987), Differential Embankment Distortion & InSAR Vertical Displacement Fusion.
+- **v2.5.16**: Post-Liquefaction Volumetric Reconsolidation Strain ($\varepsilon_v$, Ishihara & Yoshimine 1992), Multi-Layer Stratigraphic Embankment Crest Settlement Integration ($S = \sum \varepsilon_{v,i} \Delta z_i$, Tokimatsu & Seed 1987), Differential Embankment Angular Distortion Cracking Criteria ($\beta = \Delta S / L$, Bjerrum 1963 / ICOLD Bulletin 164), Coherence-Weighted Satellite InSAR Vertical Displacement Fusion ($S_{\text{fused}} = w_{\text{InSAR}} S_{\text{InSAR}} + w_{\text{model}} S_{\text{model}}$), Sridharan & Rao (1981) Hyperbolic Consolidation Dissipation ($U(t) = t / (t + t_{50})$), interactive Geotechnical Crest Settlement Studio (`SettlementModal.jsx`), and dynamic geotechnical settlement hazard XYZ tile streaming (`/api/v1/tiles/geotechnical/settlement/{sim_id}/{metric}/{z}/{x}/{y}.png`).
+- **v2.5.17 (Scaffolding Operational)**: Cloth Simulation Filtering (CSF, Zhang et al. 2016) LiDAR/UAV Point Cloud Bare Earth Separation, 2.5D Raster DEM Volumetric Cut-and-Fill Differencing ($\Delta V = \sum \Delta z \cdot \Delta x \Delta y$), Embankment Crest Slumping & Freeboard Loss Profile, and Photogrammetric Drone Epipolar Disparity Quality Assessment.
 
 ---
 
@@ -99,6 +100,21 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
     - Formulates Janbu's Simplified force equilibrium method with empirical curvature correction factor $f_0 = 1.0 + 0.5(d/L - 1.4(d/L)^2)$.
     - Optimizes circular slip surface geometry $(x_c, y_c, R)$ via 3D grid search minimizing Factor of Safety.
     - Fuses Sentinel-1 satellite radar line-of-sight InSAR creep vectors ($v_{\text{LOS}}$) to detect accelerating shear deformation across embankment crests and downstream slopes.
+18. **Transient Rainfall Infiltration & Apparent Thermal Inertia (v2.5.14)**:
+    - Formulates Green-Ampt unsteady ponding dynamics: $t_p = \frac{K_s \cdot \psi_f \cdot \Delta\theta}{i(i - K_s)}$ and implicit Newton-Raphson cumulative infiltration solver $F(t) - \psi_f \Delta\theta \ln(1 + \frac{F(t)}{\psi_f \Delta\theta}) = K_s (t - t_p + t_s)$.
+    - Computes wetting front propagation depth $z_w(t) = \frac{F(t)}{\Delta\theta \cdot 1000}$ and Fredlund apparent suction cohesion decay $\psi(t) = \psi_0 [1 - (z_w/z_{\text{slip}})^2]$.
+    - Evaluates split-window Apparent Thermal Inertia (ATI) based on Price (1985): $ATI = \frac{1 - \alpha}{\Delta T_{\text{DTR}}}$ to isolate daylighting seepage saturation anomalies.
+19. **Seed-Idriss Dynamic Liquefaction & Flow Slide Runout (v2.5.15)**:
+    - Formulates Seed-Idriss simplified dynamic liquefaction procedure: $CSR = 0.65 \cdot \frac{a_{\max}}{g} \cdot \frac{\sigma_{v0}}{\sigma'_{v0}} \cdot r_d$, $CRR_{7.5}$ from SPT $(N_1)_{60\text{cs}}$, Youd et al. (2001) Magnitude Scaling Factor ($MSF$), and factor of safety $FS_{\text{liq}} = \frac{CRR_{7.5} \cdot MSF}{CSR}$.
+    - Models excess pore water pressure ratio generation $r_u = \frac{\Delta u}{\sigma'_{v0}}$ and effective stress collapse $\sigma'_v = \sigma'_{v0}(1 - r_u)$.
+    - Evaluates satellite DEM topographic slope $V_{s30}$ shear wave velocity proxy (Wald & Allen 2007) and NEHRP site classification (Classes A–F).
+    - Evaluates Scheidegger post-liquefaction flow slide reach angle geometry ($L = H / \tan \alpha_r$) and empirical volume scaling envelope.
+20. **Post-Liquefaction Reconsolidation Settlement & Embankment Angular Distortion (v2.5.16)**:
+    - Formulates Ishihara & Yoshimine (1992) post-liquefaction volumetric reconsolidation strain curves ($\varepsilon_v$) bounded by clean-sand equivalent SPT blow counts $(N_1)_{60\text{cs}}$ and factor of safety against liquefaction $FS_{\text{liq}}$: zero volumetric strain for $FS \ge 2.0$, monotonic growth with lower $FS$ and lower $(N_1)_{60\text{cs}}$, asymptoting to terminal post-liquefaction volumetric strain limit ($\sim 4.5\% - 5.0\%$).
+    - Implements Tokimatsu & Seed (1987) multi-layer stratigraphic depth integration: total embankment subsidence $S = \sum_{i=1}^{M} \varepsilon_{v,i} \cdot \Delta z_i$, identifying critical sublayer contributions.
+    - Evaluates Bjerrum (1963) / ICOLD Bulletin 164 differential embankment angular distortion cracking criteria $\beta = \Delta S / L$ across 5 operational hazard tiers: `negligible` ($< 1/750$), `slight` ($1/500$), `moderate` ($1/300$), `severe` ($1/150$), and `critical_breach_risk` ($\ge 1/150$).
+    - Performs coherence-dependent satellite radar InSAR vertical displacement fusion: $S_{\text{fused}} = w_{\text{InSAR}} \cdot S_{\text{InSAR}} + w_{\text{model}} \cdot S_{\text{model}}$ where high coherence ($\gamma \ge 0.70$) weights InSAR at $0.80$, moderate coherence at $0.50$, and low coherence prioritizes the geotechnical numerical model ($0.85$).
+    - Models Sridharan & Rao (1981) time-dependent consolidation dissipation $U(t) = \frac{t}{t + t_{50}}$ and excess pore water pressure decay over time.
 
 ---
 
@@ -123,7 +139,9 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
   │    odc-stac Data Cube → SCL Masking → NodeODM Distributed Queue →       │
   │    Quality Mosaic Compositor → Multi-Hazard SSE Real-Time Event Bus →   │
   │    2D Shallow Water Dam Break → Dupuit Phreatic Seepage Inversion →     │
-  │    Bishop/Janbu Limit Equilibrium Slice Solvers & InSAR Creep Fusion    │
+  │    Bishop/Janbu Limit Equilibrium Slice Solvers & InSAR Creep Fusion →  │
+  │    Seed-Idriss Liquefaction & Scheidegger Flow Slide Runout Engine →    │
+  │    Ishihara-Yoshimine Post-Seismic Settlement & InSAR Fusion Engine     │
   └───────────────────────────────────┬─────────────────────────────────────┘
                                       │ (Dynamic XYZ Stream & SSE)
                                       ▼
@@ -138,6 +156,8 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
   │  • Tailings Dam Breach Simulation Studio & Evacuation Corridors         │
   │  • Phreatic Surface Seepage Studio, SWRC Curve & Piezometer Drawer      │
   │  • Embankment Slope Stability Studio, Force Polygons & Sensitivity Radar│
+  │  • Earthquake Ground Motion & Geotechnical Liquefaction Studio          │
+  │  • Post-Seismic Crest Settlement Studio, Strata Bar & Distortion Radar  │
   │  • Interactive Pixel Inspector & Polygon Zonal Analysis Drawer          │
   └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -272,6 +292,13 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
 | `POST` | `/api/v1/analysis/geotechnical/liquefaction/flow-slide-runout` | Scheidegger Fahrböschung reach angle post-liquefaction flow slide runout envelope |
 | `GET` | `/api/v1/analysis/geotechnical/liquefaction/lateral-spreading/{dam_id}` | Youd et al. empirical multi-linear regression lateral spreading displacement |
 | `GET` | `/api/v1/tiles/geotechnical/liquefaction/{sim_id}/{metric}/{z}/{x}/{y}.png` | Dynamic XYZ seismic liquefaction hazard tile stream (FS, pore pressure, $V_{s30}$, runout) |
+| `POST` | `/api/v1/analysis/geotechnical/reconsolidation-settlement` | Post-liquefaction volumetric reconsolidation strain ($\varepsilon_v$) & multi-layer settlement integration ($S$) |
+| `GET` | `/api/v1/analysis/geotechnical/settlement/{sim_id}` | Cached post-seismic reconsolidation settlement simulation results & layer breakdown |
+| `POST` | `/api/v1/analysis/geotechnical/soil-column-subsidence` | Discretized 1D soil column stratigraphy settlement profiler & Ishihara-Yoshimine curves |
+| `POST` | `/api/v1/analysis/geotechnical/embankment-crest-subsidence` | Multi-station crest subsidence alignment, InSAR coherence fusion & consolidation dissipation |
+| `POST` | `/api/v1/analysis/geotechnical/angular-distortion-hazard` | Differential settlement angular distortion ratio ($\beta = \Delta S / L$) & Bjerrum/ICOLD cracking tiering |
+| `GET` | `/api/v1/tiles/geotechnical/settlement/{sim_id}/{metric}/{z}/{x}/{y}.png` | Dynamic XYZ settlement hazard tile stream (settlement, strain, distortion, InSAR residual) |
+| `GET` | `/api/v1/analysis/geotechnical/settlement/tile-json/{sim_id}` | TileJSON metadata specification for dynamic settlement hazard XYZ tile streaming |
 | `GET` | `/api/v1/annotations` | Geotechnical field inspection defect annotations (RFC 7946 GeoJSON) |
 | `POST` | `/api/v1/work-orders` | Automated maintenance work order dispatch & ticket tracking |
 | `GET` | `/api/v1/subscriptions` | Automated continuous AOI monitoring subscriptions & alert triggers |
@@ -284,10 +311,10 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
 
 ## 5. Verification & Quality Assurance
 
-- **Unit & Integration Test Suite**: 268 tests passing via pytest across `test_schemas.py` (175), `test_api.py` (76), `test_scientific_rigor.py` (12), `test_stac_signing.py` (1), and `test_tile_server.py` (4) with 0 failures, 0 regressions, and 0 warnings.
-- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,872 modules in 8.22s with 0 errors).
+- **Unit & Integration Test Suite**: 285 tests passing via pytest across `test_schemas.py` (191), `test_api.py` (76), `test_scientific_rigor.py` (13), `test_stac_signing.py` (1), and `test_tile_server.py` (4) with 0 failures, 0 regressions, and 0 warnings.
+- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` transformed 2,873 modules in 20.30s with 0 errors).
 - **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, USGS NWIS/Earthquake feeds, cache storage, database integrity, and host system RAM. Latest inspection confirms System Status **HEALTHY** with 0 active anomalies.
 - **Live Production Telemetry**: Continuous surveillance confirms System Status HEALTHY with 0 active anomalies and stable headroom.
 
 ---
-*GIOS v2.5.15 — Verified and Approved for Production Deployment.*
+*GIOS v2.5.16 — Verified and Approved for Production Deployment.*
