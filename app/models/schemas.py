@@ -21488,25 +21488,48 @@ def decompose_atmospheric_phase_screen(
     mean_x = sum(xs) / float(n)
     mean_y = sum(ys) / float(n)
 
-    # 1. Stratified elevation-dependent delay coefficient k_elev
-    var_z = sum((z - mean_z) ** 2 for z in zs)
-    cov_z_phi = sum((zs[i] - mean_z) * (phis[i] - mean_phi) for i in range(n))
-    k_elev = (cov_z_phi / var_z) if var_z > 1e-6 else 0.0
+    # 4-variable OLS: phi ~ a0 + a1 * x + a2 * y + k_elev * z
+    X_mat = [[1.0, xs[i], ys[i], zs[i]] for i in range(n)]
+    A_mat = [[sum(X_mat[i][j] * X_mat[i][k] for i in range(n)) for k in range(4)] for j in range(4)]
+    b_vec = [sum(X_mat[i][j] * phis[i] for i in range(n)) for j in range(4)]
 
-    # 2. Elevation-corrected phase
-    phis_corr = [phis[i] - k_elev * zs[i] for i in range(n)]
-    mean_phi_corr = sum(phis_corr) / float(n)
+    # Gaussian elimination with partial pivoting
+    M_sys = [A_mat[j][:] + [b_vec[j]] for j in range(4)]
+    singular = False
+    for j in range(4):
+        max_row = max(range(j, 4), key=lambda r: abs(M_sys[r][j]))
+        M_sys[j], M_sys[max_row] = M_sys[max_row], M_sys[j]
+        if abs(M_sys[j][j]) < 1e-10:
+            singular = True
+            break
+        for k in range(j + 1, 4):
+            factor = M_sys[k][j] / M_sys[j][j]
+            for c_idx in range(j, 5):
+                M_sys[k][c_idx] -= factor * M_sys[j][c_idx]
 
-    # 3. 2D Planar Spatial Ramp
-    var_x = sum((x - mean_x) ** 2 for x in xs)
-    cov_x_phi = sum((xs[i] - mean_x) * (phis_corr[i] - mean_phi_corr) for i in range(n))
-    a1 = (cov_x_phi / var_x) if var_x > 1e-6 else 0.0
+    if not singular:
+        sol = [0.0] * 4
+        for j in range(3, -1, -1):
+            sol[j] = (M_sys[j][4] - sum(M_sys[j][c_idx] * sol[c_idx] for c_idx in range(j + 1, 4))) / M_sys[j][j]
+        a0, a1, a2, k_elev = sol[0], sol[1], sol[2], sol[3]
+    else:
+        # Fallback to sequential marginal regression if system is collinear
+        var_z = sum((z - mean_z) ** 2 for z in zs)
+        cov_z_phi = sum((zs[i] - mean_z) * (phis[i] - mean_phi) for i in range(n))
+        k_elev = (cov_z_phi / var_z) if var_z > 1e-6 else 0.0
 
-    var_y = sum((y - mean_y) ** 2 for y in ys)
-    cov_y_phi = sum((ys[i] - mean_y) * (phis_corr[i] - mean_phi_corr) for i in range(n))
-    a2 = (cov_y_phi / var_y) if var_y > 1e-6 else 0.0
+        phis_corr = [phis[i] - k_elev * zs[i] for i in range(n)]
+        mean_phi_corr = sum(phis_corr) / float(n)
 
-    a0 = mean_phi_corr - a1 * mean_x - a2 * mean_y
+        var_x = sum((x - mean_x) ** 2 for x in xs)
+        cov_x_phi = sum((xs[i] - mean_x) * (phis_corr[i] - mean_phi_corr) for i in range(n))
+        a1 = (cov_x_phi / var_x) if var_x > 1e-6 else 0.0
+
+        var_y = sum((y - mean_y) ** 2 for y in ys)
+        cov_y_phi = sum((ys[i] - mean_y) * (phis_corr[i] - mean_phi_corr) for i in range(n))
+        a2 = (cov_y_phi / var_y) if var_y > 1e-6 else 0.0
+
+        a0 = mean_phi_corr - a1 * mean_x - a2 * mean_y
 
     # APS model evaluation and residuals
     aps_vals = [a0 + a1 * xs[i] + a2 * ys[i] + k_elev * zs[i] for i in range(n)]

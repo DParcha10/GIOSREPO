@@ -779,7 +779,33 @@ from app.models.schemas import (
     classify_internal_erosion_hazard_tier,
     calculate_internal_erosion_piping_analysis,
     build_flownet_tile_url,
-    build_flownet_tile_url_template
+    build_flownet_tile_url_template,
+    InSAROrbitDirection,
+    InSARSensorBand,
+    InSARDeformationHazardTier,
+    InSARVelocityTileMetric,
+    INSAR_SENSOR_WAVELENGTHS,
+    INSAR_HAZARD_CONFIGS,
+    INSAR_VELOCITY_TILE_METRICS,
+    InSARTimeSeriesPoint,
+    PersistentScattererPoint,
+    InterferometricBaselineGeometry,
+    AtmosphericPhaseScreenResult,
+    DualOrbitDecompositionResult,
+    InSARPersistentScattererAnalysisRequest,
+    InSARPersistentScattererAnalysisResponse,
+    InSARDualOrbitDecompositionRequest,
+    InSARDualOrbitDecompositionResponse,
+    calculate_ps_temporal_coherence,
+    calculate_amplitude_dispersion_index,
+    calculate_interferometric_baseline_geometry,
+    decompose_atmospheric_phase_screen,
+    project_los_to_vertical_and_horizontal,
+    decompose_dual_orbit_insar_velocities,
+    classify_insar_deformation_hazard_tier,
+    calculate_insar_ps_analysis,
+    build_insar_velocity_tile_url,
+    build_insar_velocity_tile_url_template
 )
 from app.config import settings
 
@@ -8869,8 +8895,348 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         })
         self.assertEqual(res_fallback["soil_preset_used"], "medium_sand")
 
+    def test_ps_temporal_coherence_and_amplitude_dispersion(self):
+        """Verify Persistent Scatterer temporal coherence gamma in [0, 1] and amplitude dispersion D_A."""
+        # 1. Temporal coherence from phase residuals
+        # Zero phase residuals -> perfect coherence = 1.0
+        perfect_phases = [0.0] * 15
+        self.assertEqual(calculate_ps_temporal_coherence(perfect_phases), 1.0)
+
+        # Small Gaussian-like phase residuals -> high coherence > 0.95
+        stable_phases = [0.05, -0.04, 0.08, -0.06, 0.02, -0.03, 0.07, -0.05]
+        gamma_stable = calculate_ps_temporal_coherence(stable_phases)
+        self.assertGreater(gamma_stable, 0.95)
+
+        # Uniformly distributed phases on circle -> zero coherence
+        decorrelated = [0.0, math.pi / 2.0, math.pi, 3.0 * math.pi / 2.0]
+        gamma_decorr = calculate_ps_temporal_coherence(decorrelated)
+        self.assertAlmostEqual(gamma_decorr, 0.0, places=3)
+
+        # 2. Temporal coherence from complex numbers and complex pairs
+        # Identical complex numbers
+        c_list = [complex(math.cos(0.1 * i), math.sin(0.1 * i)) for i in range(10)]
+        self.assertGreater(calculate_ps_temporal_coherence(c_list), 0.5)
+
+        # Complex pairs (u1, u2) perfectly correlated: u1 = u2
+        c_pairs_identical = [(complex(1.5, 0.5), complex(1.5, 0.5)) for _ in range(8)]
+        self.assertAlmostEqual(calculate_ps_temporal_coherence(c_pairs_identical), 1.0, places=3)
+
+        # (cos, sin) tuples
+        tuple_list = [(math.cos(0.02 * i), math.sin(0.02 * i)) for i in range(8)]
+        self.assertGreater(calculate_ps_temporal_coherence(tuple_list), 0.95)
+
+        # Empty / zero cases
+        self.assertEqual(calculate_ps_temporal_coherence([]), 0.0)
+
+        # 3. Amplitude Dispersion Index D_A = sigma_A / mu_A
+        # Constant amplitude -> zero dispersion
+        const_amps = [150.0] * 20
+        self.assertEqual(calculate_amplitude_dispersion_index(const_amps), 0.0)
+
+        # Stable persistent scatterer (Ferretti et al., 2001: D_A < 0.25)
+        stable_amps = [100.0, 105.0, 98.0, 102.0, 97.0, 104.0, 101.0, 99.0]
+        da_stable = calculate_amplitude_dispersion_index(stable_amps)
+        self.assertLess(da_stable, 0.10)
+
+        # Highly fluctuating non-PS target
+        noisy_amps = [10.0, 350.0, 25.0, 480.0, 15.0, 290.0]
+        da_noisy = calculate_amplitude_dispersion_index(noisy_amps)
+        self.assertGreater(da_noisy, 0.70)
+
+        # Edge cases: single element, empty, zero mean
+        self.assertEqual(calculate_amplitude_dispersion_index([]), 0.0)
+        self.assertEqual(calculate_amplitude_dispersion_index([50.0]), 0.0)
+        self.assertEqual(calculate_amplitude_dispersion_index([0.0, 0.0]), 999.0)
+
+    def test_interferometric_baseline_geometry_and_height_of_ambiguity(self):
+        """Verify baseline vector geometry, height of ambiguity, and topographic phase sensitivity."""
+        # Sentinel-1 C-band geometry: B_perp = 45m, B_par = 5m, R = 850,000m, theta = 38.5 deg, lambda = 0.055465m
+        res = calculate_interferometric_baseline_geometry(
+            perpendicular_baseline_m=45.0,
+            parallel_baseline_m=5.0,
+            slant_range_m=850000.0,
+            incidence_angle_deg=38.5,
+            wavelength_m=0.055465
+        )
+
+        self.assertEqual(res["perpendicular_baseline_m"], 45.0)
+        self.assertEqual(res["parallel_baseline_m"], 5.0)
+        # Total baseline = sqrt(45^2 + 5^2) = 45.28m
+        self.assertAlmostEqual(res["total_baseline_m"], math.sqrt(45.0**2 + 5.0**2), places=1)
+
+        # Height of ambiguity: h_a = (lambda * R * sin(theta)) / (2 * |B_perp|)
+        expected_ha = (0.055465 * 850000.0 * math.sin(math.radians(38.5))) / (2.0 * 45.0)
+        self.assertAlmostEqual(res["height_of_ambiguity_m"], expected_ha, places=1)
+        self.assertGreater(res["height_of_ambiguity_m"], 300.0)
+
+        # Topographic phase sensitivity: dphi / dz = (4 * pi * B_perp) / (lambda * R * sin(theta)) = 2*pi / h_a
+        expected_dphi_dz = (2.0 * math.pi) / expected_ha
+        self.assertAlmostEqual(res["topographic_phase_sensitivity_rad_m"], expected_dphi_dz, places=4)
+
+        # Critical baseline B_crit = (lambda * R * tan(theta)) / (2 * rho_r) where rho_r = 3.7m
+        expected_bcrit = (0.055465 * 850000.0 * math.tan(math.radians(38.5))) / (2.0 * 3.7)
+        self.assertAlmostEqual(res["critical_baseline_m"], expected_bcrit, places=1)
+        self.assertGreater(res["critical_baseline_m"], 4000.0)
+
+        # Zero perpendicular baseline edge case
+        zero_res = calculate_interferometric_baseline_geometry(perpendicular_baseline_m=0.0)
+        self.assertEqual(zero_res["height_of_ambiguity_m"], 99999.0)
+        self.assertEqual(zero_res["topographic_phase_sensitivity_rad_m"], 0.0)
+
+    def test_atmospheric_phase_screen_polynomial_decomposition(self):
+        """Verify Atmospheric Phase Screen (APS) elevation gradient and planar ramp decomposition."""
+        # Synthesize points on a 2D spatial grid with independent elevation variation
+        # true parameters: a0 = 1.2, a1 = 0.004, a2 = -0.002, k_elev = 0.015
+        points = []
+        for ix in range(4):
+            for iy in range(4):
+                x = ix * 50.0
+                y = iy * 50.0
+                z = 300.0 + 8.0 * ix - 4.0 * iy + (ix * iy) * 2.0
+                true_aps = 1.2 + 0.004 * x - 0.002 * y + 0.015 * z
+                points.append({
+                    "x_m": x,
+                    "y_m": y,
+                    "elevation_m": z,
+                    "phase_rad": true_aps
+                })
+
+        aps_res = decompose_atmospheric_phase_screen(points)
+        self.assertAlmostEqual(aps_res["elevation_delay_coefficient_rad_m"], 0.015, places=2)
+        self.assertAlmostEqual(aps_res["spatial_ramp_a0"], 1.2, places=1)
+        self.assertAlmostEqual(aps_res["spatial_ramp_a1"], 0.004, places=3)
+        self.assertAlmostEqual(aps_res["spatial_ramp_a2"], -0.002, places=3)
+        self.assertGreater(aps_res["aps_variance_rad"], 0.0)
+        # Perfect synthetic fit -> residuals should be near zero
+        self.assertLess(aps_res["residual_std_dev_rad"], 0.01)
+
+        # Empty points edge case
+        empty_aps = decompose_atmospheric_phase_screen([])
+        self.assertEqual(empty_aps["elevation_delay_coefficient_rad_m"], 0.0)
+        self.assertEqual(empty_aps["aps_variance_rad"], 0.0)
+
+    def test_los_to_vertical_horizontal_projection_and_dual_orbit_inversion(self):
+        """Verify 1D LOS to 3D vertical/horizontal projection and dual-orbit Ascending/Descending inversion."""
+        # 1. 1D LOS to vertical projection
+        # v_los = -7.83 mm/yr, theta = 38.5 deg -> v_vert = -7.83 / cos(38.5 deg) = -10.0 mm/yr
+        proj = project_los_to_vertical_and_horizontal(
+            velocity_los_mm_yr=-7.826,
+            incidence_angle_deg=38.5,
+            satellite_heading_deg=348.0
+        )
+        self.assertAlmostEqual(proj["velocity_vertical_mm_yr"], -10.0, places=1)
+        self.assertEqual(proj["hazard_tier"], "moderate_displacement")
+        self.assertEqual(proj["look_azimuth_deg"], (348.0 - 90.0) % 360.0)
+
+        # 2. Dual Orbit Ascending / Descending Inversion
+        # Test Case A: Pure vertical subsidence of -12.0 mm/yr (zero East-West horizontal velocity)
+        # v_asc_los = v_v * cos(38.5 deg) = -12.0 * 0.7826 = -9.39 mm/yr
+        # v_desc_los = v_v * cos(39.2 deg) = -12.0 * 0.7749 = -9.30 mm/yr
+        th_asc_rad = math.radians(38.5)
+        th_desc_rad = math.radians(39.2)
+        v_asc_synth = -12.0 * math.cos(th_asc_rad)
+        v_desc_synth = -12.0 * math.cos(th_desc_rad)
+
+        decomp_vert = decompose_dual_orbit_insar_velocities(
+            velocity_asc_mm_yr=v_asc_synth,
+            velocity_desc_mm_yr=v_desc_synth,
+            inc_angle_asc_deg=38.5,
+            inc_angle_desc_deg=39.2,
+            heading_asc_deg=348.0,
+            heading_desc_deg=192.0
+        )
+        self.assertAlmostEqual(decomp_vert["velocity_vertical_mm_yr"], -12.0, places=1)
+        self.assertAlmostEqual(decomp_vert["velocity_east_west_mm_yr"], 0.0, places=1)
+        self.assertAlmostEqual(decomp_vert["total_magnitude_mm_yr"], 12.0, places=1)
+        self.assertEqual(decomp_vert["hazard_tier"], "accelerating_deformation")
+
+        # Test Case B: Pure Eastward lateral movement of +8.0 mm/yr (zero vertical velocity)
+        # Ascending (looking westwards): movement toward east is away from satellite -> negative LOS velocity
+        # Descending (looking eastwards): movement toward east is toward satellite -> positive LOS velocity
+        se_asc = -math.sin(th_asc_rad) * math.cos(math.radians(348.0))
+        se_desc = -math.sin(th_desc_rad) * math.cos(math.radians(192.0))
+        v_asc_east = 8.0 * se_asc
+        v_desc_east = 8.0 * se_desc
+
+        decomp_east = decompose_dual_orbit_insar_velocities(
+            velocity_asc_mm_yr=v_asc_east,
+            velocity_desc_mm_yr=v_desc_east,
+            inc_angle_asc_deg=38.5,
+            inc_angle_desc_deg=39.2,
+            heading_asc_deg=348.0,
+            heading_desc_deg=192.0
+        )
+        self.assertAlmostEqual(decomp_east["velocity_east_west_mm_yr"], 8.0, places=1)
+        self.assertAlmostEqual(decomp_east["velocity_vertical_mm_yr"], 0.0, places=1)
+        self.assertEqual(decomp_east["hazard_tier"], "moderate_displacement")
+
+    def test_insar_deformation_hazard_tier_classification(self):
+        """Verify operational displacement rate hazard tier classification, catalogs, and enums."""
+        # 1. Tier boundaries
+        self.assertEqual(classify_insar_deformation_hazard_tier(1.2), InSARDeformationHazardTier.STABLE)
+        self.assertEqual(classify_insar_deformation_hazard_tier(-1.8), InSARDeformationHazardTier.STABLE)
+        self.assertEqual(classify_insar_deformation_hazard_tier(3.5), InSARDeformationHazardTier.MINOR_CREEP)
+        self.assertEqual(classify_insar_deformation_hazard_tier(-4.9), InSARDeformationHazardTier.MINOR_CREEP)
+        self.assertEqual(classify_insar_deformation_hazard_tier(8.2), InSARDeformationHazardTier.MODERATE_DISPLACEMENT)
+        self.assertEqual(classify_insar_deformation_hazard_tier(-11.5), InSARDeformationHazardTier.MODERATE_DISPLACEMENT)
+        self.assertEqual(classify_insar_deformation_hazard_tier(18.0), InSARDeformationHazardTier.ACCELERATING_DEFORMATION)
+        self.assertEqual(classify_insar_deformation_hazard_tier(-24.5), InSARDeformationHazardTier.ACCELERATING_DEFORMATION)
+        self.assertEqual(classify_insar_deformation_hazard_tier(26.0), InSARDeformationHazardTier.CRITICAL_INSTABILITY)
+        self.assertEqual(classify_insar_deformation_hazard_tier(-45.0), InSARDeformationHazardTier.CRITICAL_INSTABILITY)
+
+        # 2. Config catalogs
+        for tier_key in ["stable", "minor_creep", "moderate_displacement", "accelerating_deformation", "critical_instability"]:
+            self.assertIn(tier_key, INSAR_HAZARD_CONFIGS)
+            cfg = INSAR_HAZARD_CONFIGS[tier_key]
+            self.assertIn("label", cfg)
+            self.assertIn("badge", cfg)
+            self.assertIn("color", cfg)
+            self.assertIn("description", cfg)
+            self.assertIn("action", cfg)
+
+        # 3. Sensor bands & tile metrics
+        self.assertEqual(INSAR_SENSOR_WAVELENGTHS["c_band"], 0.055465)
+        self.assertEqual(INSAR_SENSOR_WAVELENGTHS["l_band"], 0.236000)
+        self.assertEqual(INSAR_SENSOR_WAVELENGTHS["x_band"], 0.031000)
+
+        self.assertIn("velocity_los", INSAR_VELOCITY_TILE_METRICS)
+        self.assertIn("velocity_vertical", INSAR_VELOCITY_TILE_METRICS)
+        self.assertIn("velocity_east_west", INSAR_VELOCITY_TILE_METRICS)
+        self.assertIn("temporal_coherence", INSAR_VELOCITY_TILE_METRICS)
+        self.assertIn("height_residual", INSAR_VELOCITY_TILE_METRICS)
+        self.assertIn("hazard_tier", INSAR_VELOCITY_TILE_METRICS)
+
+        # 4. Enums
+        self.assertEqual(InSAROrbitDirection.ASCENDING.value, "ascending")
+        self.assertEqual(InSAROrbitDirection.DESCENDING.value, "descending")
+        self.assertEqual(InSARSensorBand.C_BAND.value, "c_band")
+        self.assertEqual(InSARVelocityTileMetric.VELOCITY_VERTICAL.value, "velocity_vertical")
+
+    def test_insar_persistent_scatterer_pydantic_models_and_bidirectional_serialization(self):
+        """Verify unified InSAR Pydantic models, camelCase aliases, and solver orchestration."""
+        raw_input = {
+            "simulationId": "SIM_INSAR_TEST_01",
+            "assetId": "EMBANKMENT_CADIA_NORTH",
+            "assetName": "Cadia Northern Tailings Dam Crest",
+            "satelliteMission": "sentinel-1",
+            "sensorBand": "c_band",
+            "orbitDirection": "ascending",
+            "incidenceAngleDeg": 38.5,
+            "headingAngleDeg": 348.0,
+            "temporalCoherenceThreshold": 0.65,
+            "amplitudeDispersionThreshold": 0.25,
+            "perpendicularBaselineM": 52.0,
+            "parallelBaselineM": 4.0,
+            "psPointsCount": 20
+        }
+
+        # Request validation
+        req = InSARPersistentScattererAnalysisRequest.model_validate(raw_input)
+        self.assertEqual(req.simulation_id, "SIM_INSAR_TEST_01")
+        self.assertEqual(req.asset_id, "EMBANKMENT_CADIA_NORTH")
+        self.assertEqual(req.incidence_angle_deg, 38.5)
+        self.assertEqual(req.perpendicular_baseline_m, 52.0)
+
+        # Solver execution
+        analysis_res = calculate_insar_ps_analysis(req)
+        self.assertEqual(analysis_res["simulation_id"], "SIM_INSAR_TEST_01")
+        self.assertEqual(analysis_res["asset_id"], "EMBANKMENT_CADIA_NORTH")
+        self.assertIn("baseline_geometry", analysis_res)
+        self.assertIn("atmospheric_phase_screen", analysis_res)
+        self.assertGreater(analysis_res["ps_points_retained"], 0)
+        self.assertGreater(analysis_res["mean_temporal_coherence"], 0.65)
+        self.assertIn("worst_hazard_tier", analysis_res)
+        self.assertIn("ps_geojson", analysis_res)
+        self.assertEqual(analysis_res["ps_geojson"]["type"], "FeatureCollection")
+        self.assertGreater(len(analysis_res["ps_geojson"]["features"]), 0)
+
+        # Response validation
+        resp_model = InSARPersistentScattererAnalysisResponse.model_validate(analysis_res)
+        self.assertEqual(resp_model.simulation_id, "SIM_INSAR_TEST_01")
+        self.assertEqual(resp_model.asset_id, "EMBANKMENT_CADIA_NORTH")
+        self.assertGreater(resp_model.baseline_geometry.height_of_ambiguity_m, 0.0)
+
+        # CamelCase alias serialization
+        dump_camel = resp_model.model_dump(by_alias=True)
+        self.assertIn("simulationId", dump_camel)
+        self.assertIn("assetId", dump_camel)
+        self.assertIn("temporalCoherence", dump_camel["psPoints"][0])
+        self.assertIn("velocityVerticalMmYr", dump_camel["psPoints"][0])
+        self.assertIn("tileUrlTemplate", dump_camel)
+
+        # Standalone dual-orbit request / response
+        dual_req = InSARDualOrbitDecompositionRequest(
+            velocityAscMmYr=-8.5,
+            velocityDescMmYr=-7.9,
+            incAngleAscDeg=38.5,
+            incAngleDescDeg=39.2
+        )
+        decomp_raw = decompose_dual_orbit_insar_velocities(
+            velocity_asc_mm_yr=dual_req.velocity_asc_mm_yr,
+            velocity_desc_mm_yr=dual_req.velocity_desc_mm_yr,
+            inc_angle_asc_deg=dual_req.inc_angle_asc_deg,
+            inc_angle_desc_deg=dual_req.inc_angle_desc_deg
+        )
+        decomp_raw["analyzed_at"] = "2026-10-14T05:00:00Z"
+        dual_resp = InSARDualOrbitDecompositionResponse.model_validate(decomp_raw)
+        self.assertAlmostEqual(dual_resp.velocity_vertical_mm_yr, -10.5, delta=1.5)
+
+    def test_insar_canonical_route_contracts_and_tile_urls(self):
+        """Verify API route contracts and dynamic tile URL templates for Cycle v2.5.20."""
+        # 1. API route formatting
+        r1 = format_api_route("analysis_insar_ps")
+        self.assertEqual(r1, "/api/v1/analysis/geotechnical/insar-persistent-scatterers")
+
+        r2 = format_api_route("analysis_insar_velocity")
+        self.assertEqual(r2, "/api/v1/analysis/geotechnical/insar-velocity-field")
+
+        r3 = format_api_route("analysis_insar_velocity_detail", simulation_id="INSAR_SIM_001")
+        self.assertEqual(r3, "/api/v1/analysis/geotechnical/insar-velocity-field/INSAR_SIM_001")
+
+        r4 = format_api_route("analysis_insar_dual_orbit")
+        self.assertEqual(r4, "/api/v1/analysis/geotechnical/insar-dual-orbit-decomposition")
+
+        # 2. Tile URLs
+        t1 = build_insar_velocity_tile_url("INSAR_001", "velocity_vertical", 12, 1024, 2048)
+        self.assertEqual(t1, "/api/v1/tiles/geotechnical/insar-velocity/INSAR_001/velocity_vertical/12/1024/2048.png")
+
+        t2 = build_insar_velocity_tile_url_template("INSAR_001", "velocity_los")
+        self.assertEqual(t2, "/api/v1/tiles/geotechnical/insar-velocity/INSAR_001/velocity_los/{z}/{x}/{y}.png")
+
+        # 3. format_api_route for tiles_insar_velocity
+        r_tile = format_api_route("tiles_insar_velocity", sim_id="INSAR_001", metric="temporal_coherence", z=14, x=512, y=256)
+        self.assertEqual(r_tile, "/api/v1/tiles/geotechnical/insar-velocity/INSAR_001/temporal_coherence/14/512/256.png")
+
+    def test_insar_edge_cases_and_immutability(self):
+        """Verify InSAR solver input dict immutability, zero-baseline handling, and fallbacks."""
+        # 1. Immutability
+        caller_dict = {
+            "asset_id": "IMMUTABLE_ASSET",
+            "asset_name": "Test Embankment",
+            "temporal_coherence_threshold": 0.60,
+            "ps_points_count": 10
+        }
+        dict_copy = dict(caller_dict)
+        _ = calculate_insar_ps_analysis(caller_dict)
+        self.assertEqual(caller_dict, dict_copy)
+
+        # 2. Singular dual orbit geometry handles gracefully
+        singular_decomp = decompose_dual_orbit_insar_velocities(
+            velocity_asc_mm_yr=-5.0,
+            velocity_desc_mm_yr=-5.0,
+            heading_asc_deg=0.0,
+            heading_desc_deg=0.0  # Identical heading -> singular matrix
+        )
+        self.assertIn("velocity_vertical_mm_yr", singular_decomp)
+        self.assertIn("velocity_east_west_mm_yr", singular_decomp)
+
+        # 3. Zero perpendicular baseline in baseline geometry
+        zero_b = calculate_interferometric_baseline_geometry(perpendicular_baseline_m=0.0)
+        self.assertEqual(zero_b["height_of_ambiguity_m"], 99999.0)
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

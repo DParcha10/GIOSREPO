@@ -232,7 +232,13 @@ DEFAULT_INDEX_RANGES = {
     "flownet_exit_gradient": (0.0, 1.8),
     "piping_factor_of_safety": (0.5, 3.0),
     "piping_progression": (0.0, 1.0),
-    "flownet_hazard_tier": (1.0, 5.0)
+    "flownet_hazard_tier": (1.0, 5.0),
+    "velocity_vertical": (-20.0, 5.0),
+    "velocity_los": (-15.0, 5.0),
+    "velocity_east_west": (-8.0, 8.0),
+    "temporal_coherence": (0.0, 1.0),
+    "height_residual": (-5.0, 5.0),
+    "insar_hazard_tier": (1.0, 5.0)
 }
 
 class TileService:
@@ -349,7 +355,7 @@ class TileService:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
         raw_idx = str(index.value if hasattr(index, "value") else index).lower().strip() if index else "rgb"
-        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"hydrodynamic_inundation", "inundation", "hydrodynamic", "dam_breach", "dam_breach_hydrodynamic", "topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf", "geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement", "geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
+        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"geotechnical_insar_velocity", "insar_velocity", "geotechnical_insar", "insar", "geotechnical_flownet", "flownet", "hydrodynamic_inundation", "inundation", "hydrodynamic", "dam_breach", "dam_breach_hydrodynamic", "topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf", "geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement", "geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
             idx_clean = raw_idx
         else:
             idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
@@ -1224,6 +1230,65 @@ class TileService:
                     val = tier_flownet
                 else:
                     val = phi_pot
+            elif col_clean in {"geotechnical_insar_velocity", "insar_velocity", "insar_ps", "geotechnical_insar", "insar"} or (col_clean in {"geotechnical"} and idx_clean in {"velocity_los", "velocity_vertical", "velocity_east_west", "temporal_coherence", "height_residual", "hazard_tier"}) or idx_clean in {"velocity_los", "velocity_vertical", "velocity_east_west", "temporal_coherence", "height_residual", "insar_hazard_tier"}:
+                # Satellite InSAR Persistent Scatterer Interferometry (PSI) & Velocity Field (Cycle v2.5.20)
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                crest_prox = np.exp(-((v_s - 0.48) / 0.18) ** 2)
+                slump_factor = np.exp(-((u_s - 0.52) / 0.22) ** 2)
+
+                # Vertical velocity (mm/year, negative indicates subsidence)
+                v_vert = - (1.5 + 15.0 * slump_factor * crest_prox + (base_variation - 0.5) * 1.2)
+                v_vert = np.clip(v_vert, -28.0, 4.0)
+
+                # Line-of-sight velocity with Sentinel-1 incidence angle ~ 38.5 deg
+                inc_rad = np.radians(38.5)
+                v_los = v_vert * np.cos(inc_rad) + (base_variation - 0.5) * 0.8
+                v_los = np.clip(v_los, -22.0, 3.0)
+
+                # Horizontal East-West velocity (outward lateral crest spreading)
+                v_east = np.where(v_s >= 0.48, 1.0, -1.0) * (2.8 * slump_factor * crest_prox) + (base_variation - 0.5) * 0.5
+                v_east = np.clip(v_east, -8.0, 8.0)
+
+                # Temporal phase coherence gamma in [0, 1] (high on dam crest/structures, lower off-dam)
+                gamma_field = 0.52 + 0.38 * crest_prox + (base_variation - 0.5) * 0.10
+                gamma_field = np.clip(gamma_field, 0.15, 0.98)
+
+                # DEM topographic height residual error (m)
+                h_resid = 2.5 * np.sin(u_s * 3.5 * np.pi) * crest_prox + (base_variation - 0.5) * 0.4
+                h_resid = np.clip(h_resid, -5.0, 5.0)
+
+                # Operational InSAR deformation hazard tier (1: Stable, 2: Minor Creep, 3: Moderate, 4: Accelerating, 5: Critical)
+                abs_v = np.abs(v_vert)
+                tier_insar = np.where(
+                    abs_v >= 25.0, 5.0,
+                    np.where(
+                        abs_v >= 12.0, 4.0,
+                        np.where(
+                            abs_v >= 5.0, 3.0,
+                            np.where(
+                                abs_v >= 2.0, 2.0,
+                                1.0
+                            )
+                        )
+                    )
+                )
+
+                if idx_clean in {"velocity_vertical", "vertical_velocity", "v_vert", "v_v", "subsidence"}:
+                    val = v_vert
+                elif idx_clean in {"velocity_los", "los_velocity", "v_los", "los"}:
+                    val = v_los
+                elif idx_clean in {"velocity_east_west", "east_west_velocity", "v_east", "v_e", "horizontal"}:
+                    val = v_east
+                elif idx_clean in {"temporal_coherence", "coherence", "gamma", "ps_coherence"}:
+                    val = gamma_field
+                elif idx_clean in {"height_residual", "dem_residual", "height_error", "delta_h"}:
+                    val = h_resid
+                elif idx_clean in {"hazard_tier", "hazard_rating_tier", "hazard", "tier", "insar_hazard_tier"}:
+                    val = tier_insar
+                else:
+                    val = v_vert
             else:
                 val = base_variation
 
@@ -1331,6 +1396,8 @@ class TileService:
                 rgba[~seepage_mask, 3] = 0
                 rgba[seepage_mask & (val < 1.0), 3] = 190
                 rgba[seepage_mask & (val >= 1.0), 3] = 235
+            elif col_clean in {"geotechnical_insar_velocity", "insar_velocity", "insar_ps", "geotechnical_insar", "insar"} or idx_clean in {"velocity_los", "velocity_vertical", "velocity_east_west", "temporal_coherence", "height_residual", "insar_hazard_tier"}:
+                rgba[:, :, 3] = 230
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")

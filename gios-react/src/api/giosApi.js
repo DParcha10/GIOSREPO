@@ -6755,7 +6755,157 @@ export const getFlownetTileUrlTemplate = (simId, metric = 'hydraulic_head') => {
 
 export const buildFlownetTileUrlTemplateInternal = getFlownetTileUrlTemplate;
 
+/**
+ * @typedef {Object} InSARTimeSeriesPoint
+ * @property {string} date - Acquisition date (YYYY-MM-DD)
+ * @property {number} displacement_mm - Cumulative displacement in mm
+ * @property {number} [displacement_uncertainty_mm=1.5] - Measurement 1-sigma uncertainty (mm)
+ */
+
+/**
+ * @typedef {Object} PersistentScattererPoint
+ * @property {string} point_id - Scatterer station identifier (e.g. PS_01)
+ * @property {number} latitude - WGS84 latitude
+ * @property {number} longitude - WGS84 longitude
+ * @property {number} elevation_m - Surface elevation (m)
+ * @property {number} temporal_coherence - Multi-temporal phase coherence gamma in [0, 1]
+ * @property {number} amplitude_dispersion - Amplitude dispersion index D_A
+ * @property {number} velocity_los_mm_yr - Line-of-sight velocity (mm/yr)
+ * @property {number} velocity_vertical_mm_yr - Projected quasi-vertical velocity (mm/yr)
+ * @property {number} [velocity_east_west_mm_yr] - Decomposed East-West velocity (mm/yr)
+ * @property {number} [height_residual_m=0.0] - DEM height error residual correction (m)
+ * @property {string} hazard_tier - Classified deformation hazard tier
+ * @property {InSARTimeSeriesPoint[]} [time_series] - Multi-temporal displacement series
+ */
+
+/**
+ * @typedef {Object} InterferometricBaselineGeometry
+ * @property {number} perpendicular_baseline_m - Perpendicular baseline B_perp (m)
+ * @property {number} parallel_baseline_m - Parallel baseline B_par (m)
+ * @property {number} total_baseline_m - Total baseline magnitude (m)
+ * @property {number} height_of_ambiguity_m - Height of ambiguity h_a (m/2pi)
+ * @property {number} critical_baseline_m - Critical baseline threshold B_crit (m)
+ * @property {number} topographic_phase_sensitivity_rad_m - Phase change per meter elevation (rad/m)
+ */
+
+/**
+ * @typedef {Object} AtmosphericPhaseScreenResult
+ * @property {number} elevation_delay_coefficient_rad_m - Stratified troposphere gradient k_elev (rad/m)
+ * @property {number} spatial_ramp_a0 - Spatial planar ramp offset a0 (rad)
+ * @property {number} spatial_ramp_a1 - Spatial planar ramp X-gradient a1 (rad/m)
+ * @property {number} spatial_ramp_a2 - Spatial planar ramp Y-gradient a2 (rad/m)
+ * @property {number} aps_variance_rad - Variance of APS phase contribution (rad^2)
+ * @property {number} residual_std_dev_rad - Residual phase noise standard deviation (rad)
+ */
+
+/**
+ * @typedef {Object} DualOrbitDecompositionResult
+ * @property {string} point_id - Scatterer target point identifier
+ * @property {number} velocity_asc_mm_yr - Ascending track LOS velocity (mm/yr)
+ * @property {number} velocity_desc_mm_yr - Descending track LOS velocity (mm/yr)
+ * @property {number} velocity_vertical_mm_yr - True vertical velocity (mm/yr)
+ * @property {number} velocity_east_west_mm_yr - True East-West horizontal velocity (mm/yr)
+ * @property {number} total_magnitude_mm_yr - 2D velocity vector magnitude (mm/yr)
+ * @property {string} hazard_tier - Governing deformation hazard tier
+ */
+
+/**
+ * @typedef {Object} InSARPersistentScattererAnalysisRequest
+ * @property {string} [simulation_id] - Simulation execution identifier
+ * @property {string} [asset_id='EMBANKMENT_CREST_A'] - Embankment asset identifier
+ * @property {string} [asset_name='North Tailings Dam Crest'] - Embankment asset name
+ * @property {string} [satellite_mission='sentinel-1'] - Satellite SAR mission ('sentinel-1' | 'alos-2' | 'terrasar-x')
+ * @property {string} [sensor_band='c_band'] - Radar frequency band ('c_band' | 'l_band' | 'x_band')
+ * @property {string} [orbit_direction='ascending'] - Orbit pass flight direction ('ascending' | 'descending')
+ * @property {number} [incidence_angle_deg=38.5] - Nominal incidence angle in degrees
+ * @property {number} [heading_angle_deg=348.0] - Satellite heading angle in degrees
+ * @property {number} [temporal_coherence_threshold=0.65] - Minimum temporal coherence threshold
+ * @property {number} [amplitude_dispersion_threshold=0.25] - Maximum amplitude dispersion threshold
+ * @property {number} [perpendicular_baseline_m=45.0] - Interferometric perpendicular baseline B_perp (m)
+ * @property {number} [parallel_baseline_m=5.0] - Interferometric parallel baseline B_par (m)
+ * @property {number} [ps_points_count=24] - Number of synthetic PS stations along asset
+ */
+
+/**
+ * @typedef {Object} InSARPersistentScattererAnalysisResponse
+ * @property {string} simulation_id - Simulation run identifier
+ * @property {string} asset_id - Target asset identifier
+ * @property {string} asset_name - Target asset name
+ * @property {string} satellite_mission - Satellite radar mission
+ * @property {string} sensor_band - Radar band used
+ * @property {string} orbit_direction - Orbit pass direction
+ * @property {number} incidence_angle_deg - Radar incidence angle
+ * @property {number} heading_angle_deg - Satellite heading angle
+ * @property {InterferometricBaselineGeometry} baseline_geometry - Baseline geometry metrics
+ * @property {AtmosphericPhaseScreenResult} atmospheric_phase_screen - APS decomposition
+ * @property {number} ps_candidates_evaluated - Total candidate scatterers tested
+ * @property {number} ps_points_retained - High-coherence persistent scatterers retained
+ * @property {number} coherence_threshold - Applied temporal coherence threshold
+ * @property {number} mean_temporal_coherence - Mean coherence across retained scatterers
+ * @property {number} max_subsidence_velocity_mm_yr - Maximum downward vertical velocity (negative mm/yr)
+ * @property {number} max_uplift_velocity_mm_yr - Maximum upward vertical velocity (positive mm/yr)
+ * @property {string} critical_ps_point_id - Identifier of point with peak deformation rate
+ * @property {string} worst_hazard_tier - Governing deformation hazard tier
+ * @property {PersistentScattererPoint[]} ps_points - Retained persistent scatterers
+ * @property {DualOrbitDecompositionResult[]} [dual_orbit_decomposition] - Optional dual-orbit decomposition
+ * @property {Object} ps_geojson - RFC 7946 GeoJSON FeatureCollection
+ * @property {string} tile_url_template - Dynamic XYZ tile URL template
+ * @property {string} analyzed_at - ISO 8601 UTC analysis timestamp
+ */
+
+/**
+ * Analyzes satellite InSAR Persistent Scatterer (PSI) time series, temporal coherence filtering,
+ * baseline geometry, APS decomposition, and 1D LOS to 3D vertical displacement inversion.
+ * 
+ * @param {InSARPersistentScattererAnalysisRequest} params - InSAR persistent scatterer request payload
+ * @returns {Promise<InSARPersistentScattererAnalysisResponse>} PSI analysis results and scatterers
+ */
+export const analyzeInSARPersistentScatterers = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/insar-persistent-scatterers', params);
+  return response.data;
+};
+
+export const analyzeInSARVelocityField = analyzeInSARPersistentScatterers;
+export const simulateInSARPersistentScatterers = analyzeInSARPersistentScatterers;
+
+/**
+ * Retrieves a previously computed InSAR persistent scatterer velocity simulation by execution ID.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @returns {Promise<InSARPersistentScattererAnalysisResponse>} Stored InSAR simulation results
+ */
+export const fetchInSARSimulation = async (simId) => {
+  const response = await giosApi.get(`/api/v1/analysis/geotechnical/insar-velocity-field/${simId}`);
+  return response.data;
+};
+
+/**
+ * Solves 2D (Vertical, East-West) velocity decomposition from Ascending and Descending InSAR tracks.
+ * 
+ * @param {Object} params - Ascending/descending LOS velocities, incidence angles, and headings
+ * @returns {Promise<Object>} Decomposed vertical and East-West velocities and hazard tier
+ */
+export const decomposeDualOrbitInSAR = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/insar-dual-orbit-decomposition', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic XYZ tile streaming URL template for geotechnical InSAR velocity deformation layers.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @param {string} [metric='velocity_vertical'] - Raster metric ('velocity_vertical' | 'velocity_los' | 'velocity_east_west' | 'temporal_coherence' | 'height_residual' | 'hazard_tier')
+ * @returns {string} Dynamic tile URL template
+ */
+export const getInSARVelocityTileUrlTemplate = (simId, metric = 'velocity_vertical') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/geotechnical/insar-velocity/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildInSARVelocityTileUrlTemplateInternal = getInSARVelocityTileUrlTemplate;
+
 export default giosApi;
+
 
 
 

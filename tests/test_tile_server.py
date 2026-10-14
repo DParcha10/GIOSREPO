@@ -91,5 +91,49 @@ class TestTileServer(unittest.TestCase):
         img = Image.open(io.BytesIO(tile_drone))
         self.assertEqual(img.size, (256, 256))
 
+    def test_render_flownet_tile_default_and_metrics(self):
+        """Task T-178: Verify 2D Laplace seepage flownet XYZ tile rendering across metrics and colormaps."""
+        sim_id = "SIM_TEST_TILE_FLOWNET_01"
+        t0 = time.time()
+        tile_default = tile_service.render_flownet_tile(
+            sim_id=sim_id,
+            z=12,
+            x=2048,
+            y=1024
+        )
+        elapsed_ms = (time.time() - t0) * 1000
+
+        self.assertIsInstance(tile_default, bytes)
+        self.assertGreater(len(tile_default), 500)
+        self.assertEqual(tile_default[:4], b"\x89PNG")
+        img_default = Image.open(io.BytesIO(tile_default))
+        self.assertEqual(img_default.size, (256, 256))
+        self.assertEqual(img_default.mode, "RGBA")
+        self.assertLess(elapsed_ms, 500.0, f"Flownet tile render latency ({elapsed_ms:.1f}ms) exceeded 500ms")
+
+        # Test metrics supported by tile service
+        metrics = [
+            "hydraulic_head",
+            "hydraulic_gradient",
+            "exit_gradient",
+            "factor_of_safety",
+            "stream_function",
+            "pore_pressure",
+            "hazard_tier"
+        ]
+        for metric in metrics:
+            tile_bytes = tile_service.render_flownet_tile(
+                sim_id=sim_id,
+                z=12,
+                x=2048,
+                y=1024,
+                metric=metric
+            )
+            self.assertIsInstance(tile_bytes, bytes, f"Failed metric: {metric}")
+            self.assertEqual(tile_bytes[:4], b"\x89PNG", f"Invalid PNG magic for metric: {metric}")
+            img = Image.open(io.BytesIO(tile_bytes))
+            self.assertEqual(img.size, (256, 256))
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -14280,36 +14280,113 @@ export const decomposeAtmosphericPhaseScreen = (points) => {
   const meanX = xs.reduce((a, b) => a + b, 0) / n;
   const meanY = ys.reduce((a, b) => a + b, 0) / n;
 
-  let varZ = 0.0;
-  let covZPhi = 0.0;
+  // 4-variable OLS: phi ~ a0 + a1 * x + a2 * y + k_elev * z
+  const xMat = [];
   for (let i = 0; i < n; i += 1) {
-    varZ += Math.pow(zs[i] - meanZ, 2);
-    covZPhi += (zs[i] - meanZ) * (phis[i] - meanPhi);
+    xMat.push([1.0, xs[i], ys[i], zs[i]]);
   }
-  const kElev = varZ > 1e-6 ? covZPhi / varZ : 0.0;
 
-  const phisCorr = [];
-  let sumCorr = 0.0;
-  for (let i = 0; i < n; i += 1) {
-    const pc = phis[i] - kElev * zs[i];
-    phisCorr.push(pc);
-    sumCorr += pc;
-  }
-  const meanPhiCorr = sumCorr / n;
+  const aMat = [];
+  const bVec = [];
+  for (let j = 0; j < 4; j += 1) {
+    const row = [];
+    for (let k = 0; k < 4; k += 1) {
+      let sumVal = 0.0;
+      for (let i = 0; i < n; i += 1) {
+        sumVal += xMat[i][j] * xMat[i][k];
+      }
+      row.push(sumVal);
+    }
+    aMat.push(row);
 
-  let varX = 0.0;
-  let covXPhi = 0.0;
-  let varY = 0.0;
-  let covYPhi = 0.0;
-  for (let i = 0; i < n; i += 1) {
-    varX += Math.pow(xs[i] - meanX, 2);
-    covXPhi += (xs[i] - meanX) * (phisCorr[i] - meanPhiCorr);
-    varY += Math.pow(ys[i] - meanY, 2);
-    covYPhi += (ys[i] - meanY) * (phisCorr[i] - meanPhiCorr);
+    let sumB = 0.0;
+    for (let i = 0; i < n; i += 1) {
+      sumB += xMat[i][j] * phis[i];
+    }
+    bVec.push(sumB);
   }
-  const a1 = varX > 1e-6 ? covXPhi / varX : 0.0;
-  const a2 = varY > 1e-6 ? covYPhi / varY : 0.0;
-  const a0 = meanPhiCorr - a1 * meanX - a2 * meanY;
+
+  const mSys = [];
+  for (let j = 0; j < 4; j += 1) {
+    mSys.push([...aMat[j], bVec[j]]);
+  }
+
+  let singular = false;
+  for (let j = 0; j < 4; j += 1) {
+    let maxRow = j;
+    for (let r = j + 1; r < 4; r += 1) {
+      if (Math.abs(mSys[r][j]) > Math.abs(mSys[maxRow][j])) {
+        maxRow = r;
+      }
+    }
+    const temp = mSys[j];
+    mSys[j] = mSys[maxRow];
+    mSys[maxRow] = temp;
+
+    if (Math.abs(mSys[j][j]) < 1e-10) {
+      singular = true;
+      break;
+    }
+
+    for (let k = j + 1; k < 4; k += 1) {
+      const factor = mSys[k][j] / mSys[j][j];
+      for (let cIdx = j; cIdx < 5; cIdx += 1) {
+        mSys[k][cIdx] -= factor * mSys[j][cIdx];
+      }
+    }
+  }
+
+  let a0 = 0.0;
+  let a1 = 0.0;
+  let a2 = 0.0;
+  let kElev = 0.0;
+
+  if (!singular) {
+    const sol = [0.0, 0.0, 0.0, 0.0];
+    for (let j = 3; j >= 0; j -= 1) {
+      let sumRest = 0.0;
+      for (let cIdx = j + 1; cIdx < 4; cIdx += 1) {
+        sumRest += mSys[j][cIdx] * sol[cIdx];
+      }
+      sol[j] = (mSys[j][4] - sumRest) / mSys[j][j];
+    }
+    a0 = sol[0];
+    a1 = sol[1];
+    a2 = sol[2];
+    kElev = sol[3];
+  } else {
+    // Fallback to sequential marginal regression if system is collinear
+    let varZ = 0.0;
+    let covZPhi = 0.0;
+    for (let i = 0; i < n; i += 1) {
+      varZ += Math.pow(zs[i] - meanZ, 2);
+      covZPhi += (zs[i] - meanZ) * (phis[i] - meanPhi);
+    }
+    kElev = varZ > 1e-6 ? covZPhi / varZ : 0.0;
+
+    const phisCorr = [];
+    let sumCorr = 0.0;
+    for (let i = 0; i < n; i += 1) {
+      const pc = phis[i] - kElev * zs[i];
+      phisCorr.push(pc);
+      sumCorr += pc;
+    }
+    const meanPhiCorr = sumCorr / n;
+
+    let varX = 0.0;
+    let covXPhi = 0.0;
+    let varY = 0.0;
+    let covYPhi = 0.0;
+    for (let i = 0; i < n; i += 1) {
+      varX += Math.pow(xs[i] - meanX, 2);
+      covXPhi += (xs[i] - meanX) * (phisCorr[i] - meanPhiCorr);
+      varY += Math.pow(ys[i] - meanY, 2);
+      covYPhi += (ys[i] - meanY) * (phisCorr[i] - meanPhiCorr);
+    }
+    a1 = varX > 1e-6 ? covXPhi / varX : 0.0;
+    a2 = varY > 1e-6 ? covYPhi / varY : 0.0;
+    a0 = meanPhiCorr - a1 * meanX - a2 * meanY;
+  }
 
   let sumAps = 0.0;
   const apsVals = [];
