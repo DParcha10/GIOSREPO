@@ -14,7 +14,7 @@ import {
   Wrench, ShieldAlert, MapPin, Grid, GitCompare, Gauge, Waves,
   Thermometer, Sun, Sprout, Wind,
   Move, Trees, Cloud, HardDrive, ArrowUpRight, TrendingUp, CloudSnow,
-  Cpu, Bell, CloudRain, Zap
+  Cpu, Bell, CloudRain, Zap, Clock, RotateCcw
 } from 'lucide-react';
 import useAuthStore from '../store/authStore';
 import { useNavigate, Link } from 'react-router-dom';
@@ -218,6 +218,8 @@ import RainfallInfiltrationModal from '../components/RainfallInfiltrationModal';
 import LiquefactionModal from '../components/LiquefactionModal';
 import SettlementModal from '../components/SettlementModal';
 import TopographicDeltaModal from '../components/TopographicDeltaModal';
+import DamBreachModal from '../components/DamBreachModal';
+import InternalErosionModal from '../components/InternalErosionModal';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -310,7 +312,11 @@ import {
   buildSbasTileUrl,
   buildTopographicMinnaertTileUrl,
   buildTiePointRpcTileUrl,
-  buildQualityMosaicTileUrl
+  buildQualityMosaicTileUrl,
+  DAM_BREACH_HAZARD_CONFIGS,
+  buildHydrodynamicTileUrlTemplate,
+  INTERNAL_EROSION_HAZARD_CONFIGS,
+  buildFlownetTileUrlTemplate
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -1231,6 +1237,45 @@ export default function MapExplorer() {
   const [topographicSimulation, setTopographicSimulation] = useState(null);
   const [topographicMetric, setTopographicMetric] = useState('elevation_delta');
   const [topographicOpacity, setTopographicOpacity] = useState(0.85);
+
+  // T-168 & T-170: Tailings Dam Breach Hydrodynamic States (Cycle v2.5.18)
+  const [damBreachModalOpen, setDamBreachModalOpen] = useState(false);
+  const [showDamBreachLayer, setShowDamBreachLayer] = useState(false);
+  const [damBreachSimulation, setDamBreachSimulation] = useState(null);
+  const [damBreachMetric, setDamBreachMetric] = useState('inundation_depth');
+  const [damBreachOpacity, setDamBreachOpacity] = useState(0.85);
+  const [damBreachScrubberTimeMin, setDamBreachScrubberTimeMin] = useState(0);
+  const [isPlayingDamBreach, setIsPlayingDamBreach] = useState(false);
+  const damBreachPlaybackTimerRef = useRef(null);
+
+  // T-174 & T-176: Internal Erosion & Seepage Flownet States (Cycle v2.5.19)
+  const [internalErosionModalOpen, setInternalErosionModalOpen] = useState(false);
+  const [showFlownetLayer, setShowFlownetLayer] = useState(false);
+  const [internalErosionSimulation, setInternalErosionSimulation] = useState(null);
+  const [flownetMetric, setFlownetMetric] = useState('hydraulic_head');
+  const [flownetOpacity, setFlownetOpacity] = useState(0.85);
+
+  // T-168/T-170: Wave Arrival Playback Timer Ticker
+  useEffect(() => {
+    if (isPlayingDamBreach && damBreachSimulation?.stations?.length) {
+      const maxTimeMin = (damBreachSimulation?.hydrograph?.[damBreachSimulation.hydrograph.length - 1]?.time_minutes) || 
+        (damBreachSimulation.stations[damBreachSimulation.stations.length - 1].wave_arrival_time_min) || 720;
+      damBreachPlaybackTimerRef.current = setInterval(() => {
+        setDamBreachScrubberTimeMin((prev) => {
+          if (prev >= maxTimeMin) {
+            setIsPlayingDamBreach(false);
+            return maxTimeMin;
+          }
+          return prev + 15;
+        });
+      }, 700);
+    } else {
+      if (damBreachPlaybackTimerRef.current) clearInterval(damBreachPlaybackTimerRef.current);
+    }
+    return () => {
+      if (damBreachPlaybackTimerRef.current) clearInterval(damBreachPlaybackTimerRef.current);
+    };
+  }, [isPlayingDamBreach, damBreachSimulation]);
 
   // T-53 Embankment Transect Cross-Section State
   const [drawingTransect, setDrawingTransect] = useState(false);
@@ -5543,6 +5588,158 @@ export default function MapExplorer() {
               })
             )}
 
+            {/* T-168/T-170: Tailings Dam Breach Dynamic Hydrodynamic Inundation Tile Layer (Cycle v2.5.18) */}
+            {showDamBreachLayer && damBreachSimulation && !curtainActive && (
+              <TileLayer
+                key={`dam-breach-tile-${damBreachSimulation.simulation_id}-${damBreachMetric}-${damBreachOpacity}`}
+                url={buildHydrodynamicTileUrlTemplate(damBreachSimulation.simulation_id, damBreachMetric)}
+                opacity={damBreachOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* Downstream Valley Inundation Thalweg Flow Path Polyline */}
+            {showDamBreachLayer && damBreachSimulation?.stations?.length > 1 && (
+              <Polyline
+                positions={damBreachSimulation.stations.map((st) => [st.latitude, st.longitude])}
+                pathOptions={{
+                  color: '#06b6d4',
+                  weight: 4,
+                  dashArray: '6, 6',
+                  lineCap: 'round',
+                  opacity: 0.9
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="font-bold text-cyan-400">🌊 Inundation Channel Thalweg</div>
+                    <div>Simulation: <strong className="text-white">{damBreachSimulation.simulation_id}</strong></div>
+                    <div>Dam: <strong className="text-white">{damBreachSimulation.dam_name || 'Tailings Facility'}</strong></div>
+                    <div>Peak Outflow: <strong className="text-cyan-300">{damBreachSimulation.peak_discharge_m3s?.toLocaleString()} m³/s</strong></div>
+                    <div>Reach Length: <strong className="text-slate-200">{damBreachSimulation.reach_length_km} km</strong></div>
+                  </div>
+                </Popup>
+              </Polyline>
+            )}
+
+            {/* Downstream Cross-Section Station Markers with Flood Arrival State */}
+            {showDamBreachLayer && damBreachSimulation?.stations?.map((st) => {
+              const hCfg = DAM_BREACH_HAZARD_CONFIGS[st.inundation_hazard_rating] || DAM_BREACH_HAZARD_CONFIGS.low;
+              const isFlooded = damBreachScrubberTimeMin === 0 || st.wave_arrival_time_min <= damBreachScrubberTimeMin;
+              return (
+                <CircleMarker
+                  key={`dam-st-${st.station_id}`}
+                  center={[st.latitude, st.longitude]}
+                  radius={isFlooded ? 6 : 4}
+                  pathOptions={{
+                    fillColor: isFlooded ? hCfg.color : '#475569',
+                    fillOpacity: isFlooded ? 0.85 : 0.35,
+                    color: isFlooded ? '#ffffff' : '#64748b',
+                    weight: isFlooded ? 1.5 : 1
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold text-cyan-400 flex items-center justify-between gap-2">
+                        <span>📍 {st.station_name || st.station_id}</span>
+                        <span className="px-1.5 py-0.5 rounded text-[9px] uppercase font-bold" style={{ backgroundColor: `${hCfg.color}25`, color: hCfg.color }}>
+                          {isFlooded ? hCfg.badge : 'PENDING'}
+                        </span>
+                      </div>
+                      <div>Chainage: <strong>{st.chainage_km.toFixed(1)} km</strong></div>
+                      <div>Peak Depth: <strong className="text-cyan-300">{st.peak_depth_m.toFixed(2)} m</strong></div>
+                      <div>Peak Velocity: <strong>{st.peak_velocity_ms.toFixed(2)} m/s</strong></div>
+                      <div>Wave Arrival: <strong className="text-blue-400">{st.wave_arrival_time_min.toFixed(0)} min</strong></div>
+                      {damBreachScrubberTimeMin > 0 && (
+                        <div>Flood Status: <strong className={isFlooded ? 'text-rose-400' : 'text-slate-400'}>{isFlooded ? 'INUNDATED' : `ARRIVAL IN ${(st.wave_arrival_time_min - damBreachScrubberTimeMin).toFixed(0)} MIN`}</strong></div>
+                      )}
+                      <div>Evacuation Window: <strong className="text-emerald-400">{st.evacuation_time_window_min.toFixed(0)} min</strong></div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
+            {/* Dynamic Wave Front Leading Edge Marker */}
+            {showDamBreachLayer && damBreachSimulation?.stations && (() => {
+              if (damBreachScrubberTimeMin <= 0) return null;
+              const flooded = damBreachSimulation.stations.filter(st => st.wave_arrival_time_min <= damBreachScrubberTimeMin);
+              if (flooded.length === 0) return null;
+              const leadSt = flooded[flooded.length - 1];
+              return (
+                <CircleMarker
+                  key={`dam-lead-wave-front`}
+                  center={[leadSt.latitude, leadSt.longitude]}
+                  radius={9}
+                  pathOptions={{
+                    fillColor: '#06b6d4',
+                    fillOpacity: 0.95,
+                    color: '#ffffff',
+                    weight: 2.5
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold text-cyan-400">🌊 Leading Flood Wave Front</div>
+                      <div>Elapsed: <strong>T+{damBreachScrubberTimeMin} min ({(damBreachScrubberTimeMin / 60).toFixed(1)} h)</strong></div>
+                      <div>Location: <strong>km {leadSt.chainage_km.toFixed(1)}</strong></div>
+                      <div>Wave Depth: <strong>{leadSt.peak_depth_m.toFixed(2)} m</strong></div>
+                      <div>Wave Velocity: <strong>{leadSt.peak_velocity_ms.toFixed(2)} m/s</strong></div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })()}
+
+            {/* T-174/T-176: Internal Erosion & 2D Seepage Flownet Dynamic Tile Layer (Cycle v2.5.19) */}
+            {showFlownetLayer && internalErosionSimulation && !curtainActive && (
+              <TileLayer
+                key={`flownet-tile-${internalErosionSimulation.simulation_id}-${flownetMetric}-${flownetOpacity}`}
+                url={buildFlownetTileUrlTemplate(internalErosionSimulation.simulation_id, flownetMetric)}
+                opacity={flownetOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                zIndex={445}
+              />
+            )}
+
+            {/* Downstream Toe Exit Stations Markers */}
+            {showFlownetLayer && internalErosionSimulation?.flownet_seepage?.exit_stations?.map((st) => {
+              const hCfg = INTERNAL_EROSION_HAZARD_CONFIGS[st.hazard_tier] || INTERNAL_EROSION_HAZARD_CONFIGS.moderate_risk;
+              const damCoords = internalErosionSimulation.coordinates || [-111.5383, 43.9083];
+              const latOffset = (st.x_offset_m || 0) * 0.000009;
+              const markerPos = [damCoords[1] + latOffset, damCoords[0]];
+              return (
+                <CircleMarker
+                  key={`flownet-st-${st.station_id}`}
+                  center={markerPos}
+                  radius={st.sand_boiling_risk ? 7 : 5}
+                  pathOptions={{
+                    fillColor: hCfg.color,
+                    fillOpacity: 0.9,
+                    color: st.sand_boiling_risk ? '#ff0000' : '#ffffff',
+                    weight: st.sand_boiling_risk ? 2.5 : 1.5
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold text-amber-400">Toe Exit Station: {st.station_id}</div>
+                      <div>Offset: <strong>+{st.x_offset_m.toFixed(1)} m</strong></div>
+                      <div>Total Head: <strong>{st.total_head_m.toFixed(2)} m</strong></div>
+                      <div>Exit Gradient: <strong>{st.exit_gradient.toFixed(3)}</strong></div>
+                      <div>Factor of Safety: <strong>{st.factor_of_safety.toFixed(2)}</strong></div>
+                      <div>Hazard: <span className="font-bold uppercase" style={{ color: hCfg.color }}>{hCfg.label}</span></div>
+                      {st.sand_boiling_risk && (
+                        <div className="text-red-400 font-bold animate-pulse">⚠️ HEAVE / SAND BOILING DETECTED</div>
+                      )}
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
             {/* T-114/T-116: Automated Sub-Pixel Tie-Point Pins */}
             {(showRpcTiePointsLayer || showRpcLayer) && rpcTiePointPins.map((tp, idx) => {
               const baseLat = 37.0585;
@@ -7179,6 +7376,264 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-168/T-170: Floating Tailings Dam Breach Hydrodynamic HUD Controller Card (Cycle v2.5.18) */}
+          {showDamBreachLayer && damBreachSimulation && (
+            <div className="absolute top-20 left-4 z-[935] glass-panel p-3.5 rounded-xl border-cyan-500/40 shadow-2xl bg-black/90 backdrop-blur-md flex flex-col gap-2.5 w-[460px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-cyan-500/20 text-cyan-400">
+                    <Waves className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <span className="font-bold text-white tracking-wide truncate max-w-[200px]">
+                    {damBreachSimulation.dam_name || 'Dam Breach Hydrodynamics'}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-600/50 uppercase font-bold">
+                    v2.5.18
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setDamBreachModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold transition"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowDamBreachLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Telemetry Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+                <div>
+                  <span className="text-gray-400 block text-[9px] uppercase">Peak Outflow</span>
+                  <span className="text-cyan-400 font-bold">{damBreachSimulation.peak_discharge_m3s?.toLocaleString()} m³/s</span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[9px] uppercase">Max Depth</span>
+                  <span className="text-rose-400 font-bold">{damBreachSimulation.max_flood_depth_m?.toFixed(1)} m</span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[9px] uppercase">Peak Velocity</span>
+                  <span className="text-blue-400 font-bold">{damBreachSimulation.max_flow_velocity_ms?.toFixed(1)} m/s</span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[9px] uppercase">Flooded Area</span>
+                  <span className="text-emerald-400 font-bold">{damBreachSimulation.peak_inundation_area_ha?.toLocaleString()} ha</span>
+                </div>
+              </div>
+
+              {/* Controls Grid */}
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <div className="flex items-center gap-2 flex-1">
+                  <span className="text-gray-400 text-[10px] uppercase font-semibold">Opacity</span>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.05"
+                    value={damBreachOpacity}
+                    onChange={(e) => setDamBreachOpacity(Number(e.target.value))}
+                    className="w-20 accent-cyan-500 h-1 bg-slate-800 rounded"
+                  />
+                  <span className="text-[10px] text-cyan-400 font-mono w-7 text-right">
+                    {Math.round(damBreachOpacity * 100)}%
+                  </span>
+                </div>
+
+                {/* Metric Switcher */}
+                <div className="flex rounded bg-slate-900 border border-slate-800 p-0.5 overflow-x-auto max-w-[240px]">
+                  {[
+                    { id: 'inundation_depth', label: 'Depth' },
+                    { id: 'flow_velocity', label: 'Velocity' },
+                    { id: 'wave_arrival_time', label: 'Arrival' },
+                    { id: 'depth_velocity_product', label: 'h × v' }
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => setDamBreachMetric(m.id)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold transition-all shrink-0 ${
+                        damBreachMetric === m.id ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Downstream Flood Wave Arrival Playback Scrubber */}
+              <div className="pt-2 border-t border-slate-800 space-y-1.5">
+                <div className="flex items-center justify-between text-[10px] font-mono">
+                  <span className="text-gray-400 uppercase font-semibold flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-cyan-400" />
+                    <span>Flood Arrival Time Scrubber</span>
+                  </span>
+                  <span className="text-cyan-300 font-bold">
+                    T+{damBreachScrubberTimeMin} min ({(damBreachScrubberTimeMin / 60).toFixed(1)} h)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsPlayingDamBreach(!isPlayingDamBreach)}
+                    className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white transition"
+                    title={isPlayingDamBreach ? 'Pause Playback' : 'Play Wave Progression'}
+                  >
+                    {isPlayingDamBreach ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                  </button>
+                  <button
+                    onClick={() => { setIsPlayingDamBreach(false); setDamBreachScrubberTimeMin(0); }}
+                    className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+                    title="Reset to T=0"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(60, (damBreachSimulation?.hydrograph?.[damBreachSimulation.hydrograph.length - 1]?.time_minutes) || ((damBreachSimulation?.stations?.[damBreachSimulation.stations.length - 1]?.wave_arrival_time_min) || 720))}
+                    step={5}
+                    value={damBreachScrubberTimeMin}
+                    onChange={(e) => {
+                      setIsPlayingDamBreach(false);
+                      setDamBreachScrubberTimeMin(Number(e.target.value));
+                    }}
+                    className="flex-1 accent-cyan-500 h-1 bg-slate-800 rounded cursor-pointer"
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[9px] font-mono text-slate-500">
+                  <span>T+0h</span>
+                  <span>
+                    {(() => {
+                      const flooded = damBreachSimulation?.stations?.filter(st => st.wave_arrival_time_min <= damBreachScrubberTimeMin) || [];
+                      const front = flooded.length > 0 ? flooded[flooded.length - 1] : null;
+                      return front ? `Front: km ${front.chainage_km.toFixed(1)} (${flooded.length}/${damBreachSimulation.stations.length} stations)` : 'Awaiting Outflow';
+                    })()}
+                  </span>
+                  <span>T+{(Math.max(60, (damBreachSimulation?.hydrograph?.[damBreachSimulation.hydrograph.length - 1]?.time_minutes) || 720) / 60).toFixed(0)}h</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* T-174/T-176: Floating Internal Erosion & Seepage Flownet HUD Controller Card (Cycle v2.5.19) */}
+          {showFlownetLayer && internalErosionSimulation && (
+            <div className="absolute top-20 left-4 z-[936] glass-panel p-3.5 rounded-xl border-amber-500/40 shadow-2xl bg-black/90 backdrop-blur-md flex flex-col gap-2.5 w-[460px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-amber-500/20 text-amber-400">
+                    <Waves className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-amber-300">
+                      {internalErosionSimulation.dam_name || 'Internal Erosion & Seepage Flownet'}
+                    </div>
+                    <div className="text-[10px] text-gray-400">
+                      {internalErosionSimulation.simulation_id} • Soil: {internalErosionSimulation.soil_preset_used || 'Alluvial Sand'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setInternalErosionModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold transition"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowFlownetLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Key Metrics Grid */}
+              <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono">
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Terzaghi i_crit</div>
+                  <span className="text-amber-400 font-bold">
+                    {internalErosionSimulation.terzaghi_gradient?.critical_gradient?.toFixed(3) || '—'}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Max Exit i</div>
+                  <span className={`font-bold ${
+                    (internalErosionSimulation.flownet_seepage?.max_exit_gradient || 0) >= (internalErosionSimulation.terzaghi_gradient?.critical_gradient || 1.0)
+                      ? 'text-rose-400' : 'text-cyan-400'
+                  }`}>
+                    {internalErosionSimulation.flownet_seepage?.max_exit_gradient?.toFixed(3) || '—'}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Piping FS</div>
+                  <span className={`font-bold ${
+                    (internalErosionSimulation.global_factor_of_safety || 2.0) < 1.0 ? 'text-rose-400' :
+                    (internalErosionSimulation.global_factor_of_safety || 2.0) < 1.5 ? 'text-amber-400' : 'text-emerald-400'
+                  }`}>
+                    {internalErosionSimulation.global_factor_of_safety?.toFixed(2) || '—'}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Boiling Risk</div>
+                  <span className={`font-bold text-[10px] ${
+                    internalErosionSimulation.sand_boiling_imminent ? 'text-red-400 animate-pulse' : 'text-emerald-400'
+                  }`}>
+                    {internalErosionSimulation.sand_boiling_imminent ? 'CRITICAL' : 'SAFE'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Opacity Slider */}
+              <div className="flex items-center gap-2 text-xs font-mono">
+                <span className="text-gray-400 text-[10px] uppercase w-16">Opacity</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={flownetOpacity}
+                  onChange={(e) => setFlownetOpacity(Number(e.target.value))}
+                  className="flex-1 accent-amber-500 h-1 bg-gray-800 rounded cursor-pointer"
+                />
+                <span className="text-[10px] text-gray-400 w-8 text-right">
+                  {Math.round(flownetOpacity * 100)}%
+                </span>
+              </div>
+
+              {/* Metric Switcher Pills */}
+              <div className="flex flex-wrap gap-1 border-t border-gray-800/80 pt-2">
+                {[
+                  { id: 'hydraulic_head', label: 'Head (Φ)' },
+                  { id: 'hydraulic_gradient', label: 'Gradient (|i|)' },
+                  { id: 'exit_gradient', label: 'Exit Grad (i_exit)' },
+                  { id: 'factor_of_safety', label: 'Piping FS' },
+                  { id: 'streamline_potential', label: 'Streamline (Ψ)' },
+                  { id: 'pore_pressure', label: 'Pore Pres (u)' }
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setFlownetMetric(m.id)}
+                    className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all ${
+                      flownetMetric === m.id
+                        ? 'bg-amber-600 text-slate-950 font-bold shadow'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -7948,6 +8403,30 @@ export default function MapExplorer() {
               >
                 <Mountain className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Topo Delta (v2.5.17)</span>
+              </button>
+
+              {/* T-168/T-170 Tailings Dam Breach Hydrodynamic Studio Shortcut (Cycle v2.5.18) */}
+              <button
+                onClick={() => setDamBreachModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  damBreachModalOpen || showDamBreachLayer ? 'bg-cyan-600 text-white shadow-[0_0_12px_rgba(6,182,212,0.6)]' : ''
+                }`}
+                title="Tailings Dam Breach Hydrodynamic Studio, Froehlich (2008) Peak Discharge, 2D Shallow Water Wave Routing & Flood Inundation Hazards (Cycle v2.5.18)"
+              >
+                <Waves className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Dam Breach (v2.5.18)</span>
+              </button>
+
+              {/* T-174/T-176 Internal Erosion & Seepage Flownet Studio Shortcut (Cycle v2.5.19) */}
+              <button
+                onClick={() => setInternalErosionModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-amber-300 hover:text-white hover:bg-amber-500/20 border border-amber-500/30 ${
+                  internalErosionModalOpen || showFlownetLayer ? 'bg-amber-600 text-slate-950 font-extrabold shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
+                }`}
+                title="Internal Erosion & Seepage Flownet Studio, Terzaghi Critical Gradient, Sellmeijer (1988) Backward Piping Inversion & Piezometric Hazard Tiles (Cycle v2.5.19)"
+              >
+                <Waves className="w-3.5 h-3.5 text-amber-400" />
+                <span>Piping & Flownet (v2.5.19)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -19605,6 +20084,54 @@ export default function MapExplorer() {
               lat: firstCoord[1],
               lng: firstCoord[0],
               zoom: 15
+            });
+          }
+        }}
+      />
+
+      {/* T-168/T-170: Tailings Dam Breach Hydrodynamic Studio Modal (Cycle v2.5.18) */}
+      <DamBreachModal
+        isOpen={damBreachModalOpen}
+        onClose={() => setDamBreachModalOpen(false)}
+        activeSimulation={damBreachSimulation}
+        onApplySimulation={(sim, opts) => {
+          setDamBreachSimulation(sim);
+          setShowDamBreachLayer(true);
+          if (opts?.selectedMetric) {
+            setDamBreachMetric(opts.selectedMetric);
+          }
+          if (opts?.opacity !== undefined) {
+            setDamBreachOpacity(opts.opacity);
+          }
+          if (sim?.stations?.[0]) {
+            setCustomFlyTarget({
+              lat: sim.stations[0].latitude,
+              lng: sim.stations[0].longitude,
+              zoom: 13
+            });
+          }
+        }}
+      />
+
+      {/* T-174/T-176: Internal Erosion & 2D Seepage Flownet Studio Modal (Cycle v2.5.19) */}
+      <InternalErosionModal
+        isOpen={internalErosionModalOpen}
+        onClose={() => setInternalErosionModalOpen(false)}
+        activeSimulation={internalErosionSimulation}
+        onApplyToMap={(sim, opts) => {
+          setInternalErosionSimulation(sim);
+          setShowFlownetLayer(true);
+          if (opts?.selectedMetric) {
+            setFlownetMetric(opts.selectedMetric);
+          }
+          if (opts?.opacity !== undefined) {
+            setFlownetOpacity(opts.opacity);
+          }
+          if (sim?.coordinates) {
+            setCustomFlyTarget({
+              lat: sim.coordinates[1],
+              lng: sim.coordinates[0],
+              zoom: 14
             });
           }
         }}

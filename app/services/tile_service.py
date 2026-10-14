@@ -218,7 +218,21 @@ DEFAULT_INDEX_RANGES = {
     "csf_ground": (100.0, 500.0),
     "csf": (100.0, 500.0),
     "ndsm_height": (0.0, 20.0),
-    "ndsm": (0.0, 20.0)
+    "ndsm": (0.0, 20.0),
+    "inundation_depth": (0.0, 15.0),
+    "flow_velocity": (0.0, 12.0),
+    "wave_arrival_time": (0.0, 360.0),
+    "depth_velocity_product": (0.0, 10.0),
+    "water_surface_elevation": (50.0, 600.0),
+    "hazard_rating_tier": (1.0, 5.0),
+    "flownet_head": (0.0, 30.0),
+    "stream_function": (0.0, 0.005),
+    "hydraulic_gradient": (0.0, 2.0),
+    "flownet_gradient": (0.0, 2.0),
+    "flownet_exit_gradient": (0.0, 1.8),
+    "piping_factor_of_safety": (0.5, 3.0),
+    "piping_progression": (0.0, 1.0),
+    "flownet_hazard_tier": (1.0, 5.0)
 }
 
 class TileService:
@@ -335,7 +349,7 @@ class TileService:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
         raw_idx = str(index.value if hasattr(index, "value") else index).lower().strip() if index else "rgb"
-        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf", "geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement", "geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "dam_breach_hydrodynamic", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
+        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"hydrodynamic_inundation", "inundation", "hydrodynamic", "dam_breach", "dam_breach_hydrodynamic", "topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf", "geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement", "geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
             idx_clean = raw_idx
         else:
             idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
@@ -1079,6 +1093,137 @@ class TileService:
                     val = np.clip(np.abs(dz) * 2.5 + (base_variation - 0.5) * 0.8, 0.0, 20.0)
                 else:
                     val = dz
+            elif col_clean in {"hydrodynamic_inundation", "inundation", "hydrodynamic", "dam_breach", "dam_breach_hydrodynamic"} or (col_clean in {"hydrodynamic", "inundation"} and idx_clean in {"inundation_depth", "flow_velocity", "wave_arrival_time", "depth_velocity_product", "water_surface_elevation", "hazard_rating_tier", "depth", "velocity", "arrival_time", "hv", "wse", "hazard_tier"}) or idx_clean in {"inundation_depth", "flow_velocity", "wave_arrival_time", "depth_velocity_product", "water_surface_elevation", "hazard_rating_tier", "depth_velocity", "arrival_time", "hazard_tier"}:
+                # 2D Shallow Water Dam Breach Hydrodynamic Wave Routing (Cycle v2.5.18)
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                # Channel thalweg alignment with downstream sinuosity
+                valley_center = 0.50 + 0.16 * np.sin(u_s * 3.2)
+                d_thalweg = np.abs(v_s - valley_center)
+
+                # Expanding flood swath downstream
+                swath_halfwidth = 0.16 + 0.14 * u_s
+                cross_factor = np.clip(1.0 - (d_thalweg / swath_halfwidth) ** 2, 0.0, 1.0)
+
+                # Peak discharge attenuation along longitudinal reach
+                downstream_attenuation = 1.0 / (1.0 + 1.85 * (u_s ** 0.88))
+
+                # Flood depth h (m)
+                h_flood = 12.5 * downstream_attenuation * (cross_factor ** 0.8) + (base_variation - 0.5) * 0.15
+                h_flood = np.clip(np.where(cross_factor > 0.02, h_flood, 0.0), 0.0, 15.0)
+
+                # Velocity v (m/s)
+                v_flow = np.clip(8.8 * np.sqrt(np.maximum(0.01, downstream_attenuation)) * (cross_factor ** 0.5), 0.0, 12.0)
+                v_flow = np.where(h_flood > 0.05, v_flow, 0.0)
+
+                # Flood wave arrival time (minutes)
+                t_arrival = np.clip(12.0 + 260.0 * (u_s ** 0.82) + (1.0 - cross_factor) * 25.0, 0.0, 360.0)
+
+                # Depth-velocity impulse hazard product (h * v, m2/s)
+                hv_prod = np.clip(h_flood * v_flow, 0.0, 15.0)
+
+                # Water surface elevation WSE (bed + depth, m)
+                bed_elev = 450.0 - 190.0 * u_s + 20.0 * (d_thalweg ** 2)
+                wse = np.where(h_flood > 0.05, bed_elev + h_flood, bed_elev)
+
+                # Categorical hazard tier: 1: Low, 2: Moderate, 3: High, 4: Extreme, 5: Catastrophic
+                tier = np.where(
+                    (h_flood >= 5.0) | (hv_prod >= 5.0), 5.0,
+                    np.where(
+                        (h_flood >= 3.0) | (hv_prod >= 2.5), 4.0,
+                        np.where(
+                            (h_flood >= 1.5) | (hv_prod >= 1.5), 3.0,
+                            np.where(
+                                (h_flood >= 0.5) | (hv_prod >= 0.5), 2.0,
+                                np.where(h_flood > 0.05, 1.0, 0.0)
+                            )
+                        )
+                    )
+                )
+
+                if idx_clean in {"inundation_depth", "depth", "flood_depth"}:
+                    val = h_flood
+                elif idx_clean in {"flow_velocity", "velocity"}:
+                    val = v_flow
+                elif idx_clean in {"wave_arrival_time", "arrival_time", "time"}:
+                    val = t_arrival
+                elif idx_clean in {"depth_velocity_product", "hazard_product", "hv", "depth_velocity"}:
+                    val = hv_prod
+                elif idx_clean in {"water_surface_elevation", "wse"}:
+                    val = wse
+                elif idx_clean in {"hazard_rating_tier", "hazard_tier", "hazard"}:
+                    val = tier
+                else:
+                    val = h_flood
+            elif col_clean in {"geotechnical_flownet", "flownet", "seepage_flownet", "internal_erosion", "internal_erosion_piping", "piping"} or (col_clean in {"geotechnical", "seepage"} and idx_clean in {"hydraulic_head", "stream_function", "hydraulic_gradient", "pore_pressure", "exit_gradient", "factor_of_safety", "hazard_tier", "piping_progression", "flownet_head", "flownet_gradient", "flownet_exit_gradient"}) or idx_clean in {"flownet_head", "stream_function", "hydraulic_gradient", "flownet_gradient", "flownet_exit_gradient", "piping_factor_of_safety", "piping_progression", "flownet_hazard_tier"}:
+                # 2D Laplace Seepage Flownet & Backward Erosion Piping (Cycle v2.5.19)
+                u_s = (xx - min_lon) / (max_lon - min_lon + 1e-6)
+                v_s = (yy - min_lat) / (max_lat - min_lat + 1e-6)
+
+                h_up = 24.0
+                h_down = 4.0
+                delta_h = h_up - h_down
+
+                x_entry = 0.25
+                x_exit = 0.85
+                seep_span = max(0.1, x_exit - x_entry)
+                frac_x = np.clip((u_s - x_entry) / seep_span, 0.0, 1.0)
+
+                phi_pot = h_up - frac_x * delta_h + 0.5 * delta_h * (1.0 - frac_x) * frac_x * (1.0 - v_s)
+                phi_pot = np.where(u_s < x_entry, h_up, np.where(u_s > x_exit, h_down, phi_pot))
+                phi_pot = np.clip(phi_pot + (base_variation - 0.5) * 0.2, h_down - 1.0, h_up + 1.0)
+
+                psi_flow = np.clip(v_s * 0.0035 * (1.0 - 0.15 * np.cos(u_s * np.pi)), 0.0, 0.005)
+
+                base_grad = delta_h / 60.0
+                toe_concentration = np.exp(-((u_s - x_exit) / 0.08) ** 2) * 1.15
+                grad_mag = np.clip(base_grad * (1.0 + toe_concentration) + (base_variation - 0.5) * 0.05, 0.0, 2.5)
+
+                z_elev = -18.0 + v_s * 25.0
+                pore_u = np.clip((phi_pot - z_elev) * 9.81, 0.0, 450.0)
+
+                exit_grad = np.where(u_s >= 0.75, np.clip(grad_mag, 0.0, 2.0), 0.0)
+
+                i_crit_val = 1.02
+                fs_piping = np.where(exit_grad > 0.05, np.clip(i_crit_val / np.maximum(0.01, exit_grad), 0.2, 5.0), 3.5)
+
+                pipe_reach = x_exit - 0.42 * seep_span
+                in_pipe = (u_s >= pipe_reach) & (u_s <= x_exit + 0.05) & (np.abs(v_s - 0.35) < 0.06)
+                pipe_val = np.where(in_pipe, 1.0, np.clip((u_s - pipe_reach) / (x_exit - pipe_reach + 1e-5), 0.0, 0.8))
+
+                tier_flownet = np.where(
+                    (fs_piping < 1.0) | (exit_grad >= i_crit_val), 5.0,
+                    np.where(
+                        (fs_piping < 1.3) | (exit_grad >= 0.80), 4.0,
+                        np.where(
+                            (fs_piping < 1.8) | (exit_grad >= 0.55), 3.0,
+                            np.where(
+                                (fs_piping < 2.5) | (exit_grad >= 0.35), 2.0,
+                                1.0
+                            )
+                        )
+                    )
+                )
+
+                if idx_clean in {"hydraulic_head", "total_head", "head", "phi", "flownet_head"}:
+                    val = phi_pot
+                elif idx_clean in {"stream_function", "streamline", "psi", "streamlines"}:
+                    val = psi_flow
+                elif idx_clean in {"hydraulic_gradient", "gradient", "grad", "grad_phi", "flownet_gradient"}:
+                    val = grad_mag
+                elif idx_clean in {"pore_pressure", "pressure", "pore_water_pressure", "u"}:
+                    val = pore_u
+                elif idx_clean in {"exit_gradient", "toe_gradient", "i_exit", "flownet_exit_gradient"}:
+                    val = exit_grad
+                elif idx_clean in {"factor_of_safety", "fs", "fs_piping", "safety_factor", "piping_factor_of_safety"}:
+                    val = fs_piping
+                elif idx_clean in {"piping_progression", "pipe", "pipe_length", "pipe_ratio"}:
+                    val = pipe_val
+                elif idx_clean in {"hazard_tier", "hazard_rating_tier", "hazard", "tier", "flownet_hazard_tier"}:
+                    val = tier_flownet
+                else:
+                    val = phi_pot
             else:
                 val = base_variation
 
@@ -1176,6 +1321,16 @@ class TileService:
                 rgba[:, :, 3] = 225
             elif col_clean in {"topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf"} or idx_clean in {"elevation_delta", "cut_depth", "fill_height", "slope_delta", "csf_ground_surface", "ndsm_height", "delta_z", "cut", "fill", "csf_ground", "csf", "ndsm"}:
                 rgba[:, :, 3] = 230
+            elif col_clean in {"hydrodynamic_inundation", "inundation", "hydrodynamic", "dam_breach", "dam_breach_hydrodynamic"} or idx_clean in {"inundation_depth", "flow_velocity", "wave_arrival_time", "depth_velocity_product", "water_surface_elevation", "hazard_rating_tier", "depth_velocity", "arrival_time", "hazard_tier"}:
+                flood_mask = val > 0.05 if idx_clean not in {"wave_arrival_time", "water_surface_elevation"} else (val > 0.0)
+                rgba[~flood_mask, 3] = 0
+                rgba[flood_mask & (val < 1.0), 3] = 180
+                rgba[flood_mask & (val >= 1.0), 3] = 235
+            elif col_clean in {"geotechnical_flownet", "flownet", "seepage_flownet", "internal_erosion", "internal_erosion_piping", "piping"} or idx_clean in {"flownet_head", "stream_function", "hydraulic_gradient", "flownet_gradient", "flownet_exit_gradient", "piping_factor_of_safety", "piping_progression", "flownet_hazard_tier"}:
+                seepage_mask = (val > 0.0) if idx_clean not in {"hydraulic_head", "factor_of_safety", "flownet_head", "piping_factor_of_safety"} else (val > 0.1)
+                rgba[~seepage_mask, 3] = 0
+                rgba[seepage_mask & (val < 1.0), 3] = 190
+                rgba[seepage_mask & (val >= 1.0), 3] = 235
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
@@ -2693,6 +2848,158 @@ class TileService:
             colormap=colormap or "terrain",
             rescale=rescale or "100.0,500.0",
             **kwargs
+        )
+
+    def render_hydrodynamic_inundation_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "inundation_depth",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for 2D shallow water tailings dam breach inundation routing."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "inundation_depth"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"inundation_depth", "depth", "flood_depth"}:
+                chosen_cmap = "blues"
+            elif metric_clean in {"flow_velocity", "velocity"}:
+                chosen_cmap = "turbo"
+            elif metric_clean in {"wave_arrival_time", "arrival_time", "time"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"depth_velocity_product", "hazard_product", "hv"}:
+                chosen_cmap = "magma"
+            elif metric_clean in {"water_surface_elevation", "wse"}:
+                chosen_cmap = "terrain"
+            elif metric_clean in {"hazard_rating_tier", "hazard_tier", "hazard"}:
+                chosen_cmap = "rdylbu"
+            else:
+                chosen_cmap = "blues"
+        else:
+            clean_cm = colormap.lower().replace("_r", "").strip()
+            chosen_cmap = clean_cm if clean_cm in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues"} else "blues"
+
+        if not rescale:
+            if metric_clean in {"inundation_depth", "depth", "flood_depth"}:
+                chosen_rescale = "0.0,15.0"
+            elif metric_clean in {"flow_velocity", "velocity"}:
+                chosen_rescale = "0.0,12.0"
+            elif metric_clean in {"wave_arrival_time", "arrival_time", "time"}:
+                chosen_rescale = "0.0,360.0"
+            elif metric_clean in {"depth_velocity_product", "hazard_product", "hv"}:
+                chosen_rescale = "0.0,10.0"
+            elif metric_clean in {"water_surface_elevation", "wse"}:
+                chosen_rescale = "50.0,600.0"
+            elif metric_clean in {"hazard_rating_tier", "hazard_tier", "hazard"}:
+                chosen_rescale = "1.0,5.0"
+            else:
+                chosen_rescale = "0.0,15.0"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="hydrodynamic_inundation",
+            item_id=sim_id or "BREACH_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_flownet_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "hydraulic_head",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for 2D Laplace seepage flownet and Sellmeijer piping progression."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "hydraulic_head"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"hydraulic_head", "total_head", "head", "phi", "flownet_head"}:
+                chosen_cmap = "blues"
+            elif metric_clean in {"stream_function", "streamline", "psi"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"hydraulic_gradient", "gradient", "grad", "flownet_gradient"}:
+                chosen_cmap = "hot"
+            elif metric_clean in {"pore_pressure", "pressure", "u"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"exit_gradient", "toe_gradient", "i_exit", "flownet_exit_gradient"}:
+                chosen_cmap = "turbo"
+            elif metric_clean in {"factor_of_safety", "fs", "fs_piping", "piping_factor_of_safety"}:
+                chosen_cmap = "rdylbu"
+            elif metric_clean in {"piping_progression", "pipe", "pipe_ratio"}:
+                chosen_cmap = "magma"
+            elif metric_clean in {"hazard_tier", "hazard_rating_tier", "hazard", "tier", "flownet_hazard_tier"}:
+                chosen_cmap = "rdylbu"
+            else:
+                chosen_cmap = "blues"
+        else:
+            clean_cm = colormap.lower().replace("_r", "").strip()
+            chosen_cmap = clean_cm if clean_cm in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues"} else "blues"
+
+        if not rescale:
+            if metric_clean in {"hydraulic_head", "total_head", "head", "phi", "flownet_head"}:
+                chosen_rescale = "4.0,24.0"
+            elif metric_clean in {"stream_function", "streamline", "psi"}:
+                chosen_rescale = "0.0,0.005"
+            elif metric_clean in {"hydraulic_gradient", "gradient", "grad", "flownet_gradient"}:
+                chosen_rescale = "0.0,2.0"
+            elif metric_clean in {"pore_pressure", "pressure", "u"}:
+                chosen_rescale = "0.0,300.0"
+            elif metric_clean in {"exit_gradient", "toe_gradient", "i_exit", "flownet_exit_gradient"}:
+                chosen_rescale = "0.0,1.8"
+            elif metric_clean in {"factor_of_safety", "fs", "fs_piping", "piping_factor_of_safety"}:
+                chosen_rescale = "0.5,3.0"
+            elif metric_clean in {"piping_progression", "pipe", "pipe_ratio"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"hazard_tier", "hazard_rating_tier", "hazard", "tier", "flownet_hazard_tier"}:
+                chosen_rescale = "1.0,5.0"
+            else:
+                chosen_rescale = "4.0,24.0"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="geotechnical_flownet",
+            item_id=sim_id or "FLOWNET_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
         )
 
 tile_service = TileService()

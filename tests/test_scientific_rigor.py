@@ -706,7 +706,520 @@ class TestScientificRigor(unittest.TestCase):
         self.assertGreater(len(full_res["crest_profile"]), 3)
         self.assertGreater(len(full_res["angular_distortion_segments"]), 2)
 
+    def test_csf_cloth_simulation_filtering_and_cut_fill_volumetric_differencing(self):
+        """Task T-166: Continuous Scientific QA verifying CSF cloth mechanics, 2.5D DEM cut-and-fill conservation, and terrain edge preservation."""
+        from app.models.schemas import (
+            calculate_cloth_simulation_filter,
+            classify_csf_ground_tier,
+            CSFRigidness,
+            PointClassificationType,
+            PointClassificationTier,
+            CSF_TIER_METADATA,
+            build_csf_point_filter_tile_url,
+            calculate_cut_and_fill_differencing,
+            classify_topographic_delta_hazard_tier,
+            TopographicDeltaHazardTier,
+            TOPOGRAPHIC_DELTA_HAZARD_CONFIGS,
+            calculate_crest_slumping_profile,
+            classify_crest_slump_hazard_tier,
+            CrestSlumpHazardTier,
+            CREST_SLUMP_HAZARD_CONFIGS,
+            calculate_topographic_transect_delta,
+            calculate_drone_epipolar_differential,
+            classify_epipolar_disparity_quality,
+            EpipolarDisparityQuality,
+            build_topographic_elevation_delta_tile_url
+        )
+
+        # 1. Cloth Simulation Filtering (Zhang et al. 2016)
+        # Test rigidness parameter variations: flat_terrain (stiffest), relief_slope, steep_mountain (flexible)
+        csf_flat = calculate_cloth_simulation_filter(cloud_id="PC_FLAT", rigidness=CSFRigidness.FLAT_TERRAIN, sample_count=60)
+        csf_relief = calculate_cloth_simulation_filter(cloud_id="PC_RELIEF", rigidness=CSFRigidness.RELIEF_SLOPE, sample_count=60)
+        csf_mountain = calculate_cloth_simulation_filter(cloud_id="PC_STEEP", rigidness=CSFRigidness.STEEP_MOUNTAIN, sample_count=60)
+
+        self.assertEqual(csf_flat["rigidness"], "flat_terrain")
+        self.assertEqual(csf_relief["rigidness"], "relief_slope")
+        self.assertEqual(csf_mountain["rigidness"], "steep_mountain")
+
+        # Ground points must satisfy distance_to_cloth_m <= classification_threshold_m
+        for sample in csf_relief["sample_points"]:
+            if sample["is_ground"]:
+                self.assertLessEqual(sample["distance_to_cloth_m"], csf_relief["classification_threshold_m"])
+                self.assertEqual(sample["classification"], PointClassificationType.GROUND.value)
+            else:
+                self.assertGreater(sample["distance_to_cloth_m"], csf_relief["classification_threshold_m"])
+                self.assertNotEqual(sample["classification"], PointClassificationType.GROUND.value)
+
+        # Point cloud quality tier classification
+        self.assertEqual(classify_csf_ground_tier(0.70, 0.10), PointClassificationTier.EXCELLENT_BARE_EARTH_ISOLATION)
+        self.assertEqual(classify_csf_ground_tier(0.50, 0.25), PointClassificationTier.MODERATE_GROUND_EXTRACTION)
+        self.assertEqual(classify_csf_ground_tier(0.30, 0.55), PointClassificationTier.COARSE_GROUND_RESIDUAL)
+        self.assertEqual(classify_csf_ground_tier(0.15, 0.85), PointClassificationTier.HIGH_OCCLUSION_UNCERTAINTY)
+
+        # Dynamic XYZ CSF tile streaming URL template
+        tile_url = build_csf_point_filter_tile_url("PC_TEST_01", z=14, x=1024, y=512)
+        self.assertIn("/api/v1/tiles/pointcloud/csf/PC_TEST_01/14/1024/512.png", tile_url)
+
+        # 2. 2.5D Raster DEM Cut-and-Fill Differencing & Mass Conservation
+        req_cutfill = {
+            "simulation_id": "CUTFILL_SCIENTIFIC_01",
+            "asset_id": "TAILINGS_DAM_A",
+            "grid_resolution_m": 1.0,
+            "deadband_threshold_m": 0.05,
+            "grid_side_points": 20
+        }
+        res_cutfill = calculate_cut_and_fill_differencing(req_cutfill)
+        summary = res_cutfill["summary"]
+
+        # Mass/Volume conservation: Net Volume = Gross Fill - Gross Cut
+        expected_net = round(summary["gross_fill_volume_m3"] - summary["gross_cut_volume_m3"], 3)
+        self.assertAlmostEqual(summary["net_volume_change_m3"], expected_net, places=2)
+
+        # Area conservation: Total Area = Cut Area + Fill Area + Unchanged Area
+        expected_total_area = round(summary["area_cut_ha"] + summary["area_fill_ha"] + summary["area_unchanged_ha"], 4)
+        self.assertAlmostEqual(summary["total_area_ha"], expected_total_area, places=3)
+
+        # Cell count conservation: Total Cells = Cut Cells + Fill Cells + Unchanged Cells
+        total_cells = summary["cell_count_cut"] + summary["cell_count_fill"] + summary["cell_count_unchanged"]
+        self.assertEqual(summary["cell_count_total"], total_cells)
+
+        # Deadband thresholding monotonicity: higher deadband reduces or maintains gross volumes
+        req_high_deadband = dict(req_cutfill)
+        req_high_deadband["deadband_threshold_m"] = 0.25
+        res_high_db = calculate_cut_and_fill_differencing(req_high_deadband)
+        self.assertLessEqual(res_high_db["summary"]["gross_cut_volume_m3"], summary["gross_cut_volume_m3"])
+        self.assertLessEqual(res_high_db["summary"]["gross_fill_volume_m3"], summary["gross_fill_volume_m3"])
+        self.assertGreaterEqual(res_high_db["summary"]["cell_count_unchanged"], summary["cell_count_unchanged"])
+
+        # Hazard tier classification
+        self.assertEqual(classify_topographic_delta_hazard_tier(300.0, 0.10), TopographicDeltaHazardTier.NEGLIGIBLE_CHANGE)
+        self.assertEqual(classify_topographic_delta_hazard_tier(2000.0, 0.35), TopographicDeltaHazardTier.MINOR_SURFACE_RAISING_OR_CREEP)
+        self.assertEqual(classify_topographic_delta_hazard_tier(8000.0, 0.90), TopographicDeltaHazardTier.MODERATE_SURFACE_EROSION)
+        self.assertEqual(classify_topographic_delta_hazard_tier(25000.0, 2.1), TopographicDeltaHazardTier.SEVERE_EMBANKMENT_DEFORMATION)
+        self.assertEqual(classify_topographic_delta_hazard_tier(60000.0, 3.5), TopographicDeltaHazardTier.CRITICAL_CREST_BREACH_SLUMP)
+
+        # Dynamic elevation delta tile streaming URL
+        delta_tile_url = build_topographic_elevation_delta_tile_url("CUTFILL_SCIENTIFIC_01", metric="cut_depth", z=15, x=2048, y=1024)
+        self.assertIn("/api/v1/tiles/topography/elevation-delta/CUTFILL_SCIENTIFIC_01/cut_depth/15/2048/1024.png", delta_tile_url)
+
+        # 3. Longitudinal Embankment Crest Slump & Freeboard Depletion
+        slump_req = {
+            "dam_id": "DAM_CREST_QA",
+            "crest_length_m": 300.0,
+            "design_freeboard_m": 4.0,
+            "reservoir_pool_elevation_m": 320.0
+        }
+        res_slump = calculate_crest_slumping_profile(slump_req)
+        slump_summary = res_slump["summary"]
+
+        self.assertIn("min_residual_freeboard_m", slump_summary)
+        self.assertIn("max_freeboard_loss_m", slump_summary)
+        self.assertIn("total_slump_volume_m3", slump_summary)
+        self.assertGreater(slump_summary["total_slump_volume_m3"], 0.0)
+
+        # Conservation of freeboard: freeboard_pre - delta_z = freeboard_post
+        for st in res_slump["stations"]:
+            calc_post = round(st["freeboard_pre_m"] - st["freeboard_loss_m"], 2)
+            self.assertAlmostEqual(st["freeboard_post_m"], calc_post, places=2)
+
+        # Crest slump hazard tiers
+        self.assertEqual(classify_crest_slump_hazard_tier(0.10), CrestSlumpHazardTier.STABLE_FREEBOARD)
+        self.assertEqual(classify_crest_slump_hazard_tier(0.30), CrestSlumpHazardTier.ADVISORY_SETTLEMENT)
+        self.assertEqual(classify_crest_slump_hazard_tier(0.85), CrestSlumpHazardTier.HEIGHTENED_OVERTOPPING_RISK)
+        self.assertEqual(classify_crest_slump_hazard_tier(1.80), CrestSlumpHazardTier.CRITICAL_CREST_LOSS)
+
+        # 4. 1D Cross-Section Transect Profile Differencing
+        transect_req = {
+            "asset_id": "EMBANKMENT_TRANSECT_01",
+            "sample_spacing_m": 5.0
+        }
+        res_transect = calculate_topographic_transect_delta(transect_req)
+        self.assertIn("gross_cut_volume_m3", res_transect)
+        self.assertIn("gross_fill_volume_m3", res_transect)
+        self.assertIn("net_volume_m3", res_transect)
+        self.assertGreater(len(res_transect["nodes"]), 10)
+
+        # 5. UAV Photogrammetric Stereo Epipolar Disparity Quality
+        epipolar_req = {
+            "flight_pre_id": "FLIGHT_PRE",
+            "flight_post_id": "FLIGHT_POST",
+            "stereo_pair_count": 6
+        }
+        res_epipolar = calculate_drone_epipolar_differential(epipolar_req)
+        self.assertEqual(res_epipolar["stereo_pairs_evaluated"], 6)
+        self.assertIn("disparity_rmse_px", res_epipolar)
+        self.assertIn("overall_quality", res_epipolar)
+
+        self.assertEqual(classify_epipolar_disparity_quality(0.35, 95.0), EpipolarDisparityQuality.SUB_PIXEL_CONVERGENCE)
+        self.assertEqual(classify_epipolar_disparity_quality(0.95, 88.0), EpipolarDisparityQuality.STANDARD_STEREO_ACCURACY)
+        self.assertEqual(classify_epipolar_disparity_quality(2.10, 72.0), EpipolarDisparityQuality.COARSE_EPIPOLAR_RESIDUAL)
+        self.assertEqual(classify_epipolar_disparity_quality(3.80, 42.0), EpipolarDisparityQuality.DECORRELATION_FAILURE)
+
+    def test_dam_breach_hydrodynamics_and_mass_conservation(self):
+        """Task T-172: Verify Tailings Dam Breach Hydrodynamics, Outflow Mass Conservation & 2D Shallow Water Wave Routing."""
+        from app.models.schemas import (
+            calculate_froehlich_breach_parameters,
+            calculate_macdonald_monopolis_breach_parameters,
+            generate_breach_outflow_hydrograph,
+            calculate_de_saint_venant_downstream_routing,
+            calculate_dam_breach_inundation_analysis,
+            classify_inundation_hazard_rating,
+            InundationHazardRating,
+            BreachMethodology,
+            HydrodynamicRoutingMethod,
+            DamBreachMaterialType,
+            DAM_BREACH_HAZARD_CONFIGS,
+            BREACH_METHOD_CONFIGS,
+            MANNING_ROUGHNESS_CONFIGS,
+            HYDRODYNAMIC_TILE_METRICS,
+            build_hydrodynamic_tile_url,
+            build_hydrodynamic_tile_url_template,
+            HydrodynamicRoutingRequest,
+            DamBreachInundationAnalysisRequest
+        )
+
+        # 1. Multi-Model Empirical Parameter Inversion (Froehlich 2008 & MacDonald 1984)
+        # Test mode coefficient k0 adjustment: Overtopping (k0 = 1.3) vs Piping (k0 = 1.0)
+        res_ot = calculate_froehlich_breach_parameters(
+            reservoir_volume_m3=15000000.0,
+            water_height_m=35.0,
+            failure_mode="overtopping"
+        )
+        res_pip = calculate_froehlich_breach_parameters(
+            reservoir_volume_m3=15000000.0,
+            water_height_m=35.0,
+            failure_mode="piping"
+        )
+        self.assertEqual(res_ot["mode_coefficient_k0"], 1.3)
+        self.assertEqual(res_pip["mode_coefficient_k0"], 1.0)
+        self.assertGreater(res_ot["average_breach_width_m"], res_pip["average_breach_width_m"])
+        self.assertGreater(res_ot["top_breach_width_m"], res_ot["average_breach_width_m"])
+        self.assertGreater(res_ot["average_breach_width_m"], res_ot["bottom_breach_width_m"])
+        self.assertGreater(res_ot["peak_discharge_m3s"], 5000.0)
+        self.assertLess(res_ot["peak_discharge_m3s"], 7000.0)
+        self.assertGreater(res_ot["formation_time_hours"], 0.4)
+
+        # MacDonald & Langridge-Monopolis (1984) barrier erosion volume
+        res_mm = calculate_macdonald_monopolis_breach_parameters(
+            outflow_volume_m3=12000000.0,
+            water_height_m=30.0
+        )
+        self.assertGreater(res_mm["eroded_volume_m3"], 90000.0)
+        self.assertGreater(res_mm["peak_discharge_m3s"], 2000.0)
+        self.assertGreater(res_mm["formation_time_hours"], 0.2)
+        self.assertEqual(res_mm["side_slope_z"], 0.5)
+
+        # Monotonic scaling with volume
+        res_small = calculate_froehlich_breach_parameters(reservoir_volume_m3=500000.0, water_height_m=15.0)
+        res_large = calculate_froehlich_breach_parameters(reservoir_volume_m3=50000000.0, water_height_m=50.0)
+        self.assertGreater(res_large["peak_discharge_m3s"], res_small["peak_discharge_m3s"])
+        self.assertGreater(res_large["average_breach_width_m"], res_small["average_breach_width_m"])
+
+        # 2. Breach Hydrograph Mass Conservation: \int Q(t) dt == V_breach
+        qp = 4200.0
+        v_target = 8000000.0  # 8 million m3
+        tf_hr = 1.2
+        duration_hr = 12.0
+        dt_min = 5.0
+
+        hydro = generate_breach_outflow_hydrograph(
+            peak_discharge_m3s=qp,
+            total_volume_m3=v_target,
+            formation_time_hours=tf_hr,
+            duration_hours=duration_hr,
+            time_step_min=dt_min,
+            dam_height_m=35.0
+        )
+
+        self.assertGreater(len(hydro), 50)
+        self.assertEqual(hydro[0]["discharge_m3s"], 0.0)
+        self.assertEqual(hydro[0]["time_minutes"], 0.0)
+
+        # Peak discharge timing and magnitude
+        max_q = max(pt["discharge_m3s"] for pt in hydro)
+        self.assertAlmostEqual(max_q, qp, delta=qp * 0.10)
+
+        # Discrete cumulative volume integration conservation within 1.0% tolerance
+        final_cum_vol = hydro[-1]["cumulative_volume_m3"]
+        self.assertAlmostEqual(final_cum_vol, v_target, delta=v_target * 0.01)
+
+        # Cumulative volume must be monotonically non-decreasing
+        for i in range(1, len(hydro)):
+            self.assertGreaterEqual(hydro[i]["cumulative_volume_m3"], hydro[i-1]["cumulative_volume_m3"])
+            self.assertLessEqual(hydro[i]["stage_m"], hydro[i-1]["stage_m"])
+
+        # 3. 2D De Saint-Venant Downstream Wave Routing & Attenuation Physics
+        route_req = HydrodynamicRoutingRequest(
+            dam_id="TAILINGS_DAM_QA",
+            dam_name="Cadia Valley Tailings",
+            peak_discharge_m3s=4800.0,
+            reservoir_volume_m3=12000000.0,
+            reach_length_km=20.0,
+            bed_slope_avg=0.0075,
+            default_manning_n=0.05,
+            station_interval_m=1000.0
+        )
+        route_res = calculate_de_saint_venant_downstream_routing(route_req)
+
+        self.assertEqual(route_res["dam_id"], "TAILINGS_DAM_QA")
+        self.assertEqual(route_res["reach_length_km"], 20.0)
+        self.assertEqual(route_res["stations_count"], 21)
+
+        stations = route_res["stations"]
+        # Wave front progression and monotonic discharge attenuation dQ/dx <= 0
+        for i in range(1, len(stations)):
+            self.assertLessEqual(stations[i]["peak_discharge_m3s"], stations[i-1]["peak_discharge_m3s"])
+            self.assertGreaterEqual(stations[i]["wave_arrival_time_min"], stations[i-1]["wave_arrival_time_min"])
+            self.assertGreater(stations[i]["peak_velocity_ms"], 0.0)
+            self.assertGreater(stations[i]["peak_depth_m"], 0.0)
+            # Impulse hazard product check: depth_velocity_product == depth * velocity
+            expected_product = round(stations[i]["peak_depth_m"] * stations[i]["peak_velocity_ms"], 2)
+            self.assertAlmostEqual(stations[i]["depth_velocity_product_m2s"], expected_product, places=1)
+
+        # GeoJSON LineString and Station Points verification
+        geojson = route_res["inundation_geojson"]
+        self.assertEqual(geojson["type"], "FeatureCollection")
+        self.assertGreater(len(geojson["features"]), 20)
+
+        # 4. Downstream Inundation Hazard Rating Tiers
+        self.assertEqual(classify_inundation_hazard_rating(depth_m=0.3, velocity_ms=0.8), InundationHazardRating.LOW)
+        self.assertEqual(classify_inundation_hazard_rating(depth_m=1.0, velocity_ms=1.1), InundationHazardRating.MODERATE)
+        self.assertEqual(classify_inundation_hazard_rating(depth_m=2.2, velocity_ms=1.0), InundationHazardRating.HIGH)
+        self.assertEqual(classify_inundation_hazard_rating(depth_m=3.5, velocity_ms=1.2), InundationHazardRating.EXTREME)
+        self.assertEqual(classify_inundation_hazard_rating(depth_m=5.8, velocity_ms=0.5), InundationHazardRating.CATASTROPHIC)
+        self.assertEqual(classify_inundation_hazard_rating(depth_m=1.5, velocity_ms=4.0), InundationHazardRating.CATASTROPHIC)
+
+        # 5. Dynamic XYZ Tile Streaming URL Templates
+        tile_url = build_hydrodynamic_tile_url("BREACH_QA_01", metric="inundation_depth", z=14, x=1024, y=512)
+        self.assertIn("/api/v1/tiles/hydrodynamic/inundation/BREACH_QA_01/inundation_depth/14/1024/512.png", tile_url)
+        tile_tpl = build_hydrodynamic_tile_url_template("BREACH_QA_01", metric="flow_velocity")
+        self.assertIn("/api/v1/tiles/hydrodynamic/inundation/BREACH_QA_01/flow_velocity/{z}/{x}/{y}.png", tile_tpl)
+
+    def test_internal_erosion_sellmeijer_bep_and_flownet_mass_conservation(self):
+        """Task T-178: Verify Sellmeijer (1988/2006) BEP Critical Head, Terzaghi Heave & 2D Flownet Mass Conservation."""
+        from app.models.schemas import (
+            calculate_terzaghi_critical_gradient,
+            calculate_sellmeijer_critical_head,
+            calculate_seepage_flownet_potential_grid,
+            calculate_internal_erosion_piping_analysis,
+            classify_internal_erosion_hazard_tier,
+            build_flownet_tile_url,
+            build_flownet_tile_url_template,
+            InternalErosionHazardTier,
+            SellmeijerSoilClassification,
+            SELLMEIJER_SOIL_PRESETS,
+            INTERNAL_EROSION_HAZARD_CONFIGS,
+            FLOWNET_TILE_METRICS,
+            InternalErosionPipingAnalysisRequest
+        )
+
+        # 1. Terzaghi Critical Hydraulic Gradient & Phase Relationship Bounds
+        terz_sand = calculate_terzaghi_critical_gradient(specific_gravity=2.65, void_ratio=0.58, water_unit_weight=9.81)
+        # i_crit = (2.65 - 1) / (1 + 0.58) = 1.65 / 1.58 = 1.0443
+        self.assertAlmostEqual(terz_sand["critical_gradient"], 1.0443, places=3)
+        self.assertAlmostEqual(terz_sand["porosity"], 0.58 / 1.58, places=3)
+        self.assertGreater(terz_sand["saturated_unit_weight_kn_m3"], terz_sand["submerged_unit_weight_kn_m3"])
+        self.assertAlmostEqual(
+            terz_sand["saturated_unit_weight_kn_m3"] - terz_sand["submerged_unit_weight_kn_m3"],
+            9.81,
+            places=2
+        )
+
+        # Physical Monotonicity of Terzaghi Critical Gradient
+        terz_loose = calculate_terzaghi_critical_gradient(specific_gravity=2.65, void_ratio=0.90)
+        terz_dense = calculate_terzaghi_critical_gradient(specific_gravity=2.65, void_ratio=0.45)
+        self.assertGreater(terz_dense["critical_gradient"], terz_loose["critical_gradient"])
+
+        terz_heavy = calculate_terzaghi_critical_gradient(specific_gravity=2.85, void_ratio=0.60)
+        terz_light = calculate_terzaghi_critical_gradient(specific_gravity=2.55, void_ratio=0.60)
+        self.assertGreater(terz_heavy["critical_gradient"], terz_light["critical_gradient"])
+
+        # 2. Sellmeijer (1988/2006) Backward Erosion Piping Analytical Multi-Factor Decomposition
+        # Delta H_c = F_R * F_S * F_G * L
+        preset_med = SELLMEIJER_SOIL_PRESETS["medium_sand"]
+        res_bep = calculate_sellmeijer_critical_head(
+            hydraulic_conductivity_ms=preset_med["hydraulic_conductivity_ms"],
+            d70_m=preset_med["d70_m"],
+            seepage_length_m=60.0,
+            aquifer_depth_m=18.0,
+            specific_gravity=preset_med["specific_gravity"],
+            friction_angle_deg=preset_med["friction_angle_deg"],
+            applied_head_m=15.0,
+            cu=preset_med["cu"]
+        )
+
+        expected_hc = res_bep["resistance_factor_fr"] * res_bep["scale_factor_fs"] * res_bep["geometry_factor_fg"] * 60.0
+        self.assertAlmostEqual(res_bep["critical_head_m"], expected_hc, delta=0.05)
+        self.assertAlmostEqual(res_bep["critical_gradient"], round(res_bep["critical_head_m"] / 60.0, 4), places=3)
+        self.assertAlmostEqual(res_bep["factor_of_safety"], round(res_bep["critical_head_m"] / 15.0, 3), places=2)
+
+        # Monotonicity with Seepage Length L
+        res_short = calculate_sellmeijer_critical_head(
+            hydraulic_conductivity_ms=preset_med["hydraulic_conductivity_ms"],
+            d70_m=preset_med["d70_m"],
+            seepage_length_m=30.0,
+            applied_head_m=15.0
+        )
+        res_long = calculate_sellmeijer_critical_head(
+            hydraulic_conductivity_ms=preset_med["hydraulic_conductivity_ms"],
+            d70_m=preset_med["d70_m"],
+            seepage_length_m=90.0,
+            applied_head_m=15.0
+        )
+        self.assertGreater(res_long["critical_head_m"], res_short["critical_head_m"])
+        self.assertGreater(res_long["factor_of_safety"], res_short["factor_of_safety"])
+
+        # Monotonicity with Grain Size d70
+        res_coarse = calculate_sellmeijer_critical_head(
+            hydraulic_conductivity_ms=1e-4,
+            d70_m=0.00080, # 0.8 mm
+            seepage_length_m=60.0,
+            applied_head_m=15.0
+        )
+        res_fine = calculate_sellmeijer_critical_head(
+            hydraulic_conductivity_ms=1e-4,
+            d70_m=0.00015, # 0.15 mm
+            seepage_length_m=60.0,
+            applied_head_m=15.0
+        )
+        self.assertGreater(res_coarse["critical_head_m"], res_fine["critical_head_m"])
+
+        # Monotonicity with Permeability K (higher K -> lower scale factor and lower critical head)
+        res_high_k = calculate_sellmeijer_critical_head(
+            hydraulic_conductivity_ms=5e-4,
+            d70_m=0.00030,
+            seepage_length_m=60.0,
+            applied_head_m=15.0
+        )
+        res_low_k = calculate_sellmeijer_critical_head(
+            hydraulic_conductivity_ms=1e-5,
+            d70_m=0.00030,
+            seepage_length_m=60.0,
+            applied_head_m=15.0
+        )
+        self.assertGreater(res_low_k["critical_head_m"], res_high_k["critical_head_m"])
+
+        # Pipe Progression Equilibrium and Breakthrough Threshold
+        res_safe = calculate_sellmeijer_critical_head(
+            hydraulic_conductivity_ms=1e-5,
+            d70_m=0.0005,
+            seepage_length_m=80.0,
+            applied_head_m=5.0
+        )
+        self.assertFalse(res_safe["breakthrough_risk"])
+        self.assertGreaterEqual(res_safe["factor_of_safety"], 1.0)
+        self.assertLess(res_safe["pipe_length_ratio"], 0.3)
+
+        res_breach = calculate_sellmeijer_critical_head(
+            hydraulic_conductivity_ms=1e-4,
+            d70_m=0.0001,
+            seepage_length_m=40.0,
+            applied_head_m=25.0
+        )
+        self.assertTrue(res_breach["breakthrough_risk"])
+        self.assertLess(res_breach["factor_of_safety"], 1.0)
+        self.assertGreaterEqual(res_breach["pipe_length_ratio"], 0.3)
+
+        # 3. 2D Laplace Steady-State Seepage Flownet & Hydrodynamic Mass Conservation
+        h_up = 24.0
+        h_down = 4.0
+        delta_h = h_up - h_down
+        k_soil = 3.5e-5 # m/s
+        nd = 12
+        nf = 4
+        l_base = 70.0
+        d_aq = 20.0
+
+        flownet = calculate_seepage_flownet_potential_grid(
+            upstream_head_m=h_up,
+            downstream_head_m=h_down,
+            embankment_base_length_m=l_base,
+            aquifer_depth_m=d_aq,
+            hydraulic_conductivity_ms=k_soil,
+            potential_drops_nd=nd,
+            flow_channels_nf=nf,
+            critical_gradient=1.04
+        )
+
+        # Shape Factor & Darcy Discharge Rate q = K * Delta H * (Nf / Nd)
+        expected_shape = round(float(nf) / float(nd), 4)
+        self.assertEqual(flownet["shape_factor"], expected_shape)
+        expected_q = round(k_soil * delta_h * expected_shape, 7)
+        self.assertAlmostEqual(flownet["unit_seepage_flow_rate_m3s_m"], expected_q, delta=1e-8)
+
+        # Equipotential Drops Monotonicity
+        equips = flownet["equipotentials"]
+        self.assertGreater(len(equips), nd)
+        # Verify head values decrease monotonically with drop index
+        head_by_drop = {}
+        for eq in equips:
+            drop_idx = eq["equipotential_index"]
+            if drop_idx not in head_by_drop:
+                head_by_drop[drop_idx] = eq["head_m"]
+        for d_idx in range(1, nd + 1):
+            self.assertLess(head_by_drop[d_idx], head_by_drop[d_idx - 1])
+
+        # Streamline Channel Continuity & Mass Conservation
+        streams = flownet["streamlines"]
+        self.assertGreater(len(streams), nf)
+        # Flow rate per channel: delta_psi = q / Nf
+        delta_psi = expected_q / float(nf)
+        geojson = flownet["flownet_geojson"]
+        self.assertEqual(geojson["type"], "FeatureCollection")
+        streamline_feats = [f for f in geojson["features"] if f["properties"].get("type") == "streamline"]
+        self.assertEqual(len(streamline_feats), nf + 1)
+        # Check total cumulative flow across channels equals unit discharge
+        max_stream_q = max(f["properties"]["discharge_m3s_m"] for f in streamline_feats)
+        self.assertAlmostEqual(max_stream_q, expected_q, places=6)
+
+        # Downstream Toe Exit Gradient Concentration
+        exit_stations = flownet["exit_stations"]
+        self.assertGreater(len(exit_stations), 4)
+        max_exit_val = max(st["exit_gradient"] for st in exit_stations)
+        self.assertEqual(flownet["max_exit_gradient"], max_exit_val)
+        for st in exit_stations:
+            self.assertGreater(st["exit_gradient"], 0.0)
+            self.assertGreater(st["factor_of_safety"], 0.0)
+            # Factor of safety = i_crit / i_exit
+            expected_fs = round(1.04 / max(0.01, st["exit_gradient"]), 2)
+            self.assertAlmostEqual(st["factor_of_safety"], expected_fs, delta=0.05)
+            self.assertEqual(st["boil_risk_detected"], st["exit_gradient"] >= 1.04)
+
+        # 4. Internal Erosion Hazard Tier Classification
+        self.assertEqual(classify_internal_erosion_hazard_tier(3.0, 0.20, 1.0), InternalErosionHazardTier.SAFE)
+        self.assertEqual(classify_internal_erosion_hazard_tier(2.0, 0.40, 1.0), InternalErosionHazardTier.LOW_RISK)
+        self.assertEqual(classify_internal_erosion_hazard_tier(1.5, 0.60, 1.0), InternalErosionHazardTier.MODERATE_RISK)
+        self.assertEqual(classify_internal_erosion_hazard_tier(1.15, 0.85, 1.0), InternalErosionHazardTier.ELEVATED_RISK)
+        self.assertEqual(classify_internal_erosion_hazard_tier(0.85, 0.90, 1.0), InternalErosionHazardTier.CRITICAL_PIPING)
+        self.assertEqual(classify_internal_erosion_hazard_tier(1.4, 1.10, 1.0), InternalErosionHazardTier.CRITICAL_PIPING)
+
+        # 5. Full Orchestrated Piping Analysis & Dynamic Tile URLs
+        analysis_req = InternalErosionPipingAnalysisRequest(
+            simulation_id="SIM_RIGOR_PIPING_01",
+            dam_id="TAILINGS_CADIA",
+            dam_name="Cadia Valley Tailings Facility",
+            soil_classification=SellmeijerSoilClassification.MEDIUM_SAND,
+            upstream_head_m=28.0,
+            downstream_head_m=5.0,
+            embankment_base_length_m=75.0,
+            aquifer_depth_m=22.0
+        )
+        full_analysis = calculate_internal_erosion_piping_analysis(analysis_req)
+        self.assertEqual(full_analysis["simulation_id"], "SIM_RIGOR_PIPING_01")
+        self.assertIn("terzaghi_gradient", full_analysis)
+        self.assertIn("sellmeijer_bep", full_analysis)
+        self.assertIn("flownet_seepage", full_analysis)
+        self.assertIn(full_analysis["overall_hazard_tier"], [t.value for t in InternalErosionHazardTier])
+
+        # Dynamic XYZ Tile Streaming URL Formatting
+        tile_url = build_flownet_tile_url("SIM_RIGOR_PIPING_01", metric="hydraulic_head", z=14, x=1024, y=512)
+        self.assertEqual(tile_url, "/api/v1/tiles/geotechnical/flownet/SIM_RIGOR_PIPING_01/hydraulic_head/14/1024/512.png")
+        tile_tpl = build_flownet_tile_url_template("SIM_RIGOR_PIPING_01", metric="exit_gradient")
+        self.assertEqual(tile_tpl, "/api/v1/tiles/geotechnical/flownet/SIM_RIGOR_PIPING_01/exit_gradient/{z}/{x}/{y}.png")
+
 if __name__ == "__main__":
     unittest.main()
+
+
 
 

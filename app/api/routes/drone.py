@@ -44,7 +44,10 @@ from app.models.schemas import (
     ODMTaskRequest,
     ODMTaskResponse,
     ODMTaskOutputArtifacts,
-    calculate_odm_stage_progress
+    calculate_odm_stage_progress,
+    CSFPointFilterRequest,
+    CSFPointFilterResponse,
+    calculate_cloth_simulation_filter
 )
 
 router = APIRouter(prefix="/drone", tags=["Drone Fleet"])
@@ -519,5 +522,52 @@ async def get_odm_orthophoto_tile(task_id: str, z: int, x: int, y: int):
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-NodeODM-v2.5"}
     )
+
+
+@router.post("/csf-ground-filter", response_model=CSFPointFilterResponse)
+@router.post("/pointcloud/csf-filter", response_model=CSFPointFilterResponse, include_in_schema=False)
+@router.post("/csf-filter", response_model=CSFPointFilterResponse, include_in_schema=False)
+async def filter_drone_pointcloud_csf(req: CSFPointFilterRequest):
+    """Classifies UAV point cloud into ground vs non-ground via Cloth Simulation Filtering (CSF)."""
+    res = calculate_cloth_simulation_filter(
+        cloud_id=req.cloud_id,
+        cloth_resolution_m=req.cloth_resolution_m,
+        rigidness=req.rigidness,
+        classification_threshold_m=req.classification_threshold_m,
+        time_step=req.time_step,
+        max_iterations=req.max_iterations,
+        post_slope_smooth=req.post_slope_smooth
+    )
+    return CSFPointFilterResponse(**res)
+
+
+@router.get("/tiles/pointcloud/csf/{cloud_id}/{z}/{x}/{y}.png")
+@router.get("/pointcloud/csf/{cloud_id}/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/csf/{cloud_id}/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+async def get_drone_csf_tile(
+    cloud_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "terrain",
+    rescale: Optional[str] = "100.0,500.0"
+):
+    """Dynamic XYZ tile streaming for drone CSF-classified bare-earth terrain DTM."""
+    from app.services.tile_service import tile_service
+    png_bytes = tile_service.render_csf_tile(
+        cloud_id=cloud_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="csf_ground_surface",
+        colormap=colormap or "terrain",
+        rescale=rescale or "100.0,500.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-DroneCSF-v2.5"}
+    )
+
 
 

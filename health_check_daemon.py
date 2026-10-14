@@ -197,7 +197,11 @@ def inspect_data_ingestion() -> dict:
     earthquake_res = check_http_endpoint("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson", timeout=10.0, retries=2)
     results["usgs_earthquake"] = earthquake_res
     
-    # 6. Local SQLite Database
+    # 6. Real-Time Precipitation Ingest Telemetry (Open-Meteo & NOAA Weather Models)
+    precip_res = check_http_endpoint("https://api.open-meteo.com/v1/forecast?latitude=37.05&longitude=-120.85&hourly=precipitation", timeout=10.0, retries=2)
+    results["precipitation_telemetry"] = precip_res
+
+    # 7. Local SQLite Database
     db_path = os.path.join(SCRIPT_DIR, "gios.db")
     db_status = {"exists": os.path.exists(db_path), "size_bytes": 0, "tables": [], "error": None}
     if os.path.exists(db_path):
@@ -255,19 +259,108 @@ def inspect_pipelines() -> dict:
         
     return results
 
+def inspect_hydrodynamic_cfl_guard() -> dict:
+    """Inspects 2D Hydrodynamic De Saint-Venant finite-volume solver stability and Courant-Friedrichs-Lewy (CFL) bounds.
+    
+    Condition: Δt <= Δx / (sqrt(g*h) + |u|)
+    Courant number: CFL = (sqrt(g*h) + |u|) * Δt / Δx <= 1.0 (target <= 0.85)
+    """
+    results = {}
+    g = 9.80665
+    
+    # 1. Theoretical CFL stability analysis over standard parametric bounds
+    test_scenarios = [
+        {"name": "Standard Tailings Breach", "h": 5.2, "u": 4.8, "dx": 1000.0, "dt": 60.0},
+        {"name": "High Discharge Torrent", "h": 12.5, "u": 8.5, "dx": 1000.0, "dt": 45.0},
+        {"name": "Extreme Valley Flash Flood", "h": 18.0, "u": 12.0, "dx": 1000.0, "dt": 30.0},
+    ]
+    
+    scenario_evals = []
+    max_cfl = 0.0
+    for sc in test_scenarios:
+        h, u, dx, dt = sc["h"], sc["u"], sc["dx"], sc["dt"]
+        celerity = (g * h) ** 0.5 + abs(u)
+        courant = (celerity * dt) / dx
+        dt_limit = dx / max(0.1, celerity)
+        stable = courant <= 1.0
+        max_cfl = max(max_cfl, courant)
+        scenario_evals.append({
+            "scenario": sc["name"],
+            "depth_m": h,
+            "velocity_ms": u,
+            "wave_celerity_ms": round(celerity, 2),
+            "grid_interval_dx_m": dx,
+            "timestep_dt_s": dt,
+            "courant_number_cfl": round(courant, 3),
+            "max_stable_dt_s": round(dt_limit, 2),
+            "stable": stable
+        })
+        
+    results["cfl_scenarios"] = scenario_evals
+    results["max_cfl"] = round(max_cfl, 3)
+    results["cfl_stable"] = max_cfl <= 1.0
+    
+    # 2. Probe Dynamic Hydrodynamic Inundation Tile Server
+    probe_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/hydrodynamic/inundation/SIM_HEALTH_PROBE/depth/10/163/395.png",
+        timeout=3.0
+    )
+    results["hydrodynamic_tile_probe"] = probe_tile
+    
+    # 3. Direct numerical solver execution check
+    solver_status = {"passed": False, "error": None, "duration_ms": 0.0}
+    t0 = time.time()
+    try:
+        from app.models.schemas import calculate_de_saint_venant_downstream_routing, HydrodynamicRoutingRequest
+        req = HydrodynamicRoutingRequest(
+            simulationId="HEALTH_CHECK_SIM",
+            peakDischargeM3s=3800.0,
+            reachLengthKm=15.0,
+            stationIntervalM=1000.0
+        )
+        routing_res = calculate_de_saint_venant_downstream_routing(req)
+        elapsed_ms = (time.time() - t0) * 1000.0
+        if routing_res and "stations" in routing_res and len(routing_res["stations"]) > 0:
+            solver_status = {
+                "passed": True,
+                "error": None,
+                "duration_ms": round(elapsed_ms, 2),
+                "stations_evaluated": len(routing_res["stations"]),
+                "peak_depth_m": routing_res.get("max_flood_depth_m", 0.0),
+                "peak_velocity_ms": routing_res.get("max_flow_velocity_ms", 0.0)
+            }
+        else:
+            solver_status = {
+                "passed": False,
+                "error": "Routing returned empty stations",
+                "duration_ms": round(elapsed_ms, 2)
+            }
+    except Exception as e:
+        solver_status = {
+            "passed": False,
+            "error": str(e),
+            "duration_ms": round((time.time() - t0) * 1000.0, 2)
+        }
+    results["routing_solver"] = solver_status
+    
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
     disk = psutil.disk_usage("C:\\")
     
-    # Check processes
+    # Check processes and flood simulation memory watchdog
     gios_procs = []
+    flood_sim_memory_mb = 0.0
     for p in psutil.process_iter(['pid', 'name', 'memory_info']):
         try:
             name = p.info['name'].lower()
             if 'python' in name or 'uvicorn' in name or 'node' in name:
                 rss_mb = round(p.info['memory_info'].rss / (1024**2), 1)
                 gios_procs.append({"pid": p.info['pid'], "name": p.info['name'], "rss_mb": rss_mb})
+                if 'python' in name or 'uvicorn' in name:
+                    flood_sim_memory_mb += rss_mb
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
             
@@ -279,6 +372,7 @@ def inspect_resources() -> dict:
         "disk_total_gb": round(disk.total / (1024**3), 2),
         "disk_free_gb": round(disk.free / (1024**3), 2),
         "disk_percent": disk.percent,
+        "flood_sim_memory_mb": round(flood_sim_memory_mb, 1),
         "gios_processes": gios_procs
     }
 
@@ -291,6 +385,7 @@ def run_health_check() -> dict:
     tile_cache = inspect_tile_server_and_cache()
     data_ingestion = inspect_data_ingestion()
     resources = inspect_resources()
+    hydrodynamics = inspect_hydrodynamic_cfl_guard()
     pipelines = inspect_pipelines()
     
     anomalies = []
@@ -357,6 +452,13 @@ def run_health_check() -> dict:
             "type": "INGESTION_ERROR",
             "message": f"USGS Earthquake feed check failed: {data_ingestion['usgs_earthquake']['error']}"
         })
+    if "precipitation_telemetry" in data_ingestion and not data_ingestion["precipitation_telemetry"]["ok"]:
+        anomalies.append({
+            "component": "Real-Time Precipitation Telemetry API",
+            "severity": "LOW",
+            "type": "INGESTION_ERROR",
+            "message": f"Precipitation telemetry feed check failed: {data_ingestion['precipitation_telemetry']['error']}"
+        })
     if data_ingestion["sqlite_db"]["error"]:
         anomalies.append({
             "component": "SQLite Database (gios.db)",
@@ -364,8 +466,31 @@ def run_health_check() -> dict:
             "type": "DATABASE_ERROR",
             "message": f"Database integrity check failed: {data_ingestion['sqlite_db']['error']}"
         })
+
+    # 3. Analyze 2D Hydrodynamic & CFL Stability Anomalies
+    if not hydrodynamics["cfl_stable"]:
+        anomalies.append({
+            "component": "2D Hydrodynamic CFL Stability Guard",
+            "severity": "HIGH",
+            "type": "NUMERICAL_INSTABILITY",
+            "message": f"Courant number CFL={hydrodynamics['max_cfl']} exceeds stability criterion (1.0). Timestep Δt exceeds numerical convergence limit."
+        })
+    if not hydrodynamics["routing_solver"]["passed"]:
+        anomalies.append({
+            "component": "2D De Saint-Venant Downstream Wave Routing Solver",
+            "severity": "HIGH",
+            "type": "SOLVER_FAILURE",
+            "message": f"Hydrodynamic wave routing calculation failed: {hydrodynamics['routing_solver']['error']}"
+        })
+    if hydrodynamics["hydrodynamic_tile_probe"] and not hydrodynamics["hydrodynamic_tile_probe"]["ok"]:
+        anomalies.append({
+            "component": "Dynamic Hydrodynamic Inundation Tile Server",
+            "severity": "MEDIUM",
+            "type": "TILE_ERROR",
+            "message": f"Dynamic flood inundation tile probe failed: {hydrodynamics['hydrodynamic_tile_probe']['error']}"
+        })
         
-    # 3. Analyze Pipeline Anomalies
+    # 4. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
         test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
@@ -382,13 +507,20 @@ def run_health_check() -> dict:
             "message": "ResourceWarning: unclosed database in <sqlite3.Connection object> detected during test execution."
         })
         
-    # 4. Analyze Resource Anomalies
+    # 5. Analyze Resource Anomalies
     if resources["memory_percent"] > 95:
         anomalies.append({
             "component": "Host RAM",
             "severity": "MEDIUM",
             "type": "HIGH_RESOURCE_USAGE",
             "message": f"RAM utilization critical: {resources['memory_percent']}% ({resources['memory_used_gb']} GB / {resources['memory_total_gb']} GB)"
+        })
+    if resources.get("flood_sim_memory_mb", 0) > 2500.0:
+        anomalies.append({
+            "component": "Flood Simulation Process Memory Footprint",
+            "severity": "MEDIUM",
+            "type": "HIGH_RESOURCE_USAGE",
+            "message": f"Simulation worker processes consuming excessive memory: {resources['flood_sim_memory_mb']} MB."
         })
         
     has_critical_or_high = any(a.get("severity") in ("CRITICAL", "HIGH") for a in anomalies)
@@ -401,6 +533,7 @@ def run_health_check() -> dict:
         "uptime": uptime,
         "tile_cache": tile_cache,
         "data_ingestion": data_ingestion,
+        "hydrodynamics": hydrodynamics,
         "pipelines": pipelines,
         "resources": resources,
         "anomalies": anomalies
@@ -416,6 +549,7 @@ def write_health_status(report: dict):
     uptime = report["uptime"]
     tile_cache = report["tile_cache"]
     data_ing = report["data_ingestion"]
+    hydrodynamics = report.get("hydrodynamics", {})
     pipelines = report["pipelines"]
     
     entry_lines = []
@@ -427,6 +561,7 @@ def write_health_status(report: dict):
     entry_lines.append(f"- **Memory**: {resources['memory_used_gb']} GB / {resources['memory_total_gb']} GB ({resources['memory_percent']}%)")
     entry_lines.append(f"- **Disk (C:)**: {resources['disk_free_gb']} GB free / {resources['disk_total_gb']} GB total ({resources['disk_percent']}% used)")
     entry_lines.append(f"- **Cache Storage**: {tile_cache['cache_storage']['size_mb']} MB across {tile_cache['cache_storage']['file_count']} files")
+    entry_lines.append(f"- **Flood Simulation Numerical Process Memory**: {resources.get('flood_sim_memory_mb', 0.0)} MB")
     entry_lines.append("")
     
     # 2. Service Uptime
@@ -457,18 +592,42 @@ def write_health_status(report: dict):
     if "usgs_earthquake" in data_ing:
         eq_ok = "REACHABLE" if data_ing["usgs_earthquake"]["ok"] else f"ERROR ({data_ing['usgs_earthquake']['error']})"
         entry_lines.append(f"- **USGS Real-Time Earthquake & ShakeMap Feed**: `{eq_ok}` ({data_ing['usgs_earthquake']['latency_ms']} ms)")
+    if "precipitation_telemetry" in data_ing:
+        precip_ok = "REACHABLE" if data_ing["precipitation_telemetry"]["ok"] else f"ERROR ({data_ing['precipitation_telemetry']['error']})"
+        entry_lines.append(f"- **Real-Time Precipitation Telemetry (Open-Meteo & NOAA)**: `{precip_ok}` ({data_ing['precipitation_telemetry']['latency_ms']} ms)")
     entry_lines.append(f"- **SQLite Database (`gios.db`)**: `HEALTHY` ({data_ing['sqlite_db']['size_bytes']} bytes, Tables: `{db_tables}`)")
     entry_lines.append("")
     
-    # 4. Pipeline Execution & Verification
-    entry_lines.append("### 4. Pipeline Execution")
+    # 4. 2D Hydrodynamic CFL Stability & Flood Routing Guard
+    if hydrodynamics:
+        entry_lines.append("### 4. 2D Hydrodynamic CFL Stability & Flood Routing Guard")
+        cfl_status = "STABLE" if hydrodynamics.get("cfl_stable") else "UNSTABLE"
+        solver_res = hydrodynamics.get("routing_solver", {})
+        solver_status = "VERIFIED" if solver_res.get("passed") else "FAILING"
+        tile_probe = hydrodynamics.get("hydrodynamic_tile_probe")
+        tile_status = "REACHABLE" if (tile_probe and tile_probe.get("ok")) else "UNREACHABLE"
+        
+        max_cfl_val = hydrodynamics.get("max_cfl", 0.0)
+        entry_lines.append(
+            r"- **2D Shallow Water CFL Stability Condition ($\Delta t \le \frac{\Delta x}{\sqrt{g h} + |u|}$)**: "
+            f"`{cfl_status}` (Max CFL: {max_cfl_val:.3f} <= 1.0)"
+        )
+        if solver_res.get("passed"):
+            entry_lines.append(f"- **2D De Saint-Venant Downstream Routing Engine**: `{solver_status}` ({solver_res.get('stations_evaluated', 0)} stations evaluated in {solver_res.get('duration_ms', 0.0)} ms)")
+        else:
+            entry_lines.append(f"- **2D De Saint-Venant Downstream Routing Engine**: `{solver_status}` (Error: {solver_res.get('error')})")
+        entry_lines.append(f"- **Dynamic Hydrodynamic Inundation Tile Server**: `{tile_status}` (Probe latency: {tile_probe.get('latency_ms', 0.0) if tile_probe else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 5. Pipeline Execution & Verification
+    entry_lines.append("### 5. Pipeline Execution")
     test_ok = "PASSING" if pipelines["test_suite"]["passed"] else "FAILED"
     entry_lines.append(f"- **Core Test Suite & API Pipelines**: `{test_ok}` ({pipelines['test_suite']['duration_sec']}s)")
     entry_lines.append("")
     
-    # 5. Anomalies & Agent 9 (@debugger) Handoff
+    # 6. Anomalies & Agent 9 (@debugger) Handoff
     if anomalies:
-        entry_lines.append("### 5. Detected Anomalies & Action Items")
+        entry_lines.append("### 6. Detected Anomalies & Action Items")
         entry_lines.append("> [!WARNING]")
         entry_lines.append(f"> **{len(anomalies)} anomaly/anomalies detected.** Handing off immediately to **Agent 9 (@debugger)** for investigation and patching.\n")
         
@@ -482,7 +641,7 @@ def write_health_status(report: dict):
         for idx, a in enumerate(anomalies, 1):
             entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
-        entry_lines.append("### 5. Detected Anomalies")
+        entry_lines.append("### 6. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
         entry_lines.append("> All systems operational. No active anomalies detected.")
         

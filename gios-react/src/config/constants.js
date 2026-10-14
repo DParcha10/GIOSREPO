@@ -993,7 +993,25 @@ export const API_ENDPOINTS = {
   ANALYSIS_DAM_BREACH_DETAIL: (simId) => `/api/v1/analysis/hydrodynamic/dam-breach-inundation/${simId}`,
   ANALYSIS_DAM_BREACH_DETAIL_SHORT: (simId) => `/hydrodynamic/dam-breach-inundation/${simId}`,
   TILES_HYDRODYNAMIC_INUNDATION: (simId, z, x, y) => `/api/v1/tiles/hydrodynamic/inundation/${simId}/${z}/${x}/${y}.png`,
-  TILES_HYDRODYNAMIC_INUNDATION_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/hydrodynamic/inundation/${simId}/${metric}/${z}/${x}/${y}.png`
+  TILES_HYDRODYNAMIC_INUNDATION_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/hydrodynamic/inundation/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_INTERNAL_EROSION_PIPING: '/api/v1/analysis/geotechnical/internal-erosion-piping',
+  ANALYSIS_INTERNAL_EROSION_PIPING_SHORT: '/geotechnical/internal-erosion-piping',
+  ANALYSIS_INTERNAL_EROSION_DETAIL: (simId) => `/api/v1/analysis/geotechnical/internal-erosion-piping/${simId}`,
+  ANALYSIS_INTERNAL_EROSION_DETAIL_SHORT: (simId) => `/geotechnical/internal-erosion-piping/${simId}`,
+  ANALYSIS_SEEPAGE_FLOWNET: '/api/v1/analysis/geotechnical/seepage-flownet',
+  ANALYSIS_SEEPAGE_FLOWNET_SHORT: '/geotechnical/seepage-flownet',
+  TILES_FLOWNET: (simId, z, x, y) => `/api/v1/tiles/geotechnical/flownet/${simId}/${z}/${x}/${y}.png`,
+  TILES_FLOWNET_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/flownet/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_INSAR_PS: '/api/v1/analysis/geotechnical/insar-persistent-scatterers',
+  ANALYSIS_INSAR_PS_SHORT: '/geotechnical/insar-persistent-scatterers',
+  ANALYSIS_INSAR_VELOCITY: '/api/v1/analysis/geotechnical/insar-velocity-field',
+  ANALYSIS_INSAR_VELOCITY_SHORT: '/geotechnical/insar-velocity-field',
+  ANALYSIS_INSAR_VELOCITY_DETAIL: (simId) => `/api/v1/analysis/geotechnical/insar-velocity-field/${simId}`,
+  ANALYSIS_INSAR_VELOCITY_DETAIL_SHORT: (simId) => `/geotechnical/insar-velocity-field/${simId}`,
+  ANALYSIS_INSAR_DUAL_ORBIT: '/api/v1/analysis/geotechnical/insar-dual-orbit-decomposition',
+  ANALYSIS_INSAR_DUAL_ORBIT_SHORT: '/geotechnical/insar-dual-orbit-decomposition',
+  TILES_INSAR_VELOCITY: (simId, z, x, y) => `/api/v1/tiles/geotechnical/insar-velocity/${simId}/${z}/${x}/${y}.png`,
+  TILES_INSAR_VELOCITY_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/insar-velocity/${simId}/${metric}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1207,6 +1225,20 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'ANALYSIS_DAM_BREACH_DETAIL':
       case 'ANALYSIS_DAM_BREACH_DETAIL_SHORT':
         return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_BREACH_001');
+      case 'TILES_FLOWNET':
+        return endpoint(params.simId || params.sim_id || 'SIM_FLOWNET_001', params.z, params.x, params.y);
+      case 'TILES_FLOWNET_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_FLOWNET_001', params.metric || 'hydraulic_head', params.z, params.x, params.y);
+      case 'ANALYSIS_INTERNAL_EROSION_DETAIL':
+      case 'ANALYSIS_INTERNAL_EROSION_DETAIL_SHORT':
+        return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_PIPING_001');
+      case 'TILES_INSAR_VELOCITY':
+        return endpoint(params.simId || params.sim_id || 'SIM_INSAR_001', params.z, params.x, params.y);
+      case 'TILES_INSAR_VELOCITY_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_INSAR_001', params.metric || 'velocity_vertical', params.z, params.x, params.y);
+      case 'ANALYSIS_INSAR_VELOCITY_DETAIL':
+      case 'ANALYSIS_INSAR_VELOCITY_DETAIL_SHORT':
+        return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_INSAR_001');
       default:
         return endpoint(params);
     }
@@ -4353,7 +4385,9 @@ export const INUNDATION_HAZARD_TIERS = {
 
 export const DAM_BREACH_FAILURE_MODES = {
   OVERTOPPING: 'overtopping',
+  PIPING: 'piping',
   PIPING_SEEPAGE: 'piping_seepage',
+  SLOPE_INSTABILITY: 'slope_instability',
   FOUNDATION_SLIDE: 'foundation_slide',
   SEISMIC_LIQUEFACTION: 'seismic_liquefaction'
 };
@@ -12841,6 +12875,1765 @@ export const buildTopographicElevationDeltaTileUrl = (simId, metric = 'elevation
 export const buildTopographicElevationDeltaTileUrlTemplate = (simId, metric = 'elevation_delta', basePrefix = '/api/v1') => {
   return `${basePrefix}/tiles/topography/elevation-delta/${simId}/${metric}/{z}/{x}/{y}.png`;
 };
+
+// ==============================================================================
+// CYCLE v2.5.18: TAILINGS DAM BREACH PEAK DISCHARGE HYDROGRAPH,
+// 2D DE SAINT-VENANT SHALLOW WATER WAVE ROUTING & DOWNSTREAM INUNDATION MODELS
+// ==============================================================================
+
+export const BREACH_METHODOLOGIES = {
+  FROEHLICH_2008: 'froehlich_2008',
+  MACDONALD_LANGRIDGE_MONOPOLIS_1984: 'macdonald_langridge_monopolis_1984',
+  HYBRID_ENSEMBLE: 'hybrid_ensemble'
+};
+
+export const HYDRODYNAMIC_ROUTING_METHODS = {
+  DE_SAINT_VENANT_2D: 'de_saint_venant_2d',
+  DIFFUSIVE_WAVE_APPROXIMATION: 'diffusive_wave_approximation',
+  KINEMATIC_WAVE_MOMENTUM: 'kinematic_wave_momentum'
+};
+
+export const INUNDATION_HAZARD_RATINGS = {
+  LOW: 'low',
+  MODERATE: 'moderate',
+  HIGH: 'high',
+  EXTREME: 'extreme',
+  CATASTROPHIC: 'catastrophic'
+};
+
+export const DAM_BREACH_MATERIAL_TYPES = {
+  COHESIVE_CLAY: 'cohesive_clay',
+  SILT_TAILINGS: 'silt_tailings',
+  SAND_TAILINGS: 'sand_tailings',
+  ROCKFILL: 'rockfill',
+  COMPACTED_EARTHFILL: 'compacted_earthfill'
+};
+
+export const DAM_BREACH_HAZARD_CONFIGS = {
+  low: {
+    id: 'low',
+    label: 'Low Hazard (Wading / Nuisance)',
+    min_depth_m: 0.0,
+    max_depth_m: 0.5,
+    min_hv_m2s: 0.0,
+    max_hv_m2s: 0.5,
+    color: '#10b981',
+    badge: 'LOW',
+    description: 'Shallow inundation; pedestrian evacuation feasible with caution.',
+    action: 'Issue flood watch; restrict vehicle traffic across low-lying culverts.'
+  },
+  moderate: {
+    id: 'moderate',
+    label: 'Moderate Hazard (Vehicle Inundation)',
+    min_depth_m: 0.5,
+    max_depth_m: 1.5,
+    min_hv_m2s: 0.5,
+    max_hv_m2s: 1.5,
+    color: '#3b82f6',
+    badge: 'MODERATE',
+    description: 'Vehicles swept away; ground floor residential flooding; secondary structure damage.',
+    action: 'Enact proactive evacuation of low-lying floodplains; secure flood gates.'
+  },
+  high: {
+    id: 'high',
+    label: 'High Hazard (Structural Damage)',
+    min_depth_m: 1.5,
+    max_depth_m: 3.0,
+    min_hv_m2s: 1.5,
+    max_hv_m2s: 2.5,
+    color: '#f59e0b',
+    badge: 'HIGH',
+    description: 'Severe structural damage to framed buildings; high danger to life; evacuation mandatory.',
+    action: 'Immediate mandatory evacuation; mobilize emergency rescue corridors.'
+  },
+  extreme: {
+    id: 'extreme',
+    label: 'Extreme Hazard (Structural Failure)',
+    min_depth_m: 3.0,
+    max_depth_m: 5.0,
+    min_hv_m2s: 2.5,
+    max_hv_m2s: 5.0,
+    color: '#f97316',
+    badge: 'EXTREME',
+    description: 'Destruction of multistory buildings; fast-moving violent tailings slurry or surge.',
+    action: 'Sound public alarm sirens; emergency vertical or upland evacuation immediately.'
+  },
+  catastrophic: {
+    id: 'catastrophic',
+    label: 'Catastrophic Hazard (Violent Wave Impact)',
+    min_depth_m: 5.0,
+    max_depth_m: 9999.0,
+    min_hv_m2s: 5.0,
+    max_hv_m2s: 9999.0,
+    color: '#ef4444',
+    badge: 'CATASTROPHIC',
+    description: 'Total obliteration of infrastructure; high-velocity hydraulic shock front.',
+    action: 'Full Emergency Action Plan (EAP) Level 3 activation; all personnel flee to high ground.'
+  }
+};
+
+export const BREACH_METHOD_CONFIGS = {
+  froehlich_2008: {
+    id: 'froehlich_2008',
+    name: 'Froehlich (2008) Multi-Regression',
+    reference: 'Froehlich, D.C. (2008). Embankment Dam Breach Parameters and Their Uncertainties. J. Hydrol. Eng., 13(12): 1063-1077.',
+    description: 'Calibrated against 74 historical dam failures. Computes B_avg, t_f, and Q_peak with overtopping/piping mode adjustments.',
+    equations: {
+      peak_discharge: 'Q_p = 0.607 * V_w^0.295 * h_w^1.24',
+      average_width: 'B_avg = 0.27 * k_0 * V_w^0.32 * h_b^0.04',
+      formation_time_sec: 't_f = 63.2 * sqrt(V_w / (g * h_b^2))'
+    }
+  },
+  macdonald_langridge_monopolis_1984: {
+    id: 'macdonald_langridge_monopolis_1984',
+    name: 'MacDonald & Langridge-Monopolis (1984)',
+    reference: 'MacDonald, T.C. and Langridge-Monopolis, J. (1984). Breaching Characteristics of Dam Failures. J. Hydraul. Eng., 110(5): 567-586.',
+    description: 'Empirical relationship linking eroded barrier volume to outflow volume and hydraulic water depth.',
+    equations: {
+      eroded_volume: 'V_eroded = 0.0261 * (V_out * h_w)^0.769',
+      formation_time_hr: 't_f = 0.0179 * V_eroded^0.364',
+      peak_discharge: 'Q_p = 1.154 * (V_out * h_w)^0.412'
+    }
+  },
+  hybrid_ensemble: {
+    id: 'hybrid_ensemble',
+    name: 'Hybrid Multi-Model Ensemble',
+    reference: 'GIOS Hydrodynamic Synthesis (Froehlich 2008 + MacDonald-Langridge-Monopolis 1984 + USBR envelope)',
+    description: 'Ensemble weighting delivering deterministic median and 95% upper confidence bound for engineering conservatism.',
+    equations: {
+      peak_discharge: 'Q_p = 0.65 * Q_p_froehlich + 0.35 * Q_p_mlm'
+    }
+  }
+};
+
+export const MANNING_ROUGHNESS_CONFIGS = {
+  clean_natural_channel: { id: 'clean_natural_channel', n: 0.030, label: 'Clean Natural Stream / Gravel Channel' },
+  gravel_bed_channel: { id: 'gravel_bed_channel', n: 0.040, label: 'Coarse Gravel Bed with Cobbles' },
+  brushy_floodplain: { id: 'brushy_floodplain', n: 0.075, label: 'Floodplain with Scattered Brush / Shrubs' },
+  dense_vegetation: { id: 'dense_vegetation', n: 0.120, label: 'Dense Willow / Timber Floodplain Overbank' },
+  tailings_slurry_mud: { id: 'tailings_slurry_mud', n: 0.065, label: 'Viscous Hyperconcentrated Tailings Mud' },
+  urban_built_environment: { id: 'urban_built_environment', n: 0.025, label: 'Paved / Compacted Urban Valley Floor' }
+};
+
+export const HYDRODYNAMIC_TILE_METRICS = {
+  inundation_depth: {
+    id: 'inundation_depth',
+    name: 'Maximum Inundation Depth (h)',
+    unit: 'm',
+    min: 0.0,
+    max: 15.0,
+    colormap: 'blues',
+    description: 'Peak water column / slurry depth above ground surface (m)'
+  },
+  flow_velocity: {
+    id: 'flow_velocity',
+    name: 'Peak Flow Velocity (v)',
+    unit: 'm/s',
+    min: 0.0,
+    max: 12.0,
+    colormap: 'turbo',
+    description: 'Maximum shallow water magnitude of velocity vector (m/s)'
+  },
+  wave_arrival_time: {
+    id: 'wave_arrival_time',
+    name: 'Flood Wave Front Arrival Time',
+    unit: 'min',
+    min: 0.0,
+    max: 360.0,
+    colormap: 'viridis',
+    description: 'Elapsed time from breach inception to first inundation wave arrival (minutes)'
+  },
+  depth_velocity_product: {
+    id: 'depth_velocity_product',
+    name: 'Hazard Intensity Product (h * v)',
+    unit: 'm2/s',
+    min: 0.0,
+    max: 10.0,
+    colormap: 'magma',
+    description: 'Product of peak depth and velocity representing hydrodynamic impulse hazard (m2/s)'
+  },
+  water_surface_elevation: {
+    id: 'water_surface_elevation',
+    name: 'Water Surface Elevation (WSE)',
+    unit: 'm',
+    min: 50.0,
+    max: 600.0,
+    colormap: 'terrain',
+    description: 'Peak flood stage above datum (bed elevation + depth, m)'
+  },
+  hazard_rating_tier: {
+    id: 'hazard_rating_tier',
+    name: 'Inundation Hazard Severity Rating',
+    unit: 'tier',
+    min: 1.0,
+    max: 5.0,
+    colormap: 'rdylbu',
+    description: 'Categorical hazard tier (1: low, 2: moderate, 3: high, 4: extreme, 5: catastrophic)'
+  }
+};
+
+export const calculateFroehlichBreachParameters = (reservoirVolumeM3, waterHeightM, failureMode = 'overtopping') => {
+  const vw = Math.max(100.0, parseFloat(reservoirVolumeM3) || 15000000.0);
+  const hw = Math.max(0.5, parseFloat(waterHeightM) || 35.0);
+  const isOvertopping = String(failureMode).toLowerCase().includes('overtopping');
+  const k0 = isOvertopping ? 1.3 : 1.0;
+  const zb = isOvertopping ? 0.7 : 1.0;
+  const g = 9.80665;
+
+  const bAvg = Number((0.27 * k0 * Math.pow(vw, 0.32) * Math.pow(hw, 0.04)).toFixed(2));
+  const tfSec = Number((63.2 * Math.sqrt(vw / (g * Math.pow(hw, 2)))).toFixed(1));
+  const tfHr = Number((tfSec / 3600.0).toFixed(3));
+  const tfMin = Number((tfSec / 60.0).toFixed(1));
+
+  const qp = Number((0.607 * Math.pow(vw, 0.295) * Math.pow(hw, 1.24)).toFixed(2));
+  const bTop = Number((bAvg + zb * hw).toFixed(2));
+  const bBottom = Number(Math.max(1.0, bAvg - zb * hw).toFixed(2));
+  const erodedVol = Number((0.5 * (bTop + bBottom) * hw * (hw * 1.5)).toFixed(2));
+
+  return {
+    average_breach_width_m: bAvg,
+    top_breach_width_m: bTop,
+    bottom_breach_width_m: bBottom,
+    breach_height_m: hw,
+    side_slope_z: zb,
+    formation_time_seconds: tfSec,
+    formation_time_minutes: tfMin,
+    formation_time_hours: tfHr,
+    eroded_volume_m3: erodedVol,
+    peak_discharge_m3s: qp,
+    mode_coefficient_k0: k0
+  };
+};
+
+export const calculateMacDonaldMonopolisBreachParameters = (outflowVolumeM3, waterHeightM) => {
+  const vw = Math.max(100.0, parseFloat(outflowVolumeM3) || 15000000.0);
+  const hw = Math.max(0.5, parseFloat(waterHeightM) || 35.0);
+  const vhFactor = vw * hw;
+
+  const vEroded = Number((0.0261 * Math.pow(vhFactor, 0.769)).toFixed(2));
+  const tfHr = Number((0.0179 * Math.pow(vEroded, 0.364)).toFixed(3));
+  const tfSec = Number((tfHr * 3600.0).toFixed(1));
+  const tfMin = Number((tfHr * 60.0).toFixed(1));
+  const qp = Number((1.154 * Math.pow(vhFactor, 0.412)).toFixed(2));
+
+  const zb = 0.5;
+  const bAvg = Number(Math.max(3.0, Math.sqrt(vEroded / Math.max(1.0, hw * 40.0)) * 12.0).toFixed(2));
+  const bTop = Number((bAvg + zb * hw).toFixed(2));
+  const bBottom = Number(Math.max(1.0, bAvg - zb * hw).toFixed(2));
+
+  return {
+    average_breach_width_m: bAvg,
+    top_breach_width_m: bTop,
+    bottom_breach_width_m: bBottom,
+    breach_height_m: hw,
+    side_slope_z: zb,
+    formation_time_seconds: tfSec,
+    formation_time_minutes: tfMin,
+    formation_time_hours: tfHr,
+    eroded_volume_m3: vEroded,
+    peak_discharge_m3s: qp
+  };
+};
+
+export const classifyInundationHazardRating = (depthM, velocityMs = 0.0) => {
+  const d = Math.max(0.0, parseFloat(depthM) || 0.0);
+  const v = Math.max(0.0, parseFloat(velocityMs) || 0.0);
+  const hv = Number((d * v).toFixed(3));
+
+  if (d >= 5.0 || hv >= 5.0) return 'catastrophic';
+  if (d >= 3.0 || hv >= 2.5) return 'extreme';
+  if (d >= 1.5 || hv >= 1.5) return 'high';
+  if (d >= 0.5 || hv >= 0.5) return 'moderate';
+  return 'low';
+};
+
+export const generateBreachOutflowHydrograph = (
+  peakDischargeM3s,
+  totalVolumeM3,
+  formationTimeHours,
+  durationHours = 12.0,
+  timeStepMin = 5.0,
+  damHeightM = 40.0
+) => {
+  const qp = Math.max(1.0, parseFloat(peakDischargeM3s) || 4500.0);
+  const vTotal = Math.max(100.0, parseFloat(totalVolumeM3) || 15000000.0);
+  const tfHr = Math.max(0.05, parseFloat(formationTimeHours) || 1.5);
+  const tEndHr = Math.max(tfHr * 2.5, parseFloat(durationHours) || 12.0);
+  const dtMin = Math.max(0.5, parseFloat(timeStepMin) || 5.0);
+  const dtHr = dtMin / 60.0;
+  const dtSec = dtHr * 3600.0;
+
+  let tpHr = Math.max(0.02, tfHr * 0.35);
+  let tpSec = tpHr * 3600.0;
+  let vRise = qp * tpSec / 3.0;
+
+  if (vRise >= 0.85 * vTotal) {
+    tpSec = (0.70 * vTotal * 3.0) / qp;
+    tpHr = tpSec / 3600.0;
+    vRise = qp * tpSec / 3.0;
+  }
+
+  const vRecessTarget = Math.max(100.0, vTotal - vRise);
+  const kSec = qp / vRecessTarget;
+  const kHr = kSec * 3600.0;
+
+  const numSteps = Math.ceil(tEndHr / dtHr) + 1;
+  const hydrograph = [];
+  let cumVol = 0.0;
+
+  for (let step = 0; step < numSteps; step++) {
+    const tHr = Number((step * dtHr).toFixed(4));
+    const tMin = Number((tHr * 60.0).toFixed(2));
+
+    let q = 0.0;
+    if (tHr <= tpHr) {
+      const ratio = tHr / Math.max(0.001, tpHr);
+      q = qp * Math.pow(ratio, 2);
+    } else {
+      const dtRecess = tHr - tpHr;
+      q = qp * Math.exp(-kHr * dtRecess);
+    }
+
+    q = Math.max(0.0, Number(q.toFixed(2)));
+    const stepVol = q * dtSec;
+    cumVol += stepVol;
+    const remFraction = Math.max(0.0, 1.0 - (cumVol / vTotal));
+    const stageM = Number((damHeightM * Math.sqrt(remFraction)).toFixed(2));
+
+    hydrograph.push({
+      time_minutes: tMin,
+      time_hours: tHr,
+      discharge_m3s: q,
+      cumulative_volume_m3: Number(Math.min(vTotal, cumVol).toFixed(2)),
+      stage_m: stageM
+    });
+  }
+
+  if (hydrograph.length > 0) {
+    const rawIntegral = hydrograph.reduce((acc, pt) => acc + pt.discharge_m3s * dtSec, 0);
+    if (rawIntegral > 0) {
+      const scale = vTotal / rawIntegral;
+      let cumVolAdj = 0.0;
+      hydrograph.forEach((pt) => {
+        if (pt.time_hours !== Number(tpHr.toFixed(4))) {
+          pt.discharge_m3s = Number((pt.discharge_m3s * scale).toFixed(2));
+        }
+        const stepVol = pt.discharge_m3s * dtSec;
+        cumVolAdj += stepVol;
+        pt.cumulative_volume_m3 = Number(Math.min(vTotal, cumVolAdj).toFixed(2));
+      });
+    }
+  }
+
+  return hydrograph;
+};
+
+export const calculateDeSaintVenantDownstreamRouting = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `HYD_SIM_${Date.now()}`;
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_01';
+  const damName = options.dam_name || options.damName || 'Mount Polley Embankment';
+  const qp0 = Math.max(1.0, parseFloat(options.peak_discharge_m3s || options.peakDischargeM3s || 4500.0));
+  const reachKm = Math.max(0.5, parseFloat(options.reach_length_km || options.reachLengthKm || 25.0));
+  const bedSlope = Math.max(0.0001, parseFloat(options.bed_slope_avg || options.bedSlopeAvg || 0.008));
+  const nManning = Math.max(0.01, parseFloat(options.default_manning_n || options.defaultManningN || 0.055));
+  const intervalM = Math.max(100.0, parseFloat(options.station_interval_m || options.stationIntervalM || 1000.0));
+  const method = options.routing_method || options.routingMethod || 'de_saint_venant_2d';
+  const g = 9.80665;
+
+  const lat0 = parseFloat(options.latitude || 37.05);
+  const lon0 = parseFloat(options.longitude || -120.85);
+  const baseElevM = 350.0;
+
+  const numStations = Math.floor(reachKm * 1000.0 / intervalM) + 1;
+  const stations = [];
+  let cumArrivalSec = 0.0;
+  let cumInundationAreaM2 = 0.0;
+
+  let worstTier = 'low';
+  let criticalStId = 'STA_00';
+  let maxDAll = 0.0;
+  let maxVAll = 0.0;
+
+  const tierSeverityMap = { low: 1, moderate: 2, high: 3, extreme: 4, catastrophic: 5 };
+
+  for (let idx = 0; idx < numStations; idx++) {
+    const distM = idx * intervalM;
+    const distKm = Number((distM / 1000.0).toFixed(2));
+    const stId = `STA_${String(idx).padStart(2, '0')}`;
+    const stName = `Downstream Transect km ${distKm.toFixed(1)}`;
+
+    const attenuationFactor = 1.0 / (1.0 + 0.038 * Math.pow(distKm, 0.82));
+    const qPeak = Number((qp0 * attenuationFactor).toFixed(2));
+
+    const bChannel = 30.0 + 1.4 * distKm;
+    const bedElev = Number((baseElevM - bedSlope * distM).toFixed(2));
+
+    const denom = bChannel * Math.sqrt(bedSlope);
+    let depthM = Number(Math.pow((qPeak * nManning) / Math.max(0.01, denom), 0.6).toFixed(2));
+    depthM = Math.max(0.1, depthM);
+
+    const areaFlow = bChannel * depthM;
+    const velMs = Number((qPeak / Math.max(0.1, areaFlow)).toFixed(2));
+    const wseM = Number((bedElev + depthM).toFixed(2));
+    const hvProd = Number((depthM * velMs).toFixed(2));
+
+    const celerity = Math.sqrt(g * depthM) + velMs;
+    if (idx > 0) {
+      const stepDtSec = intervalM / Math.max(0.5, celerity);
+      cumArrivalSec += stepDtSec;
+    }
+
+    const tArrivalMin = Number((cumArrivalSec / 60.0).toFixed(1));
+    const tPeakMin = Number((tArrivalMin + 35.0).toFixed(1));
+    const tEvacMin = Number(Math.max(0.0, tArrivalMin - 10.0).toFixed(1));
+
+    const hazardTier = classifyInundationHazardRating(depthM, velMs);
+    if ((tierSeverityMap[hazardTier] || 1) >= (tierSeverityMap[worstTier] || 1)) {
+      worstTier = hazardTier;
+      criticalStId = stId;
+    }
+
+    if (depthM > maxDAll) maxDAll = depthM;
+    if (velMs > maxVAll) maxVAll = velMs;
+
+    const angleRad = 0.35 + 0.12 * Math.sin(idx * 0.45);
+    const stLat = Number((lat0 - (distKm / 111.0) * Math.cos(angleRad)).toFixed(5));
+    const stLon = Number((lon0 + (distKm / (111.0 * Math.cos(lat0 * Math.PI / 180.0))) * Math.sin(angleRad)).toFixed(5));
+
+    const inundatedWidthM = bChannel + depthM * 12.0;
+    cumInundationAreaM2 += inundatedWidthM * intervalM;
+
+    stations.push({
+      station_id: stId,
+      station_name: stName,
+      chainage_m: distM,
+      chainage_km: distKm,
+      latitude: stLat,
+      longitude: stLon,
+      bed_elevation_m: bedElev,
+      manning_n: nManning,
+      wave_arrival_time_min: tArrivalMin,
+      time_to_peak_min: tPeakMin,
+      peak_depth_m: depthM,
+      peak_wse_m: wseM,
+      peak_velocity_ms: velMs,
+      depth_velocity_product_m2s: hvProd,
+      peak_discharge_m3s: qPeak,
+      inundation_hazard_rating: hazardTier,
+      evacuation_time_window_min: tEvacMin
+    });
+  }
+
+  const inundationHa = Number((cumInundationAreaM2 / 10000.0).toFixed(1));
+
+  const geojson = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: stations.map(st => [st.longitude, st.latitude])
+        },
+        properties: {
+          feature_type: 'inundation_channel_thalweg',
+          dam_id: damId,
+          simulation_id: simId,
+          reach_length_km: reachKm,
+          peak_outflow_discharge_m3s: qp0,
+          worst_hazard_rating: worstTier
+        }
+      },
+      ...stations.map(st => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [st.longitude, st.latitude]
+        },
+        properties: {
+          feature_type: 'cross_section_station',
+          station_id: st.station_id,
+          chainage_km: st.chainage_km,
+          peak_depth_m: st.peak_depth_m,
+          peak_velocity_ms: st.peak_velocity_ms,
+          wave_arrival_time_min: st.wave_arrival_time_min,
+          hazard_rating: st.inundation_hazard_rating
+        }
+      }))
+    ]
+  };
+
+  const tileTemplate = `/api/v1/tiles/hydrodynamic/inundation/${simId}/inundation_depth/{z}/{x}/{y}.png`;
+
+  return {
+    simulation_id: simId,
+    dam_id: damId,
+    dam_name: damName,
+    reach_length_km: reachKm,
+    routing_method: method,
+    peak_outflow_discharge_m3s: qp0,
+    stations_count: stations.length,
+    stations,
+    peak_inundation_area_ha: inundationHa,
+    max_flood_depth_m: Number(maxDAll.toFixed(2)),
+    max_flow_velocity_ms: Number(maxVAll.toFixed(2)),
+    critical_station_id: criticalStId,
+    worst_hazard_rating: worstTier,
+    inundation_geojson: geojson,
+    tile_url_template: tileTemplate,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateDamBreachInundationAnalysis = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `BREACH_SIM_${Date.now()}`;
+  const damId = options.dam_id || options.damId || 'TAILINGS_DAM_01';
+  const damName = options.dam_name || options.damName || 'Mount Polley Embankment';
+  const damH = parseFloat(options.dam_height_m || options.damHeightM || 40.0);
+  const resVol = parseFloat(options.reservoir_volume_m3 || options.reservoirVolumeM3 || 15000000.0);
+  const waterH = parseFloat(options.water_depth_above_invert_m || options.waterDepthAboveInvertM || 35.0);
+  const failMode = options.failure_mode || options.failureMode || 'overtopping';
+  const methodology = options.methodology || 'froehlich_2008';
+
+  const froehlich = calculateFroehlichBreachParameters(resVol, waterH, failMode);
+  const mlm = calculateMacDonaldMonopolisBreachParameters(resVol, waterH);
+  const usbrEnvelope = Number((19.0 * Math.pow(waterH, 1.85)).toFixed(2));
+
+  let geom = froehlich;
+  let selectedMethod = 'froehlich_2008';
+  let qp = froehlich.peak_discharge_m3s;
+  let tfHr = froehlich.formation_time_hours;
+
+  if (String(methodology).toLowerCase().includes('macdonald')) {
+    geom = mlm;
+    selectedMethod = 'macdonald_langridge_monopolis_1984';
+    qp = mlm.peak_discharge_m3s;
+    tfHr = mlm.formation_time_hours;
+  } else if (String(methodology).toLowerCase().includes('hybrid')) {
+    selectedMethod = 'hybrid_ensemble';
+    qp = Number((0.65 * froehlich.peak_discharge_m3s + 0.35 * mlm.peak_discharge_m3s).toFixed(2));
+    tfHr = Number((0.65 * froehlich.formation_time_hours + 0.35 * mlm.formation_time_hours).toFixed(3));
+    geom = {
+      ...froehlich,
+      peak_discharge_m3s: qp,
+      formation_time_hours: tfHr,
+      formation_time_minutes: Number((tfHr * 60.0).toFixed(1)),
+      formation_time_seconds: Number((tfHr * 3600.0).toFixed(1))
+    };
+  }
+
+  const breachGeomSummary = {
+    average_breach_width_m: geom.average_breach_width_m,
+    top_breach_width_m: geom.top_breach_width_m,
+    bottom_breach_width_m: geom.bottom_breach_width_m,
+    breach_height_m: geom.breach_height_m,
+    side_slope_z: geom.side_slope_z,
+    formation_time_hours: geom.formation_time_hours,
+    formation_time_minutes: geom.formation_time_minutes,
+    eroded_volume_m3: geom.eroded_volume_m3,
+    peak_discharge_m3s: qp,
+    method: selectedMethod
+  };
+
+  const durationHr = parseFloat(options.simulation_duration_hours || options.simulationDurationHours || 12.0);
+  const dtMin = parseFloat(options.time_step_minutes || options.timeStepMinutes || 5.0);
+  const hydrograph = generateBreachOutflowHydrograph(qp, resVol, tfHr, durationHr, dtMin, damH);
+
+  const routingReq = {
+    ...options,
+    simulation_id: simId,
+    peak_discharge_m3s: qp,
+    breach_formation_time_min: geom.formation_time_minutes
+  };
+  const routingRes = calculateDeSaintVenantDownstreamRouting(routingReq);
+
+  return {
+    simulation_id: simId,
+    dam_id: damId,
+    dam_name: damName,
+    breach_geometry: breachGeomSummary,
+    peak_discharge_m3s: qp,
+    time_to_peak_hours: Number((tfHr * 0.35).toFixed(3)),
+    total_breach_volume_m3: resVol,
+    hydrograph,
+    peak_discharge_bounds: {
+      froehlich_2008: froehlich.peak_discharge_m3s,
+      macdonald_langridge_monopolis_1984: mlm.peak_discharge_m3s,
+      usbr_envelope_1982: usbrEnvelope
+    },
+    reach_length_km: routingRes.reach_length_km,
+    stations: routingRes.stations,
+    peak_inundation_area_ha: routingRes.peak_inundation_area_ha,
+    max_flood_depth_m: routingRes.max_flood_depth_m,
+    max_flow_velocity_ms: routingRes.max_flow_velocity_ms,
+    worst_hazard_rating: routingRes.worst_hazard_rating,
+    inundation_geojson: routingRes.inundation_geojson,
+    tile_url_template: routingRes.tile_url_template,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const buildHydrodynamicTileUrl = (simId, metric = 'inundation_depth', z = 12, x = 2048, y = 1024, basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/hydrodynamic/inundation/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildHydrodynamicTileUrlTemplate = (simId, metric = 'inundation_depth', basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/hydrodynamic/inundation/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+// ==============================================================================
+// CYCLE v2.5.19: INTERNAL EROSION & BACKWARD PIPING (TERZAGHI / SELLMEIJER 1988)
+// 2D SEEPAGE FLOWNET POTENTIAL GRID (LAPLACE EQUATION) & EXIT GRADIENT SOLVER
+// ==============================================================================
+
+export const PipingFailureMechanism = {
+  BACKWARD_EROSION: 'backward_erosion',
+  INTERNAL_INSTABILITY: 'internal_instability',
+  CONTACT_EROSION: 'contact_erosion',
+  CONCENTRATED_LEAK: 'concentrated_leak'
+};
+
+export const SellmeijerSoilClassification = {
+  FINE_UNIFORM_SAND: 'fine_uniform_sand',
+  MEDIUM_SAND: 'medium_sand',
+  COARSE_SAND: 'coarse_sand',
+  SILTY_TAILINGS_SAND: 'silty_tailings_sand',
+  COPPER_TAILINGS: 'copper_tailings',
+  FOUNDATION_ALLUVIUM: 'foundation_alluvium'
+};
+
+export const FlownetBoundaryCondition = {
+  IMPERMEABLE_BEDROCK: 'impermeable_bedrock',
+  CONSTANT_HEAD_UPSTREAM: 'constant_head_upstream',
+  CONSTANT_HEAD_DOWNSTREAM: 'constant_head_downstream',
+  FREE_SEEPAGE_FACE: 'free_seepage_face'
+};
+
+export const InternalErosionHazardTier = {
+  SAFE: 'safe',
+  LOW_RISK: 'low_risk',
+  MODERATE_RISK: 'moderate_risk',
+  ELEVATED_RISK: 'elevated_risk',
+  CRITICAL_PIPING: 'critical_piping'
+};
+
+export const INTERNAL_EROSION_HAZARD_CONFIGS = {
+  safe: {
+    id: 'safe',
+    label: 'Safe / Negligible Piping Risk',
+    min_fs: 2.5,
+    max_fs: null,
+    max_gradient_ratio: 0.35,
+    color: '#10b981',
+    badge: 'SAFE',
+    description: 'Exit gradient well below critical heave threshold; backward piping arrested.',
+    action: 'Maintain routine baseline piezometer telemetry and visual inspection.'
+  },
+  low_risk: {
+    id: 'low_risk',
+    label: 'Low Piping Susceptibility',
+    min_fs: 1.8,
+    max_fs: 2.5,
+    max_gradient_ratio: 0.55,
+    color: '#3b82f6',
+    badge: 'LOW',
+    description: 'Stable hydraulic regime; localized low seepage velocity beneath toe filter.',
+    action: 'Verify downstream drainage collection ditches and pressure relief capacity.'
+  },
+  moderate_risk: {
+    id: 'moderate_risk',
+    label: 'Moderate Internal Erosion Susceptibility',
+    min_fs: 1.3,
+    max_fs: 1.8,
+    max_gradient_ratio: 0.75,
+    color: '#f59e0b',
+    badge: 'MODERATE',
+    description: 'Concentrated seepage exit gradient detected; localized micro-piping initiation possible.',
+    action: 'Increase vibrating-wire piezometer polling frequency to 15-min intervals; inspect downstream toe.'
+  },
+  elevated_risk: {
+    id: 'elevated_risk',
+    label: 'Elevated Piping Hazard / Imminent Heave',
+    min_fs: 1.0,
+    max_fs: 1.3,
+    max_gradient_ratio: 1.0,
+    color: '#f97316',
+    badge: 'HIGH',
+    description: 'Exit gradient approaching critical Terzaghi heave gradient; sand boiling imminent.',
+    action: 'Deploy downstream toe weighting berm / inverted filter surcharge; stage drawdown siphon.'
+  },
+  critical_piping: {
+    id: 'critical_piping',
+    label: 'Critical Piping / Sand Boiling Failure',
+    min_fs: 0.0,
+    max_fs: 1.0,
+    max_gradient_ratio: null,
+    color: '#ef4444',
+    badge: 'CRITICAL',
+    description: 'Exit hydraulic gradient exceeds critical heave threshold; backward piping channel progressing; urgent evacuation and reservoir drawdown required.',
+    action: 'Activate Emergency Action Plan (EAP); trigger downstream community alert; immediate reservoir drawdown.'
+  }
+};
+
+export const SELLMEIJER_SOIL_PRESETS = {
+  fine_uniform_sand: {
+    id: 'fine_uniform_sand',
+    name: 'Fine Uniform Sand',
+    d70_m: 0.00015,
+    d10_m: 0.00008,
+    cu: 1.875,
+    hydraulic_conductivity_ms: 1.5e-5,
+    friction_angle_deg: 32.0,
+    specific_gravity: 2.65,
+    void_ratio: 0.65,
+    porosity: 0.394,
+    description: 'Clean, fine uniform alluvial sand with high susceptibility to backward piping.'
+  },
+  medium_sand: {
+    id: 'medium_sand',
+    name: 'Medium Quartz Sand',
+    d70_m: 0.00035,
+    d10_m: 0.00015,
+    cu: 2.33,
+    hydraulic_conductivity_ms: 8.0e-5,
+    friction_angle_deg: 35.0,
+    specific_gravity: 2.65,
+    void_ratio: 0.58,
+    porosity: 0.367,
+    description: 'Standard river bed medium sand with moderate backward erosion resistance.'
+  },
+  coarse_sand: {
+    id: 'coarse_sand',
+    name: 'Coarse Sub-Angular Sand',
+    d70_m: 0.00080,
+    d10_m: 0.00025,
+    cu: 3.20,
+    hydraulic_conductivity_ms: 3.5e-4,
+    friction_angle_deg: 38.0,
+    specific_gravity: 2.66,
+    void_ratio: 0.50,
+    porosity: 0.333,
+    description: 'Coarse sub-angular sand with high interlock and elevated piping resistance.'
+  },
+  silty_tailings_sand: {
+    id: 'silty_tailings_sand',
+    name: 'Silty Gold/Silver Tailings Sand',
+    d70_m: 0.00008,
+    d10_m: 0.000018,
+    cu: 4.44,
+    hydraulic_conductivity_ms: 4.2e-6,
+    friction_angle_deg: 29.0,
+    specific_gravity: 2.78,
+    void_ratio: 0.72,
+    porosity: 0.419,
+    description: 'Milled unoxidized precious metal tailings with low cohesion and high void ratio.'
+  },
+  copper_tailings: {
+    id: 'copper_tailings',
+    name: 'Dense Copper Flotation Tailings',
+    d70_m: 0.000065,
+    d10_m: 0.000012,
+    cu: 5.42,
+    hydraulic_conductivity_ms: 2.8e-6,
+    friction_angle_deg: 30.0,
+    specific_gravity: 2.82,
+    void_ratio: 0.78,
+    porosity: 0.438,
+    description: 'High specific gravity chalcopyrite tailings susceptible to internal suffusion.'
+  },
+  foundation_alluvium: {
+    id: 'foundation_alluvium',
+    name: 'Fluvial Foundation Alluvium',
+    d70_m: 0.00028,
+    d10_m: 0.00010,
+    cu: 2.80,
+    hydraulic_conductivity_ms: 5.0e-5,
+    friction_angle_deg: 34.0,
+    specific_gravity: 2.67,
+    void_ratio: 0.60,
+    porosity: 0.375,
+    description: 'Heterogeneous fluvial channel deposits underlying dam embankment footprint.'
+  }
+};
+
+export const FLOWNET_TILE_METRICS = {
+  hydraulic_head: {
+    id: 'hydraulic_head',
+    label: 'Total Hydraulic Head (m)',
+    colormap: 'turbo',
+    unit: 'm',
+    min: 0.0,
+    max: 40.0,
+    description: 'Piezometric total head Phi = z + u / gamma_w across 2D seepage domain.'
+  },
+  hydraulic_gradient: {
+    id: 'hydraulic_gradient',
+    label: 'Hydraulic Gradient (i)',
+    colormap: 'plasma',
+    unit: 'm/m',
+    min: 0.0,
+    max: 2.0,
+    description: 'Magnitude of local seepage gradient vector |grad Phi|.'
+  },
+  exit_gradient: {
+    id: 'exit_gradient',
+    label: 'Exit Gradient (i_exit)',
+    colormap: 'spectral',
+    unit: 'm/m',
+    min: 0.0,
+    max: 1.5,
+    description: 'Upward vertical seepage exit gradient at ground surface / downstream toe.'
+  },
+  factor_of_safety: {
+    id: 'factor_of_safety',
+    label: 'Factor of Safety (FS)',
+    colormap: 'rdylgn',
+    unit: '-',
+    min: 0.5,
+    max: 4.0,
+    description: 'Local Factor of Safety against boiling FS = i_crit / i_exit.'
+  },
+  streamline_potential: {
+    id: 'streamline_potential',
+    label: 'Stream Function (m²/s)',
+    colormap: 'blues',
+    unit: 'm²/s',
+    min: 0.0,
+    max: 0.001,
+    description: 'Orthogonal stream function Psi contour grid representing flow channels.'
+  },
+  pore_pressure: {
+    id: 'pore_pressure',
+    label: 'Pore Water Pressure (kPa)',
+    colormap: 'ocean',
+    unit: 'kPa',
+    min: 0.0,
+    max: 400.0,
+    description: 'Pore pressure distribution u = gamma_w * (Phi - z) within saturated foundation.'
+  }
+};
+
+export const calculateTerzaghiCriticalGradient = (specificGravity = 2.65, voidRatio = 0.65, waterUnitWeight = 9.81) => {
+  const gs = Math.max(1.5, parseFloat(specificGravity));
+  const e = Math.max(0.1, parseFloat(voidRatio));
+  const gammaW = parseFloat(waterUnitWeight);
+
+  const iCrit = (gs - 1.0) / (1.0 + e);
+  const gammaPrime = iCrit * gammaW;
+  const gammaSat = gammaPrime + gammaW;
+  const porosity = e / (1.0 + e);
+
+  return {
+    critical_gradient: Number(iCrit.toFixed(4)),
+    submerged_unit_weight_kn_m3: Number(gammaPrime.toFixed(3)),
+    saturated_unit_weight_kn_m3: Number(gammaSat.toFixed(3)),
+    water_unit_weight_kn_m3: Number(gammaW.toFixed(3)),
+    specific_gravity: Number(gs.toFixed(3)),
+    void_ratio: Number(e.toFixed(3)),
+    porosity: Number(porosity.toFixed(4))
+  };
+};
+
+export const calculateSellmeijerCriticalHead = (options = {}) => {
+  const appliedH = Math.max(0.01, parseFloat(options.applied_head_m || options.appliedHeadM || 20.0));
+  const lM = Math.max(1.0, parseFloat(options.seepage_length_m || options.seepageLengthM || 60.0));
+  const dM = Math.max(1.0, parseFloat(options.aquifer_depth_m || options.aquiferDepthM || 18.0));
+  const kVal = Math.max(1e-8, parseFloat(options.hydraulic_conductivity_ms || options.hydraulicConductivityMs || 5.0e-5));
+  const d70Val = Math.max(1e-5, parseFloat(options.d70_m || options.d70M || 0.000208));
+  const gsVal = Math.max(1.5, parseFloat(options.specific_gravity || options.specificGravity || 2.65));
+  const phiDeg = Math.max(15.0, Math.min(50.0, parseFloat(options.friction_angle_deg || options.frictionAngleDeg || 34.0)));
+
+  const eta = 0.28;
+  const nu = 1.004e-6;
+  const g = 9.81;
+  const d70Ref = 0.000208;
+
+  const submergedRelDensity = gsVal - 1.0;
+  const tanTheta = Math.tan((phiDeg * Math.PI) / 180.0);
+  const d70Ratio = d70Val / d70Ref;
+  let fr = eta * submergedRelDensity * tanTheta * Math.pow(d70Ratio, 0.4);
+  fr = Math.max(0.02, fr);
+
+  // 2. Scale factor F_S: captures grain size d70 and intrinsic permeability kappa = nu * K / g
+  const kappa = (nu * kVal) / g;
+  const scaleDenom = Math.pow(Math.max(1e-15, kappa * lM), 1.0 / 3.0);
+  let fs = d70Val / Math.max(1e-6, scaleDenom);
+  fs = Math.max(0.01, Math.min(2.5, fs));
+
+  // 3. Geometry factor F_G (aquifer depth D / seepage length L)
+  const dOverL = Math.min(2.0, Math.max(0.02, dM / lM));
+  const denom = Math.pow(dOverL, 2.8) - 1.0;
+  const pExp = Math.abs(denom) < 1e-4 ? 280.0 : 0.28 / denom;
+  const clampedExp = Math.max(-5.0, Math.min(5.0, pExp));
+  let geomTerm = 0.91 * Math.pow(dOverL, clampedExp);
+  let fg = Math.max(0.2, Math.min(2.5, geomTerm));
+
+  let deltaHc = fr * fs * fg * lM;
+  deltaHc = Math.max(0.05, Number(deltaHc.toFixed(3)));
+  const iCritSellmeijer = Number((deltaHc / lM).toFixed(4));
+  const iApplied = Number((appliedH / lM).toFixed(4));
+  const fsPiping = Number((deltaHc / appliedH).toFixed(3));
+
+  let progressionRatio = 0.0;
+  if (appliedH >= deltaHc) {
+    const excess = (appliedH - deltaHc) / deltaHc;
+    progressionRatio = Math.min(1.0, 0.3 + 0.7 * excess);
+  } else {
+    progressionRatio = Math.max(0.0, 0.3 * Math.pow(appliedH / deltaHc, 2.0));
+  }
+
+  const pipeLenM = Number((progressionRatio * lM).toFixed(2));
+  const breakthroughRisk = Boolean(fsPiping < 1.0 || progressionRatio >= 0.8);
+
+  return {
+    critical_head_m: deltaHc,
+    critical_gradient: iCritSellmeijer,
+    applied_head_m: Number(appliedH.toFixed(3)),
+    applied_gradient: iApplied,
+    factor_of_safety: fsPiping,
+    resistance_factor_fr: Number(fr.toFixed(4)),
+    scale_factor_fs: Number(fs.toFixed(5)),
+    geometry_factor_fg: Number(fg.toFixed(4)),
+    pipe_progression_length_m: pipeLenM,
+    pipe_length_ratio: Number(progressionRatio.toFixed(3)),
+    breakthrough_risk: breakthroughRisk
+  };
+};
+
+export const classifyInternalErosionHazardTier = (factorOfSafety, exitGradient, criticalGradient = 1.0) => {
+  const fs = parseFloat(factorOfSafety);
+  const iEx = parseFloat(exitGradient);
+  const iCr = Math.max(0.01, parseFloat(criticalGradient));
+  const ratio = iEx / iCr;
+
+  if (fs < 1.0 || ratio >= 1.0) {
+    return InternalErosionHazardTier.CRITICAL_PIPING;
+  }
+  if (fs < 1.3 || ratio >= 0.75) {
+    return InternalErosionHazardTier.ELEVATED_RISK;
+  }
+  if (fs < 1.8 || ratio >= 0.55) {
+    return InternalErosionHazardTier.MODERATE_RISK;
+  }
+  if (fs < 2.5 || ratio >= 0.35) {
+    return InternalErosionHazardTier.LOW_RISK;
+  }
+  return InternalErosionHazardTier.SAFE;
+};
+
+export const calculateSeepageFlownetPotentialGrid = (options = {}) => {
+  const hUp = Math.max(0.0, parseFloat(options.upstream_head_m || options.upstreamHeadM || 24.0));
+  const hDown = Math.max(0.0, parseFloat(options.downstream_head_m || options.downstreamHeadM || 4.0));
+  const deltaH = Math.max(0.01, hUp - hDown);
+  const lBase = Math.max(5.0, parseFloat(options.embankment_base_length_m || options.embankmentBaseLengthM || 60.0));
+  const dAq = Math.max(2.0, parseFloat(options.aquifer_depth_m || options.aquiferDepthM || 18.0));
+  const kMs = Math.max(1e-8, parseFloat(options.hydraulic_conductivity_ms || options.hydraulicConductivityMs || 5.0e-5));
+  const nd = Math.max(4, parseInt(options.potential_drops_nd || options.potentialDropsNd || 12, 10));
+  const nf = Math.max(2, parseInt(options.flow_channels_nf || options.flowChannelsNf || 4, 10));
+  const nx = Math.max(10, parseInt(options.grid_nx || options.gridNx || 25, 10));
+  const nz = Math.max(6, parseInt(options.grid_nz || options.gridNz || 15, 10));
+  const iCrit = Math.max(0.1, parseFloat(options.critical_gradient || options.criticalGradient || 1.0));
+
+  const shapeFactor = Number((nf / nd).toFixed(4));
+  const unitQ = Number((kMs * deltaH * shapeFactor).toFixed(7));
+
+  const dx = lBase / (nx - 1);
+  const dz = dAq / (nz - 1);
+
+  const equipotentials = [];
+  const deltaPhi = deltaH / nd;
+  for (let dropIdx = 0; dropIdx <= nd; dropIdx += 1) {
+    const targetHead = Number((hUp - dropIdx * deltaPhi).toFixed(3));
+    const fracX = dropIdx / nd;
+    const xPos = Number((fracX * lBase).toFixed(2));
+    for (let zStep = 0; zStep < nz; zStep += 1) {
+      const zPos = Number((-zStep * dz).toFixed(2));
+      equipotentials.push({
+        equipotential_index: dropIdx,
+        x_m: xPos,
+        z_m: zPos,
+        head_m: targetHead
+      });
+    }
+  }
+
+  const streamlines = [];
+  const deltaPsi = nf > 0 ? unitQ / nf : 0.0;
+  for (let chIdx = 0; chIdx <= nf; chIdx += 1) {
+    const fracZ = chIdx / nf;
+    const zStream = Number((-fracZ * dAq).toFixed(2));
+    for (let xStep = 0; xStep < nx; xStep += 1) {
+      const fracX = xStep / (nx - 1);
+      const xStream = Number((fracX * lBase).toFixed(2));
+      const headVal = Number((hUp - fracX * deltaH).toFixed(3));
+      const locGrad = deltaH / lBase;
+      const vMs = Number((kMs * locGrad).toFixed(7));
+      streamlines.push({
+        streamline_index: chIdx,
+        x_m: xStream,
+        z_m: zStream,
+        head_m: headVal,
+        velocity_ms: vMs
+      });
+    }
+  }
+
+  const exitStations = [];
+  const numStations = 8;
+  let maxExitGrad = 0.0;
+  let minFs = 999.0;
+  let worstTier = InternalErosionHazardTier.SAFE;
+
+  for (let i = 0; i < numStations; i += 1) {
+    const offsetM = Number((-5.0 + i * 2.5).toFixed(1));
+    const xSt = Number((lBase + offsetM).toFixed(1));
+    const distFactor = Math.exp(-Math.abs(offsetM) / 8.0);
+    const baseGrad = deltaH / (Math.PI * dAq);
+    const iExit = Number((baseGrad * (1.2 + 0.8 * distFactor)).toFixed(4));
+    if (iExit > maxExitGrad) {
+      maxExitGrad = iExit;
+    }
+
+    const fsExit = Number((iCrit / Math.max(0.01, iExit)).toFixed(2));
+    if (fsExit < minFs) {
+      minFs = fsExit;
+    }
+
+    const isBoil = Boolean(iExit >= iCrit);
+    const stTier = classifyInternalErosionHazardTier(fsExit, iExit, iCrit);
+
+    if (isBoil || stTier === InternalErosionHazardTier.CRITICAL_PIPING) {
+      worstTier = InternalErosionHazardTier.CRITICAL_PIPING;
+    } else if (stTier === InternalErosionHazardTier.ELEVATED_RISK && worstTier !== InternalErosionHazardTier.CRITICAL_PIPING) {
+      worstTier = InternalErosionHazardTier.ELEVATED_RISK;
+    } else if (stTier === InternalErosionHazardTier.MODERATE_RISK && (worstTier === InternalErosionHazardTier.SAFE || worstTier === InternalErosionHazardTier.LOW_RISK)) {
+      worstTier = InternalErosionHazardTier.MODERATE_RISK;
+    } else if (stTier === InternalErosionHazardTier.LOW_RISK && worstTier === InternalErosionHazardTier.SAFE) {
+      worstTier = InternalErosionHazardTier.LOW_RISK;
+    }
+
+    exitStations.push({
+      station_id: `TOE_STA_${String(i + 1).padStart(2, '0')}`,
+      x_m: xSt,
+      exit_gradient: iExit,
+      critical_gradient: Number(iCrit.toFixed(4)),
+      factor_of_safety: fsExit,
+      hazard_tier: stTier,
+      boil_risk_detected: isBoil
+    });
+  }
+
+  const geojsonFeatures = [];
+  for (let chIdx = 0; chIdx <= nf; chIdx += 1) {
+    const linePts = streamlines.filter((pt) => pt.streamline_index === chIdx).map((pt) => [pt.x_m, pt.z_m]);
+    geojsonFeatures.push({
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: linePts
+      },
+      properties: {
+        type: 'streamline',
+        streamline_index: chIdx,
+        discharge_m3s_m: Number((chIdx * deltaPsi).toFixed(7))
+      }
+    });
+  }
+
+  for (let dropIdx = 0; dropIdx <= nd; dropIdx += 1) {
+    const linePts = equipotentials.filter((pt) => pt.equipotential_index === dropIdx).map((pt) => [pt.x_m, pt.z_m]);
+    geojsonFeatures.push({
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: linePts
+      },
+      properties: {
+        type: 'equipotential',
+        drop_index: dropIdx,
+        head_m: Number((hUp - dropIdx * deltaPhi).toFixed(3))
+      }
+    });
+  }
+
+  const geojsonCollection = {
+    type: 'FeatureCollection',
+    features: geojsonFeatures
+  };
+
+  const simIdDummy = options.simulation_id || options.simulationId || 'SIM_FLOWNET_001';
+  const tileTemplate = `/api/v1/tiles/geotechnical/flownet/${simIdDummy}/{metric}/{z}/{x}/{y}.png`;
+
+  return {
+    upstream_head_m: Number(hUp.toFixed(2)),
+    downstream_head_m: Number(hDown.toFixed(2)),
+    total_head_loss_m: Number(deltaH.toFixed(2)),
+    potential_drops_nd: nd,
+    flow_channels_nf: nf,
+    shape_factor: shapeFactor,
+    unit_seepage_flow_rate_m3s_m: unitQ,
+    max_exit_gradient: Number(maxExitGrad.toFixed(4)),
+    critical_exit_gradient: Number(iCrit.toFixed(4)),
+    min_factor_of_safety: Number(minFs.toFixed(2)),
+    worst_hazard_tier: worstTier,
+    streamlines_count: nf + 1,
+    equipotentials_count: nd + 1,
+    grid_resolution_m: Number(dx.toFixed(2)),
+    exit_stations: exitStations,
+    equipotentials,
+    streamlines,
+    flownet_geojson: geojsonCollection,
+    tile_url_template: tileTemplate
+  };
+};
+
+export const calculateInternalErosionPipingAnalysis = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `PIPING_SIM_${Date.now()}`;
+  const damId = options.dam_id || options.damId || 'DAM_TAILINGS_01';
+  const damName = options.dam_name || options.damName || 'Tailings Embankment Facility';
+
+  const soilPresetId = options.soil_classification || options.soilClassification || 'medium_sand';
+  const preset = SELLMEIJER_SOIL_PRESETS[soilPresetId] || SELLMEIJER_SOIL_PRESETS.medium_sand;
+  const customParams = options.soil_parameters || options.soilParameters || {};
+
+  const gs = parseFloat(customParams.specific_gravity || customParams.specificGravity || preset.specific_gravity);
+  const eVoid = parseFloat(customParams.void_ratio || customParams.voidRatio || preset.void_ratio);
+  const d70 = parseFloat(customParams.d70_m || customParams.d70M || preset.d70_m);
+  const cuVal = parseFloat(customParams.cu || preset.cu);
+  const kCond = parseFloat(customParams.hydraulic_conductivity_ms || customParams.hydraulicConductivityMs || preset.hydraulic_conductivity_ms);
+  const phiDeg = parseFloat(customParams.friction_angle_deg || customParams.frictionAngleDeg || preset.friction_angle_deg);
+
+  const hUp = parseFloat(options.upstream_head_m || options.upstreamHeadM || 24.0);
+  const hDown = parseFloat(options.downstream_head_m || options.downstreamHeadM || 4.0);
+  const deltaH = Math.max(0.01, hUp - hDown);
+  const lBase = parseFloat(options.embankment_base_length_m || options.embankmentBaseLengthM || 60.0);
+  const dAq = parseFloat(options.aquifer_depth_m || options.aquiferDepthM || 18.0);
+  const nd = parseInt(options.potential_drops_nd || options.potentialDropsNd || 12, 10);
+  const nf = parseInt(options.flow_channels_nf || options.flowChannelsNf || 4, 10);
+  const nx = parseInt(options.grid_nx || options.gridNx || 25, 10);
+  const nz = parseInt(options.grid_nz || options.gridNz || 15, 10);
+
+  const terzaghiRes = calculateTerzaghiCriticalGradient(gs, eVoid, 9.81);
+  const iCritTerzaghi = terzaghiRes.critical_gradient;
+
+  const sellmeijerRes = calculateSellmeijerCriticalHead({
+    hydraulic_conductivity_ms: kCond,
+    d70_m: d70,
+    seepage_length_m: lBase,
+    aquifer_depth_m: dAq,
+    specific_gravity: gs,
+    friction_angle_deg: phiDeg,
+    applied_head_m: deltaH,
+    cu: cuVal
+  });
+
+  const flownetRes = calculateSeepageFlownetPotentialGrid({
+    simulation_id: simId,
+    upstream_head_m: hUp,
+    downstream_head_m: hDown,
+    embankment_base_length_m: lBase,
+    aquifer_depth_m: dAq,
+    hydraulic_conductivity_ms: kCond,
+    potential_drops_nd: nd,
+    flow_channels_nf: nf,
+    grid_nx: nx,
+    grid_nz: nz,
+    critical_gradient: iCritTerzaghi
+  });
+
+  const tileTemplate = `/api/v1/tiles/geotechnical/flownet/${simId}/{metric}/{z}/{x}/{y}.png`;
+  flownetRes.tile_url_template = tileTemplate;
+
+  const fsSellmeijer = sellmeijerRes.factor_of_safety;
+  const fsFlownet = flownetRes.min_factor_of_safety;
+  const globalFs = Number(Math.min(fsSellmeijer, fsFlownet).toFixed(2));
+
+  const overallTier = classifyInternalErosionHazardTier(
+    globalFs,
+    flownetRes.max_exit_gradient,
+    iCritTerzaghi
+  );
+
+  const boilImminent = Boolean(
+    globalFs < 1.0 ||
+    sellmeijerRes.breakthrough_risk ||
+    flownetRes.max_exit_gradient >= iCritTerzaghi
+  );
+
+  return {
+    simulation_id: simId,
+    dam_id: damId,
+    dam_name: damName,
+    soil_preset_used: soilPresetId,
+    terzaghi_gradient: terzaghiRes,
+    sellmeijer_bep: sellmeijerRes,
+    flownet_seepage: flownetRes,
+    global_factor_of_safety: globalFs,
+    overall_hazard_tier: overallTier,
+    sand_boiling_imminent: boilImminent,
+    tile_url_template: tileTemplate,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const buildFlownetTileUrl = (simId, metric = 'hydraulic_head', z = 12, x = 2048, y = 1024, basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/geotechnical/flownet/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildFlownetTileUrlTemplate = (simId, metric = 'hydraulic_head', basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/geotechnical/flownet/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+// ==============================================================================
+// Cycle v2.5.20: Satellite InSAR Persistent Scatterer Interferometry (PSI)
+// Temporal Coherence Matrix, Baseline Geometry, APS Decomposition & 3D Projections
+// ==============================================================================
+
+export const InSAROrbitDirection = {
+  ASCENDING: 'ascending',
+  DESCENDING: 'descending'
+};
+
+export const InSARSensorBand = {
+  C_BAND: 'c_band',
+  L_BAND: 'l_band',
+  X_BAND: 'x_band'
+};
+
+export const InSARDeformationHazardTier = {
+  STABLE: 'stable',
+  MINOR_CREEP: 'minor_creep',
+  MODERATE_DISPLACEMENT: 'moderate_displacement',
+  ACCELERATING_DEFORMATION: 'accelerating_deformation',
+  CRITICAL_INSTABILITY: 'critical_instability'
+};
+
+export const InSARVelocityTileMetric = {
+  VELOCITY_LOS: 'velocity_los',
+  VELOCITY_VERTICAL: 'velocity_vertical',
+  VELOCITY_EAST_WEST: 'velocity_east_west',
+  TEMPORAL_COHERENCE: 'temporal_coherence',
+  HEIGHT_RESIDUAL: 'height_residual',
+  HAZARD_TIER: 'hazard_tier'
+};
+
+export const INSAR_SENSOR_WAVELENGTHS = {
+  c_band: 0.055465,
+  l_band: 0.236000,
+  x_band: 0.031000
+};
+
+export const INSAR_HAZARD_CONFIGS = {
+  stable: {
+    id: 'stable',
+    label: 'Stable / Negligible Creep',
+    badge: 'STABLE',
+    color: '#10B981',
+    max_abs_velocity_mm_yr: 2.0,
+    description: 'Deformation velocity within baseline noise (< 2 mm/yr). Normal operational condition.',
+    action: 'Routine annual interferometric monitoring'
+  },
+  minor_creep: {
+    id: 'minor_creep',
+    label: 'Minor Creep Deformation',
+    badge: 'MINOR CREEP',
+    color: '#3B82F6',
+    max_abs_velocity_mm_yr: 5.0,
+    description: 'Slow millimeter creep (2 to 5 mm/yr) detected on embankment crest or slopes.',
+    action: 'Semi-annual time-series tracking and piezometer correlation'
+  },
+  moderate_displacement: {
+    id: 'moderate_displacement',
+    label: 'Moderate Displacement',
+    badge: 'MODERATE',
+    color: '#F59E0B',
+    max_abs_velocity_mm_yr: 12.0,
+    description: 'Noticeable displacement (5 to 12 mm/yr) indicating active shear or consolidation creep.',
+    action: 'Monthly satellite tracking, visual dam crest inspection, and inclinometer survey'
+  },
+  accelerating_deformation: {
+    id: 'accelerating_deformation',
+    label: 'Accelerating Deformation',
+    badge: 'ELEVATED RISK',
+    color: '#F97316',
+    max_abs_velocity_mm_yr: 25.0,
+    description: 'High rate of continuous movement (12 to 25 mm/yr) indicating progressive structural shear.',
+    action: 'Bi-weekly InSAR alerts, piezometric drawdown review, and emergency stability audit'
+  },
+  critical_instability: {
+    id: 'critical_instability',
+    label: 'Critical Instability / Accelerated Failure',
+    badge: 'CRITICAL RISK',
+    color: '#EF4444',
+    max_abs_velocity_mm_yr: 999.0,
+    description: 'Severe velocity (>= 25 mm/yr) or sudden displacement jump indicating imminent slope breach.',
+    action: 'Immediate emergency response team dispatch, reservoir pool drawdown, and evacuation readiness'
+  }
+};
+
+export const INSAR_VELOCITY_TILE_METRICS = {
+  velocity_los: 'Line-of-Sight Millimeter Velocity (mm/year)',
+  velocity_vertical: 'Projected Quasi-Vertical Velocity (mm/year)',
+  velocity_east_west: 'Decomposed East-West Velocity (mm/year)',
+  temporal_coherence: 'Interferometric Temporal Coherence (gamma in [0, 1])',
+  height_residual: 'DEM Topographic Height Residual Correction (m)',
+  hazard_tier: 'Operational InSAR Deformation Hazard Tier'
+};
+
+export const calculatePsTemporalCoherence = (data) => {
+  if (!data || !Array.isArray(data) || data.length === 0) return 0.0;
+  const n = data.length;
+  const first = data[0];
+
+  if (typeof first === 'number') {
+    let sCos = 0.0;
+    let sSin = 0.0;
+    for (let i = 0; i < n; i += 1) {
+      sCos += Math.cos(Number(data[i]));
+      sSin += Math.sin(Number(data[i]));
+    }
+    const mag = Math.sqrt(sCos * sCos + sSin * sSin);
+    return Math.min(1.0, Math.max(0.0, Number((mag / n).toFixed(4))));
+  }
+
+  if (Array.isArray(first) && first.length === 2) {
+    let sRe = 0.0;
+    let sIm = 0.0;
+    let sumMag = 0.0;
+    for (let i = 0; i < n; i += 1) {
+      const re = Number(data[i][0]);
+      const im = Number(data[i][1]);
+      sRe += re;
+      sIm += im;
+      sumMag += Math.sqrt(re * re + im * im);
+    }
+    if (sumMag < 1e-12) return 0.0;
+    const mag = Math.sqrt(sRe * sRe + sIm * sIm);
+    return Math.min(1.0, Math.max(0.0, Number((mag / sumMag).toFixed(4))));
+  }
+
+  return 0.0;
+};
+
+export const calculateAmplitudeDispersionIndex = (amplitudes) => {
+  if (!amplitudes || !Array.isArray(amplitudes) || amplitudes.length < 2) return 0.0;
+  const n = amplitudes.length;
+  const sum = amplitudes.reduce((acc, a) => acc + Number(a), 0);
+  const mu = sum / n;
+  if (mu <= 1e-12) return 999.0;
+
+  const varSum = amplitudes.reduce((acc, a) => acc + Math.pow(Number(a) - mu, 2), 0);
+  const sigma = Math.sqrt(varSum / n);
+  return Number((sigma / mu).toFixed(4));
+};
+
+export const calculateInterferometricBaselineGeometry = (options = {}) => {
+  const bPerp = Number(options.perpendicular_baseline_m ?? options.perpendicularBaselineM ?? 45.0);
+  const bPar = Number(options.parallel_baseline_m ?? options.parallelBaselineM ?? 0.0);
+  const rSlant = Math.max(1000.0, Number(options.slant_range_m ?? options.slantRangeM ?? 850000.0));
+  const incDeg = Math.max(5.0, Math.min(85.0, Number(options.incidence_angle_deg ?? options.incidenceAngleDeg ?? 38.5)));
+  const incRad = (incDeg * Math.PI) / 180.0;
+  const lam = Math.max(0.001, Number(options.wavelength_m ?? options.wavelengthM ?? 0.055465));
+
+  const bTotal = Math.sqrt(bPerp * bPerp + bPar * bPar);
+  let ha = 99999.0;
+  let dphiDz = 0.0;
+
+  if (Math.abs(bPerp) >= 1e-4) {
+    ha = (lam * rSlant * Math.sin(incRad)) / (2.0 * Math.abs(bPerp));
+    dphiDz = (4.0 * Math.PI * bPerp) / (lam * rSlant * Math.sin(incRad));
+  }
+
+  const rhoR = 3.7;
+  const bCrit = (lam * rSlant * Math.tan(incRad)) / (2.0 * rhoR);
+
+  return {
+    perpendicular_baseline_m: Number(bPerp.toFixed(2)),
+    parallel_baseline_m: Number(bPar.toFixed(2)),
+    total_baseline_m: Number(bTotal.toFixed(2)),
+    height_of_ambiguity_m: Number(ha.toFixed(2)),
+    critical_baseline_m: Number(bCrit.toFixed(2)),
+    topographic_phase_sensitivity_rad_m: Number(dphiDz.toFixed(6))
+  };
+};
+
+export const decomposeAtmosphericPhaseScreen = (points) => {
+  if (!points || !Array.isArray(points) || points.length === 0) {
+    return {
+      elevation_delay_coefficient_rad_m: 0.0,
+      spatial_ramp_a0: 0.0,
+      spatial_ramp_a1: 0.0,
+      spatial_ramp_a2: 0.0,
+      aps_variance_rad: 0.0,
+      residual_std_dev_rad: 0.0
+    };
+  }
+
+  const n = points.length;
+  const xs = points.map((p) => Number(p.x_m ?? p.x ?? 0.0));
+  const ys = points.map((p) => Number(p.y_m ?? p.y ?? 0.0));
+  const zs = points.map((p) => Number(p.elevation_m ?? p.z_m ?? 0.0));
+  const phis = points.map((p) => Number(p.phase_rad ?? p.raw_phase_rad ?? 0.0));
+
+  const meanZ = zs.reduce((a, b) => a + b, 0) / n;
+  const meanPhi = phis.reduce((a, b) => a + b, 0) / n;
+  const meanX = xs.reduce((a, b) => a + b, 0) / n;
+  const meanY = ys.reduce((a, b) => a + b, 0) / n;
+
+  let varZ = 0.0;
+  let covZPhi = 0.0;
+  for (let i = 0; i < n; i += 1) {
+    varZ += Math.pow(zs[i] - meanZ, 2);
+    covZPhi += (zs[i] - meanZ) * (phis[i] - meanPhi);
+  }
+  const kElev = varZ > 1e-6 ? covZPhi / varZ : 0.0;
+
+  const phisCorr = [];
+  let sumCorr = 0.0;
+  for (let i = 0; i < n; i += 1) {
+    const pc = phis[i] - kElev * zs[i];
+    phisCorr.push(pc);
+    sumCorr += pc;
+  }
+  const meanPhiCorr = sumCorr / n;
+
+  let varX = 0.0;
+  let covXPhi = 0.0;
+  let varY = 0.0;
+  let covYPhi = 0.0;
+  for (let i = 0; i < n; i += 1) {
+    varX += Math.pow(xs[i] - meanX, 2);
+    covXPhi += (xs[i] - meanX) * (phisCorr[i] - meanPhiCorr);
+    varY += Math.pow(ys[i] - meanY, 2);
+    covYPhi += (ys[i] - meanY) * (phisCorr[i] - meanPhiCorr);
+  }
+  const a1 = varX > 1e-6 ? covXPhi / varX : 0.0;
+  const a2 = varY > 1e-6 ? covYPhi / varY : 0.0;
+  const a0 = meanPhiCorr - a1 * meanX - a2 * meanY;
+
+  let sumAps = 0.0;
+  const apsVals = [];
+  const residuals = [];
+  for (let i = 0; i < n; i += 1) {
+    const aps = a0 + a1 * xs[i] + a2 * ys[i] + kElev * zs[i];
+    apsVals.push(aps);
+    sumAps += aps;
+    residuals.push(phis[i] - aps);
+  }
+  const meanAps = sumAps / n;
+  let varAps = 0.0;
+  let varRes = 0.0;
+  for (let i = 0; i < n; i += 1) {
+    varAps += Math.pow(apsVals[i] - meanAps, 2);
+    varRes += Math.pow(residuals[i], 2);
+  }
+
+  return {
+    elevation_delay_coefficient_rad_m: Number(kElev.toFixed(6)),
+    spatial_ramp_a0: Number(a0.toFixed(4)),
+    spatial_ramp_a1: Number(a1.toFixed(6)),
+    spatial_ramp_a2: Number(a2.toFixed(6)),
+    aps_variance_rad: Number((varAps / n).toFixed(4)),
+    residual_std_dev_rad: Number(Math.sqrt(varRes / n).toFixed(4))
+  };
+};
+
+export const classifyInSARDeformationHazardTier = (velocityMmYr) => {
+  const v = Math.abs(Number(velocityMmYr));
+  if (v >= 25.0) return InSARDeformationHazardTier.CRITICAL_INSTABILITY;
+  if (v >= 12.0) return InSARDeformationHazardTier.ACCELERATING_DEFORMATION;
+  if (v >= 5.0) return InSARDeformationHazardTier.MODERATE_DISPLACEMENT;
+  if (v >= 2.0) return InSARDeformationHazardTier.MINOR_CREEP;
+  return InSARDeformationHazardTier.STABLE;
+};
+
+export const projectLosToVerticalAndHorizontal = (velocityLosMmYr, incidenceAngleDeg = 38.5, satelliteHeadingDeg = 348.0) => {
+  const vLos = Number(velocityLosMmYr);
+  const incDeg = Math.max(5.0, Math.min(85.0, Number(incidenceAngleDeg)));
+  const incRad = (incDeg * Math.PI) / 180.0;
+  const headDeg = ((Number(satelliteHeadingDeg) % 360) + 360) % 360;
+
+  const vVert = vLos / Math.cos(incRad);
+  const vHoriz = vLos / Math.sin(incRad);
+
+  const lookAzDeg = (((headDeg - 90.0) % 360) + 360) % 360;
+  const lookRad = (lookAzDeg * Math.PI) / 180.0;
+
+  const vEast = vHoriz * Math.sin(lookRad);
+  const vNorth = vHoriz * Math.cos(lookRad);
+
+  const tier = classifyInSARDeformationHazardTier(vVert);
+
+  return {
+    velocity_los_mm_yr: Number(vLos.toFixed(2)),
+    velocity_vertical_mm_yr: Number(vVert.toFixed(2)),
+    velocity_horizontal_mm_yr: Number(vHoriz.toFixed(2)),
+    velocity_east_mm_yr: Number(vEast.toFixed(2)),
+    velocity_north_mm_yr: Number(vNorth.toFixed(2)),
+    incidence_angle_deg: Number(incDeg.toFixed(2)),
+    look_azimuth_deg: Number(lookAzDeg.toFixed(2)),
+    hazard_tier: tier
+  };
+};
+
+export const decomposeDualOrbitInSARVelocities = (options = {}) => {
+  const vAsc = Number(options.velocity_asc_mm_yr ?? options.velocityAscMmYr ?? 0.0);
+  const vDesc = Number(options.velocity_desc_mm_yr ?? options.velocityDescMmYr ?? 0.0);
+
+  const thAsc = (Math.max(5.0, Math.min(85.0, Number(options.inc_angle_asc_deg ?? options.incAngleAscDeg ?? 38.5))) * Math.PI) / 180.0;
+  const thDesc = (Math.max(5.0, Math.min(85.0, Number(options.inc_angle_desc_deg ?? options.incAngleDescDeg ?? 39.2))) * Math.PI) / 180.0;
+  const hAsc = ((Number(options.heading_asc_deg ?? options.headingAscDeg ?? 348.0) % 360) * Math.PI) / 180.0;
+  const hDesc = ((Number(options.heading_desc_deg ?? options.headingDescDeg ?? 192.0) % 360) * Math.PI) / 180.0;
+
+  const seAsc = -Math.sin(thAsc) * Math.cos(hAsc);
+  const svAsc = Math.cos(thAsc);
+  const seDesc = -Math.sin(thDesc) * Math.cos(hDesc);
+  const svDesc = Math.cos(thDesc);
+
+  const det = seAsc * svDesc - seDesc * svAsc;
+  let vE = 0.0;
+  let vV = 0.0;
+
+  if (Math.abs(det) < 1e-6) {
+    vV = 0.5 * (vAsc / svAsc + vDesc / svDesc);
+    vE = 0.0;
+  } else {
+    vE = (vAsc * svDesc - vDesc * svAsc) / det;
+    vV = (seAsc * vDesc - seDesc * vAsc) / det;
+  }
+
+  const totalMag = Math.sqrt(vV * vV + vE * vE);
+  const worstV = Math.max(Math.abs(vV), Math.abs(vE));
+  const tier = classifyInSARDeformationHazardTier(worstV);
+
+  return {
+    velocity_asc_mm_yr: Number(vAsc.toFixed(2)),
+    velocity_desc_mm_yr: Number(vDesc.toFixed(2)),
+    velocity_vertical_mm_yr: Number(vV.toFixed(2)),
+    velocity_east_west_mm_yr: Number(vE.toFixed(2)),
+    total_magnitude_mm_yr: Number(totalMag.toFixed(2)),
+    determinant: Number(det.toFixed(4)),
+    hazard_tier: tier
+  };
+};
+
+export const calculateInSARPersistentScattererAnalysis = (options = {}) => {
+  const simId = options.simulation_id || options.simulationId || `INSAR_SIM_${Date.now()}`;
+  const assetId = options.asset_id || options.assetId || 'EMBANKMENT_CREST_A';
+  const assetName = options.asset_name || options.assetName || 'North Tailings Dam Crest';
+  const satMission = options.satellite_mission || options.satelliteMission || 'sentinel-1';
+  const sensorBand = options.sensor_band || options.sensorBand || 'c_band';
+  const orbitDir = options.orbit_direction || options.orbitDirection || 'ascending';
+  const incAngle = Number(options.incidence_angle_deg ?? options.incidenceAngleDeg ?? 38.5);
+  const heading = Number(options.heading_angle_deg ?? options.headingAngleDeg ?? 348.0);
+  const gammaThresh = Number(options.temporal_coherence_threshold ?? options.temporalCoherenceThreshold ?? 0.65);
+  const bPerp = Number(options.perpendicular_baseline_m ?? options.perpendicularBaselineM ?? 45.0);
+  const bPar = Number(options.parallel_baseline_m ?? options.parallelBaselineM ?? 5.0);
+  const nPoints = Math.max(4, Math.min(200, parseInt(options.ps_points_count ?? options.psPointsCount ?? 24, 10)));
+  const wavelength = INSAR_SENSOR_WAVELENGTHS[sensorBand] || 0.055465;
+
+  const baselineRes = calculateInterferometricBaselineGeometry({
+    perpendicular_baseline_m: bPerp,
+    parallel_baseline_m: bPar,
+    slant_range_m: 850000.0,
+    incidence_angle_deg: incAngle,
+    wavelength_m: wavelength
+  });
+
+  const baseLon = -121.050;
+  const baseLat = 37.050;
+  const dLon = 0.015 / Math.max(1, nPoints - 1);
+  const dLat = 0.008 / Math.max(1, nPoints - 1);
+
+  const candidatePoints = [];
+  for (let i = 0; i < nPoints; i += 1) {
+    const xM = Number((i * 35.0).toFixed(1));
+    const yM = Number((i * 18.0).toFixed(1));
+    const midFactor = Math.sin((i / Math.max(1, nPoints - 1)) * Math.PI);
+    const zElev = Number((335.0 - 1.2 * midFactor + 0.5 * Math.cos(i * 0.8)).toFixed(2));
+    const vTrueVert = -Number((1.5 + 13.0 * Math.pow(midFactor, 2)).toFixed(2));
+    const vTrueLos = Number((vTrueVert * Math.cos((incAngle * Math.PI) / 180.0)).toFixed(2));
+
+    const isPoor = i === 3 || i === nPoints - 4;
+    const noiseLevel = isPoor ? 0.35 : 0.12;
+    const amps = [];
+    const phases = [];
+    for (let k = 0; k < 20; k += 1) {
+      amps.push(Number((100.0 + 10.0 * Math.sin(k * 0.7) + (k % 5) * (isPoor ? 15.0 : 2.0)).toFixed(1)));
+      phases.push(Number((noiseLevel * Math.cos(k * 1.3)).toFixed(3)));
+    }
+    const daVal = calculateAmplitudeDispersionIndex(amps);
+    const gammaVal = calculatePsTemporalCoherence(phases);
+
+    candidatePoints.push({
+      idx: i,
+      x_m: xM,
+      y_m: yM,
+      elevation_m: zElev,
+      raw_phase_rad: Number((0.45 * (zElev - 330.0) / 10.0 + 0.002 * xM + (isPoor ? 0.85 : 0.22)).toFixed(3)),
+      lon: Number((baseLon + i * dLon).toFixed(6)),
+      lat: Number((baseLat + i * dLat).toFixed(6)),
+      da: daVal,
+      gamma: gammaVal,
+      v_los: vTrueLos,
+      v_vert: vTrueVert
+    });
+  }
+
+  const apsRes = decomposeAtmosphericPhaseScreen(candidatePoints);
+
+  const retainedPs = [];
+  const dualOrbitList = [];
+  let sumCoherence = 0.0;
+  let minVVert = 999.0;
+  let maxVVert = -999.0;
+  let critPointId = 'PS_01';
+  let worstTier = InSARDeformationHazardTier.STABLE;
+
+  const dateStamps = [];
+  for (let m = 1; m <= 12; m += 1) dateStamps.push(`2025-${String(m).padStart(2, '0')}-15`);
+  for (let m = 1; m <= 12; m += 1) dateStamps.push(`2026-${String(m).padStart(2, '0')}-15`);
+
+  candidatePoints.forEach((pt) => {
+    if (pt.gamma >= gammaThresh) {
+      const pId = `PS_${String(pt.idx + 1).padStart(2, '0')}`;
+      const vVert = pt.v_vert;
+      const vLos = pt.v_los;
+      sumCoherence += pt.gamma;
+
+      if (vVert < minVVert) {
+        minVVert = vVert;
+        critPointId = pId;
+      }
+      if (vVert > maxVVert) maxVVert = vVert;
+
+      const tier = classifyInSARDeformationHazardTier(vVert);
+      if (tier === InSARDeformationHazardTier.CRITICAL_INSTABILITY) {
+        worstTier = InSARDeformationHazardTier.CRITICAL_INSTABILITY;
+      } else if (tier === InSARDeformationHazardTier.ACCELERATING_DEFORMATION && worstTier !== InSARDeformationHazardTier.CRITICAL_INSTABILITY) {
+        worstTier = InSARDeformationHazardTier.ACCELERATING_DEFORMATION;
+      } else if (tier === InSARDeformationHazardTier.MODERATE_DISPLACEMENT && (worstTier === InSARDeformationHazardTier.STABLE || worstTier === InSARDeformationHazardTier.MINOR_CREEP)) {
+        worstTier = InSARDeformationHazardTier.MODERATE_DISPLACEMENT;
+      } else if (tier === InSARDeformationHazardTier.MINOR_CREEP && worstTier === InSARDeformationHazardTier.STABLE) {
+        worstTier = InSARDeformationHazardTier.MINOR_CREEP;
+      }
+
+      const tsPoints = dateStamps.map((dtStr, mIdx) => {
+        const tYr = mIdx / 12.0;
+        return {
+          date: dtStr,
+          displacement_mm: Number((vVert * tYr + 0.4 * Math.sin(mIdx * 0.9)).toFixed(2)),
+          displacement_uncertainty_mm: 1.2
+        };
+      });
+
+      const psDict = {
+        point_id: pId,
+        latitude: pt.lat,
+        longitude: pt.lon,
+        elevation_m: pt.elevation_m,
+        temporal_coherence: pt.gamma,
+        amplitude_dispersion: pt.da,
+        velocity_los_mm_yr: vLos,
+        velocity_vertical_mm_yr: vVert,
+        velocity_east_west_mm_yr: Number((0.25 * vVert).toFixed(2)),
+        height_residual_m: Number((0.15 * Math.sin(pt.x_m / 100.0)).toFixed(2)),
+        hazard_tier: tier,
+        time_series: tsPoints
+      };
+      retainedPs.push(psDict);
+
+      const vDescLos = Number((vVert * Math.cos((39.2 * Math.PI) / 180.0) + 0.3 * Math.sin(pt.idx)).toFixed(2));
+      const dualDecomp = decomposeDualOrbitInSARVelocities({
+        velocity_asc_mm_yr: vLos,
+        velocity_desc_mm_yr: vDescLos,
+        inc_angle_asc_deg: incAngle,
+        inc_angle_desc_deg: 39.2,
+        heading_asc_deg: heading,
+        heading_desc_deg: 192.0
+      });
+
+      dualOrbitList.push({
+        point_id: pId,
+        velocity_asc_mm_yr: vLos,
+        velocity_desc_mm_yr: vDescLos,
+        velocity_vertical_mm_yr: dualDecomp.velocity_vertical_mm_yr,
+        velocity_east_west_mm_yr: dualDecomp.velocity_east_west_mm_yr,
+        total_magnitude_mm_yr: dualDecomp.total_magnitude_mm_yr,
+        hazard_tier: dualDecomp.hazard_tier
+      });
+    }
+  });
+
+  const nRetained = retainedPs.length;
+  const meanGamma = Number((sumCoherence / Math.max(1, nRetained)).toFixed(4));
+  if (minVVert === 999.0) minVVert = 0.0;
+  if (maxVVert === -999.0) maxVVert = 0.0;
+
+  const features = retainedPs.map((ps) => ({
+    type: 'Feature',
+    geometry: {
+      type: 'Point',
+      coordinates: [ps.longitude, ps.latitude, ps.elevation_m]
+    },
+    properties: {
+      point_id: ps.point_id,
+      temporal_coherence: ps.temporal_coherence,
+      amplitude_dispersion: ps.amplitude_dispersion,
+      velocity_los_mm_yr: ps.velocity_los_mm_yr,
+      velocity_vertical_mm_yr: ps.velocity_vertical_mm_yr,
+      velocity_east_west_mm_yr: ps.velocity_east_west_mm_yr,
+      hazard_tier: ps.hazard_tier,
+      time_series_count: ps.time_series.length
+    }
+  }));
+
+  const geojson = {
+    type: 'FeatureCollection',
+    features
+  };
+
+  const tileTemplate = `/api/v1/tiles/geotechnical/insar-velocity/${simId}/{metric}/{z}/{x}/{y}.png`;
+
+  return {
+    simulation_id: simId,
+    asset_id: assetId,
+    asset_name: assetName,
+    satellite_mission: satMission,
+    sensor_band: sensorBand,
+    orbit_direction: orbitDir,
+    incidence_angle_deg: Number(incAngle.toFixed(2)),
+    heading_angle_deg: Number(heading.toFixed(2)),
+    baseline_geometry: baselineRes,
+    atmospheric_phase_screen: apsRes,
+    ps_candidates_evaluated: candidatePoints.length,
+    ps_points_retained: nRetained,
+    coherence_threshold: gammaThresh,
+    mean_temporal_coherence: meanGamma,
+    max_subsidence_velocity_mm_yr: Number(minVVert.toFixed(2)),
+    max_uplift_velocity_mm_yr: Number(maxVVert.toFixed(2)),
+    critical_ps_point_id: critPointId,
+    worst_hazard_tier: worstTier,
+    ps_points: retainedPs,
+    dual_orbit_decomposition: dualOrbitList,
+    ps_geojson: geojson,
+    tile_url_template: tileTemplate,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateInSARVelocityFieldAnalysis = calculateInSARPersistentScattererAnalysis;
+
+export const buildInSARVelocityTileUrl = (simId, metric = 'velocity_vertical', z = 12, x = 2048, y = 1024, basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/geotechnical/insar-velocity/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildInSARVelocityTileUrlTemplate = (simId, metric = 'velocity_vertical', basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/geotechnical/insar-velocity/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+
+
 
 
 

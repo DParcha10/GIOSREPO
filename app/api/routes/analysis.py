@@ -527,7 +527,53 @@ from app.models.schemas import (
     classify_epipolar_disparity_quality,
     calculate_drone_epipolar_differential,
     build_topographic_elevation_delta_tile_url,
-    build_topographic_elevation_delta_tile_url_template
+    build_topographic_elevation_delta_tile_url_template,
+    DamBreachFailureMode,
+    DamBreachMaterialType,
+    BreachMethodology,
+    HydrodynamicRoutingMethod,
+    InundationHazardRating,
+    INUNDATION_HAZARD_CONFIGS,
+    BREACH_METHOD_CONFIGS,
+    MANNING_ROUGHNESS_CONFIGS,
+    HYDRODYNAMIC_TILE_METRICS,
+    BreachHydrographPoint,
+    BreachGeometrySummary,
+    DownstreamCrossSectionStation,
+    DamBreachHydrographRequest,
+    DamBreachHydrographResponse,
+    HydrodynamicRoutingRequest,
+    HydrodynamicRoutingResponse,
+    DamBreachInundationAnalysisRequest,
+    DamBreachInundationAnalysisResponse,
+    calculate_froehlich_breach_parameters,
+    calculate_macdonald_monopolis_breach_parameters,
+    classify_inundation_hazard_rating,
+    generate_breach_outflow_hydrograph,
+    calculate_de_saint_venant_downstream_routing,
+    calculate_dam_breach_inundation_analysis,
+    build_hydrodynamic_tile_url,
+    build_hydrodynamic_tile_url_template,
+    InternalErosionHazardTier,
+    SellmeijerSoilClassification,
+    PipingFailureMechanism,
+    SoilPipingParameters,
+    FlownetStreamlineNode,
+    FlownetEquipotentialNode,
+    FlownetGridPoint,
+    ExitGradientStation,
+    TerzaghiCriticalGradientResult,
+    SellmeijerCriticalHeadResult,
+    SeepageFlownetResult,
+    InternalErosionPipingAnalysisRequest,
+    InternalErosionPipingAnalysisResponse,
+    calculate_terzaghi_critical_gradient,
+    calculate_sellmeijer_critical_head,
+    calculate_seepage_flownet_potential_grid,
+    classify_internal_erosion_hazard_tier,
+    calculate_internal_erosion_piping_analysis,
+    build_flownet_tile_url,
+    build_flownet_tile_url_template
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -546,6 +592,7 @@ sar_router = APIRouter(prefix="/sar", tags=["SAR Analytics"])
 geotechnical_router = APIRouter(prefix="/geotechnical", tags=["Geotechnical & Dam Safety"])
 thermal_router = APIRouter(prefix="/thermal", tags=["Thermal Remote Sensing"])
 topography_router = APIRouter(prefix="/topography", tags=["Topography & Elevation"])
+hydrodynamic_router = APIRouter(prefix="/hydrodynamic", tags=["Hydrodynamics & Dam Breach"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -7346,15 +7393,539 @@ def get_analysis_settlement_tile_metric(
     return get_settlement_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
 
 
+# ============================================================================
+# Topographic Elevation Differencing, CSF Ground Filtering & Epipolar Models
+# Task T-163: Agent 7 (@backend)
+# ============================================================================
+
+CUT_FILL_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_CUT_FILL_STORE_SIZE = 100
 
 
+def _store_cut_fill_simulation(sim_res: Dict[str, Any]):
+    """Caches 2.5D DEM cut-and-fill volumetric simulation run with bounded LRU memory retention."""
+    sim_id = sim_res.get("simulation_id")
+    if not sim_id:
+        return
+    if len(CUT_FILL_STORE) >= MAX_CUT_FILL_STORE_SIZE:
+        oldest_key = next(iter(CUT_FILL_STORE))
+        CUT_FILL_STORE.pop(oldest_key, None)
+    CUT_FILL_STORE[sim_id] = sim_res
+    gc.collect()
 
 
+@router.post("/topography/csf-ground-filter", response_model=CSFPointFilterResponse, response_model_by_alias=False)
+@router.post("/pointcloud/csf-filter", response_model=CSFPointFilterResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/topography/csf-filter", response_model=CSFPointFilterResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/csf-ground-filter", response_model=CSFPointFilterResponse, response_model_by_alias=False, include_in_schema=False)
+@topography_router.post("/csf-ground-filter", response_model=CSFPointFilterResponse, response_model_by_alias=False, include_in_schema=False)
+@topography_router.post("/csf-filter", response_model=CSFPointFilterResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_csf_ground_filter_endpoint(req: CSFPointFilterRequest):
+    """Evaluates Cloth Simulation Filtering (CSF, Zhang et al. 2016) LiDAR/UAV ground classification and DTM generation."""
+    csf_res = calculate_cloth_simulation_filter(
+        cloud_id=req.cloud_id,
+        cloth_resolution_m=req.cloth_resolution_m,
+        rigidness=req.rigidness,
+        classification_threshold_m=req.classification_threshold_m,
+        time_step=req.time_step,
+        max_iterations=req.max_iterations,
+        post_slope_smooth=req.post_slope_smooth
+    )
+    return CSFPointFilterResponse(**csf_res)
 
 
+@router.post("/topography/cut-and-fill", response_model=CutAndFillAnalysisResponse, response_model_by_alias=False)
+@router.post("/cut-and-fill", response_model=CutAndFillAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@topography_router.post("/cut-and-fill", response_model=CutAndFillAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_cut_and_fill_endpoint(req: CutAndFillAnalysisRequest):
+    """Evaluates 2.5D raster DEM cut-and-fill differential volumetric integration (cell differencing or prism modes)."""
+    sim_res = calculate_cut_and_fill_differencing(req)
+    _store_cut_fill_simulation(sim_res)
+    return CutAndFillAnalysisResponse(**sim_res)
 
 
+@router.get("/topography/cut-and-fill/{sim_id}", response_model=CutAndFillAnalysisResponse, response_model_by_alias=False)
+@router.get("/cut-and-fill/{sim_id}", response_model=CutAndFillAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@topography_router.get("/cut-and-fill/{sim_id}", response_model=CutAndFillAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def get_cut_and_fill_detail(sim_id: str):
+    """Retrieves 2.5D DEM cut-and-fill volumetric simulation by simulation ID."""
+    sim_res = CUT_FILL_STORE.get(sim_id)
+    if not sim_res:
+        sim_res = calculate_cut_and_fill_differencing({"simulation_id": sim_id})
+        _store_cut_fill_simulation(sim_res)
+    return CutAndFillAnalysisResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
 
 
+@router.post("/topography/crest-slump", response_model=CrestSlumpAnalysisResponse, response_model_by_alias=False)
+@router.post("/crest-slump", response_model=CrestSlumpAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@topography_router.post("/crest-slump", response_model=CrestSlumpAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_crest_slump_endpoint(req: CrestSlumpAnalysisRequest):
+    """Evaluates longitudinal embankment crest slump depression, residual freeboard loss, and overtopping hazard."""
+    res = calculate_crest_slumping_profile(req)
+    return CrestSlumpAnalysisResponse(**res)
+
+
+@router.post("/topography/transect-delta", response_model=TopographicTransectDeltaResponse, response_model_by_alias=False)
+@router.post("/transect-delta", response_model=TopographicTransectDeltaResponse, response_model_by_alias=False, include_in_schema=False)
+@topography_router.post("/transect-delta", response_model=TopographicTransectDeltaResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_transect_delta_endpoint(req: TopographicTransectDeltaRequest):
+    """Calculates multi-temporal DEM transect cross-section elevation differencing and volumetric cut/fill profile."""
+    res = calculate_topographic_transect_delta(req)
+    return TopographicTransectDeltaResponse(**res)
+
+
+@router.post("/topography/epipolar-differential", response_model=DroneEpipolarDifferentialResponse, response_model_by_alias=False)
+@router.post("/epipolar-differential", response_model=DroneEpipolarDifferentialResponse, response_model_by_alias=False, include_in_schema=False)
+@topography_router.post("/epipolar-differential", response_model=DroneEpipolarDifferentialResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_epipolar_differential_endpoint(req: DroneEpipolarDifferentialRequest):
+    """Evaluates multi-temporal UAV photogrammetry stereo epipolar disparity residuals and photo-consistency."""
+    res = calculate_drone_epipolar_differential(req)
+    return DroneEpipolarDifferentialResponse(**res)
+
+
+@tiles_router.get("/topography/elevation-delta/{sim_id}/{z}/{x}/{y}.png")
+@topography_router.get("/tiles/elevation-delta/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_topographic_delta_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "bwr",
+    rescale: Optional[str] = "-5.0,5.0"
+):
+    """Dynamic XYZ tile streaming for topographic elevation difference raster layer."""
+    png_bytes = tile_service.render_topographic_delta_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="elevation_delta",
+        colormap=colormap or "bwr",
+        rescale=rescale or "-5.0,5.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-TopographicDelta-v2.5"}
+    )
+
+
+@tiles_router.get("/topography/elevation-delta/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@topography_router.get("/tiles/elevation-delta/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_topographic_delta_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for topographic elevation difference with selected metric."""
+    png_bytes = tile_service.render_topographic_delta_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-TopographicDelta-{metric}"}
+    )
+
+
+@router.get("/tiles/topography/elevation-delta/{sim_id}/{z}/{x}/{y}.png")
+def get_analysis_topographic_delta_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "bwr",
+    rescale: Optional[str] = "-5.0,5.0"
+):
+    return get_topographic_delta_tile_default(sim_id=sim_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@router.get("/tiles/topography/elevation-delta/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_analysis_topographic_delta_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_topographic_delta_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@tiles_router.get("/pointcloud/csf/{cloud_id}/{z}/{x}/{y}.png")
+@topography_router.get("/tiles/pointcloud/csf/{cloud_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_csf_pointcloud_tile(
+    cloud_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "terrain",
+    rescale: Optional[str] = "100.0,500.0"
+):
+    """Dynamic XYZ tile streaming for Cloth Simulation Filter classified bare-earth DTM."""
+    png_bytes = tile_service.render_csf_tile(
+        cloud_id=cloud_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="csf_ground_surface",
+        colormap=colormap or "terrain",
+        rescale=rescale or "100.0,500.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-CSF-v2.5"}
+    )
+
+
+@router.get("/tiles/pointcloud/csf/{cloud_id}/{z}/{x}/{y}.png")
+def get_analysis_csf_pointcloud_tile(
+    cloud_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "terrain",
+    rescale: Optional[str] = "100.0,500.0"
+):
+    return get_csf_pointcloud_tile(cloud_id=cloud_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# Tailings Dam Breach Peak Discharge Hydrograph & 2D Hydrodynamic Wave Routing
+# Task T-169: Agent 7 (@backend)
+# ============================================================================
+
+DAM_BREACH_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_DAM_BREACH_STORE_SIZE = 100
+
+
+def _store_dam_breach_simulation(sim_res: Dict[str, Any]):
+    """Caches dam breach inundation simulation run with bounded LRU memory retention."""
+    sim_id = sim_res.get("simulation_id")
+    if not sim_id:
+        return
+    if len(DAM_BREACH_STORE) >= MAX_DAM_BREACH_STORE_SIZE:
+        oldest_key = next(iter(DAM_BREACH_STORE))
+        DAM_BREACH_STORE.pop(oldest_key, None)
+    DAM_BREACH_STORE[sim_id] = sim_res
+    gc.collect()
+
+
+@router.post("/hydrodynamic/dam-breach-hydrograph", response_model=DamBreachHydrographResponse, response_model_by_alias=False)
+@router.post("/dam-breach-hydrograph", response_model=DamBreachHydrographResponse, response_model_by_alias=False, include_in_schema=False)
+@hydrodynamic_router.post("/dam-breach-hydrograph", response_model=DamBreachHydrographResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_dam_breach_hydrograph_endpoint(req: DamBreachHydrographRequest):
+    """Computes empirical dam breach geometry, formation time, peak discharge (Froehlich 2008 / MLM 1984), and outflow hydrograph."""
+    res_vol = req.reservoir_volume_m3
+    water_h = req.water_depth_above_invert_m
+    fail_mode = req.failure_mode.value if hasattr(req.failure_mode, "value") else str(req.failure_mode)
+    method_val = req.methodology.value if hasattr(req.methodology, "value") else str(req.methodology)
+
+    froehlich = calculate_froehlich_breach_parameters(res_vol, water_h, fail_mode)
+    mlm = calculate_macdonald_monopolis_breach_parameters(res_vol, water_h)
+    usbr_envelope = round(19.0 * (water_h ** 1.85), 2)
+
+    if method_val.startswith("macdonald"):
+        geom = mlm
+        selected_method = "macdonald_langridge_monopolis_1984"
+        qp = mlm["peak_discharge_m3s"]
+        tf_hr = mlm["formation_time_hours"]
+    elif method_val.startswith("hybrid"):
+        selected_method = "hybrid_ensemble"
+        qp = round(0.65 * froehlich["peak_discharge_m3s"] + 0.35 * mlm["peak_discharge_m3s"], 2)
+        tf_hr = round(0.65 * froehlich["formation_time_hours"] + 0.35 * mlm["formation_time_hours"], 3)
+        geom = dict(froehlich)
+        geom["peak_discharge_m3s"] = qp
+        geom["formation_time_hours"] = tf_hr
+        geom["formation_time_minutes"] = round(tf_hr * 60.0, 1)
+        geom["formation_time_seconds"] = round(tf_hr * 3600.0, 1)
+    else:
+        geom = froehlich
+        selected_method = "froehlich_2008"
+        qp = froehlich["peak_discharge_m3s"]
+        tf_hr = froehlich["formation_time_hours"]
+
+    breach_geom = {
+        "average_breach_width_m": geom["average_breach_width_m"],
+        "top_breach_width_m": geom["top_breach_width_m"],
+        "bottom_breach_width_m": geom["bottom_breach_width_m"],
+        "breach_height_m": geom["breach_height_m"],
+        "side_slope_z": geom["side_slope_z"],
+        "formation_time_hours": geom["formation_time_hours"],
+        "formation_time_minutes": geom["formation_time_minutes"],
+        "eroded_volume_m3": geom["eroded_volume_m3"],
+        "peak_discharge_m3s": qp,
+        "method": selected_method
+    }
+
+    hg = generate_breach_outflow_hydrograph(
+        peak_discharge_m3s=qp,
+        total_volume_m3=res_vol,
+        formation_time_hours=tf_hr,
+        duration_hours=req.simulation_duration_hours,
+        time_step_min=req.time_step_minutes,
+        dam_height_m=req.dam_height_m
+    )
+
+    sim_id = f"HYDRO_HG_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+
+    return DamBreachHydrographResponse(
+        simulation_id=sim_id,
+        dam_id=req.dam_id,
+        dam_name=req.dam_name,
+        breach_geometry=breach_geom,
+        peak_discharge_m3s=qp,
+        time_to_peak_hours=round(tf_hr * 0.35, 3),
+        total_breach_volume_m3=res_vol,
+        hydrograph=hg,
+        peak_discharge_bounds={
+            "froehlich_2008": froehlich["peak_discharge_m3s"],
+            "macdonald_langridge_monopolis_1984": mlm["peak_discharge_m3s"],
+            "usbr_envelope_1982": usbr_envelope
+        },
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@router.post("/hydrodynamic/inundation-routing", response_model=HydrodynamicRoutingResponse, response_model_by_alias=False)
+@router.post("/inundation-routing", response_model=HydrodynamicRoutingResponse, response_model_by_alias=False, include_in_schema=False)
+@hydrodynamic_router.post("/inundation-routing", response_model=HydrodynamicRoutingResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_inundation_routing_endpoint(req: HydrodynamicRoutingRequest):
+    """Simulates 2D De Saint-Venant downstream wave propagation along river/valley cross-section stations."""
+    res = calculate_de_saint_venant_downstream_routing(req)
+    return HydrodynamicRoutingResponse(**res)
+
+
+@router.post("/hydrodynamic/dam-breach-inundation", response_model=DamBreachInundationAnalysisResponse, response_model_by_alias=False)
+@router.post("/dam-breach-inundation", response_model=DamBreachInundationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@hydrodynamic_router.post("/dam-breach-inundation", response_model=DamBreachInundationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_dam_breach_inundation_endpoint(req: DamBreachInundationAnalysisRequest):
+    """Executes full unified tailings dam breach hydrodynamics: empirical breach geometry, outflow hydrograph, and downstream 2D wave routing."""
+    res = calculate_dam_breach_inundation_analysis(req)
+    _store_dam_breach_simulation(res)
+    return DamBreachInundationAnalysisResponse(**res)
+
+
+@router.get("/hydrodynamic/dam-breach-inundation/{sim_id}", response_model=DamBreachInundationAnalysisResponse, response_model_by_alias=False)
+@router.get("/dam-breach-inundation/{sim_id}", response_model=DamBreachInundationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/hydrodynamic/{sim_id}", response_model=DamBreachInundationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@hydrodynamic_router.get("/dam-breach-inundation/{sim_id}", response_model=DamBreachInundationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@hydrodynamic_router.get("/{sim_id}", response_model=DamBreachInundationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def get_dam_breach_inundation_detail(sim_id: str):
+    """Retrieves dam breach inundation simulation by simulation ID."""
+    sim_res = DAM_BREACH_STORE.get(sim_id)
+    if not sim_res:
+        sim_res = calculate_dam_breach_inundation_analysis({"simulation_id": sim_id})
+        _store_dam_breach_simulation(sim_res)
+    return DamBreachInundationAnalysisResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@tiles_router.get("/hydrodynamic/inundation/{sim_id}/{z}/{x}/{y}.png")
+@hydrodynamic_router.get("/tiles/inundation/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_hydrodynamic_inundation_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "blues",
+    rescale: Optional[str] = "0.0,15.0"
+):
+    """Dynamic XYZ tile streaming for tailings dam breach inundation depth raster layer."""
+    png_bytes = tile_service.render_hydrodynamic_inundation_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="inundation_depth",
+        colormap=colormap or "blues",
+        rescale=rescale or "0.0,15.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Hydrodynamic-v2.5"}
+    )
+
+
+@tiles_router.get("/hydrodynamic/inundation/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@hydrodynamic_router.get("/tiles/inundation/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_hydrodynamic_inundation_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for tailings dam breach inundation layer with selectable hydrodynamic metric."""
+    png_bytes = tile_service.render_hydrodynamic_inundation_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Hydrodynamic-{metric}"}
+    )
+
+
+@router.get("/tiles/hydrodynamic/inundation/{sim_id}/{z}/{x}/{y}.png")
+def get_analysis_hydrodynamic_inundation_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "blues",
+    rescale: Optional[str] = "0.0,15.0"
+):
+    return get_hydrodynamic_inundation_tile_default(sim_id=sim_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+@router.get("/tiles/hydrodynamic/inundation/{sim_id}/{metric}/{z}/{x}/{y}.png")
+def get_analysis_hydrodynamic_inundation_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_hydrodynamic_inundation_tile_metric(sim_id=sim_id, metric=metric, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+# ==============================================================================
+# Internal Erosion & Flownet Piping Simulation Store (Cycle v2.5.19)
+# ==============================================================================
+
+PIPING_FLOWNET_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_PIPING_STORE_SIZE = 100
+
+
+def _store_piping_simulation(sim_res: Dict[str, Any]):
+    """Caches internal erosion piping simulation result with LRU eviction and memory bounds."""
+    sim_id = sim_res.get("simulation_id") or sim_res.get("simulationId")
+    if not sim_id:
+        return
+    if len(PIPING_FLOWNET_STORE) >= MAX_PIPING_STORE_SIZE:
+        oldest_key = next(iter(PIPING_FLOWNET_STORE))
+        PIPING_FLOWNET_STORE.pop(oldest_key, None)
+        gc.collect()
+    PIPING_FLOWNET_STORE[sim_id] = sim_res
+
+
+# ==============================================================================
+# Internal Erosion & Flownet Endpoints (Cycle v2.5.19 - Task T-175)
+# ==============================================================================
+
+@router.post("/geotechnical/internal-erosion-piping", response_model=InternalErosionPipingAnalysisResponse, response_model_by_alias=False)
+@router.post("/internal-erosion-piping", response_model=InternalErosionPipingAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/internal-erosion-piping", response_model=InternalErosionPipingAnalysisResponse, response_model_by_alias=False)
+@geotechnical_router.post("/piping", response_model=InternalErosionPipingAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_internal_erosion_piping_endpoint(req: InternalErosionPipingAnalysisRequest):
+    """Calculates comprehensive embankment internal erosion analysis across Terzaghi, Sellmeijer, and 2D Laplace flownet."""
+    res = calculate_internal_erosion_piping_analysis(req)
+    _store_piping_simulation(res)
+    return InternalErosionPipingAnalysisResponse(**res) if isinstance(res, dict) else res
+
+
+@router.get("/geotechnical/internal-erosion-piping/{simulation_id}", response_model=InternalErosionPipingAnalysisResponse, response_model_by_alias=False)
+@router.get("/internal-erosion-piping/{simulation_id}", response_model=InternalErosionPipingAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/internal-erosion-piping/{simulation_id}", response_model=InternalErosionPipingAnalysisResponse, response_model_by_alias=False)
+@geotechnical_router.get("/piping/{simulation_id}", response_model=InternalErosionPipingAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def get_internal_erosion_piping_detail(simulation_id: str):
+    """Retrieves internal erosion piping simulation by simulation ID."""
+    sim_res = PIPING_FLOWNET_STORE.get(simulation_id)
+    if not sim_res:
+        sim_res = calculate_internal_erosion_piping_analysis({"simulation_id": simulation_id})
+        _store_piping_simulation(sim_res)
+    return InternalErosionPipingAnalysisResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@router.post("/geotechnical/seepage-flownet", response_model=SeepageFlownetResult, response_model_by_alias=False)
+@router.post("/seepage-flownet", response_model=SeepageFlownetResult, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/seepage-flownet", response_model=SeepageFlownetResult, response_model_by_alias=False)
+@geotechnical_router.post("/flownet", response_model=SeepageFlownetResult, response_model_by_alias=False, include_in_schema=False)
+def calculate_seepage_flownet_endpoint(req: InternalErosionPipingAnalysisRequest):
+    """Computes 2D Laplace equipotential flownet grid, exit hydraulic gradients, and streamline geometries."""
+    res = calculate_internal_erosion_piping_analysis(req)
+    _store_piping_simulation(res)
+    flownet_dict = res.get("flownet_seepage") if isinstance(res, dict) else getattr(res, "flownet_seepage", res)
+    return SeepageFlownetResult(**flownet_dict) if isinstance(flownet_dict, dict) else flownet_dict
+
+
+@tiles_router.get("/geotechnical/flownet/{sim_id}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/flownet/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/geotechnical/flownet/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_geotechnical_flownet_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "blues",
+    rescale: Optional[str] = "4.0,24.0"
+):
+    """Dynamic XYZ tile streaming for geotechnical seepage flownet hydraulic head raster layer."""
+    png_bytes = tile_service.render_flownet_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="hydraulic_head",
+        colormap=colormap or "blues",
+        rescale=rescale or "4.0,24.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Flownet-v2.5"}
+    )
+
+
+@tiles_router.get("/geotechnical/flownet/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/flownet/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/geotechnical/flownet/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_geotechnical_flownet_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for geotechnical seepage flownet with selectable metric."""
+    png_bytes = tile_service.render_flownet_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Flownet-{metric}"}
+    )
 
 

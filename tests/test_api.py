@@ -2540,8 +2540,263 @@ class TestGIOSApi(unittest.TestCase):
             self.assertGreater(len(res_tile.content), 100)
             self.assertEqual(res_tile.content[:4], b"\x89PNG")
 
+    def test_reconsolidation_settlement_and_tiles_api(self):
+        """Task T-160/T-166: Test POST /api/v1/analysis/geotechnical/reconsolidation-settlement, aliases, and dynamic settlement tiles."""
+        payload = {
+            "dam_id": "DAM-RECONS-TEST-01",
+            "dam_name": "Test Embankment Reconsolidation",
+            "crest_length_m": 350.0,
+            "pga_g": 0.32,
+            "earthquake_magnitude_mw": 6.8,
+            "calculation_method": "ishihara_yoshimine_1992",
+            "insar_coherence": 0.75,
+            "insar_displacement_m": 0.35,
+            "t50_days": 15.0,
+            "elapsed_days": 12.0,
+            "stratigraphic_layers": [
+                {"layer_id": "L1", "soil_type": "tailings_beach", "depth_top_m": 0.0, "depth_bottom_m": 5.0, "spt_n1_60cs": 10.0, "factor_of_safety_liq": 0.95},
+                {"layer_id": "L2", "soil_type": "slimes", "depth_top_m": 5.0, "depth_bottom_m": 12.0, "spt_n1_60cs": 6.0, "factor_of_safety_liq": 0.65}
+            ]
+        }
+        res = self.client.post("/api/v1/analysis/geotechnical/reconsolidation-settlement", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["dam_id"], "DAM-RECONS-TEST-01")
+        self.assertIn("max_crest_settlement_m", data)
+        self.assertIn("max_angular_distortion", data)
+        self.assertIn("simulation_id", data)
+        sim_id = data["simulation_id"]
+
+        # Route aliases
+        res_alias = self.client.post("/api/v1/analysis/reconsolidation-settlement", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # GET simulation detail
+        res_get = self.client.get(f"/api/v1/analysis/geotechnical/reconsolidation-settlement/{sim_id}")
+        self.assertEqual(res_get.status_code, 200)
+        self.assertEqual(res_get.json()["simulation_id"], sim_id)
+
+        # Standalone Angular Distortion endpoint
+        res_ang = self.client.post("/api/v1/analysis/geotechnical/angular-distortion", json={
+            "settlement_a_m": 0.12,
+            "settlement_b_m": 0.28,
+            "distance_m": 20.0
+        })
+        self.assertEqual(res_ang.status_code, 200)
+        self.assertIn("angular_distortion", res_ang.json())
+        self.assertIn("hazard_tier", res_ang.json())
+
+        # Standalone Stratigraphic Soil Column endpoint
+        res_col = self.client.post("/api/v1/analysis/geotechnical/settlement/soil-column", json={
+            "calculation_method": "ishihara_yoshimine_1992",
+            "stratigraphic_layers": [
+                {"layer_id": "L1", "depth_top_m": 0.0, "depth_bottom_m": 4.0, "spt_n1_60cs": 12.0, "factor_of_safety_liq": 0.85}
+            ]
+        })
+        self.assertEqual(res_col.status_code, 200)
+        self.assertIn("total_settlement_m", res_col.json())
+
+        # Standalone InSAR Fusion endpoint
+        res_fusion = self.client.post("/api/v1/analysis/geotechnical/settlement/insar-fusion", json={
+            "modeled_settlement_m": 0.35,
+            "insar_displacement_m": 0.40,
+            "insar_coherence": 0.80
+        })
+        self.assertEqual(res_fusion.status_code, 200)
+        self.assertIn("fused_settlement_m", res_fusion.json())
+
+        # Dynamic XYZ settlement tile streaming
+        tile_urls = [
+            f"/api/v1/tiles/geotechnical/settlement/{sim_id}/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/settlement/{sim_id}/total_settlement/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/settlement/{sim_id}/angular_distortion/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/settlement/{sim_id}/insar_differential/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/settlement/{sim_id}/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
+    def test_topography_csf_and_cut_fill_tiles_api(self):
+        """Task T-163/T-166: Test POST /api/v1/analysis/topography endpoints, aliases, and dynamic XYZ tiles."""
+        # 1. CSF Point Cloud Ground Filter
+        csf_payload = {
+            "cloud_id": "UAV_POINTCLOUD_TEST_01",
+            "cloth_resolution_m": 1.0,
+            "rigidness": "relief_slope",
+            "classification_threshold_m": 0.35
+        }
+        res_csf = self.client.post("/api/v1/analysis/topography/csf-ground-filter", json=csf_payload)
+        self.assertEqual(res_csf.status_code, 200)
+        csf_data = res_csf.json()
+        self.assertEqual(csf_data["cloud_id"], "UAV_POINTCLOUD_TEST_01")
+        self.assertIn("ground_fraction", csf_data)
+        self.assertIn("sample_points", csf_data)
+
+        # Route aliases
+        res_csf_alias = self.client.post("/api/v1/analysis/csf-ground-filter", json=csf_payload)
+        self.assertEqual(res_csf_alias.status_code, 200)
+        res_drone_csf = self.client.post("/api/v1/drone/csf-ground-filter", json=csf_payload)
+        self.assertEqual(res_drone_csf.status_code, 200)
+
+        # 2. 2.5D DEM Cut-and-Fill Analysis
+        cutfill_payload = {
+            "simulation_id": "CUTFILL_API_TEST_01",
+            "asset_id": "NORTH_EMBANKMENT",
+            "grid_resolution_m": 1.0,
+            "deadband_threshold_m": 0.05,
+            "grid_side_points": 16
+        }
+        res_cutfill = self.client.post("/api/v1/analysis/topography/cut-and-fill", json=cutfill_payload)
+        self.assertEqual(res_cutfill.status_code, 200)
+        cutfill_data = res_cutfill.json()
+        self.assertEqual(cutfill_data["simulation_id"], "CUTFILL_API_TEST_01")
+        self.assertIn("summary", cutfill_data)
+        self.assertIn("gross_cut_volume_m3", cutfill_data["summary"])
+        self.assertIn("gross_fill_volume_m3", cutfill_data["summary"])
+
+        # GET simulation detail
+        res_get_cf = self.client.get("/api/v1/analysis/topography/cut-and-fill/CUTFILL_API_TEST_01")
+        self.assertEqual(res_get_cf.status_code, 200)
+        self.assertEqual(res_get_cf.json()["simulation_id"], "CUTFILL_API_TEST_01")
+
+        # 3. Embankment Crest Slump Profile
+        slump_payload = {
+            "dam_id": "DAM_API_TEST_01",
+            "crest_length_m": 350.0,
+            "design_freeboard_m": 4.0,
+            "reservoir_pool_elevation_m": 315.0
+        }
+        res_slump = self.client.post("/api/v1/analysis/topography/crest-slump", json=slump_payload)
+        self.assertEqual(res_slump.status_code, 200)
+        self.assertIn("summary", res_slump.json())
+        self.assertIn("stations", res_slump.json())
+
+        # 4. Transect Profile Differencing
+        transect_payload = {
+            "asset_id": "EMBANKMENT_TRANSECT_API",
+            "sample_spacing_m": 5.0
+        }
+        res_transect = self.client.post("/api/v1/analysis/topography/transect-delta", json=transect_payload)
+        self.assertEqual(res_transect.status_code, 200)
+        self.assertIn("gross_cut_volume_m3", res_transect.json())
+        self.assertIn("nodes", res_transect.json())
+
+        # 5. UAV Stereo Epipolar Disparity
+        epipolar_payload = {
+            "flight_pre_id": "FLIGHT_PRE_01",
+            "flight_post_id": "FLIGHT_POST_01",
+            "stereo_pair_count": 6
+        }
+        res_epipolar = self.client.post("/api/v1/analysis/topography/epipolar-differential", json=epipolar_payload)
+        self.assertEqual(res_epipolar.status_code, 200)
+        self.assertIn("disparity_rmse_px", res_epipolar.json())
+        self.assertIn("differential_pairs", res_epipolar.json())
+
+        # 6. Dynamic XYZ Topography & CSF Tile Streaming
+        tile_urls = [
+            "/api/v1/tiles/topography/elevation-delta/CUTFILL_API_TEST_01/12/2048/1024.png",
+            "/api/v1/tiles/topography/elevation-delta/CUTFILL_API_TEST_01/cut_depth/12/2048/1024.png",
+            "/api/v1/tiles/topography/elevation-delta/CUTFILL_API_TEST_01/fill_height/12/2048/1024.png",
+            "/api/v1/tiles/topography/elevation-delta/CUTFILL_API_TEST_01/slope_delta/12/2048/1024.png",
+            "/api/v1/tiles/pointcloud/csf/UAV_POINTCLOUD_TEST_01/12/2048/1024.png",
+            "/api/v1/analysis/tiles/pointcloud/csf/UAV_POINTCLOUD_TEST_01/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
+    def test_internal_erosion_piping_and_flownet_api(self):
+        """Test Cycle v2.5.19: POST /api/v1/analysis/geotechnical/internal-erosion-piping, GET detail, seepage-flownet, and dynamic tiles."""
+        payload = {
+            "simulationId": "SIM_TEST_PIPING_API_01",
+            "damId": "DAM_TEST_CADIA",
+            "damName": "Cadia Tailings Dam",
+            "soilClassification": "medium_sand",
+            "upstreamHeadM": 24.0,
+            "downstreamHeadM": 4.0,
+            "embankmentBaseLengthM": 60.0,
+            "aquiferDepthM": 18.0,
+            "potentialDropsNd": 12,
+            "flowChannelsNf": 4
+        }
+
+        # 1. Primary Analysis Endpoint
+        res = self.client.post("/api/v1/analysis/geotechnical/internal-erosion-piping", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["simulation_id"], "SIM_TEST_PIPING_API_01")
+        self.assertEqual(data["dam_id"], "DAM_TEST_CADIA")
+        self.assertEqual(data["dam_name"], "Cadia Tailings Dam")
+        self.assertIn("terzaghi_gradient", data)
+        self.assertIn("sellmeijer_bep", data)
+        self.assertIn("flownet_seepage", data)
+        self.assertIn("global_factor_of_safety", data)
+        self.assertIn("overall_hazard_tier", data)
+        self.assertIn("tile_url_template", data)
+
+        # 2. Canonical Route Aliases
+        res_alias1 = self.client.post("/api/v1/analysis/internal-erosion-piping", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/geotechnical/internal-erosion-piping", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+        res_alias3 = self.client.post("/api/v1/geotechnical/piping", json=payload)
+        self.assertEqual(res_alias3.status_code, 200)
+
+        # 3. GET Detail Endpoint & Aliases
+        sim_id = "SIM_TEST_PIPING_API_01"
+        res_get1 = self.client.get(f"/api/v1/analysis/geotechnical/internal-erosion-piping/{sim_id}")
+        self.assertEqual(res_get1.status_code, 200)
+        self.assertEqual(res_get1.json()["simulation_id"], sim_id)
+
+        res_get2 = self.client.get(f"/api/v1/geotechnical/internal-erosion-piping/{sim_id}")
+        self.assertEqual(res_get2.status_code, 200)
+        res_get3 = self.client.get(f"/api/v1/geotechnical/piping/{sim_id}")
+        self.assertEqual(res_get3.status_code, 200)
+
+        # 4. Seepage Flownet Endpoint & Aliases
+        res_flow1 = self.client.post("/api/v1/analysis/geotechnical/seepage-flownet", json=payload)
+        self.assertEqual(res_flow1.status_code, 200)
+        flow_data = res_flow1.json()
+        self.assertIn("shape_factor", flow_data)
+        self.assertIn("unit_seepage_flow_rate_m3s_m", flow_data)
+        self.assertIn("flownet_geojson", flow_data)
+        self.assertIn("exit_stations", flow_data)
+
+        res_flow2 = self.client.post("/api/v1/geotechnical/seepage-flownet", json=payload)
+        self.assertEqual(res_flow2.status_code, 200)
+        res_flow3 = self.client.post("/api/v1/geotechnical/flownet", json=payload)
+        self.assertEqual(res_flow3.status_code, 200)
+
+        # 5. Dynamic XYZ Flownet Tile Streaming across all metrics
+        tile_urls = [
+            f"/api/v1/tiles/geotechnical/flownet/{sim_id}/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/flownet/{sim_id}/hydraulic_head/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/flownet/{sim_id}/hydraulic_gradient/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/flownet/{sim_id}/exit_gradient/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/flownet/{sim_id}/factor_of_safety/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/flownet/{sim_id}/pore_pressure/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/flownet/{sim_id}/hazard_tier/12/2048/1024.png",
+            f"/api/v1/geotechnical/tiles/flownet/{sim_id}/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/flownet/{sim_id}/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed flownet tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
 if __name__ == "__main__":
     unittest.main()
+
+
 
 
 

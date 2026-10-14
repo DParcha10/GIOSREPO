@@ -41,7 +41,14 @@ import {
   calculateCutAndFillDifferencing,
   calculateCrestSlumpingProfile,
   calculateTopographicTransectDelta,
-  calculateDroneEpipolarDifferential
+  calculateDroneEpipolarDifferential,
+  calculateFroehlichBreachParameters,
+  generateBreachOutflowHydrograph,
+  calculateDeSaintVenantDownstreamRouting,
+  calculateDamBreachInundationAnalysis,
+  calculateInternalErosionPipingAnalysis,
+  calculateInSARPersistentScattererAnalysis,
+  decomposeDualOrbitInSARVelocities
 } from '../config/constants.js';
 
 export {
@@ -452,7 +459,37 @@ export {
   calculateTopographicTransectDelta,
   calculateDroneEpipolarDifferential,
   buildTopographicElevationDeltaTileUrl,
-  buildTopographicElevationDeltaTileUrlTemplate
+  buildTopographicElevationDeltaTileUrlTemplate,
+  BREACH_METHODOLOGIES,
+  HYDRODYNAMIC_ROUTING_METHODS,
+  INUNDATION_HAZARD_RATINGS,
+  DAM_BREACH_MATERIAL_TYPES,
+  DAM_BREACH_HAZARD_CONFIGS,
+  BREACH_METHOD_CONFIGS,
+  MANNING_ROUGHNESS_CONFIGS,
+  HYDRODYNAMIC_TILE_METRICS,
+  calculateFroehlichBreachParameters,
+  calculateMacDonaldMonopolisBreachParameters,
+  classifyInundationHazardRating,
+  generateBreachOutflowHydrograph,
+  calculateDeSaintVenantDownstreamRouting,
+  calculateDamBreachInundationAnalysis,
+  buildHydrodynamicTileUrl,
+  buildHydrodynamicTileUrlTemplate,
+  PipingFailureMechanism,
+  SellmeijerSoilClassification,
+  FlownetBoundaryCondition,
+  InternalErosionHazardTier,
+  INTERNAL_EROSION_HAZARD_CONFIGS,
+  SELLMEIJER_SOIL_PRESETS,
+  FLOWNET_TILE_METRICS,
+  calculateTerzaghiCriticalGradient,
+  calculateSellmeijerCriticalHead,
+  calculateSeepageFlownetPotentialGrid,
+  classifyInternalErosionHazardTier,
+  calculateInternalErosionPipingAnalysis,
+  buildFlownetTileUrl,
+  buildFlownetTileUrlTemplate
 } from '../config/constants.js';
 
 /**
@@ -2542,6 +2579,72 @@ const demoAdapter = async (config) => {
         let parsed = {};
         try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
         data = calculateDroneEpipolarDifferential(parsed);
+      }
+      else if (url.includes('/dam-breach-hydrograph')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const resVol = parsed.reservoir_volume_m3 || parsed.reservoirVolumeM3 || 15000000.0;
+        const waterH = parsed.water_depth_above_invert_m || parsed.waterDepthAboveInvertM || 35.0;
+        const mode = parsed.failure_mode || parsed.failureMode || 'overtopping';
+        const params = calculateFroehlichBreachParameters(resVol, waterH, mode);
+        const hydro = generateBreachOutflowHydrograph(params.peak_discharge_m3s, resVol, params.formation_time_hours);
+        data = {
+          simulation_id: `BREACH_SIM_${Date.now()}`,
+          dam_id: parsed.dam_id || parsed.damId || 'TAILINGS_DAM_01',
+          dam_name: parsed.dam_name || parsed.damName || 'Mount Polley Embankment',
+          breach_geometry: params,
+          peak_discharge_m3s: params.peak_discharge_m3s,
+          time_to_peak_hours: Number((params.formation_time_hours * 0.35).toFixed(3)),
+          total_breach_volume_m3: resVol,
+          hydrograph: hydro,
+          peak_discharge_bounds: { froehlich_2008: params.peak_discharge_m3s },
+          analyzed_at: new Date().toISOString()
+        };
+      }
+      else if (url.includes('/inundation-routing')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = calculateDeSaintVenantDownstreamRouting(parsed);
+      }
+      else if (url.includes('/dam-breach-inundation')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (!parsed.simulation_id && !parsed.simulationId) {
+          const parts = url.split('/');
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && !lastPart.includes('dam-breach-inundation')) {
+            parsed.simulation_id = lastPart;
+          }
+        }
+        data = calculateDamBreachInundationAnalysis(parsed);
+      }
+      else if (url.includes('/internal-erosion-piping') || url.includes('/seepage-flownet')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (!parsed.simulation_id && !parsed.simulationId) {
+          const parts = url.split('/');
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && !lastPart.includes('internal-erosion-piping') && !lastPart.includes('seepage-flownet')) {
+            parsed.simulation_id = lastPart;
+          }
+        }
+        data = calculateInternalErosionPipingAnalysis(parsed);
+      }
+      else if (url.includes('/insar-persistent-scatterers') || url.includes('/insar-velocity-field') || url.includes('/insar-dual-orbit-decomposition')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (!parsed.simulation_id && !parsed.simulationId) {
+          const parts = url.split('/');
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && !lastPart.includes('insar-velocity-field') && !lastPart.includes('insar-persistent-scatterers') && !lastPart.includes('insar-dual-orbit-decomposition')) {
+            parsed.simulation_id = lastPart;
+          }
+        }
+        if (url.includes('/insar-dual-orbit-decomposition')) {
+          data = decomposeDualOrbitInSARVelocities(parsed);
+        } else {
+          data = calculateInSARPersistentScattererAnalysis(parsed);
+        }
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -6411,6 +6514,246 @@ export const getTopographicElevationDeltaTileUrlTemplate = (simId, metric = 'ele
 };
 
 export const buildTopographicElevationDeltaTileUrlTemplateInternal = getTopographicElevationDeltaTileUrlTemplate;
+
+/**
+ * Simulates or computes empirical tailings dam breach outflow peak discharge and time-series hydrograph.
+ * 
+ * @param {Object} params - Reservoir volume, water height, failure mode, and embankment geometry
+ * @returns {Promise<Object>} Peak discharge, breach dimensions, formation time, and outflow hydrograph
+ */
+export const calculateDamBreachHydrograph = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/hydrodynamic/dam-breach-hydrograph', params);
+  return response.data;
+};
+
+export const simulateDamBreachHydrograph = calculateDamBreachHydrograph;
+
+/**
+ * Executes 2D De Saint-Venant shallow water wave routing along downstream river valley stations.
+ * 
+ * @param {Object} params - Inflow peak discharge, reach length, slope, Manning n, and station interval
+ * @returns {Promise<Object>} Downstream stations, wave arrival times, peak depths, velocities, and hazard ratings
+ */
+export const calculateInundationRouting = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/hydrodynamic/inundation-routing', params);
+  return response.data;
+};
+
+export const simulateInundationRouting = calculateInundationRouting;
+
+/**
+ * Unified analytical solver uniting breach hydrograph generation and 2D downstream flood routing.
+ * 
+ * @param {Object} params - Dam geometry, impoundment volume, valley parameters, and routing settings
+ * @returns {Promise<Object>} Complete unified simulation response with breach geometry, hydrograph, and downstream stations
+ */
+export const analyzeDamBreachInundation = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/hydrodynamic/dam-breach-inundation', params);
+  return response.data;
+};
+
+export const simulateDamBreachInundation = analyzeDamBreachInundation;
+
+/**
+ * Retrieves a previously computed dam breach inundation simulation by execution ID.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @returns {Promise<Object>} Stored simulation results, hydrograph, and downstream inundation stations
+ */
+export const fetchDamBreachSimulation = async (simId) => {
+  const response = await giosApi.get(`/api/v1/analysis/hydrodynamic/dam-breach-inundation/${simId}`);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic XYZ tile streaming URL template for hydrodynamic flood inundation raster maps.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @param {string} [metric='inundation_depth'] - Raster metric ('inundation_depth' | 'flow_velocity' | 'wave_arrival_time' | 'depth_velocity_product')
+ * @returns {string} Dynamic tile URL template
+ */
+export const getHydrodynamicTileUrlTemplate = (simId, metric = 'inundation_depth') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/hydrodynamic/inundation/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildHydrodynamicTileUrlTemplateInternal = getHydrodynamicTileUrlTemplate;
+
+/**
+ * @typedef {Object} SoilPipingParameters
+ * @property {number} [specific_gravity=2.65] - Specific gravity of soil solids Gs
+ * @property {number} [void_ratio=0.65] - Void ratio e
+ * @property {number} [d70_m=0.000208] - 70th percentile grain diameter in meters (d70m)
+ * @property {number} [d10_m=0.00008] - 10th percentile grain diameter in meters (d10m)
+ * @property {number} [cu=2.5] - Coefficient of uniformity Cu = d60 / d10
+ * @property {number} [hydraulic_conductivity_ms=5.0e-5] - Darcy hydraulic conductivity K (m/s)
+ * @property {number} [friction_angle_deg=34.0] - Effective internal friction angle (degrees)
+ * @property {number} [submerged_unit_weight_kn_m3] - Submerged unit weight gamma' (kN/m3)
+ */
+
+/**
+ * @typedef {Object} FlownetStreamlineNode
+ * @property {number} streamline_index - Flow channel index (0 to Nf)
+ * @property {number} x_m - Horizontal distance from upstream toe (m)
+ * @property {number} z_m - Elevation relative to foundation datum (m)
+ * @property {number} head_m - Total hydraulic head at node (m)
+ * @property {number} velocity_ms - Seepage velocity v = K * i (m/s)
+ */
+
+/**
+ * @typedef {Object} FlownetEquipotentialNode
+ * @property {number} equipotential_index - Equipotential drop index (0 to Nd)
+ * @property {number} x_m - Horizontal distance from upstream toe (m)
+ * @property {number} z_m - Elevation relative to foundation datum (m)
+ * @property {number} head_m - Total hydraulic head along equipotential (m)
+ */
+
+/**
+ * @typedef {Object} ExitGradientStation
+ * @property {string} station_id - Identifier of the exit station
+ * @property {number} x_m - Distance from upstream toe along profile (m)
+ * @property {number} exit_gradient - Upward hydraulic exit gradient i_exit
+ * @property {number} critical_gradient - Terzaghi critical heave gradient i_crit
+ * @property {number} factor_of_safety - Factor of safety against boiling FS = i_crit / i_exit
+ * @property {string} hazard_tier - Piping hazard tier classification
+ * @property {boolean} boil_risk_detected - Boolean flag indicating sand boiling condition
+ */
+
+/**
+ * @typedef {Object} TerzaghiCriticalGradientResult
+ * @property {number} critical_gradient - Terzaghi critical gradient i_crit = (Gs - 1) / (1 + e)
+ * @property {number} submerged_unit_weight_kn_m3 - Submerged unit weight gamma' (kN/m3)
+ * @property {number} saturated_unit_weight_kn_m3 - Saturated unit weight gamma_sat (kN/m3)
+ * @property {number} water_unit_weight_kn_m3 - Unit weight of water (kN/m3)
+ * @property {number} specific_gravity - Specific gravity Gs
+ * @property {number} void_ratio - Void ratio e
+ * @property {number} porosity - Porosity n = e / (1 + e)
+ */
+
+/**
+ * @typedef {Object} SellmeijerCriticalHeadResult
+ * @property {number} critical_head_m - Critical hydraulic head difference Delta H_c (m)
+ * @property {number} critical_gradient - Critical average piping gradient Delta H_c / L
+ * @property {number} applied_head_m - Applied hydraulic head difference Delta H (m)
+ * @property {number} applied_gradient - Applied average gradient Delta H / L
+ * @property {number} factor_of_safety - Piping factor of safety Delta H_c / Delta H
+ * @property {number} resistance_factor_fr - Sellmeijer resistance factor F_R
+ * @property {number} scale_factor_fs - Sellmeijer scale factor F_S
+ * @property {number} geometry_factor_fg - Sellmeijer geometry factor F_G
+ * @property {number} pipe_progression_length_m - Estimated backward erosion pipe length (m)
+ * @property {number} pipe_length_ratio - Normalized pipe penetration ratio l_pipe / L
+ * @property {boolean} breakthrough_risk - Flag indicating imminent piping breakthrough
+ */
+
+/**
+ * @typedef {Object} SeepageFlownetResult
+ * @property {number} upstream_head_m - Upstream reservoir head (m)
+ * @property {number} downstream_head_m - Downstream tailwater head (m)
+ * @property {number} total_head_loss_m - Total head loss Delta H (m)
+ * @property {number} potential_drops_nd - Number of equipotential drops Nd
+ * @property {number} flow_channels_nf - Number of flow channels Nf
+ * @property {number} shape_factor - Flownet shape factor Nf / Nd
+ * @property {number} unit_seepage_flow_rate_m3s_m - Seepage discharge per unit width q (m3/s/m)
+ * @property {number} max_exit_gradient - Peak exit gradient at toe i_exit_max
+ * @property {number} critical_exit_gradient - Critical heave gradient i_crit
+ * @property {number} min_factor_of_safety - Minimum Factor of Safety against boiling along toe
+ * @property {string} worst_hazard_tier - Worst piping hazard tier across all exit stations
+ * @property {number} streamlines_count - Number of computed streamline paths
+ * @property {number} equipotentials_count - Number of computed equipotential contour lines
+ * @property {number} grid_resolution_m - Spatial grid cell spacing (m)
+ * @property {ExitGradientStation[]} exit_stations - Downstream toe monitoring stations
+ * @property {FlownetEquipotentialNode[]} equipotentials - Discrete equipotential lines
+ * @property {FlownetStreamlineNode[]} streamlines - Discrete streamline flow paths
+ * @property {Object} flownet_geojson - GeoJSON feature collection of streamlines and equipotentials
+ * @property {string} tile_url_template - XYZ tile template for dynamic flownet layers
+ */
+
+/**
+ * @typedef {Object} InternalErosionPipingAnalysisRequest
+ * @property {string} [simulation_id] - Optional simulation identifier
+ * @property {string} [dam_id='DAM_TAILINGS_01'] - Dam asset identifier
+ * @property {string} [dam_name='Tailings Embankment Facility'] - Dam asset name
+ * @property {string} [soil_classification='medium_sand'] - Soil classification preset
+ * @property {string} [failure_mechanism='backward_erosion'] - Primary piping mechanism
+ * @property {SoilPipingParameters} [soil_parameters] - Custom soil parameters
+ * @property {number} [upstream_head_m=24.0] - Upstream reservoir head (m)
+ * @property {number} [downstream_head_m=4.0] - Downstream tailwater head (m)
+ * @property {number} [embankment_base_length_m=60.0] - Seepage path / base length L (m)
+ * @property {number} [aquifer_depth_m=18.0] - Pervious foundation aquifer thickness D (m)
+ * @property {number} [potential_drops_nd=12] - Number of equipotential drops Nd
+ * @property {number} [flow_channels_nf=4] - Number of flow channels Nf
+ * @property {number} [grid_nx=25] - Horizontal mesh resolution Nx
+ * @property {number} [grid_nz=15] - Vertical mesh resolution Nz
+ * @property {number} [toe_filter_permeability_ratio=10.0] - Permeability multiplier of downstream toe filter
+ */
+
+/**
+ * @typedef {Object} InternalErosionPipingAnalysisResponse
+ * @property {string} simulation_id - Unique simulation identifier
+ * @property {string} dam_id - Dam asset identifier
+ * @property {string} dam_name - Dam asset name
+ * @property {string} soil_preset_used - Soil preset identifier used for analysis
+ * @property {TerzaghiCriticalGradientResult} terzaghi_gradient - Terzaghi critical hydraulic gradient metrics
+ * @property {SellmeijerCriticalHeadResult} sellmeijer_bep - Sellmeijer backward erosion piping results
+ * @property {SeepageFlownetResult} flownet_seepage - 2D Laplace seepage flownet and exit gradient results
+ * @property {number} global_factor_of_safety - Governing factor of safety against internal erosion
+ * @property {string} overall_hazard_tier - Overall internal erosion hazard tier
+ * @property {boolean} sand_boiling_imminent - Flag indicating imminent sand boiling or piping breach
+ * @property {string} tile_url_template - Dynamic XYZ tile URL template for flownet layers
+ * @property {string} analyzed_at - ISO 8601 UTC analysis timestamp
+ */
+
+/**
+ * Analyzes internal erosion and backward erosion piping (BEP) susceptibility
+ * using Terzaghi critical gradient, Sellmeijer (1988) critical head, and 2D Laplace seepage flownet.
+ * 
+ * @param {InternalErosionPipingAnalysisRequest} params - Internal erosion analysis request parameters
+ * @returns {Promise<InternalErosionPipingAnalysisResponse>} Complete piping analysis and flownet response
+ */
+export const analyzeInternalErosionPiping = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/internal-erosion-piping', params);
+  return response.data;
+};
+
+export const simulateInternalErosionPiping = analyzeInternalErosionPiping;
+
+/**
+ * Solves 2D Laplace steady seepage potential grid, stream function, and exit gradient distribution.
+ * 
+ * @param {Object} params - Seepage domain geometry, reservoir/tailwater heads, and grid discretization
+ * @returns {Promise<SeepageFlownetResult>} Equipotentials, streamlines, exit stations, and shape factor
+ */
+export const calculateSeepageFlownet = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/seepage-flownet', params);
+  return response.data;
+};
+
+export const simulateSeepageFlownet = calculateSeepageFlownet;
+
+/**
+ * Retrieves a previously computed internal erosion piping simulation by execution ID.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @returns {Promise<InternalErosionPipingAnalysisResponse>} Stored internal erosion simulation results
+ */
+export const fetchInternalErosionSimulation = async (simId) => {
+  const response = await giosApi.get(`/api/v1/analysis/geotechnical/internal-erosion-piping/${simId}`);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic XYZ tile streaming URL template for geotechnical seepage flownet raster layers.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @param {string} [metric='hydraulic_head'] - Raster metric ('hydraulic_head' | 'hydraulic_gradient' | 'exit_gradient' | 'factor_of_safety' | 'streamline_potential' | 'pore_pressure')
+ * @returns {string} Dynamic tile URL template
+ */
+export const getFlownetTileUrlTemplate = (simId, metric = 'hydraulic_head') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/geotechnical/flownet/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildFlownetTileUrlTemplateInternal = getFlownetTileUrlTemplate;
 
 export default giosApi;
 
