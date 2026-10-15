@@ -60,7 +60,9 @@ import {
   evaluateBandMathFormula,
   parseBandMathAst,
   BAND_MATH_PRESETS,
-  buildCustomExpressionTileUrlTemplate
+  buildCustomExpressionTileUrlTemplate,
+  calculateElevationTransectProfile,
+  buildDemTileUrlTemplate
 } from '../config/constants.js';
 
 export {
@@ -2855,6 +2857,79 @@ const demoAdapter = async (config) => {
           };
         } else {
           data = { is_valid: true, message: 'Custom expression endpoint reached.' };
+        }
+      }
+      else if (url.includes('/api/v1/analysis/dem') || url.includes('/analysis/dem')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (url.includes('/transect')) {
+          const startPt = parsed.start_point || parsed.startPoint || [37.05, -121.05];
+          const endPt = parsed.end_point || parsed.endPoint || [37.045, -121.045];
+          const samples = parsed.samples || 50;
+          data = calculateElevationTransectProfile(startPt, endPt, {
+            samples,
+            collection: parsed.collection || 'cop-dem-glo-30',
+            crestElevation: parsed.crest_elevation || parsed.crestElevation || 1250.0,
+            toeElevation: parsed.toe_elevation || parsed.toeElevation || 1110.0
+          });
+        } else if (url.includes('/slope-hazard')) {
+          data = {
+            analysis_id: `DEM-HAZARD-${Date.now()}`,
+            collection: parsed.collection || 'cop-dem-glo-30',
+            total_area_hectares: 450.0,
+            tier_breakdown: {
+              flat: { area_ha: 120.0, percentage: 26.67, risk_level: 'low' },
+              gentle: { area_ha: 155.0, percentage: 34.44, risk_level: 'low' },
+              moderate: { area_ha: 110.0, percentage: 24.44, risk_level: 'moderate' },
+              steep: { area_ha: 50.0, percentage: 11.11, risk_level: 'high' },
+              critical_hazard: { area_ha: 15.0, percentage: 3.33, risk_level: 'severe' }
+            },
+            critical_slope_hectares: 15.0,
+            critical_slope_percentage: 3.33,
+            overall_hazard_rating: 'moderate',
+            analyzed_at: new Date().toISOString()
+          };
+        } else {
+          // /api/v1/analysis/dem/topography
+          data = {
+            simulation_id: `DEM-TOPO-${Date.now()}`,
+            collection: parsed.collection || 'cop-dem-glo-30',
+            bbox: parsed.bbox || [-121.1, 37.0, -121.0, 37.1],
+            summary: {
+              min_elevation_m: 840.5,
+              max_elevation_m: 1395.2,
+              mean_elevation_m: 1120.8,
+              elevation_relief_m: 554.7,
+              mean_slope_deg: 18.4,
+              max_slope_deg: 41.2,
+              dominant_aspect_compass: 'NW',
+              mean_twi: 8.65,
+              high_seepage_area_pct: 14.8,
+              critical_slope_area_pct: 3.2
+            },
+            sun_illumination: {
+              azimuth_deg: parsed.sun_azimuth_deg || 315.0,
+              altitude_deg: parsed.sun_altitude_deg || 45.0,
+              zenith_deg: 90.0 - (parsed.sun_altitude_deg || 45.0),
+              z_factor: parsed.z_factor || 1.0
+            },
+            hazard_distribution: {
+              flat: 26.67,
+              gentle: 34.44,
+              moderate: 24.44,
+              steep: 11.11,
+              critical_hazard: 3.34
+            },
+            tile_url_templates: {
+              relief: '/api/v1/tiles/dem/relief/{z}/{x}/{y}.png',
+              elevation: '/api/v1/tiles/dem/elevation/{z}/{x}/{y}.png',
+              slope: '/api/v1/tiles/dem/slope/{z}/{x}/{y}.png',
+              aspect: '/api/v1/tiles/dem/aspect/{z}/{x}/{y}.png',
+              hillshade: '/api/v1/tiles/dem/hillshade/{z}/{x}/{y}.png',
+              twi: '/api/v1/tiles/dem/twi/{z}/{x}/{y}.png'
+            },
+            analyzed_at: new Date().toISOString()
+          };
         }
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
@@ -7769,6 +7844,71 @@ export const getCustomExpressionTileUrlTemplate = (expr, options = {}) => {
   return buildCustomExpressionTileUrlTemplate(expr, options);
 };
 
+/**
+ * @typedef {Object} DemTopographyParams
+ * @property {number[]} [bbox] - Bounding box [min_lon, min_lat, max_lon, max_lat]
+ * @property {string} [collection='cop-dem-glo-30'] - Source DEM collection
+ * @property {number} [target_resolution_m=30.0] - Target resolution in meters
+ * @property {number} [sun_azimuth_deg=315.0] - Solar azimuth in degrees
+ * @property {number} [sun_altitude_deg=45.0] - Solar altitude in degrees
+ * @property {number} [z_factor=1.0] - Vertical exaggeration multiplier
+ * @property {number} [specific_catchment_area_m=100.0] - Specific catchment area for TWI
+ */
+
+/**
+ * Fetches comprehensive DEM topography summary, relief metrics, and tile templates.
+ * 
+ * @param {DemTopographyParams} [params={}] - Topography request parameters
+ * @returns {Promise<Object>} Summary statistics, elevation relief, slope/aspect, and tile URLs
+ */
+export const fetchDemTopographyAnalysis = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/dem/topography', params);
+  return response.data;
+};
+
+/**
+ * Extracts a crest-to-toe cross-sectional elevation and slope transect profile.
+ * 
+ * @param {number[]} startPoint - [lat, lon] starting coordinates (crest)
+ * @param {number[]} endPoint - [lat, lon] ending coordinates (toe)
+ * @param {Object} [options={}] - Optional samples count, collection, z_factor
+ * @returns {Promise<Object>} Transect points with elevation, slope, TWI, and hazard tiers
+ */
+export const fetchDemElevationTransect = async (startPoint, endPoint, options = {}) => {
+  const payload = {
+    start_point: startPoint,
+    end_point: endPoint,
+    samples: options.samples || 50,
+    collection: options.collection || 'cop-dem-glo-30',
+    z_factor: options.z_factor !== undefined ? options.z_factor : 1.0,
+    ...options
+  };
+  const response = await giosApi.post('/api/v1/analysis/dem/transect', payload);
+  return response.data;
+};
+
+/**
+ * Evaluates geotechnical slope hazard zonification across an AOI.
+ * 
+ * @param {Object} [params={}] - Bounding box, critical threshold, and collection
+ * @returns {Promise<Object>} Slope tier area distribution and critical slope percentage
+ */
+export const fetchDemSlopeHazardAnalysis = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/dem/slope-hazard', params);
+  return response.data;
+};
+
+/**
+ * Constructs a dynamic Leaflet tile URL template for DEM relief and morphometric metrics.
+ * 
+ * @param {string} [metric='relief'] - Target metric ('relief', 'elevation', 'slope', 'aspect', 'hillshade', 'twi')
+ * @param {Object} [options={}] - Colormap, rescale, sunAzimuth, sunAltitude, zFactor
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const getDemTileUrlTemplate = (metric = 'relief', options = {}) => {
+  return buildDemTileUrlTemplate(metric, options);
+};
+
 export {
   InSARDeformationHazardTier,
   INSAR_HAZARD_CONFIGS,
@@ -7853,7 +7993,26 @@ export {
   evaluateBandMathAst,
   evaluateBandMathFormula,
   buildCustomExpressionTileUrl,
-  buildCustomExpressionTileUrlTemplate
+  buildCustomExpressionTileUrlTemplate,
+  DEM_COLLECTION_IDS,
+  DEM_METRIC_TYPES,
+  SLOPE_UNITS,
+  DEM_SLOPE_HAZARD_TIERS,
+  DEM_COLLECTIONS_METADATA,
+  DEM_METRIC_CONFIGS,
+  DEM_SLOPE_HAZARD_CONFIGS,
+  DEFAULT_DEM_SUN_ILLUMINATION,
+  DEM_COLORMAPS_METADATA,
+  aspectToCompassDirection,
+  calculateHornGradient,
+  calculateTerrainSlope,
+  calculateCompassAspect,
+  calculateLambertianHillshade,
+  calculateDemTopographicWetnessIndex,
+  classifyDemSlopeHazardTier,
+  calculateElevationTransectProfile,
+  buildDemTileUrl,
+  buildDemTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;

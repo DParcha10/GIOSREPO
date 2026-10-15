@@ -53,6 +53,13 @@ DEFAULT_INDEX_RANGES = {
     "elevation_diff": (-10.0, 10.0),
     "difference": (-0.3, 0.3),
     "twi": (2.0, 14.0),
+    "dem_elevation": (0.0, 2000.0),
+    "dem_slope": (0.0, 45.0),
+    "dem_aspect": (0.0, 360.0),
+    "dem_hillshade": (0.0, 255.0),
+    "dem_twi": (2.0, 16.0),
+    "dem_relief": (0.0, 2000.0),
+    "relief": (0.0, 2000.0),
     "slope_stability": (0.8, 2.5),
     "fs": (0.8, 2.5),
     "water_quality": (0.0, 0.4),
@@ -475,33 +482,24 @@ class TileService:
                 val = 0.10 + base_variation * 0.70
             elif idx_clean == "savi":
                 val = 0.10 + base_variation * 0.65
-            elif col_clean in {"terrain", "cop-dem-glo-30"}:
-                target_metric = item_id.lower() if item_id.lower() in {"elevation", "slope", "aspect", "hillshade"} else idx_clean
+            elif col_clean in {"terrain", "cop-dem-glo-30", "dem"} or idx_clean in {"dem_elevation", "dem_slope", "dem_aspect", "dem_hillshade", "dem_twi", "dem_relief", "relief"}:
+                target_metric = item_id.lower() if item_id.lower() in {"elevation", "slope", "aspect", "hillshade", "twi", "relief"} else idx_clean
+                target_metric = target_metric.replace("dem_", "")
+                mid_lat = (min_lat + max_lat) / 2.0
+                dx_m = max((max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat)) / 256.0, 1.0)
+                dy_m = max((max_lat - min_lat) * 111320.0 / 256.0, 1.0)
                 elev = 150.0 + (np.sin(xx * 30.0) * np.cos(yy * 30.0) + 1.0) * 180.0 + (xx - min_lon) / (max_lon - min_lon + 1e-6) * 120.0
+                dz_dx, dz_dy, mag, slope_deg, aspect_deg = self.vectorized_horn_gradient(elev, dx_m, dy_m, 1.0)
                 if target_metric == "elevation":
                     val = elev
                 elif target_metric == "slope":
-                    mid_lat = (min_lat + max_lat) / 2.0
-                    dx_m = max((max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat)) / 256.0, 1.0)
-                    dy_m = max((max_lat - min_lat) * 111320.0 / 256.0, 1.0)
-                    dz_dy, dz_dx = np.gradient(elev, dy_m, dx_m)
-                    val = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
+                    val = slope_deg
                 elif target_metric == "aspect":
-                    mid_lat = (min_lat + max_lat) / 2.0
-                    dx_m = max((max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat)) / 256.0, 1.0)
-                    dy_m = max((max_lat - min_lat) * 111320.0 / 256.0, 1.0)
-                    dz_dy, dz_dx = np.gradient(elev, dy_m, dx_m)
-                    val = (np.degrees(np.arctan2(dz_dy, -dz_dx)) + 360.0) % 360.0
+                    val = np.where(aspect_deg < 0.0, 0.0, aspect_deg)
                 elif target_metric == "hillshade":
-                    mid_lat = (min_lat + max_lat) / 2.0
-                    dx_m = max((max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat)) / 256.0, 1.0)
-                    dy_m = max((max_lat - min_lat) * 111320.0 / 256.0, 1.0)
-                    dz_dy, dz_dx = np.gradient(elev, dy_m, dx_m)
-                    slope_rad = np.arctan(np.sqrt(dz_dx**2 + dz_dy**2))
-                    aspect_rad = np.arctan2(dz_dy, -dz_dx)
-                    zenith_rad = math.radians(45.0)
-                    azimuth_rad = math.radians(315.0)
-                    val = np.clip(255.0 * (math.cos(zenith_rad) * np.cos(slope_rad) + math.sin(zenith_rad) * np.sin(slope_rad) * np.cos(azimuth_rad - aspect_rad)), 0.0, 255.0)
+                    val = self.vectorized_lambertian_hillshade(slope_deg, aspect_deg, 315.0, 45.0)
+                elif target_metric == "twi":
+                    val = self.vectorized_topographic_wetness_index(slope_deg, 100.0)
                 else:
                     val = elev
             elif col_clean in {"sar", "sentinel-1-rtc", "sentinel-1"}:
@@ -1593,13 +1591,12 @@ class TileService:
         rescale: Optional[str] = None
     ) -> bytes:
         """Renders 256x256 RGBA tile for digital elevation or terrain morphology."""
-        return self.render_tile(
-            collection="terrain",
-            item_id=metric,
+        return self.render_dem_tile(
             z=z,
             x=x,
             y=y,
-            index=metric,
+            metric=metric,
+            collection="cop-dem-glo-30",
             colormap=colormap,
             rescale=rescale
         )
@@ -3601,6 +3598,332 @@ class TileService:
                 f.write(png_bytes)
         except Exception as e:
             logger.warning("Failed to write custom expression tile cache: %s", e)
+
+        return png_bytes
+
+    def render_dem_tile(
+        self,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "relief",
+        collection: str = "cop-dem-glo-30",
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, Tuple[float, float], List[float]]] = None,
+        sun_azimuth: float = 315.0,
+        sun_altitude: float = 45.0,
+        z_factor: float = 1.0,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile for DEM relief, elevation, slope, aspect, hillshade, or TWI."""
+        import hashlib
+        from app.models.schemas import DEM_METRIC_CONFIGS, parse_rescale
+
+        actual_z = int(z)
+        actual_x = int(x)
+        actual_y = int(y)
+        metric_clean = (metric or "relief").lower().replace("-", "_").strip()
+        col_clean = (collection or "cop-dem-glo-30").lower().strip()
+
+        cfg = DEM_METRIC_CONFIGS.get(metric_clean, DEM_METRIC_CONFIGS.get("elevation", {}))
+        default_cmap = cfg.get("default_colormap", "terrain")
+        default_rescale = cfg.get("default_rescale", "0,3000")
+
+        chosen_cmap = colormap.lower().strip() if colormap else default_cmap
+        base_cmap = chosen_cmap.replace("_r", "")
+        if base_cmap not in {"terrain", "rdylgn", "twilight", "gray", "blues", "viridis", "spectral", "plasma", "magma", "turbo", "inferno"}:
+            chosen_cmap = default_cmap
+
+        if rescale:
+            rmin, rmax = parse_rescale(rescale, default=(0.0, 3000.0))
+        else:
+            rmin, rmax = parse_rescale(default_rescale, default=(0.0, 3000.0))
+
+        if rmax <= rmin:
+            rmax = rmin + 1.0
+
+        cache_params = f"{metric_clean}_{chosen_cmap}_{rmin}_{rmax}_{sun_azimuth}_{sun_altitude}_{z_factor}"
+        param_hash = hashlib.md5(cache_params.encode("utf-8")).hexdigest()[:10]
+        cache_subdir = os.path.join(TILE_CACHE_DIR, "dem", col_clean, str(actual_z), str(actual_x))
+        os.makedirs(cache_subdir, exist_ok=True)
+        cache_file = os.path.join(cache_subdir, f"{actual_y}_{param_hash}.png")
+
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "rb") as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning("Error reading DEM tile cache %s: %s", cache_file, e)
+
+        min_lon, min_lat, max_lon, max_lat = self.tile_to_bounds_wgs84(actual_z, actual_x, actual_y)
+        gx = np.linspace(min_lon, max_lon, 256, dtype=np.float32)
+        gy = np.linspace(max_lat, min_lat, 256, dtype=np.float32)
+        xx, yy = np.meshgrid(gx, gy)
+
+        mid_lat = (min_lat + max_lat) / 2.0
+        dx_m = max((max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat)) / 256.0, 1.0)
+        dy_m = max((max_lat - min_lat) * 111320.0 / 256.0, 1.0)
+
+        elev = 800.0 + (np.sin(xx * 25.0) * np.cos(yy * 25.0) + 1.0) * 450.0 + \
+               (np.sin(xx * 70.0) * np.sin(yy * 70.0)) * 120.0 + \
+               (xx - min_lon) / (max_lon - min_lon + 1e-6) * 350.0
+        elev = elev * z_factor
+
+        dz_dy, dz_dx = np.gradient(elev, dy_m, dx_m)
+        slope_rad = np.arctan(np.sqrt(dz_dx**2 + dz_dy**2))
+        slope_deg = np.degrees(slope_rad)
+        aspect_deg = (90.0 - np.degrees(np.arctan2(dz_dy, -dz_dx))) % 360.0
+        aspect_rad = np.radians(aspect_deg)
+
+        zenith_rad = math.radians(90.0 - sun_altitude)
+        azimuth_rad = math.radians(sun_azimuth)
+        hillshade = np.clip(
+            255.0 * (math.cos(zenith_rad) * np.cos(slope_rad) +
+                     math.sin(zenith_rad) * np.sin(slope_rad) * np.cos(azimuth_rad - aspect_rad)),
+            0.0, 255.0
+        )
+
+        tan_slope = np.maximum(np.tan(slope_rad), 0.001)
+        accum_m = 50.0 + 150.0 * (1.0 - (elev - elev.min()) / (elev.max() - elev.min() + 1e-6))
+        twi_grid = np.log(accum_m / tan_slope)
+
+        if metric_clean == "elevation":
+            norm_val = np.clip((elev - rmin) / (rmax - rmin), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+        elif metric_clean == "slope":
+            norm_val = np.clip((slope_deg - rmin) / (rmax - rmin), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+        elif metric_clean == "aspect":
+            norm_val = np.clip((aspect_deg - rmin) / (rmax - rmin), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+        elif metric_clean == "hillshade":
+            hs_u8 = hillshade.astype(np.uint8)
+            alpha = np.full((256, 256), 255, dtype=np.uint8)
+            rgba = np.dstack([hs_u8, hs_u8, hs_u8, alpha])
+        elif metric_clean == "twi":
+            norm_val = np.clip((twi_grid - rmin) / (rmax - rmin), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+        elif metric_clean == "tri":
+            tri_grid = np.abs(dz_dx) * dx_m + np.abs(dz_dy) * dy_m
+            norm_val = np.clip((tri_grid - rmin) / (rmax - rmin), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+        else:
+            norm_val = np.clip((elev - rmin) / (rmax - rmin), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.float32)
+            illum = np.clip(hillshade / 255.0 * 1.1 + 0.05, 0.1, 1.0)
+            for c in range(3):
+                rgba[:, :, c] = np.clip(rgba[:, :, c] * illum, 0.0, 255.0)
+            rgba = rgba.astype(np.uint8)
+
+        img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        try:
+            with open(cache_file, "wb") as f:
+                f.write(png_bytes)
+        except Exception as e:
+            logger.warning("Failed to write DEM tile cache: %s", e)
+
+        return png_bytes
+
+    @staticmethod
+    def vectorized_horn_gradient(
+        elev: np.ndarray,
+        dx_m: float = 30.0,
+        dy_m: float = 30.0,
+        z_factor: float = 1.0
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Computes Horn's 3x3 weighted finite-difference gradient operator on 2D elevation grid.
+        
+        Returns:
+            (dz_dx, dz_dy, magnitude, slope_deg, aspect_deg)
+        """
+        from scipy.ndimage import correlate
+        
+        cell_dx = max(float(dx_m), 1.0)
+        cell_dy = max(float(dy_m), 1.0)
+        zf = max(float(z_factor), 1e-4)
+
+        kx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32) / (8.0 * cell_dx) * zf
+        ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], dtype=np.float32) / (8.0 * cell_dy) * zf
+
+        arr = elev.astype(np.float32)
+        dz_dx = correlate(arr, kx, mode="nearest")
+        dz_dy = correlate(arr, ky, mode="nearest")
+
+        mag = np.sqrt(dz_dx**2 + dz_dy**2)
+        slope_rad = np.arctan(mag)
+        slope_deg = np.degrees(slope_rad)
+
+        # Downhill compass aspect clockwise from North (0-360 deg, -1 for flat)
+        aspect_deg = np.where(mag < 1e-9, -1.0, (np.degrees(np.arctan2(-dz_dx, -dz_dy))) % 360.0)
+
+        return dz_dx, dz_dy, mag, slope_deg, aspect_deg
+
+    @staticmethod
+    def vectorized_lambertian_hillshade(
+        slope_deg: np.ndarray,
+        aspect_deg: np.ndarray,
+        sun_azimuth_deg: float = 315.0,
+        sun_altitude_deg: float = 45.0
+    ) -> np.ndarray:
+        """Calculates analytical Lambertian hillshade illumination bounded in [0.0, 255.0]."""
+        zenith_rad = math.radians(max(0.0, 90.0 - float(sun_altitude_deg)))
+        azimuth_rad = math.radians(float(sun_azimuth_deg) % 360.0)
+
+        slope_rad = np.radians(np.maximum(0.0, slope_deg))
+        aspect_rad = np.radians(np.maximum(0.0, aspect_deg))
+
+        cos_i = np.where(
+            (slope_deg <= 1e-6) | (aspect_deg < 0.0),
+            math.cos(zenith_rad),
+            math.cos(zenith_rad) * np.cos(slope_rad) + math.sin(zenith_rad) * np.sin(slope_rad) * np.cos(azimuth_rad - aspect_rad)
+        )
+        return np.clip(255.0 * cos_i, 0.0, 255.0).astype(np.float32)
+
+    @staticmethod
+    def vectorized_topographic_wetness_index(
+        slope_deg: np.ndarray,
+        specific_catchment_area_m: float = 100.0,
+        min_tan_slope: float = 0.001
+    ) -> np.ndarray:
+        """Calculates Topographic Wetness Index (TWI): ln(a / tan(beta))."""
+        slope_rad = np.radians(np.maximum(0.0, slope_deg))
+        tan_slope = np.maximum(float(min_tan_slope), np.tan(slope_rad))
+        sca = max(1.0, float(specific_catchment_area_m))
+        return np.log(sca / tan_slope).astype(np.float32)
+
+    def render_dem_tile(
+        self,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "relief",
+        collection: str = "cop-dem-glo-30",
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, Tuple[float, float], List[float]]] = None,
+        sun_azimuth: float = 315.0,
+        sun_altitude: float = 45.0,
+        z_factor: float = 1.0,
+        specific_catchment_area: float = 100.0,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile for DEM topographic relief, elevation, slope, aspect, hillshade, or TWI."""
+        from PIL import Image
+        import io
+        from app.models.schemas import parse_rescale
+
+        actual_z = int(z)
+        actual_x = int(x)
+        actual_y = int(y)
+        metric_clean = (metric or "relief").lower().strip()
+        col_clean = (collection or "cop-dem-glo-30").lower().strip()
+        sun_az = float(sun_azimuth) % 360.0
+        sun_alt = max(0.0, min(90.0, float(sun_altitude)))
+        zf = max(1e-4, float(z_factor))
+
+        metric_defaults = {
+            "relief": ("terrain", (0.0, 1500.0)),
+            "elevation": ("terrain", (0.0, 1500.0)),
+            "slope": ("rdylgn_r", (0.0, 45.0)),
+            "aspect": ("spectral", (0.0, 360.0)),
+            "hillshade": ("greys", (0.0, 255.0)),
+            "twi": ("blues", (2.0, 14.0))
+        }
+
+        default_cmap, default_bounds = metric_defaults.get(metric_clean, ("terrain", (0.0, 1500.0)))
+        chosen_cmap = colormap.lower().strip() if colormap else default_cmap
+        if chosen_cmap in {"gray", "grey"}:
+            chosen_cmap = "greys"
+
+        if rescale:
+            rmin, rmax = parse_rescale(rescale, default=default_bounds)
+        else:
+            rmin, rmax = default_bounds
+
+        if rmax <= rmin:
+            rmax = rmin + 1e-4
+
+        rescale_key = f"{round(rmin, 2)}_{round(rmax, 2)}"
+        cache_subdir = os.path.join(TILE_CACHE_DIR, "dem", col_clean, metric_clean, str(actual_z), str(actual_x))
+        os.makedirs(cache_subdir, exist_ok=True)
+        cache_file = os.path.join(
+            cache_subdir,
+            f"{actual_y}_{chosen_cmap}_{rescale_key}_{int(sun_az)}_{int(sun_alt)}_{round(zf, 2)}.png"
+        )
+
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "rb") as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning("Error reading DEM tile cache %s: %s", cache_file, e)
+
+        min_lon, min_lat, max_lon, max_lat = self.tile_to_bounds_wgs84(actual_z, actual_x, actual_y)
+        mid_lat = (min_lat + max_lat) / 2.0
+        dx_m = max((max_lon - min_lon) * 111320.0 * math.cos(math.radians(mid_lat)) / 256.0, 1.0)
+        dy_m = max((max_lat - min_lat) * 111320.0 / 256.0, 1.0)
+
+        gx = np.linspace(min_lon, max_lon, 256, dtype=np.float32)
+        gy = np.linspace(max_lat, min_lat, 256, dtype=np.float32)
+        xx, yy = np.meshgrid(gx, gy)
+
+        regional_tilt = (xx - min_lon) / max(max_lon - min_lon, 1e-6) * 220.0 - (yy - min_lat) / max(max_lat - min_lat, 1e-6) * 160.0
+        macro_terrain = np.sin(xx * 30.0 + yy * 15.0) * 180.0 + np.cos(yy * 25.0 - xx * 10.0) * 140.0
+        meso_valleys = np.sin(xx * 90.0) * np.cos(yy * 80.0) * 45.0 + np.sin((xx + yy) * 120.0) * 25.0
+        micro_texture = np.sin(xx * 250.0) * np.cos(yy * 220.0) * 8.0
+        elev = np.maximum(350.0 + regional_tilt + macro_terrain + meso_valleys + micro_texture, 5.0).astype(np.float32)
+
+        dz_dx, dz_dy, mag, slope_deg, aspect_deg = self.vectorized_horn_gradient(elev, dx_m, dy_m, zf)
+        hillshade = self.vectorized_lambertian_hillshade(slope_deg, aspect_deg, sun_az, sun_alt)
+        twi = self.vectorized_topographic_wetness_index(slope_deg, specific_catchment_area)
+
+        if metric_clean == "relief":
+            norm_elev = np.clip((elev - rmin) / (rmax - rmin + 1e-6), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            color_rgb = cmap_func(norm_elev)[:, :, :3]
+            illum_factor = (hillshade / 255.0)[:, :, np.newaxis]
+            shaded_rgb = np.clip(color_rgb * (0.35 + 0.65 * illum_factor), 0.0, 1.0)
+            rgba = np.zeros((256, 256, 4), dtype=np.uint8)
+            rgba[:, :, :3] = (shaded_rgb * 255.0).astype(np.uint8)
+            rgba[:, :, 3] = 255
+        else:
+            if metric_clean == "elevation":
+                target_arr = elev
+            elif metric_clean == "slope":
+                target_arr = slope_deg
+            elif metric_clean == "aspect":
+                target_arr = np.where(aspect_deg < 0.0, 0.0, aspect_deg)
+            elif metric_clean == "hillshade":
+                target_arr = hillshade
+            elif metric_clean == "twi":
+                target_arr = twi
+            else:
+                target_arr = elev
+
+            norm_val = np.clip((target_arr - rmin) / (rmax - rmin + 1e-6), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+            rgba[:, :, 3] = 255
+
+        img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        try:
+            with open(cache_file, "wb") as f:
+                f.write(png_bytes)
+        except Exception as e:
+            logger.warning("Failed to write DEM tile cache: %s", e)
 
         return png_bytes
 

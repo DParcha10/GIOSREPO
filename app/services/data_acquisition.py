@@ -631,4 +631,30 @@ class DataAcquisitionService:
             ]
         return all_scenes
 
+    def load_cop_dem_cube(
+        self,
+        bbox: Union[Tuple[float, float, float, float], List[float], str, Dict[str, float], BoundingBox],
+        resolution: float = 30.0,
+        crs: str = "EPSG:3857"
+    ) -> xr.Dataset:
+        """Loads a Copernicus 30m Global DEM (GLO-30) raster cube via Planetary Computer STAC and odc-stac."""
+        bbox_norm = parse_bbox(bbox)
+        scenes = self.search_scenes(
+            bbox=bbox_norm,
+            start_date="2021-01-01",
+            end_date="2026-12-31",
+            collection="cop-dem-glo-30"
+        )
+        stac_items = [s.get("_stac_item") for s in scenes if s.get("_stac_item")] if scenes else []
+        if not stac_items and scenes:
+            stac_items = scenes
+        return self.load_data_cube(
+            items=stac_items or [{"id": "COP_DEM_GLO_30_T10SEJ", "collection": "cop-dem-glo-30"}],
+            bands=["data"],
+            bbox=bbox_norm,
+            crs=crs,
+            resolution=resolution,
+            collection="cop-dem-glo-30"
+        )
+
 data_acquisition_service = DataAcquisitionService()

@@ -1068,7 +1068,23 @@ export const API_ENDPOINTS = {
   ANALYSIS_CUSTOM_EXPRESSION_PRESETS_SHORT: '/analysis/custom-expression/presets',
   TILES_CUSTOM_EXPRESSION: (z, x, y) => `/api/v1/tiles/custom-expression/${z}/${x}/${y}.png`,
   TILES_CUSTOM_EXPRESSION_COLLECTION: (collection, itemId, z, x, y) => `/api/v1/tiles/${collection}/${itemId}/custom-expression/${z}/${x}/${y}.png`,
-  TILES_CUSTOM_EXPRESSION_SHORT: (z, x, y) => `/tiles/custom-expression/${z}/${x}/${y}.png`
+  TILES_CUSTOM_EXPRESSION_SHORT: (z, x, y) => `/tiles/custom-expression/${z}/${x}/${y}.png`,
+  ANALYSIS_DEM_TOPOGRAPHY: '/api/v1/analysis/dem/topography',
+  ANALYSIS_DEM_TOPOGRAPHY_SHORT: '/analysis/dem/topography',
+  ANALYSIS_DEM_TRANSECT: '/api/v1/analysis/dem/transect',
+  ANALYSIS_DEM_TRANSECT_SHORT: '/analysis/dem/transect',
+  ANALYSIS_DEM_SLOPE_HAZARD: '/api/v1/analysis/dem/slope-hazard',
+  ANALYSIS_DEM_SLOPE_HAZARD_SHORT: '/analysis/dem/slope-hazard',
+  TILES_DEM_RELIEF: (z, x, y) => `/api/v1/tiles/dem/relief/${z}/${x}/${y}.png`,
+  TILES_DEM_RELIEF_SHORT: (z, x, y) => `/tiles/dem/relief/${z}/${x}/${y}.png`,
+  TILES_DEM_METRIC: (metric, z, x, y) => `/api/v1/tiles/dem/${metric}/${z}/${x}/${y}.png`,
+  TILES_DEM_METRIC_SHORT: (metric, z, x, y) => `/tiles/dem/${metric}/${z}/${x}/${y}.png`,
+  TILES_DEM_HILLSHADE: (z, x, y) => `/api/v1/tiles/dem/hillshade/${z}/${x}/${y}.png`,
+  TILES_DEM_HILLSHADE_SHORT: (z, x, y) => `/tiles/dem/hillshade/${z}/${x}/${y}.png`,
+  TILES_DEM_SLOPE: (z, x, y) => `/api/v1/tiles/dem/slope/${z}/${x}/${y}.png`,
+  TILES_DEM_SLOPE_SHORT: (z, x, y) => `/tiles/dem/slope/${z}/${x}/${y}.png`,
+  TILES_DEM_TWI: (z, x, y) => `/api/v1/tiles/dem/twi/${z}/${x}/${y}.png`,
+  TILES_DEM_TWI_SHORT: (z, x, y) => `/tiles/dem/twi/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1336,6 +1352,18 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(params.z, params.x, params.y);
       case 'TILES_CUSTOM_EXPRESSION_COLLECTION':
         return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'S2_SCENE', params.z, params.x, params.y);
+      case 'TILES_DEM_RELIEF':
+      case 'TILES_DEM_RELIEF_SHORT':
+      case 'TILES_DEM_HILLSHADE':
+      case 'TILES_DEM_HILLSHADE_SHORT':
+      case 'TILES_DEM_SLOPE':
+      case 'TILES_DEM_SLOPE_SHORT':
+      case 'TILES_DEM_TWI':
+      case 'TILES_DEM_TWI_SHORT':
+        return endpoint(params.z, params.x, params.y);
+      case 'TILES_DEM_METRIC':
+      case 'TILES_DEM_METRIC_SHORT':
+        return endpoint(params.metric || 'elevation', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -18279,3 +18307,570 @@ export const buildCustomExpressionTileUrlTemplate = (expr, options = {}) => {
 
 
 
+
+// ==============================================================================
+// CYCLE v2.5.26: COPERNICUS 30m DEM (GLO-30) COG STAC ASSET CONTRACTS,
+// HORN 3x3 SLOPE/ASPECT VECTOR FORMULAS, ANALYTICAL HILLSHADE ILLUMINATION
+// & TOPOGRAPHIC WETNESS INDEX (TWI) SCHEMAS
+// ==============================================================================
+
+export const DEM_COLLECTION_IDS = {
+  COP_DEM_GLO_30: 'cop-dem-glo-30',
+  COP_DEM_GLO_90: 'cop-dem-glo-90',
+  NASADEM: 'nasadem',
+  DRONE_DSM: 'drone-dsm'
+};
+
+export const DEM_METRIC_TYPES = {
+  ELEVATION: 'elevation',
+  SLOPE: 'slope',
+  ASPECT: 'aspect',
+  HILLSHADE: 'hillshade',
+  TWI: 'twi',
+  TRI: 'tri',
+  ROUGHNESS: 'roughness',
+  RELIEF: 'relief'
+};
+
+export const SLOPE_UNITS = {
+  DEGREES: 'degrees',
+  PERCENT: 'percent',
+  RADIANS: 'radians'
+};
+
+export const DEM_SLOPE_HAZARD_TIERS = {
+  FLAT: 'flat',
+  GENTLE: 'gentle',
+  MODERATE: 'moderate',
+  STEEP: 'steep',
+  CRITICAL_HAZARD: 'critical_hazard'
+};
+
+export const DEM_COLLECTIONS_METADATA = {
+  'cop-dem-glo-30': {
+    collection_id: 'cop-dem-glo-30',
+    name: 'Copernicus DEM GLO-30 (30m)',
+    provider: 'European Space Agency / Airbus / Planetary Computer',
+    spatial_resolution_m: 30.0,
+    horizontal_crs: 'EPSG:4326',
+    vertical_datum: 'EGM2008',
+    stac_asset_key: 'data',
+    stac_endpoint: 'https://planetarycomputer.microsoft.com/api/stac/v1',
+    coverage: 'Global (excluding non-land oceanic areas)',
+    accuracy_m: 4.0,
+    description: 'High-resolution 30-meter global Digital Surface Model derived from WorldDEM / TanDEM-X radar interferometry.'
+  },
+  'cop-dem-glo-90': {
+    collection_id: 'cop-dem-glo-90',
+    name: 'Copernicus DEM GLO-90 (90m)',
+    provider: 'European Space Agency / Airbus / Planetary Computer',
+    spatial_resolution_m: 90.0,
+    horizontal_crs: 'EPSG:4326',
+    vertical_datum: 'EGM2008',
+    stac_asset_key: 'data',
+    stac_endpoint: 'https://planetarycomputer.microsoft.com/api/stac/v1',
+    coverage: 'Global',
+    accuracy_m: 6.0,
+    description: '90-meter global elevation raster for regional watershed scale modeling.'
+  },
+  'nasadem': {
+    collection_id: 'nasadem',
+    name: 'NASADEM HGT v001 (30m)',
+    provider: 'NASA / JPL',
+    spatial_resolution_m: 30.0,
+    horizontal_crs: 'EPSG:4326',
+    vertical_datum: 'WGS84 / EGM96',
+    stac_asset_key: 'elevation',
+    stac_endpoint: 'https://planetarycomputer.microsoft.com/api/stac/v1',
+    coverage: 'Latitudes 60N to 56S',
+    accuracy_m: 6.0,
+    description: 'Reprocessed SRTM radar interferometry with ASTER GDEM void filling.'
+  },
+  'drone-dsm': {
+    collection_id: 'drone-dsm',
+    name: 'Drone Photogrammetry Centimeter DSM',
+    provider: 'GIOS NodeODM Bridge',
+    spatial_resolution_m: 0.05,
+    horizontal_crs: 'EPSG:3857 / UTM',
+    vertical_datum: 'Ellipsoidal WGS84',
+    stac_asset_key: 'dsm',
+    stac_endpoint: '/api/v1/drone/photogrammetry',
+    coverage: 'Local AOI Survey Extent',
+    accuracy_m: 0.03,
+    description: 'Centimeter-grade Digital Surface Model generated via Structure-from-Motion (SfM).'
+  }
+};
+
+export const DEM_METRIC_CONFIGS = {
+  elevation: {
+    metric: 'elevation',
+    name: 'Digital Elevation Model (DEM)',
+    unit: 'meters',
+    default_colormap: 'terrain',
+    default_rescale: '0,3000',
+    description: 'Topographic orthometric surface elevation above sea level.'
+  },
+  slope: {
+    metric: 'slope',
+    name: 'Terrain Slope Angle',
+    unit: 'degrees',
+    default_colormap: 'rdylgn_r',
+    default_rescale: '0,45',
+    description: "Local surface inclination angle derived via Horn's 3x3 finite difference operator."
+  },
+  aspect: {
+    metric: 'aspect',
+    name: 'Compass Aspect Direction',
+    unit: 'degrees (0-360)',
+    default_colormap: 'twilight',
+    default_rescale: '0,360',
+    description: 'Downhill compass azimuth direction of steepest descent from true North.'
+  },
+  hillshade: {
+    metric: 'hillshade',
+    name: 'Analytical Lambertian Hillshade',
+    unit: 'illumination (0-255)',
+    default_colormap: 'gray',
+    default_rescale: '0,255',
+    description: 'Illumination intensity modeled from solar azimuth and zenith geometry.'
+  },
+  twi: {
+    metric: 'twi',
+    name: 'Topographic Wetness Index (TWI)',
+    unit: 'dimensionless',
+    default_colormap: 'blues',
+    default_rescale: '2,18',
+    description: 'Steady-state soil moisture and seepage accumulation index: ln(a / tan(beta)).'
+  },
+  tri: {
+    metric: 'tri',
+    name: 'Terrain Ruggedness Index (TRI)',
+    unit: 'meters',
+    default_colormap: 'viridis',
+    default_rescale: '0,50',
+    description: 'Mean absolute elevation delta across adjacent 8-neighbor raster cells.'
+  },
+  relief: {
+    metric: 'relief',
+    name: 'Color Relief Shading',
+    unit: 'RGBA composite',
+    default_colormap: 'terrain',
+    default_rescale: '0,3000',
+    description: 'Hypsometric elevation color ramp blended with analytical Lambertian hillshade.'
+  }
+};
+
+export const DEM_SLOPE_HAZARD_CONFIGS = {
+  flat: {
+    tier: 'flat',
+    label: 'Flat (< 5°)',
+    min_degrees: 0.0,
+    max_degrees: 5.0,
+    risk_level: 'low',
+    hex_color: '#10b981',
+    badge: 'bg-emerald-900/60 text-emerald-300 border-emerald-500/50',
+    description: 'Impoundment basin tailings beach or valley flat; low slope instability risk.'
+  },
+  gentle: {
+    tier: 'gentle',
+    label: 'Gentle (5° - 15°)',
+    min_degrees: 5.0,
+    max_degrees: 15.0,
+    risk_level: 'low',
+    hex_color: '#3b82f6',
+    badge: 'bg-blue-900/60 text-blue-300 border-blue-500/50',
+    description: 'Low inclination terrain; stable under dry and moderate seepage conditions.'
+  },
+  moderate: {
+    tier: 'moderate',
+    label: 'Moderate (15° - 25°)',
+    min_degrees: 15.0,
+    max_degrees: 25.0,
+    risk_level: 'moderate',
+    hex_color: '#f59e0b',
+    badge: 'bg-amber-900/60 text-amber-300 border-amber-500/50',
+    description: 'Engineered embankment slope (approx 1V:2.5H to 1V:2.1H); requires regular surveillance.'
+  },
+  steep: {
+    tier: 'steep',
+    label: 'Steep (25° - 35°)',
+    min_degrees: 25.0,
+    max_degrees: 35.0,
+    risk_level: 'high',
+    hex_color: '#f97316',
+    badge: 'bg-orange-900/60 text-orange-300 border-orange-500/50',
+    description: 'Critical inclination approaching friction angle of uncompacted tailings (phi ~ 30-34 deg).'
+  },
+  critical_hazard: {
+    tier: 'critical_hazard',
+    label: 'Critical Hazard (> 35°)',
+    min_degrees: 35.0,
+    max_degrees: 90.0,
+    risk_level: 'severe',
+    hex_color: '#ef4444',
+    badge: 'bg-rose-900/60 text-rose-300 border-rose-500/50',
+    description: 'Exceeds natural angle of repose; extreme hazard for static liquefaction and rotational sliding.'
+  }
+};
+
+export const DEFAULT_DEM_SUN_ILLUMINATION = {
+  azimuth_deg: 315.0,
+  altitude_deg: 45.0,
+  zenith_deg: 45.0,
+  z_factor: 1.0
+};
+
+export const DEM_COLORMAPS_METADATA = {
+  terrain: { id: 'terrain', name: 'Terrain Relief', stops: ['#336633', '#ffff99', '#996633', '#ffffff'] },
+  elevation: { id: 'elevation', name: 'Hypsometric Elevation', stops: ['#00008b', '#2e8b57', '#ffd700', '#8b0000', '#ffffff'] },
+  rdylgn_r: { id: 'rdylgn_r', name: 'Slope Hazard Ramp', stops: ['#10b981', '#f59e0b', '#ef4444'] },
+  twilight: { id: 'twilight', name: 'Cyclic Compass Aspect', stops: ['#e0ecf4', '#8856a7', '#810f7c', '#e0ecf4'] },
+  gray: { id: 'gray', name: 'Analytical Shaded Relief', stops: ['#000000', '#ffffff'] },
+  blues: { id: 'blues', name: 'Topographic Wetness (TWI)', stops: ['#f7fbff', '#6baed6', '#08306b'] },
+  viridis: { id: 'viridis', name: 'Viridis', stops: ['#440154', '#21908d', '#fde725'] },
+  spectral: { id: 'spectral', name: 'Spectral', stops: ['#9e0142', '#ffffbf', '#5e4fa2'] }
+};
+
+/**
+ * Converts downhill aspect azimuth in degrees to an 8-point compass cardinal direction string.
+ * 
+ * @param {number} aspectDeg - Downhill azimuth in degrees (0-360)
+ * @returns {string} Cardinal direction ('N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'Flat')
+ */
+export const aspectToCompassDirection = (aspectDeg) => {
+  if (aspectDeg < 0.0 || isNaN(aspectDeg)) return 'Flat';
+  const norm = ((aspectDeg % 360) + 360) % 360;
+  if (norm >= 337.5 || norm < 22.5) return 'N';
+  if (norm < 67.5) return 'NE';
+  if (norm < 112.5) return 'E';
+  if (norm < 157.5) return 'SE';
+  if (norm < 202.5) return 'S';
+  if (norm < 247.5) return 'SW';
+  if (norm < 292.5) return 'W';
+  return 'NW';
+};
+
+/**
+ * Computes Horn's 3x3 weighted finite-difference gradient operator for DEM elevation grid.
+ * 
+ * @param {number[][]} grid3x3 - 3x3 elevation kernel where row 0 is North and row 2 is South
+ * @param {number} [cellSizeX=30.0] - Grid cell spacing in East-West meters
+ * @param {number} [cellSizeY=30.0] - Grid cell spacing in North-South meters
+ * @param {number} [zFactor=1.0] - Vertical exaggeration multiplier
+ * @returns {Object} Gradient derivatives, slope (deg/percent), aspect (deg/compass)
+ */
+export const calculateHornGradient = (grid3x3, cellSizeX = 30.0, cellSizeY = 30.0, zFactor = 1.0) => {
+  if (!Array.isArray(grid3x3) || grid3x3.length !== 3 || !grid3x3.every(r => Array.isArray(r) && r.length === 3)) {
+    throw new Error('grid3x3 must be a 3x3 matrix of elevation numbers.');
+  }
+  const a = Number(grid3x3[0][0]); const b = Number(grid3x3[0][1]); const c = Number(grid3x3[0][2]);
+  const d = Number(grid3x3[1][0]); const _e = Number(grid3x3[1][1]); const f = Number(grid3x3[1][2]);
+  const g = Number(grid3x3[2][0]); const h = Number(grid3x3[2][1]); const i = Number(grid3x3[2][2]);
+
+  const dzDx = (((c + 2.0 * f + i) - (a + 2.0 * d + g)) / (8.0 * cellSizeX)) * zFactor;
+  const dzDy = (((a + 2.0 * b + c) - (g + 2.0 * h + i)) / (8.0 * cellSizeY)) * zFactor;
+
+  const magnitude = Math.sqrt(dzDx * dzDx + dzDy * dzDy);
+  const slopeRad = Math.atan(magnitude);
+  const slopeDeg = (slopeRad * 180.0) / Math.PI;
+  const slopePercent = magnitude * 100.0;
+
+  const aspectRad = Math.atan2(-dzDy, dzDx);
+  let aspectDeg = -1.0;
+  let aspectCompass = 'Flat';
+
+  if (Math.abs(dzDx) > 1e-9 || Math.abs(dzDy) > 1e-9) {
+    const deg = ((Math.atan2(-dzDx, -dzDy) * 180.0) / Math.PI + 360.0) % 360.0;
+    aspectDeg = Number(deg.toFixed(4));
+    aspectCompass = aspectToCompassDirection(aspectDeg);
+  }
+
+  return {
+    dz_dx: Number(dzDx.toFixed(6)),
+    dz_dy: Number(dzDy.toFixed(6)),
+    gradient_magnitude: Number(magnitude.toFixed(6)),
+    slope_rad: Number(slopeRad.toFixed(6)),
+    slope_deg: Number(slopeDeg.toFixed(4)),
+    slope_percent: Number(slopePercent.toFixed(4)),
+    aspect_rad: Number(aspectRad.toFixed(6)),
+    aspect_deg: aspectDeg,
+    aspect_compass: aspectCompass
+  };
+};
+
+/**
+ * Calculates terrain slope angle from gradient derivatives.
+ * 
+ * @param {number} dzDx - Partial derivative in X
+ * @param {number} dzDy - Partial derivative in Y
+ * @param {string} [unit='degrees'] - 'degrees', 'percent', or 'radians'
+ * @returns {number} Slope value in specified unit
+ */
+export const calculateTerrainSlope = (dzDx, dzDy, unit = 'degrees') => {
+  const mag = Math.sqrt(dzDx * dzDx + dzDy * dzDy);
+  if (unit === 'radians') return Math.atan(mag);
+  if (unit === 'percent') return mag * 100.0;
+  return (Math.atan(mag) * 180.0) / Math.PI;
+};
+
+/**
+ * Calculates downhill terrain compass aspect in degrees (0-360, -1 for flat).
+ * 
+ * @param {number} dzDx - Partial derivative in X
+ * @param {number} dzDy - Partial derivative in Y
+ * @returns {number} Compass azimuth of downhill slope
+ */
+export const calculateCompassAspect = (dzDx, dzDy) => {
+  if (Math.abs(dzDx) < 1e-9 && Math.abs(dzDy) < 1e-9) return -1.0;
+  return Number((((Math.atan2(-dzDx, -dzDy) * 180.0) / Math.PI + 360.0) % 360.0).toFixed(4));
+};
+
+/**
+ * Calculates analytical Lambertian shaded relief illumination.
+ * 
+ * @param {number} slopeDeg - Slope in degrees
+ * @param {number} aspectDeg - Aspect in degrees
+ * @param {number} [sunAzimuthDeg=315.0] - Solar azimuth in degrees
+ * @param {number} [sunAltitudeDeg=45.0] - Solar altitude in degrees
+ * @returns {Object} Illumination (0-255), cos(i), is_shadow flag
+ */
+export const calculateLambertianHillshade = (slopeDeg, aspectDeg, sunAzimuthDeg = 315.0, sunAltitudeDeg = 45.0) => {
+  const zenithDeg = Math.max(0.0, Math.min(90.0, 90.0 - sunAltitudeDeg));
+  const zenithRad = (zenithDeg * Math.PI) / 180.0;
+  const slopeRad = (slopeDeg * Math.PI) / 180.0;
+  const sunAzimuthRad = ((sunAzimuthDeg % 360) * Math.PI) / 180.0;
+
+  let cosI = 0.0;
+  if (slopeDeg <= 1e-6 || aspectDeg < 0.0) {
+    cosI = Math.cos(zenithRad);
+  } else {
+    const aspectRad = ((aspectDeg % 360) * Math.PI) / 180.0;
+    cosI = Math.cos(zenithRad) * Math.cos(slopeRad) +
+           Math.sin(zenithRad) * Math.sin(slopeRad) * Math.cos(sunAzimuthRad - aspectRad);
+  }
+
+  const clampedCosI = Math.max(-1.0, Math.min(1.0, cosI));
+  const illumination = Math.max(0.0, Math.min(255.0, 255.0 * Math.max(0.0, clampedCosI)));
+  const isShadow = clampedCosI <= 0.0;
+
+  return {
+    illumination: Number(illumination.toFixed(2)),
+    cos_incidence: Number(clampedCosI.toFixed(6)),
+    is_shadow: isShadow,
+    solar_azimuth_deg: Number((sunAzimuthDeg % 360).toFixed(2)),
+    solar_altitude_deg: Number(sunAltitudeDeg.toFixed(2)),
+    solar_zenith_deg: Number(zenithDeg.toFixed(2))
+  };
+};
+
+/**
+ * Calculates Topographic Wetness Index (TWI) with division-by-zero protection.
+ * 
+ * @param {number} slopeDeg - Surface slope in degrees
+ * @param {number} [specificCatchmentAreaM=100.0] - Specific catchment area in meters
+ * @param {number} [minTanSlope=0.001] - Epsilon floor for tangent slope
+ * @returns {Object} TWI, catchment area, slope, and seepage hazard tier
+ */
+export const calculateDemTopographicWetnessIndex = (slopeDeg, specificCatchmentAreaM = 100.0, minTanSlope = 0.001) => {
+  const slopeRad = (Math.max(0.0, slopeDeg) * Math.PI) / 180.0;
+  const rawTan = Math.tan(slopeRad);
+  const clampedTan = Math.max(minTanSlope, rawTan);
+  const twi = Math.log(specificCatchmentAreaM / clampedTan);
+
+  let hazardTier = 'low';
+  if (twi > 14.0) hazardTier = 'critical';
+  else if (twi > 10.0) hazardTier = 'high';
+  else if (twi > 6.0) hazardTier = 'moderate';
+
+  return {
+    twi: Number(twi.toFixed(4)),
+    specific_catchment_area_m: Number(specificCatchmentAreaM.toFixed(2)),
+    slope_rad: Number(slopeRad.toFixed(6)),
+    tan_slope: Number(clampedTan.toFixed(6)),
+    seepage_hazard_tier: hazardTier
+  };
+};
+
+/**
+ * Classifies a terrain slope angle into standardized geotechnical hazard tiers.
+ * 
+ * @param {number} slopeDeg - Terrain slope in degrees
+ * @returns {string} Hazard tier ('flat', 'gentle', 'moderate', 'steep', 'critical_hazard')
+ */
+export const classifyDemSlopeHazardTier = (slopeDeg) => {
+  const s = Math.max(0.0, Number(slopeDeg));
+  if (s < 5.0) return DEM_SLOPE_HAZARD_TIERS.FLAT;
+  if (s < 15.0) return DEM_SLOPE_HAZARD_TIERS.GENTLE;
+  if (s < 25.0) return DEM_SLOPE_HAZARD_TIERS.MODERATE;
+  if (s < 35.0) return DEM_SLOPE_HAZARD_TIERS.STEEP;
+  return DEM_SLOPE_HAZARD_TIERS.CRITICAL_HAZARD;
+};
+
+/**
+ * Generates an elevation and slope profile along a transect between two points.
+ * 
+ * @param {number[]} startCoord - [lat, lon] start coordinates
+ * @param {number[]} endCoord - [lat, lon] end coordinates
+ * @param {Object} [options={}] - samples, crestElevation, toeElevation, collection
+ * @returns {Object} Transect response containing profile points
+ */
+export const calculateElevationTransectProfile = (startCoord, endCoord, options = {}) => {
+  const {
+    samples = 50,
+    crestElevation = 1250.0,
+    toeElevation = 1110.0,
+    collection = 'cop-dem-glo-30'
+  } = options;
+
+  const count = Math.max(5, Math.min(500, samples));
+  const [lat1, lon1] = startCoord;
+  const [lat2, lon2] = endCoord;
+
+  const rEarth = 6371000.0;
+  const phi1 = (lat1 * Math.PI) / 180.0;
+  const phi2 = (lat2 * Math.PI) / 180.0;
+  const dphi = ((lat2 - lat1) * Math.PI) / 180.0;
+  const dlam = ((lon2 - lon1) * Math.PI) / 180.0;
+  const aHav = Math.sin(dphi / 2.0) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dlam / 2.0) ** 2;
+  const totalDist = 2.0 * rEarth * Math.atan2(Math.sqrt(aHav), Math.sqrt(Math.max(0.0, 1.0 - aHav)));
+
+  const totalDrop = crestElevation - toeElevation;
+  const points = [];
+  let maxSlope = 0.0;
+  let slopeSum = 0.0;
+  let criticalFound = false;
+
+  for (let idx = 0; idx < count; idx++) {
+    const frac = idx / (count - 1);
+    const curLat = lat1 + frac * (lat2 - lat1);
+    const curLon = lon1 + frac * (lon2 - lon1);
+    const chainage = frac * totalDist;
+
+    // Sigmoidal crest-to-toe embankment face curve
+    const elev = crestElevation - totalDrop * (1.0 / (1.0 + Math.exp(-6.0 * (frac - 0.5))));
+
+    let slopeRad = 0.0;
+    if (idx === 0) {
+      const nextFrac = 1.0 / (count - 1);
+      const nextElev = crestElevation - totalDrop * (1.0 / (1.0 + Math.exp(-6.0 * (nextFrac - 0.5))));
+      const dx = totalDist / (count - 1);
+      slopeRad = Math.atan(Math.abs(elev - nextElev) / Math.max(1.0, dx));
+    } else {
+      const prevFrac = (idx - 1) / (count - 1);
+      const prevElev = crestElevation - totalDrop * (1.0 / (1.0 + Math.exp(-6.0 * (prevFrac - 0.5))));
+      const dx = totalDist / (count - 1);
+      slopeRad = Math.atan(Math.abs(prevElev - elev) / Math.max(1.0, dx));
+    }
+
+    const slopeDeg = (slopeRad * 180.0) / Math.PI;
+    const slopePct = Math.tan(slopeRad) * 100.0;
+    maxSlope = Math.max(maxSlope, slopeDeg);
+    slopeSum += slopeDeg;
+
+    const tier = classifyDemSlopeHazardTier(slopeDeg);
+    if (tier === DEM_SLOPE_HAZARD_TIERS.CRITICAL_HAZARD) {
+      criticalFound = true;
+    }
+
+    const bearing = ((Math.atan2(Math.sin(dlam) * Math.cos(phi2), Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dlam)) * 180.0) / Math.PI + 360.0) % 360.0;
+    const twiRes = calculateDemTopographicWetnessIndex(slopeDeg, Math.max(10.0, 50.0 + chainage * 0.2));
+
+    points.push({
+      point_index: idx,
+      lat: Number(curLat.toFixed(6)),
+      lon: Number(curLon.toFixed(6)),
+      chainage_m: Number(chainage.toFixed(2)),
+      elevation_m: Number(elev.toFixed(2)),
+      slope_deg: Number(slopeDeg.toFixed(2)),
+      slope_percent: Number(slopePct.toFixed(2)),
+      aspect_deg: Number(bearing.toFixed(2)),
+      twi: twiRes.twi,
+      hazard_tier: tier
+    });
+  }
+
+  const meanSlope = slopeSum / count;
+
+  return {
+    transect_id: `TRANSECT-${Date.now()}`,
+    collection,
+    total_distance_m: Number(totalDist.toFixed(2)),
+    crest_elevation_m: Number(crestElevation.toFixed(2)),
+    toe_elevation_m: Number(toeElevation.toFixed(2)),
+    total_relief_drop_m: Number(totalDrop.toFixed(2)),
+    max_slope_deg: Number(maxSlope.toFixed(2)),
+    mean_slope_deg: Number(meanSlope.toFixed(2)),
+    critical_slope_encountered: criticalFound,
+    points,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+/**
+ * Constructs a dynamic XYZ DEM raster tile endpoint URL.
+ * 
+ * @param {number} z - Zoom level
+ * @param {number} x - Tile column
+ * @param {number} y - Tile row
+ * @param {Object} [options={}] - metric, colormap, rescale, sunAzimuth, sunAltitude, zFactor
+ * @returns {string} Fully formed XYZ tile URL
+ */
+export const buildDemTileUrl = (z, x, y, options = {}) => {
+  const {
+    metric = 'relief',
+    colormap,
+    rescale,
+    sunAzimuth = 315.0,
+    sunAltitude = 45.0,
+    zFactor = 1.0
+  } = options;
+
+  let base = '';
+  if (metric === 'relief') {
+    base = `/api/v1/tiles/dem/relief/${z}/${x}/${y}.png`;
+  } else {
+    base = `/api/v1/tiles/dem/${metric}/${z}/${x}/${y}.png`;
+  }
+
+  const params = [];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  if (sunAzimuth !== 315.0) params.push(`sun_azimuth=${sunAzimuth}`);
+  if (sunAltitude !== 45.0) params.push(`sun_altitude=${sunAltitude}`);
+  if (zFactor !== 1.0) params.push(`z_factor=${zFactor}`);
+
+  return params.length ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Constructs a dynamic Leaflet tile URL template for DEM topographic relief tiles.
+ * 
+ * @param {string} [metric='relief'] - Target metric ('relief', 'elevation', 'slope', 'aspect', 'hillshade', 'twi')
+ * @param {Object} [options={}] - colormap, rescale, sunAzimuth, sunAltitude, zFactor
+ * @returns {string} Tile URL template with {z}/{x}/{y} placeholders
+ */
+export const buildDemTileUrlTemplate = (metric = 'relief', options = {}) => {
+  const {
+    colormap,
+    rescale,
+    sunAzimuth = 315.0,
+    sunAltitude = 45.0,
+    zFactor = 1.0
+  } = options;
+
+  let base = '';
+  if (metric === 'relief') {
+    base = '/api/v1/tiles/dem/relief/{z}/{x}/{y}.png';
+  } else {
+    base = `/api/v1/tiles/dem/${metric}/{z}/{x}/{y}.png`;
+  }
+
+  const params = [];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  if (sunAzimuth !== 315.0) params.push(`sun_azimuth=${sunAzimuth}`);
+  if (sunAltitude !== 45.0) params.push(`sun_altitude=${sunAltitude}`);
+  if (zFactor !== 1.0) params.push(`z_factor=${zFactor}`);
+
+  return params.length ? `${base}?${params.join('&')}` : base;
+};

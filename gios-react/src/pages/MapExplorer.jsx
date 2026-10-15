@@ -41,6 +41,7 @@ import giosApi, {
   buildDroneTileUrl,
   getDronePhotogrammetryTileUrlTemplate,
   getCustomExpressionTileUrlTemplate,
+  getDemTileUrlTemplate,
   buildWildfireTileUrl,
   calculateTerrainAnalysis,
   calculateSarAnalysis,
@@ -228,6 +229,7 @@ import PhenologyStudioModal from '../components/PhenologyStudioModal';
 import WebhookManagerModal from '../components/WebhookManagerModal';
 import DronePhotogrammetryModal from '../components/DronePhotogrammetryModal';
 import BandMathStudioModal from '../components/BandMathStudioModal';
+import DemTopographyModal from '../components/DemTopographyModal';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -1320,6 +1322,18 @@ export default function MapExplorer() {
   const [customBandColormap, setCustomBandColormap] = useState('rdylgn');
   const [customBandRescale, setCustomBandRescale] = useState('-0.2,0.8');
   const [customBandOpacity, setCustomBandOpacity] = useState(0.85);
+
+  // T-216 & T-218: Topographic Relief & Hillshade Studio States (Cycle v2.5.26)
+  const [demModalOpen, setDemModalOpen] = useState(false);
+  const [showDemLayer, setShowDemLayer] = useState(false);
+  const [demCollection, setDemCollection] = useState('cop-dem-glo-30');
+  const [demMetric, setDemMetric] = useState('relief');
+  const [demSunAzimuth, setDemSunAzimuth] = useState(315.0);
+  const [demSunAltitude, setDemSunAltitude] = useState(45.0);
+  const [demZFactor, setDemZFactor] = useState(1.0);
+  const [demColormap, setDemColormap] = useState('terrain');
+  const [demOpacity, setDemOpacity] = useState(0.85);
+  const [demBlendMode, setDemBlendMode] = useState('multiply');
 
   // T-168/T-170: Wave Arrival Playback Timer Ticker
   useEffect(() => {
@@ -4538,6 +4552,24 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={450}
+              />
+            )}
+
+            {/* T-216/T-218: Topographic Relief & Hillshade Dynamic DEM Tile Layer (Cycle v2.5.26) */}
+            {showDemLayer && !curtainActive && (
+              <TileLayer 
+                key={`dem-live-${demCollection}-${demMetric}-${demColormap}-${demSunAzimuth}-${demSunAltitude}-${demZFactor}-${demOpacity}`}
+                url={getDemTileUrlTemplate(demMetric, {
+                  colormap: demColormap,
+                  sun_azimuth: demSunAzimuth,
+                  sun_altitude: demSunAltitude,
+                  z_factor: demZFactor
+                })}
+                opacity={demOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={440}
               />
             )}
 
@@ -8604,6 +8636,66 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-216/T-218: Floating DEM Relief & Topographic Hillshade HUD Card (Cycle v2.5.26) */}
+          {showDemLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-emerald-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[520px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Mountain className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[260px]">
+                    Topographic DEM: {demMetric.toUpperCase()} ({demCollection})
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setDemModalOpen(true)}
+                    className="px-2 py-1 bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust Angles
+                  </button>
+                  <button
+                    onClick={() => setShowDemLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss DEM Relief Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300">
+                <div className="flex items-center gap-2">
+                  <span className="text-zinc-500 uppercase">Azimuth:</span>
+                  <span className="text-amber-400 font-bold">{demSunAzimuth}°</span>
+                  <span className="text-zinc-500 uppercase ml-2">Altitude:</span>
+                  <span className="text-amber-400 font-bold">{demSunAltitude}°</span>
+                  <span className="text-zinc-500 uppercase ml-2">Colormap:</span>
+                  <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-emerald-300 uppercase font-bold text-[10px]">
+                    {demColormap}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <span className="text-zinc-500 text-[10px] uppercase">Opacity:</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={demOpacity}
+                  onChange={(e) => setDemOpacity(parseFloat(e.target.value))}
+                  className="w-40 accent-emerald-500 cursor-pointer"
+                />
+                <span className="text-emerald-400 font-bold text-[11px]">
+                  {Math.round(demOpacity * 100)}%
+                </span>
+                <span className="text-zinc-500 text-[10px] uppercase ml-1">Blend:</span>
+                <span className="text-zinc-300 font-mono text-[10px] uppercase">{demBlendMode}</span>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -9469,6 +9561,18 @@ export default function MapExplorer() {
               >
                 <Calculator className="w-3.5 h-3.5 text-indigo-400" />
                 <span>Band Math (v2.5.25)</span>
+              </button>
+
+              {/* T-216/T-218 Topographic Relief & Hillshade Studio Shortcut (Cycle v2.5.26) */}
+              <button
+                onClick={() => setDemModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-emerald-300 hover:text-white hover:bg-emerald-500/20 border border-emerald-500/30 ${
+                  demModalOpen || showDemLayer ? 'bg-emerald-600 text-white font-extrabold shadow-[0_0_12px_rgba(16,185,129,0.6)]' : ''
+                }`}
+                title="Topographic Relief & Hillshade Studio, Interactive Solar Illumination Sliders, Slope Hazards & Dynamic DEM TileLayer (Cycle v2.5.26)"
+              >
+                <Mountain className="w-3.5 h-3.5 text-emerald-400" />
+                <span>DEM Relief (v2.5.26)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}

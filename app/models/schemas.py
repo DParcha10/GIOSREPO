@@ -27092,19 +27092,19 @@ def calculate_dem_topographic_wetness_index(
     )
 
 
-def classify_dem_slope_hazard_tier(slope_deg: float) -> SlopeHazardTier:
+def classify_dem_slope_hazard_tier(slope_deg: float) -> DemSlopeHazardTier:
     """Classifies a terrain slope angle into standardized geotechnical hazard tiers."""
     s = max(0.0, float(slope_deg))
     if s < 5.0:
-        return SlopeHazardTier.FLAT
+        return DemSlopeHazardTier.FLAT
     elif s < 15.0:
-        return SlopeHazardTier.GENTLE
+        return DemSlopeHazardTier.GENTLE
     elif s < 25.0:
-        return SlopeHazardTier.MODERATE
+        return DemSlopeHazardTier.MODERATE
     elif s < 35.0:
-        return SlopeHazardTier.STEEP
+        return DemSlopeHazardTier.STEEP
     else:
-        return SlopeHazardTier.CRITICAL_HAZARD
+        return DemSlopeHazardTier.CRITICAL_HAZARD
 
 
 def calculate_elevation_transect_profile(
@@ -27166,7 +27166,7 @@ def calculate_elevation_transect_profile(
         slope_sum += slope_deg
 
         tier = classify_dem_slope_hazard_tier(slope_deg)
-        if tier == SlopeHazardTier.CRITICAL_HAZARD:
+        if tier == DemSlopeHazardTier.CRITICAL_HAZARD:
             critical_found = True
 
         # Downhill aspect towards end point
