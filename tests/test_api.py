@@ -3562,9 +3562,71 @@ class TestGIOSApi(unittest.TestCase):
             self.assertEqual(res_tile.headers.get("content-type"), "image/png")
             self.assertTrue(res_tile.content.startswith(b"\x89PNG"))
 
+    def test_mosaic_vrt_feather_and_dynamic_tiles_api(self):
+        """Test POST /api/v1/analysis/mosaic/vrt, /feather, /granules and dynamic XYZ mosaic tile streaming."""
+        # 1. Test POST /api/v1/analysis/mosaic/vrt (and alias /mosaic/vrt)
+        vrt_payload = {
+            "collection": "sentinel-2-l2a",
+            "bbox": [-121.20, 36.90, -120.65, 37.45],
+            "granule_ids": ["T10SEG", "T10SFG"],
+            "feather_width_m": 200.0,
+            "blend_method": "feather",
+            "target_crs": "EPSG:3857"
+        }
+        res_vrt = self.client.post("/api/v1/analysis/mosaic/vrt", json=vrt_payload)
+        self.assertEqual(res_vrt.status_code, 200)
+        vrt_data = res_vrt.json()
+        self.assertIn("mosaic_id", vrt_data)
+        self.assertIn("vrt_xml", vrt_data)
+        self.assertIn("tile_url_template", vrt_data)
+        self.assertEqual(len(vrt_data["granules"]), 2)
+        self.assertEqual(vrt_data["summary"]["radiometric_continuity_tier"], "seamless")
+
+        # Route alias
+        res_vrt_alias = self.client.post("/mosaic/vrt", json=vrt_payload)
+        self.assertEqual(res_vrt_alias.status_code, 200)
+
+        # 2. Test POST /api/v1/analysis/mosaic/feather (and alias /mosaic/feather)
+        feather_payload = {
+            "granule_a": "T10SEG",
+            "granule_b": "T10SFG",
+            "feather_width_m": 250.0,
+            "blend_method": "feather"
+        }
+        res_f = self.client.post("/api/v1/analysis/mosaic/feather", json=feather_payload)
+        self.assertEqual(res_f.status_code, 200)
+        f_data = res_f.json()
+        self.assertIn("analysis_id", f_data)
+        self.assertIn("sample_points", f_data)
+        self.assertIn("weight_profile_samples", f_data)
+        self.assertEqual(f_data["radiometric_continuity_tier"], "seamless")
+        self.assertLess(f_data["mean_delta_rho"], 0.005)
+
+        # 3. Test GET /api/v1/analysis/mosaic/granules (and alias /mosaic/granules)
+        res_g = self.client.get("/api/v1/analysis/mosaic/granules?bbox=-121.20,36.90,-120.65,37.45")
+        self.assertEqual(res_g.status_code, 200)
+        g_data = res_g.json()
+        self.assertIn("granules", g_data)
+        self.assertGreaterEqual(len(g_data["granules"]), 2)
+
+        # 4. Dynamic XYZ Mosaic Tile Streaming
+        mosaic_tiles = [
+            "/api/v1/tiles/mosaic/sentinel-2-l2a/10/163/395.png?blend_method=feather",
+            "/api/v1/tiles/mosaic/sentinel-2-l2a/10/163/395.png?blend_method=voronoi",
+            "/api/v1/tiles/mosaic/feather/10/163/395.png",
+            "/api/v1/tiles/mosaic/seamline/10/163/395.png",
+            "/tiles/mosaic/sentinel-2-l2a/10/163/395.png"
+        ]
+        for url in mosaic_tiles:
+            res_t = self.client.get(url)
+            self.assertEqual(res_t.status_code, 200, f"Failed mosaic tile: {url}")
+            self.assertEqual(res_t.headers.get("content-type"), "image/png")
+            self.assertTrue(res_t.content.startswith(b"\x89PNG"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

@@ -461,7 +461,7 @@ def inspect_dem_topography_guard() -> dict:
             [100.0, 115.0, 100.0],
             [100.0, 100.0, 100.0]
         ]
-        res = calculate_horn_gradient(grid, cell_size_x_m=30.0, cell_size_y_m=30.0)
+        res = calculate_horn_gradient(grid, cell_size_x=30.0, cell_size_y=30.0)
         elapsed_ms = (time.time() - t0) * 1000.0
         solver_status = {
             "passed": res is not None and hasattr(res, "slope_deg"),

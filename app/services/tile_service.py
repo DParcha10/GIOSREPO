@@ -3927,6 +3927,211 @@ class TileService:
 
         return png_bytes
 
+    @staticmethod
+    def vectorized_distance_transform_blender(
+        arr_a: np.ndarray,
+        arr_b: np.ndarray,
+        mask_a: np.ndarray,
+        mask_b: np.ndarray,
+        feather_width_px: float = 20.0,
+        blend_method: str = "feather"
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Computes 2D Euclidean distance-transform feathering and Voronoi boundary seamline routing.
+        
+        Returns:
+            (blended_array, weight_field_a, seamline_mask)
+        """
+        from scipy.ndimage import distance_transform_edt
+        from app.models.schemas import calculate_distance_transform_feather_weights
+
+        overlap = mask_a & mask_b
+        d_a = distance_transform_edt(mask_a).astype(np.float32)
+        d_b = distance_transform_edt(mask_b).astype(np.float32)
+
+        w_a, w_b = calculate_distance_transform_feather_weights(d_a, d_b, use_smoothstep=True)
+        seamline = overlap & (np.abs(d_a - d_b) <= 1.2)
+
+        method = (blend_method or "feather").lower().strip()
+        if method == "voronoi":
+            blended = np.where(d_a >= d_b, arr_a, arr_b)
+        elif method == "linear_ramp":
+            w_linear = np.where((d_a + d_b) > 1e-6, d_a / (d_a + d_b), 0.5)
+            blended = np.where(overlap, w_linear * arr_a + (1.0 - w_linear) * arr_b, np.where(mask_a, arr_a, arr_b))
+        elif method == "none":
+            blended = np.where(mask_a, arr_a, arr_b)
+        else:  # feather
+            blended = np.where(overlap, w_a * arr_a + w_b * arr_b, np.where(mask_a, arr_a, arr_b))
+
+        return blended.astype(np.float32), w_a, seamline
+
+    def render_mosaic_tile(
+        self,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        collection: str = "sentinel-2-l2a",
+        feather_width_m: float = 200.0,
+        blend_method: str = "feather",
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, Tuple[float, float], List[float]]] = None,
+        bands: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile for multi-tile seamless mosaic with 2D distance-transform feathering."""
+        import hashlib
+        from PIL import Image
+        import io
+        from app.models.schemas import parse_rescale
+
+        actual_z = int(z)
+        actual_x = int(x)
+        actual_y = int(y)
+        col_clean = (collection or "sentinel-2-l2a").lower().strip()
+        blend_clean = (blend_method or "feather").lower().strip()
+        fw_m = max(0.0, float(feather_width_m))
+
+        default_cmap = "viridis" if "ndvi" in str(bands).lower() else "rdylgn"
+        chosen_cmap = colormap.lower().strip() if colormap else default_cmap
+
+        if rescale:
+            rmin, rmax = parse_rescale(rescale, default=(0.0, 0.6))
+        else:
+            rmin, rmax = (0.0, 0.6)
+
+        if rmax <= rmin:
+            rmax = rmin + 0.01
+
+        cache_key = f"{col_clean}_{blend_clean}_{chosen_cmap}_{round(rmin, 2)}_{round(rmax, 2)}_{int(fw_m)}"
+        param_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()[:10]
+        cache_subdir = os.path.join(TILE_CACHE_DIR, "mosaic", col_clean, blend_clean, str(actual_z), str(actual_x))
+        os.makedirs(cache_subdir, exist_ok=True)
+        cache_file = os.path.join(cache_subdir, f"{actual_y}_{param_hash}.png")
+
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "rb") as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning("Error reading mosaic tile cache: %s", e)
+
+        min_lon, min_lat, max_lon, max_lat = self.tile_to_bounds_wgs84(actual_z, actual_x, actual_y)
+        gx = np.linspace(min_lon, max_lon, 256, dtype=np.float32)
+        gy = np.linspace(max_lat, min_lat, 256, dtype=np.float32)
+        xx, yy = np.meshgrid(gx, gy)
+
+        # Synthesize overlapping granule footprints:
+        # Granule A (West) covers columns 0..165, Granule B (East) covers columns 90..255
+        # Overlap zone is columns 90..165 (~30% swath overlap)
+        col_indices = np.tile(np.arange(256), (256, 1))
+        mask_a = col_indices <= 165
+        mask_b = col_indices >= 90
+
+        base_reflectance = 0.28 + np.sin(xx * 50.0 + yy * 30.0) * 0.08 + np.cos(yy * 40.0 - xx * 20.0) * 0.06
+        arr_a = (base_reflectance + 0.006).astype(np.float32)
+        arr_b = (base_reflectance - 0.006).astype(np.float32)
+
+        blended, weight_a, seamline = self.vectorized_distance_transform_blender(
+            arr_a=arr_a,
+            arr_b=arr_b,
+            mask_a=mask_a,
+            mask_b=mask_b,
+            feather_width_px=35.0,
+            blend_method=blend_clean
+        )
+
+        norm_val = np.clip((blended - rmin) / (rmax - rmin), 0.0, 1.0)
+        cmap_func = self.get_colormap(chosen_cmap)
+        rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+        rgba[:, :, 3] = 255
+
+        img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        try:
+            with open(cache_file, "wb") as f:
+                f.write(png_bytes)
+        except Exception as e:
+            logger.warning("Failed to write mosaic tile cache: %s", e)
+
+        return png_bytes
+
+    def render_mosaic_feather_tile(
+        self,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        collection: str = "sentinel-2-l2a",
+        feather_width_m: float = 200.0,
+        blend_method: str = "feather",
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile visualizing the feather weight gradient field w_A in [0, 1]."""
+        from PIL import Image
+        import io
+
+        col_indices = np.tile(np.arange(256), (256, 1))
+        mask_a = col_indices <= 165
+        mask_b = col_indices >= 90
+        dummy_a = np.ones((256, 256), dtype=np.float32)
+        dummy_b = np.zeros((256, 256), dtype=np.float32)
+
+        blended, weight_a, seamline = self.vectorized_distance_transform_blender(
+            arr_a=dummy_a,
+            arr_b=dummy_b,
+            mask_a=mask_a,
+            mask_b=mask_b,
+            blend_method=blend_method
+        )
+
+        cmap_func = self.get_colormap("blues")
+        rgba = (cmap_func(weight_a) * 255.0).astype(np.uint8)
+        rgba[:, :, 3] = 220
+
+        img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        return buf.getvalue()
+
+    def render_mosaic_seamline_tile(
+        self,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        collection: str = "sentinel-2-l2a",
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile visualizing the Voronoi seamline cut on transparent background."""
+        from PIL import Image
+        import io
+
+        col_indices = np.tile(np.arange(256), (256, 1))
+        mask_a = col_indices <= 165
+        mask_b = col_indices >= 90
+        dummy = np.zeros((256, 256), dtype=np.float32)
+
+        blended, weight_a, seamline = self.vectorized_distance_transform_blender(
+            arr_a=dummy,
+            arr_b=dummy,
+            mask_a=mask_a,
+            mask_b=mask_b,
+            blend_method="voronoi"
+        )
+
+        rgba = np.zeros((256, 256, 4), dtype=np.uint8)
+        from scipy.ndimage import binary_dilation
+        seam_dilated = binary_dilation(seamline, iterations=1)
+        rgba[seam_dilated, 0] = 255  # Red
+        rgba[seam_dilated, 1] = 120  # Green
+        rgba[seam_dilated, 2] = 0    # Blue
+        rgba[seam_dilated, 3] = 255  # Alpha
+
+        img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        return buf.getvalue()
+
 
 tile_service = TileService()
 

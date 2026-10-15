@@ -62,7 +62,16 @@ import {
   BAND_MATH_PRESETS,
   buildCustomExpressionTileUrlTemplate,
   calculateElevationTransectProfile,
-  buildDemTileUrlTemplate
+  buildDemTileUrlTemplate,
+  MGRS_GRANULE_PRESETS,
+  MOSAIC_BLEND_METHOD_CONFIGS,
+  SEAMLINE_TIER_CONFIGS,
+  MGRS_TILE_DIMENSIONS,
+  calculateMgrsGranuleOverlap,
+  generateVrtXmlDefinition,
+  buildMosaicTileUrlTemplate,
+  buildMosaicFeatherTileUrlTemplate,
+  buildMosaicSeamlineTileUrlTemplate
 } from '../config/constants.js';
 
 export {
@@ -161,12 +170,6 @@ export {
   NOTIFICATION_CHANNELS,
   SEAMLINE_MODES,
   buildVrtTileUrl,
-  MGRS_BENCHMARK_GRANULES,
-  MGRS_REGIONAL_PRESETS,
-  SEAMLINE_MODE_CONFIGS,
-  calculateDistanceTransformWeights,
-  calculateMosaicedBbox,
-  buildVrtTileUrlTemplate,
   CHANGE_DETECTION_METRICS,
   CHANGE_CATEGORIES,
   calculateChangeDetectionClasses,
@@ -2935,6 +2938,113 @@ const demoAdapter = async (config) => {
               twi: '/api/v1/tiles/dem/twi/{z}/{x}/{y}.png'
             },
             analyzed_at: new Date().toISOString()
+          };
+        }
+      }
+      else if (url.includes('/api/v1/analysis/mosaic') || url.includes('/analysis/mosaic') || url.includes('/api/v1/mosaic') || url.includes('/mosaic')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (url.includes('/feather')) {
+          const granA = parsed.granule_a || parsed.granuleA || 'T10SEG';
+          const granB = parsed.granule_b || parsed.granuleB || 'T10SFG';
+          const metaA = MGRS_GRANULE_PRESETS[granA] || MGRS_GRANULE_PRESETS.T10SEG;
+          const metaB = MGRS_GRANULE_PRESETS[granB] || MGRS_GRANULE_PRESETS.T10SFG;
+          const overlap = calculateMgrsGranuleOverlap(metaA.bbox, metaB.bbox, metaA.mean_reflectance, metaB.mean_reflectance);
+          data = {
+            analysis_id: `MOSAIC-FEATHER-${Date.now()}`,
+            granule_a: granA,
+            granule_b: granB,
+            feather_width_m: parsed.feather_width_m || parsed.featherWidthM || 200.0,
+            blend_method: parsed.blend_method || parsed.blendMethod || 'feather',
+            mean_delta_rho: overlap.estimated_delta_rho,
+            max_delta_rho: Number((overlap.estimated_delta_rho * 1.35).toFixed(4)),
+            radiometric_continuity_tier: overlap.seamline_tier,
+            seamline_length_km: 109.8,
+            overlap_width_m: 10000.0,
+            sample_points: [
+              { point_index: 0, lat: 36.90, lon: overlap.seamline_mid_lon, delta_rho: overlap.estimated_delta_rho, distance_to_edge_m: 100.0, feather_weight: 0.5 },
+              { point_index: 1, lat: 37.05, lon: overlap.seamline_mid_lon, delta_rho: overlap.estimated_delta_rho, distance_to_edge_m: 150.0, feather_weight: 0.5 },
+              { point_index: 2, lat: 37.20, lon: overlap.seamline_mid_lon, delta_rho: overlap.estimated_delta_rho, distance_to_edge_m: 200.0, feather_weight: 0.5 }
+            ],
+            weight_profile_samples: [
+              { distance_m: -100.0, weight_a: 1.0, weight_b: 0.0 },
+              { distance_m: -50.0, weight_a: 0.85, weight_b: 0.15 },
+              { distance_m: 0.0, weight_a: 0.5, weight_b: 0.5 },
+              { distance_m: 50.0, weight_a: 0.15, weight_b: 0.85 },
+              { distance_m: 100.0, weight_a: 0.0, weight_b: 1.0 }
+            ],
+            tile_url_template: `/api/v1/tiles/mosaic/feather/{z}/{x}/{y}.png?collection=${parsed.collection || 'sentinel-2-l2a'}`,
+            analyzed_at: new Date().toISOString()
+          };
+        } else if (url.includes('/granules') || url.includes('/overlap-analysis')) {
+          data = {
+            collection: parsed.collection || 'sentinel-2-l2a',
+            bbox: parsed.bbox || [-121.20, 36.90, -120.65, 37.45],
+            granules: Object.values(MGRS_GRANULE_PRESETS),
+            adjacent_pairs: [
+              {
+                granule_a: 'T10SEG',
+                granule_b: 'T10SFG',
+                overlap: calculateMgrsGranuleOverlap(MGRS_GRANULE_PRESETS.T10SEG.bbox, MGRS_GRANULE_PRESETS.T10SFG.bbox, MGRS_GRANULE_PRESETS.T10SEG.mean_reflectance, MGRS_GRANULE_PRESETS.T10SFG.mean_reflectance)
+              },
+              {
+                granule_a: 'T10SEG',
+                granule_b: 'T10TEK',
+                overlap: calculateMgrsGranuleOverlap(MGRS_GRANULE_PRESETS.T10SEG.bbox, MGRS_GRANULE_PRESETS.T10TEK.bbox, MGRS_GRANULE_PRESETS.T10SEG.mean_reflectance, MGRS_GRANULE_PRESETS.T10TEK.mean_reflectance)
+              }
+            ]
+          };
+        } else if (url.includes('/presets')) {
+          data = {
+            presets: MGRS_GRANULE_PRESETS,
+            blend_methods: MOSAIC_BLEND_METHOD_CONFIGS,
+            seamline_tiers: SEAMLINE_TIER_CONFIGS,
+            mgrs_dimensions: MGRS_TILE_DIMENSIONS
+          };
+        } else {
+          // /api/v1/analysis/mosaic/vrt or /mosaic/vrt/generate
+          const mosaicId = parsed.mosaic_id || parsed.mosaicId || `VRT-MOSAIC-${Date.now()}`;
+          const collection = parsed.collection || 'sentinel-2-l2a';
+          const granules = Object.values(MGRS_GRANULE_PRESETS);
+          const vrtXml = generateVrtXmlDefinition(mosaicId, collection, granules);
+          data = {
+            mosaic_id: mosaicId,
+            collection,
+            target_crs: parsed.target_crs || 'EPSG:3857',
+            target_resolution_m: parsed.target_resolution_m || 10.0,
+            blend_method: parsed.blend_method || parsed.blendMethod || 'feather',
+            granules: granules.map((g) => ({
+              granule_id: g.granule_id,
+              source_uri: `stac://${collection}/${g.granule_id}`,
+              bbox: g.bbox,
+              overlap_area_sqkm: 55.4,
+              overlap_percentage: 12.5,
+              weight_contribution: 0.333
+            })),
+            seamlines: [
+              {
+                seamline_id: 'SEAM-T10SEG-T10SFG',
+                granule_a: 'T10SEG',
+                granule_b: 'T10SFG',
+                length_km: 109.8,
+                mean_delta_rho: 0.003,
+                max_delta_rho: 0.0045,
+                radiometric_tier: 'seamless',
+                coordinates: [[-120.925, 36.90], [-120.925, 37.20]]
+              }
+            ],
+            summary: {
+              total_mosaic_area_sqkm: 24500.0,
+              overlap_area_sqkm: 110.8,
+              overlap_percentage: 4.52,
+              mean_seamline_delta_rho: 0.003,
+              radiometric_continuity_tier: 'seamless',
+              feather_buffer_width_m: parsed.feather_width_m || 200.0,
+              active_granule_count: granules.length
+            },
+            vrt_xml: vrtXml,
+            tile_url_template: `/api/v1/tiles/mosaic/${collection}/{z}/{x}/{y}.png`,
+            created_at: new Date().toISOString()
           };
         }
       }
@@ -7915,6 +8025,81 @@ export const getDemTileUrlTemplate = (metric = 'relief', options = {}) => {
   return buildDemTileUrlTemplate(metric, options);
 };
 
+/**
+ * Assembles a Virtual Raster (VRT) seamless mosaic catalog from candidate granules.
+ * 
+ * @param {Object} [params={}] - VRT request parameters (bbox, collection, granule_ids, blend_method, feather_width_m, bands)
+ * @returns {Promise<Object>} VRT specification, seamlines, and tile streaming templates
+ */
+export const fetchVrtMosaic = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/mosaic/vrt', params);
+  return response.data;
+};
+
+/**
+ * Analyzes 2D distance-transform feathering and seamline continuity between adjacent granules.
+ * 
+ * @param {Object} [params={}] - Granules to blend, feather_width_m, blend_method
+ * @returns {Promise<Object>} Feathering weights, profile samples, and radiometric continuity tier
+ */
+export const fetchSeamlineFeather = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/mosaic/feather', params);
+  return response.data;
+};
+
+/**
+ * Queries intersecting candidate granules and identifies overlapping adjacent pairs across an AOI.
+ * 
+ * @param {Object} [params={}] - Query bounding box and satellite collection
+ * @returns {Promise<Object>} Intersecting granules and adjacent pairs with overlap metrics
+ */
+export const fetchMosaicGranules = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/mosaic/granules', params);
+  return response.data;
+};
+
+/**
+ * Fetches standard MGRS granule presets, blend method configs, and seamline quality tiers.
+ * 
+ * @returns {Promise<Object>} Presets and configurations
+ */
+export const fetchMosaicPresets = async () => {
+  const response = await giosApi.get('/api/v1/mosaic/presets');
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for multi-tile seamless mosaic raster tiles.
+ * 
+ * @param {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @param {Object} [options={}] - Blending method, feather buffer width, colormap, rescale, bands
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const getSeamlessMosaicTileUrlTemplate = (collection = 'sentinel-2-l2a', options = {}) => {
+  return buildMosaicTileUrlTemplate({ collection, ...options });
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for mosaic feathering weight gradient tiles.
+ * 
+ * @param {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @param {Object} [options={}] - Feather buffer width, blend method
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const getMosaicFeatherTileUrlTemplate = (collection = 'sentinel-2-l2a', options = {}) => {
+  return buildMosaicFeatherTileUrlTemplate({ collection, ...options });
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for mosaic seamline boundary line overlay tiles.
+ * 
+ * @param {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const getMosaicSeamlineTileUrlTemplate = (collection = 'sentinel-2-l2a') => {
+  return buildMosaicSeamlineTileUrlTemplate(collection);
+};
+
 export {
   InSARDeformationHazardTier,
   INSAR_HAZARD_CONFIGS,
@@ -8018,7 +8203,35 @@ export {
   classifyDemSlopeHazardTier,
   calculateElevationTransectProfile,
   buildDemTileUrl,
-  buildDemTileUrlTemplate
+  buildDemTileUrlTemplate,
+  MGRS_BENCHMARK_GRANULES,
+  MGRS_REGIONAL_PRESETS,
+  SEAMLINE_MODE_CONFIGS,
+  calculateDistanceTransformWeights,
+  calculateMosaicedBbox,
+  buildVrtTileUrlTemplate,
+  MOSAIC_BLEND_METHODS,
+  MosaicBlendMethod,
+  MOSAIC_SEAMLINE_TIERS,
+  MosaicSeamlineTier,
+  MOSAIC_GRANULE_STATUSES,
+  MosaicGranuleStatus,
+  MGRS_TILE_DIMENSIONS,
+  MGRS_GRANULE_PRESETS,
+  MOSAIC_BLEND_METHOD_CONFIGS,
+  SEAMLINE_TIER_CONFIGS,
+  classifyMosaicSeamlineTier,
+  classifyMosaicRadiometricTier,
+  calculateDistanceTransformFeatherWeights,
+  calculateVoronoiSeamlineWeights,
+  calculateMultiGranuleSeamlineWeights,
+  calculateDistanceToEdge2d,
+  calculateMgrsGranuleOverlap,
+  generateVrtXmlDefinition,
+  buildMosaicTileUrl,
+  buildMosaicTileUrlTemplate,
+  buildMosaicFeatherTileUrlTemplate,
+  buildMosaicSeamlineTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;

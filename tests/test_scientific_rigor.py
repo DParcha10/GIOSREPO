@@ -2640,9 +2640,165 @@ class TestScientificRigor(unittest.TestCase):
             self.assertEqual(img.size, (256, 256))
             self.assertEqual(img.mode, "RGBA")
 
+    def test_task_t226_mosaic_seamline_feathering_radiometric_continuity_and_vrt_scientific_rigor(self):
+        """Task T-226: Continuous Scientific QA for Cycle v2.5.27 Multi-Tile Seamline Feathering,
+        Virtual Raster VRT Mosaics & MGRS Granule Edge Blending:
+        1. Exact Partition of Unity across 2D Euclidean distance transforms (w1 + w2 == 1.0 +- 1e-6)
+        2. Smoothstep cubic Hermite C1-continuous transition and monotonic weight scaling
+        3. Multi-Granule normalization across FEATHER, VORONOI, COSINE_BELL, LINEAR_RAMP
+        4. Radiometric continuity across seamlines (Delta rho < 0.005) & tier classification
+        5. GDAL Virtual Raster (VRT) XML structure and SRS/GeoTransform validation
+        6. Dynamic XYZ Mosaic Tile Rendering invariants across mosaic, feather, and seamline tiles
+        """
+        import io
+        import numpy as np
+        from PIL import Image
+        from app.models.schemas import (
+            MosaicBlendMethod,
+            MosaicSeamlineTier,
+            classify_mosaic_seamline_tier,
+            calculate_distance_transform_feather_weights,
+            calculate_voronoi_seamline_weights,
+            calculate_multi_granule_seamline_weights,
+            calculate_distance_to_edge_2d,
+            calculate_mgrs_granule_overlap,
+            generate_vrt_xml_definition,
+            build_mosaic_tile_url,
+            build_mosaic_tile_url_template,
+            build_mosaic_feather_tile_url_template,
+            build_mosaic_seamline_tile_url_template
+        )
+        from app.services.tile_service import tile_service
+
+        # -------------------------------------------------------------
+        # 1. Exact Partition of Unity across Distance Transforms (w1 + w2 == 1.0 +- 1e-6)
+        # -------------------------------------------------------------
+        for d1, d2 in [(10.0, 10.0), (0.0, 50.0), (80.0, 20.0), (150.0, 350.0), (1.0, 999.0)]:
+            w1, w2 = calculate_distance_transform_feather_weights(d1, d2, use_smoothstep=True)
+            self.assertAlmostEqual(w1 + w2, 1.0, places=5)
+            self.assertGreaterEqual(w1, 0.0)
+            self.assertLessEqual(w1, 1.0)
+            self.assertGreaterEqual(w2, 0.0)
+            self.assertLessEqual(w2, 1.0)
+
+        # Equal distance must yield exact symmetry w1 == w2 == 0.5
+        w1_sym, w2_sym = calculate_distance_transform_feather_weights(100.0, 100.0, use_smoothstep=True)
+        self.assertAlmostEqual(w1_sym, 0.5, places=5)
+        self.assertAlmostEqual(w2_sym, 0.5, places=5)
+
+        # 2D Array Partition of Unity
+        d1_grid = np.linspace(0.0, 200.0, 25, dtype=np.float32).reshape(5, 5)
+        d2_grid = np.linspace(200.0, 0.0, 25, dtype=np.float32).reshape(5, 5)
+        w1_arr, w2_arr = calculate_distance_transform_feather_weights(d1_grid, d2_grid, use_smoothstep=True)
+        sum_arr = w1_arr + w2_arr
+        np.testing.assert_allclose(sum_arr, 1.0, rtol=1e-5, atol=1e-5)
+
+        # -------------------------------------------------------------
+        # 2. Smoothstep Cubic Hermite C1-Continuous Monotonicity
+        # -------------------------------------------------------------
+        d_totals = 100.0
+        prev_w1 = -0.01
+        for step in range(0, 101, 10):
+            d1_val = float(step)
+            d2_val = d_totals - d1_val
+            w1_val, w2_val = calculate_distance_transform_feather_weights(d1_val, d2_val, use_smoothstep=True)
+            self.assertGreaterEqual(w1_val, prev_w1)
+            prev_w1 = w1_val
+
+        # -------------------------------------------------------------
+        # 3. Voronoi Seamline Weights & Multi-Granule Blending Normalization
+        # -------------------------------------------------------------
+        v1, v2 = calculate_voronoi_seamline_weights(120.0, 80.0)
+        self.assertEqual(v1, 1.0)
+        self.assertEqual(v2, 0.0)
+
+        v1_rev, v2_rev = calculate_voronoi_seamline_weights(45.0, 95.0)
+        self.assertEqual(v1_rev, 0.0)
+        self.assertEqual(v2_rev, 1.0)
+
+        for method in [MosaicBlendMethod.FEATHER, MosaicBlendMethod.VORONOI, MosaicBlendMethod.COSINE_BELL, MosaicBlendMethod.LINEAR_RAMP]:
+            weights_3 = calculate_multi_granule_seamline_weights([50.0, 120.0, 80.0], method=method)
+            self.assertEqual(len(weights_3), 3)
+            self.assertAlmostEqual(sum(weights_3), 1.0, places=4)
+
+            weights_4 = calculate_multi_granule_seamline_weights([20.0, 100.0, 150.0, 60.0], method=method)
+            self.assertEqual(len(weights_4), 4)
+            self.assertAlmostEqual(sum(weights_4), 1.0, places=4)
+
+        # -------------------------------------------------------------
+        # 4. Radiometric Continuity Across Seamlines & Tier Classification
+        # -------------------------------------------------------------
+        self.assertEqual(classify_mosaic_seamline_tier(0.002), MosaicSeamlineTier.SEAMLESS)
+        self.assertEqual(classify_mosaic_seamline_tier(0.0049), MosaicSeamlineTier.SEAMLESS)
+        self.assertEqual(classify_mosaic_seamline_tier(0.005), MosaicSeamlineTier.SUBTLE)
+        self.assertEqual(classify_mosaic_seamline_tier(0.0199), MosaicSeamlineTier.SUBTLE)
+        self.assertEqual(classify_mosaic_seamline_tier(0.020), MosaicSeamlineTier.VISIBLE_STEP)
+        self.assertEqual(classify_mosaic_seamline_tier(0.0499), MosaicSeamlineTier.VISIBLE_STEP)
+        self.assertEqual(classify_mosaic_seamline_tier(0.050), MosaicSeamlineTier.SEVERE_DISCONTINUITY)
+        self.assertEqual(classify_mosaic_seamline_tier(0.120), MosaicSeamlineTier.SEVERE_DISCONTINUITY)
+
+        # Geometric Overlap between MGRS UTM granules
+        bbox_10seg = [-121.20, 36.90, -120.80, 37.40]
+        bbox_10sfg = [-120.95, 36.90, -120.55, 37.40]
+        overlap_res = calculate_mgrs_granule_overlap(bbox_10seg, bbox_10sfg, mean_refl_a=0.285, mean_refl_b=0.282)
+        self.assertTrue(overlap_res["has_overlap"])
+        self.assertGreater(overlap_res["overlap_area_sqkm"], 0.0)
+        self.assertGreater(overlap_res["overlap_percentage_a"], 0.0)
+        self.assertEqual(overlap_res["seamline_tier"], MosaicSeamlineTier.SEAMLESS.value)
+        self.assertLess(overlap_res["estimated_delta_rho"], 0.005)
+
+        # -------------------------------------------------------------
+        # 5. GDAL Virtual Raster (VRT) XML Definition Verification
+        # -------------------------------------------------------------
+        granules_mock = [
+            {"granule_id": "T10SEG", "source_uri": "stac://sentinel-2-l2a/T10SEG"},
+            {"granule_id": "T10SFG", "source_uri": "stac://sentinel-2-l2a/T10SFG"}
+        ]
+        vrt_xml = generate_vrt_xml_definition("MOSAIC-QA-01", "sentinel-2-l2a", granules_mock)
+        self.assertIn("<VRTDataset", vrt_xml)
+        self.assertIn("<SRS", vrt_xml)
+        self.assertIn("<GeoTransform", vrt_xml)
+        self.assertIn("<VRTRasterBand", vrt_xml)
+        self.assertIn("<SimpleSource>", vrt_xml)
+        self.assertIn("T10SEG", vrt_xml)
+        self.assertIn("T10SFG", vrt_xml)
+
+        # -------------------------------------------------------------
+        # 6. Dynamic XYZ Mosaic Tile Rendering Invariants
+        # -------------------------------------------------------------
+        for blend in ["feather", "voronoi", "linear_ramp"]:
+            tile_bytes = tile_service.render_mosaic_tile(
+                z=10,
+                x=163,
+                y=395,
+                collection="sentinel-2-l2a",
+                blend_method=blend,
+                feather_width_m=250.0
+            )
+            self.assertIsInstance(tile_bytes, bytes)
+            self.assertTrue(tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+            img = Image.open(io.BytesIO(tile_bytes))
+            self.assertEqual(img.size, (256, 256))
+            self.assertEqual(img.mode, "RGBA")
+
+        # Distance transform feather weight tile
+        feather_bytes = tile_service.render_mosaic_feather_tile(z=10, x=163, y=395)
+        self.assertIsInstance(feather_bytes, bytes)
+        self.assertTrue(feather_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+        img_f = Image.open(io.BytesIO(feather_bytes))
+        self.assertEqual(img_f.size, (256, 256))
+
+        # Seamline Voronoi overlay tile
+        seam_bytes = tile_service.render_mosaic_seamline_tile(z=10, x=163, y=395)
+        self.assertIsInstance(seam_bytes, bytes)
+        self.assertTrue(seam_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+        img_s = Image.open(io.BytesIO(seam_bytes))
+        self.assertEqual(img_s.size, (256, 256))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

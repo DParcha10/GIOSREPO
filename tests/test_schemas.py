@@ -964,7 +964,38 @@ from app.models.schemas import (
     classify_dem_slope_hazard_tier,
     calculate_elevation_transect_profile,
     build_dem_tile_url,
-    build_dem_tile_url_template
+    build_dem_tile_url_template,
+    # Cycle v2.5.27: Multi-Tile Seamline Feathering & VRT Mosaic Contracts
+    MosaicBlendMethod,
+    MosaicSeamlineTier,
+    MosaicGranuleStatus,
+    MGRS_TILE_DIMENSIONS,
+    MGRS_GRANULE_PRESETS,
+    MOSAIC_BLEND_METHOD_CONFIGS,
+    SEAMLINE_TIER_CONFIGS,
+    MgrsGranuleMetadata,
+    SeamlinePoint,
+    SeamlinePolyline,
+    VrtGranuleEntry,
+    VrtMosaicSummary,
+    VrtMosaicRequest,
+    VrtMosaicResponse,
+    SeamlineFeatherRequest,
+    SeamlineFeatherResponse,
+    MosaicGranulesListResponse,
+    MosaicTileRequestParams,
+    classify_mosaic_seamline_tier,
+    classify_mosaic_radiometric_tier,
+    calculate_distance_transform_feather_weights,
+    calculate_voronoi_seamline_weights,
+    calculate_multi_granule_seamline_weights,
+    calculate_distance_to_edge_2d,
+    calculate_mgrs_granule_overlap,
+    generate_vrt_xml_definition,
+    build_mosaic_tile_url,
+    build_mosaic_tile_url_template,
+    build_mosaic_feather_tile_url_template,
+    build_mosaic_seamline_tile_url_template
 )
 from app.config import settings
 
@@ -10924,6 +10955,11 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertAlmostEqual(grad_flat.slope_deg, 0.0, places=5)
         self.assertAlmostEqual(grad_flat.slope_percent, 0.0, places=5)
 
+        # Verify keyword alias compatibility (cell_size_x_m, cell_size_y_m)
+        grad_alias = calculate_horn_gradient(flat_window, cell_size_x_m=30.0, cell_size_y_m=30.0)
+        self.assertAlmostEqual(grad_alias.dz_dx, 0.0, places=5)
+        self.assertAlmostEqual(grad_alias.slope_deg, 0.0, places=5)
+
         # Slope facing West (elevation rises East: 70 -> 100 -> 130, downhill faces West)
         # Horn dz_dx = ((130+2*130+130) - (70+2*70+70)) / (8*30) = 1.0
         west_facing_window = [
@@ -11045,6 +11081,278 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(format_api_route("analysis_dem_slope_hazard"), "/api/v1/analysis/dem/slope-hazard")
         self.assertEqual(format_api_route("tiles_dem_relief", z=14, x=2048, y=4096), "/api/v1/tiles/dem/relief/14/2048/4096.png")
         self.assertEqual(format_api_route("tiles_dem_metric", metric="slope", z=12, x=1024, y=2048), "/api/v1/tiles/dem/slope/12/1024/2048.png")
+
+    def test_task_t222_mgrs_granule_overlap_feathering_and_vrt_mosaic_contracts(self):
+        """Verify Task T-222: Multi-Granule MGRS Overlap Geometry, Voronoi Seamlines, Distance-Transform Feathering & VRT Mosaic Schemas."""
+        import numpy as np
+
+        # 1. Enums & Grid Specifications
+        self.assertEqual(MosaicBlendMethod.FEATHER.value, "feather")
+        self.assertEqual(MosaicBlendMethod.VORONOI.value, "voronoi")
+        self.assertEqual(MosaicBlendMethod.LINEAR_RAMP.value, "linear_ramp")
+        self.assertEqual(MosaicBlendMethod.COSINE_BELL.value, "cosine_bell")
+        self.assertEqual(MosaicBlendMethod.MIN_CLOUD.value, "min_cloud")
+        self.assertEqual(MosaicBlendMethod.DISTANCE_TRANSFORM.value, "distance_transform")
+        self.assertEqual(MosaicBlendMethod.NONE.value, "none")
+
+        self.assertEqual(MosaicSeamlineTier.SEAMLESS.value, "seamless")
+        self.assertEqual(MosaicSeamlineTier.SUBTLE.value, "subtle")
+        self.assertEqual(MosaicSeamlineTier.VISIBLE_STEP.value, "visible_step")
+        self.assertEqual(MosaicSeamlineTier.SEVERE_DISCONTINUITY.value, "severe_discontinuity")
+
+        self.assertEqual(MosaicGranuleStatus.OPTIMAL.value, "optimal")
+        self.assertEqual(MosaicGranuleStatus.ACCEPTABLE.value, "acceptable")
+        self.assertEqual(MosaicGranuleStatus.SUBOPTIMAL.value, "suboptimal")
+
+        self.assertEqual(MGRS_TILE_DIMENSIONS["grid_width_m"], 109800.0)
+        self.assertEqual(MGRS_TILE_DIMENSIONS["grid_height_m"], 109800.0)
+        self.assertEqual(MGRS_TILE_DIMENSIONS["nominal_overlap_width_m"], 10000.0)
+        self.assertEqual(MGRS_TILE_DIMENSIONS["default_gsd_m"], 10.0)
+        self.assertEqual(MGRS_TILE_DIMENSIONS["pixels_per_dim"], 10980)
+
+        # 2. Granule Presets & Configuration Dictionaries
+        self.assertIn("T10SEG", MGRS_GRANULE_PRESETS)
+        self.assertIn("T10SFG", MGRS_GRANULE_PRESETS)
+        self.assertIn("T10TEK", MGRS_GRANULE_PRESETS)
+        self.assertEqual(MGRS_GRANULE_PRESETS["T10SEG"]["utm_zone"], 10)
+        self.assertEqual(MGRS_GRANULE_PRESETS["T10SEG"]["collection"], "sentinel-2-l2a")
+
+        self.assertIn("feather", MOSAIC_BLEND_METHOD_CONFIGS)
+        self.assertIn("voronoi", MOSAIC_BLEND_METHOD_CONFIGS)
+        self.assertIn("cosine_bell", MOSAIC_BLEND_METHOD_CONFIGS)
+        self.assertTrue(MOSAIC_BLEND_METHOD_CONFIGS["feather"]["supports_smoothstep"])
+        self.assertFalse(MOSAIC_BLEND_METHOD_CONFIGS["voronoi"]["supports_smoothstep"])
+
+        self.assertEqual(SEAMLINE_TIER_CONFIGS["seamless"]["color"], "#10B981")
+        self.assertEqual(SEAMLINE_TIER_CONFIGS["seamless"]["max_delta_rho"], 0.005)
+        self.assertEqual(SEAMLINE_TIER_CONFIGS["subtle"]["max_delta_rho"], 0.020)
+        self.assertEqual(SEAMLINE_TIER_CONFIGS["visible_step"]["max_delta_rho"], 0.050)
+
+        # 3. Pydantic Models Validation & Serialization
+        granule = MgrsGranuleMetadata(
+            granule_id="T10SEG",
+            utm_zone=10,
+            name="San Luis Reservoir West",
+            collection="sentinel-2-l2a",
+            bbox=[-121.20, 36.90, -120.90, 37.20],
+            cloud_cover_pct=2.1,
+            acquisition_date="2026-09-12T18:42:15Z",
+            mean_reflectance=0.285
+        )
+        self.assertEqual(granule.granule_id, "T10SEG")
+        self.assertEqual(granule.utm_zone, 10)
+        self.assertEqual(granule.cloud_cover_pct, 2.1)
+
+        pt = SeamlinePoint(
+            point_index=0,
+            lat=37.05,
+            lon=-120.925,
+            delta_rho=0.003,
+            distance_to_edge_m=120.0,
+            feather_weight=0.52
+        )
+        self.assertEqual(pt.point_index, 0)
+        self.assertAlmostEqual(pt.feather_weight, 0.52, places=2)
+
+        poly = SeamlinePolyline(
+            seamline_id="SEAM-01",
+            granule_a="T10SEG",
+            granule_b="T10SFG",
+            length_km=109.8,
+            mean_delta_rho=0.0032,
+            max_delta_rho=0.0048,
+            radiometric_tier=MosaicSeamlineTier.SEAMLESS,
+            coordinates=[[-120.925, 36.90], [-120.925, 37.20]]
+        )
+        self.assertEqual(poly.radiometric_tier, MosaicSeamlineTier.SEAMLESS)
+        self.assertEqual(len(poly.coordinates), 2)
+
+        vrt_req = VrtMosaicRequest(
+            bbox=[-121.20, 36.90, -120.65, 37.45],
+            collection="sentinel-2-l2a",
+            granule_ids=["T10SEG", "T10SFG"],
+            feather_width_m=250.0,
+            blend_method=MosaicBlendMethod.FEATHER
+        )
+        self.assertEqual(vrt_req.feather_width_m, 250.0)
+        self.assertEqual(vrt_req.blend_method, MosaicBlendMethod.FEATHER)
+
+        feather_req = SeamlineFeatherRequest(
+            granule_a="T10SEG",
+            granule_b="T10SFG",
+            feather_width_m=200.0,
+            blend_method=MosaicBlendMethod.FEATHER
+        )
+        self.assertEqual(feather_req.granule_a, "T10SEG")
+        self.assertEqual(feather_req.granule_b, "T10SFG")
+
+        tile_params = MosaicTileRequestParams(
+            z=12,
+            x=650,
+            y=1520,
+            collection="sentinel-2-l2a",
+            feather_width_m=200.0,
+            blend_method=MosaicBlendMethod.FEATHER
+        )
+        self.assertEqual(tile_params.z, 12)
+        self.assertEqual(tile_params.x, 650)
+        self.assertEqual(tile_params.y, 1520)
+
+        # 4. MGRS Granule Overlap Geometry Solver
+        overlap_res = calculate_mgrs_granule_overlap(
+            bbox_a=[-121.20, 36.90, -120.90, 37.20],
+            bbox_b=[-120.95, 36.90, -120.65, 37.20],
+            mean_refl_a=0.285,
+            mean_refl_b=0.282
+        )
+        self.assertTrue(overlap_res["has_overlap"])
+        self.assertGreater(overlap_res["overlap_area_sqkm"], 0.0)
+        self.assertGreater(overlap_res["overlap_percentage_a"], 0.0)
+        self.assertGreater(overlap_res["overlap_percentage_b"], 0.0)
+        self.assertAlmostEqual(overlap_res["seamline_mid_lon"], -120.925, places=3)
+        self.assertAlmostEqual(overlap_res["estimated_delta_rho"], 0.003, places=4)
+        self.assertEqual(overlap_res["seamline_tier"], "seamless")
+
+        # Disjoint bounding boxes (no overlap)
+        no_overlap = calculate_mgrs_granule_overlap(
+            bbox_a=[-121.20, 36.90, -120.90, 37.20],
+            bbox_b=[-119.50, 36.90, -119.20, 37.20]
+        )
+        self.assertFalse(no_overlap["has_overlap"])
+        self.assertEqual(no_overlap["overlap_area_sqkm"], 0.0)
+        self.assertEqual(no_overlap["overlap_percentage_a"], 0.0)
+
+        # 5. Radiometric Continuity Tiering Classification
+        self.assertEqual(classify_mosaic_seamline_tier(0.002), MosaicSeamlineTier.SEAMLESS)
+        self.assertEqual(classify_mosaic_seamline_tier(0.0049), MosaicSeamlineTier.SEAMLESS)
+        self.assertEqual(classify_mosaic_seamline_tier(0.012), MosaicSeamlineTier.SUBTLE)
+        self.assertEqual(classify_mosaic_seamline_tier(0.035), MosaicSeamlineTier.VISIBLE_STEP)
+        self.assertEqual(classify_mosaic_seamline_tier(0.075), MosaicSeamlineTier.SEVERE_DISCONTINUITY)
+        self.assertEqual(classify_mosaic_radiometric_tier(0.003), MosaicSeamlineTier.SEAMLESS)
+
+        # 6. Distance-Transform Feathering Weights & Partition of Unity
+        # Centerline equality (d1 == d2)
+        w1_mid, w2_mid = calculate_distance_transform_feather_weights(100.0, 100.0, use_smoothstep=True)
+        self.assertAlmostEqual(w1_mid, 0.5, places=5)
+        self.assertAlmostEqual(w2_mid, 0.5, places=5)
+        self.assertAlmostEqual(w1_mid + w2_mid, 1.0, places=5)
+
+        # Pure Granule A interior (d2 == 0)
+        w1_full, w2_zero = calculate_distance_transform_feather_weights(200.0, 0.0, use_smoothstep=True)
+        self.assertAlmostEqual(w1_full, 1.0, places=5)
+        self.assertAlmostEqual(w2_zero, 0.0, places=5)
+        self.assertAlmostEqual(w1_full + w2_zero, 1.0, places=5)
+
+        # Arbitrary intermediate distances
+        w1_arb, w2_arb = calculate_distance_transform_feather_weights(150.0, 50.0, use_smoothstep=True)
+        self.assertGreater(w1_arb, 0.5)
+        self.assertLess(w2_arb, 0.5)
+        self.assertAlmostEqual(w1_arb + w2_arb, 1.0, places=5)
+
+        # Vectorized array input
+        d1_arr = np.array([0.0, 50.0, 100.0, 150.0, 200.0], dtype=np.float32)
+        d2_arr = np.array([200.0, 150.0, 100.0, 50.0, 0.0], dtype=np.float32)
+        w1_vec, w2_vec = calculate_distance_transform_feather_weights(d1_arr, d2_arr, use_smoothstep=True)
+        np.testing.assert_allclose(w1_vec + w2_vec, 1.0, atol=1e-5)
+        self.assertAlmostEqual(float(w1_vec[0]), 0.0, places=5)
+        self.assertAlmostEqual(float(w1_vec[2]), 0.5, places=5)
+        self.assertAlmostEqual(float(w1_vec[4]), 1.0, places=5)
+
+        # 7. Voronoi Seamline Weights
+        v_w1, v_w2 = calculate_voronoi_seamline_weights(120.0, 80.0)
+        self.assertEqual(v_w1, 1.0)
+        self.assertEqual(v_w2, 0.0)
+        v_w1b, v_w2b = calculate_voronoi_seamline_weights(50.0, 150.0)
+        self.assertEqual(v_w1b, 0.0)
+        self.assertEqual(v_w2b, 1.0)
+
+        # 8. Multi-Granule Blending Weights (N = 3)
+        mw_feather = calculate_multi_granule_seamline_weights([100.0, 50.0, 25.0], method="feather", gamma=1.5)
+        self.assertEqual(len(mw_feather), 3)
+        self.assertAlmostEqual(sum(mw_feather), 1.0, places=5)
+        self.assertGreater(mw_feather[0], mw_feather[1])
+        self.assertGreater(mw_feather[1], mw_feather[2])
+
+        mw_voronoi = calculate_multi_granule_seamline_weights([100.0, 50.0, 25.0], method="voronoi")
+        self.assertEqual(mw_voronoi, [1.0, 0.0, 0.0])
+
+        mw_cosine = calculate_multi_granule_seamline_weights([100.0, 50.0, 25.0], method="cosine_bell")
+        self.assertAlmostEqual(sum(mw_cosine), 1.0, places=5)
+
+        mw_cloud = calculate_multi_granule_seamline_weights(
+            [100.0, 100.0, 100.0],
+            method="min_cloud",
+            cloud_pcts=[5.0, 20.0, 60.0]
+        )
+        self.assertAlmostEqual(sum(mw_cloud), 1.0, places=5)
+        self.assertGreater(mw_cloud[0], mw_cloud[1])
+        self.assertGreater(mw_cloud[1], mw_cloud[2])
+
+        # 9. 2D Distance-to-Edge Grid
+        edge_grid = calculate_distance_to_edge_2d(width=6, height=6, feather_buffer_px=3)
+        self.assertEqual(len(edge_grid), 6)
+        self.assertEqual(len(edge_grid[0]), 6)
+        self.assertEqual(edge_grid[0][0], 0.0)  # Corner
+        self.assertEqual(edge_grid[0][3], 0.0)  # Border
+        self.assertGreater(edge_grid[2][2], 0.0)  # Interior
+
+        # 10. GDAL VRT XML Definition Generator
+        vrt_xml = generate_vrt_xml_definition(
+            mosaic_id="VRT-TEST-01",
+            collection="sentinel-2-l2a",
+            granules=[
+                {"granule_id": "T10SEG", "source_uri": "stac://sentinel-2-l2a/T10SEG"},
+                {"granule_id": "T10SFG", "source_uri": "stac://sentinel-2-l2a/T10SFG"}
+            ],
+            crs="EPSG:3857"
+        )
+        self.assertIn('<VRTDataset rasterXSize="20000" rasterYSize="10980">', vrt_xml)
+        self.assertIn('<SRS dataAxisToSRSAxisMapping="1,2">EPSG:3857</SRS>', vrt_xml)
+        self.assertIn('<GeoTransform>-121.20, 0.0001, 0.0, 37.45, 0.0, -0.0001</GeoTransform>', vrt_xml)
+        self.assertIn('<VRTRasterBand dataType="Float32" band="1">', vrt_xml)
+        self.assertIn('<SourceFilename relativeToVRT="0">stac://sentinel-2-l2a/T10SEG</SourceFilename>', vrt_xml)
+        self.assertIn('<SourceFilename relativeToVRT="0">stac://sentinel-2-l2a/T10SFG</SourceFilename>', vrt_xml)
+        self.assertIn('</VRTDataset>', vrt_xml)
+
+        # 11. Dynamic Tile URL Builders and Leaflet Templates
+        mosaic_url = build_mosaic_tile_url(
+            collection="sentinel-2-l2a",
+            z=12,
+            x=650,
+            y=1520,
+            feather_width_m=250.0,
+            blend_method="cosine_bell",
+            colormap="spectral",
+            rescale="0,3000"
+        )
+        self.assertIn("/api/v1/tiles/mosaic/sentinel-2-l2a/12/650/1520.png", mosaic_url)
+        self.assertIn("feather_width_m=250.0", mosaic_url)
+        self.assertIn("blend_method=cosine_bell", mosaic_url)
+        self.assertIn("colormap=spectral", mosaic_url)
+        self.assertIn("rescale=0,3000", mosaic_url)
+
+        tmpl = build_mosaic_tile_url_template(collection="sentinel-2-l2a", feather_width_m=200.0, blend_method="feather")
+        self.assertEqual(tmpl, "/api/v1/tiles/mosaic/sentinel-2-l2a/{z}/{x}/{y}.png")
+
+        tmpl_feather = build_mosaic_feather_tile_url_template(collection="sentinel-2-l2a", feather_width_m=200.0, blend_method="feather")
+        self.assertEqual(tmpl_feather, "/api/v1/tiles/mosaic/feather/{z}/{x}/{y}.png?collection=sentinel-2-l2a&feather_width_m=200.0&blend_method=feather")
+
+        tmpl_seamline = build_mosaic_seamline_tile_url_template(collection="sentinel-2-l2a")
+        self.assertEqual(tmpl_seamline, "/api/v1/tiles/mosaic/seamline/{z}/{x}/{y}.png?collection=sentinel-2-l2a")
+
+        # 12. API Route Contract Parity
+        self.assertEqual(format_api_route("analysis_mosaic_vrt"), "/api/v1/analysis/mosaic/vrt")
+        self.assertEqual(format_api_route("analysis_mosaic_feather"), "/api/v1/analysis/mosaic/feather")
+        self.assertEqual(format_api_route("analysis_mosaic_granules"), "/api/v1/analysis/mosaic/granules")
+        self.assertEqual(format_api_route("mosaic_seamlines"), "/api/v1/mosaic/seamlines")
+        self.assertEqual(format_api_route("mosaic_overlap_analysis"), "/api/v1/mosaic/overlap-analysis")
+        self.assertEqual(format_api_route("mosaic_vrt_generate"), "/api/v1/mosaic/vrt/generate")
+        self.assertEqual(format_api_route("mosaic_presets"), "/api/v1/mosaic/presets")
+        self.assertEqual(format_api_route("tiles_mosaic_composite", collection="sentinel-2-l2a", z=12, x=650, y=1520), "/api/v1/tiles/mosaic/sentinel-2-l2a/12/650/1520.png")
+        self.assertEqual(format_api_route("tiles_mosaic_feather", z=12, x=650, y=1520), "/api/v1/tiles/mosaic/feather/12/650/1520.png")
+        self.assertEqual(format_api_route("tiles_mosaic_seamline", z=12, x=650, y=1520), "/api/v1/tiles/mosaic/seamline/12/650/1520.png")
+        self.assertEqual(format_api_route("tiles_mosaic_seamless", z=12, x=650, y=1520), "/api/v1/tiles/mosaic/seamless/12/650/1520.png")
+        self.assertEqual(format_api_route("tiles_mosaic_id", mosaic_id="VRT-01", z=12, x=650, y=1520), "/api/v1/tiles/mosaic/VRT-01/12/650/1520.png")
 
 if __name__ == "__main__":
     unittest.main()

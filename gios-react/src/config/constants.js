@@ -1084,7 +1084,32 @@ export const API_ENDPOINTS = {
   TILES_DEM_SLOPE: (z, x, y) => `/api/v1/tiles/dem/slope/${z}/${x}/${y}.png`,
   TILES_DEM_SLOPE_SHORT: (z, x, y) => `/tiles/dem/slope/${z}/${x}/${y}.png`,
   TILES_DEM_TWI: (z, x, y) => `/api/v1/tiles/dem/twi/${z}/${x}/${y}.png`,
-  TILES_DEM_TWI_SHORT: (z, x, y) => `/tiles/dem/twi/${z}/${x}/${y}.png`
+  TILES_DEM_TWI_SHORT: (z, x, y) => `/tiles/dem/twi/${z}/${x}/${y}.png`,
+  ANALYSIS_MOSAIC_VRT: '/api/v1/analysis/mosaic/vrt',
+  ANALYSIS_MOSAIC_VRT_SHORT: '/analysis/mosaic/vrt',
+  ANALYSIS_MOSAIC_FEATHER: '/api/v1/analysis/mosaic/feather',
+  ANALYSIS_MOSAIC_FEATHER_SHORT: '/analysis/mosaic/feather',
+  ANALYSIS_MOSAIC_GRANULES: '/api/v1/analysis/mosaic/granules',
+  ANALYSIS_MOSAIC_GRANULES_SHORT: '/analysis/mosaic/granules',
+  MOSAIC_SEAMLINES: '/api/v1/mosaic/seamlines',
+  MOSAIC_SEAMLINES_SHORT: '/mosaic/seamlines',
+  MOSAIC_OVERLAP_ANALYSIS: '/api/v1/mosaic/overlap-analysis',
+  MOSAIC_OVERLAP_ANALYSIS_SHORT: '/mosaic/overlap-analysis',
+  MOSAIC_VRT_GENERATE: '/api/v1/mosaic/vrt/generate',
+  MOSAIC_VRT_GENERATE_SHORT: '/mosaic/vrt/generate',
+  MOSAIC_PRESETS: '/api/v1/mosaic/presets',
+  MOSAIC_PRESETS_SHORT: '/mosaic/presets',
+  TILES_MOSAIC_COMPOSITE: (collection, z, x, y) => `/api/v1/tiles/mosaic/${collection}/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_COMPOSITE_SHORT: (collection, z, x, y) => `/tiles/mosaic/${collection}/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_FEATHER: (z, x, y) => `/api/v1/tiles/mosaic/feather/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_FEATHER_SHORT: (z, x, y) => `/tiles/mosaic/feather/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_SEAMLINE: (z, x, y) => `/api/v1/tiles/mosaic/seamline/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_SEAMLINE_SHORT: (z, x, y) => `/tiles/mosaic/seamline/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_SEAMLESS: (z, x, y) => `/api/v1/tiles/mosaic/seamless/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_SEAMLESS_SHORT: (z, x, y) => `/tiles/mosaic/seamless/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_ID: (mosaicId, z, x, y) => `/api/v1/tiles/mosaic/${mosaicId}/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_ID_SHORT: (mosaicId, z, x, y) => `/tiles/mosaic/${mosaicId}/${z}/${x}/${y}.png`,
+  TILES_MOSAIC_SEAMLINE_DEBUG: (mosaicId, z, x, y) => `/api/v1/tiles/mosaic/${mosaicId}/seamline-debug/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1364,6 +1389,20 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'TILES_DEM_METRIC':
       case 'TILES_DEM_METRIC_SHORT':
         return endpoint(params.metric || 'elevation', params.z, params.x, params.y);
+      case 'TILES_MOSAIC_COMPOSITE':
+      case 'TILES_MOSAIC_COMPOSITE_SHORT':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.z, params.x, params.y);
+      case 'TILES_MOSAIC_FEATHER':
+      case 'TILES_MOSAIC_FEATHER_SHORT':
+      case 'TILES_MOSAIC_SEAMLINE':
+      case 'TILES_MOSAIC_SEAMLINE_SHORT':
+      case 'TILES_MOSAIC_SEAMLESS':
+      case 'TILES_MOSAIC_SEAMLESS_SHORT':
+        return endpoint(params.z, params.x, params.y);
+      case 'TILES_MOSAIC_ID':
+      case 'TILES_MOSAIC_ID_SHORT':
+      case 'TILES_MOSAIC_SEAMLINE_DEBUG':
+        return endpoint(params.mosaicId || params.mosaic_id || 'seamless', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -19101,3 +19140,492 @@ export const buildDemTileUrlTemplate = (metric = 'relief', options = {}) => {
 
   return params.length ? `${base}?${params.join('&')}` : base;
 };
+
+// ==============================================================================
+// CYCLE v2.5.27: MULTI-TILE SEAMLINE FEATHERING, VIRTUAL RASTER (VRT) MOSAICS & MGRS GRANULE EDGE BLENDING
+// ==============================================================================
+
+export const MOSAIC_BLEND_METHODS = Object.freeze({
+  FEATHER: 'feather',
+  VORONOI: 'voronoi',
+  LINEAR_RAMP: 'linear_ramp',
+  COSINE_BELL: 'cosine_bell',
+  MIN_CLOUD: 'min_cloud',
+  DISTANCE_TRANSFORM: 'distance_transform',
+  NONE: 'none'
+});
+
+export const MosaicBlendMethod = MOSAIC_BLEND_METHODS;
+
+export const MOSAIC_SEAMLINE_TIERS = Object.freeze({
+  SEAMLESS: 'seamless',
+  SUBTLE: 'subtle',
+  VISIBLE_STEP: 'visible_step',
+  SEVERE_DISCONTINUITY: 'severe_discontinuity'
+});
+
+export const MosaicSeamlineTier = MOSAIC_SEAMLINE_TIERS;
+
+export const MOSAIC_GRANULE_STATUSES = Object.freeze({
+  OPTIMAL: 'optimal',
+  ACCEPTABLE: 'acceptable',
+  SUBOPTIMAL: 'suboptimal'
+});
+
+export const MosaicGranuleStatus = MOSAIC_GRANULE_STATUSES;
+
+export const MGRS_TILE_DIMENSIONS = Object.freeze({
+  grid_width_m: 109800.0,
+  grid_height_m: 109800.0,
+  nominal_overlap_width_m: 10000.0,
+  default_gsd_m: 10.0,
+  pixels_per_dim: 10980
+});
+
+export const MGRS_GRANULE_PRESETS = Object.freeze({
+  T10SEG: {
+    granule_id: 'T10SEG',
+    utm_zone: 10,
+    name: 'San Luis Reservoir West / Pacheco Pass',
+    collection: 'sentinel-2-l2a',
+    bbox: [-121.20, 36.90, -120.90, 37.20],
+    cloud_cover_pct: 2.1,
+    acquisition_date: '2026-09-12T18:42:15Z',
+    mean_reflectance: 0.285,
+    radiometric_gain: 1.002,
+    radiometric_offset: -0.001
+  },
+  T10SFG: {
+    granule_id: 'T10SFG',
+    utm_zone: 10,
+    name: 'Los Banos Central East / Delta-Mendota Canal',
+    collection: 'sentinel-2-l2a',
+    bbox: [-120.95, 36.90, -120.65, 37.20],
+    cloud_cover_pct: 1.4,
+    acquisition_date: '2026-09-12T18:42:38Z',
+    mean_reflectance: 0.282,
+    radiometric_gain: 0.998,
+    radiometric_offset: 0.001
+  },
+  T10TEK: {
+    granule_id: 'T10TEK',
+    utm_zone: 10,
+    name: 'Orestimba Creek / Newman North',
+    collection: 'sentinel-2-l2a',
+    bbox: [-121.20, 37.15, -120.90, 37.45],
+    cloud_cover_pct: 3.8,
+    acquisition_date: '2026-09-12T18:41:50Z',
+    mean_reflectance: 0.291,
+    radiometric_gain: 1.005,
+    radiometric_offset: -0.002
+  }
+});
+
+export const MOSAIC_BLEND_METHOD_CONFIGS = Object.freeze({
+  feather: {
+    id: 'feather',
+    label: '2D Distance-Transform Feathering',
+    description: 'Euclidean distance-to-edge weighted blending (w_i = d_i / sum d_j) eliminating boundary seams',
+    default_feather_width_m: 200.0,
+    supports_smoothstep: true
+  },
+  distance_transform: {
+    id: 'distance_transform',
+    label: '2D Distance-Transform Feathering',
+    description: 'Euclidean distance-to-edge weighted blending (w_i = d_i / sum d_j) eliminating boundary seams',
+    default_feather_width_m: 200.0,
+    supports_smoothstep: true
+  },
+  voronoi: {
+    id: 'voronoi',
+    label: 'Voronoi Minimum Energy Seamline Cut',
+    description: 'Hard boundary partition along ridge of equal distance to edges (d_a = d_b)',
+    default_feather_width_m: 0.0,
+    supports_smoothstep: false
+  },
+  linear_ramp: {
+    id: 'linear_ramp',
+    label: 'Linear Overlap Ramp',
+    description: 'Directional linear gradient feathering across swath overlap zone',
+    default_feather_width_m: 150.0,
+    supports_smoothstep: false
+  },
+  cosine_bell: {
+    id: 'cosine_bell',
+    label: 'Raised Cosine (Hann) Bell',
+    description: 'C1-continuous raised cosine feathering window with zero boundary gradient',
+    default_feather_width_m: 250.0,
+    supports_smoothstep: true
+  },
+  min_cloud: {
+    id: 'min_cloud',
+    label: 'Cloud-Probability Quality Weighted',
+    description: 'Distance transform weights modulated inversely by scene cloud cover percentage',
+    default_feather_width_m: 200.0,
+    supports_smoothstep: true
+  },
+  none: {
+    id: 'none',
+    label: 'Direct Overwrite (No Blending)',
+    description: 'Top tile directly covers bottom tile with hard boundary edge',
+    default_feather_width_m: 0.0,
+    supports_smoothstep: false
+  }
+});
+
+export const SEAMLINE_TIER_CONFIGS = Object.freeze({
+  seamless: {
+    tier: 'seamless',
+    max_delta_rho: 0.005,
+    badge: 'Seamless (Δρ < 0.005)',
+    color: '#10B981',
+    status: 'optimal'
+  },
+  subtle: {
+    tier: 'subtle',
+    max_delta_rho: 0.020,
+    badge: 'Subtle Transition (Δρ < 0.020)',
+    color: '#3B82F6',
+    status: 'acceptable'
+  },
+  visible_step: {
+    tier: 'visible_step',
+    max_delta_rho: 0.050,
+    badge: 'Visible Step (Δρ < 0.050)',
+    color: '#F59E0B',
+    status: 'suboptimal'
+  },
+  severe_discontinuity: {
+    tier: 'severe_discontinuity',
+    max_delta_rho: 1.000,
+    badge: 'Severe Discontinuity (Δρ ≥ 0.050)',
+    color: '#EF4444',
+    status: 'critical'
+  }
+});
+
+/**
+ * Classifies radiometric continuity tier based on reflectance discrepancy Delta rho.
+ * 
+ * @param {number} deltaRho - Surface reflectance step across boundary (|rho_A - rho_B|)
+ * @returns {string} One of 'seamless', 'subtle', 'visible_step', 'severe_discontinuity'
+ */
+export const classifyMosaicSeamlineTier = (deltaRho) => {
+  const val = Math.max(0.0, Number(deltaRho) || 0.0);
+  if (val < 0.005) return MOSAIC_SEAMLINE_TIERS.SEAMLESS;
+  if (val < 0.020) return MOSAIC_SEAMLINE_TIERS.SUBTLE;
+  if (val < 0.050) return MOSAIC_SEAMLINE_TIERS.VISIBLE_STEP;
+  return MOSAIC_SEAMLINE_TIERS.SEVERE_DISCONTINUITY;
+};
+
+export const classifyMosaicRadiometricTier = classifyMosaicSeamlineTier;
+
+/**
+ * Computes normalized distance-transform feathering weights satisfying w1 + w2 = 1.0.
+ * 
+ * @param {number} d1 - Distance to edge of granule 1 (meters or pixels)
+ * @param {number} d2 - Distance to edge of granule 2 (meters or pixels)
+ * @param {boolean} [useSmoothstep=true] - Apply Cubic Hermite smoothstep for C1 continuity
+ * @returns {[number, number]} [w1, w2]
+ */
+export const calculateDistanceTransformFeatherWeights = (d1, d2, useSmoothstep = true) => {
+  const v1 = Math.max(0.0, Number(d1) || 0.0);
+  const v2 = Math.max(0.0, Number(d2) || 0.0);
+  const sumD = v1 + v2;
+  let w1 = sumD > 1e-7 ? v1 / sumD : 0.5;
+  if (useSmoothstep) {
+    w1 = Math.max(0.0, Math.min(1.0, w1));
+    w1 = w1 * w1 * (3.0 - 2.0 * w1);
+  }
+  const w2 = 1.0 - w1;
+  return [Number(w1.toFixed(6)), Number(w2.toFixed(6))];
+};
+
+/**
+ * Computes binary Voronoi seamline weights based on distance-to-edge.
+ * 
+ * @param {number} d1 - Distance to edge of granule 1
+ * @param {number} d2 - Distance to edge of granule 2
+ * @returns {[number, number]} [w1, w2]
+ */
+export const calculateVoronoiSeamlineWeights = (d1, d2) => {
+  const v1 = Number(d1) || 0.0;
+  const v2 = Number(d2) || 0.0;
+  return v1 >= v2 ? [1.0, 0.0] : [0.0, 1.0];
+};
+
+/**
+ * Computes normalized blending weights for N granules satisfying Partition of Unity: sum w_k = 1.0.
+ * 
+ * @param {number[]} distances - Distances to granule edges
+ * @param {string} [method='feather'] - Blending method
+ * @param {number} [gamma=1.5] - Exponential feathering power
+ * @param {number[]} [cloudPcts=null] - Optional cloud cover percentages for quality weighting
+ * @returns {number[]} Normalized weights summing to 1.0
+ */
+export const calculateMultiGranuleSeamlineWeights = (
+  distances,
+  method = 'feather',
+  gamma = 1.5,
+  cloudPcts = null
+) => {
+  if (!Array.isArray(distances) || distances.length === 0) return [];
+  const n = distances.length;
+  if (n === 1) return [1.0];
+
+  const dArr = distances.map((d) => Math.max(0.0, Number(d) || 0.0));
+  const mVal = String(method).toLowerCase();
+
+  if (mVal === 'voronoi') {
+    let maxIdx = 0;
+    let maxD = dArr[0];
+    for (let i = 1; i < n; i += 1) {
+      if (dArr[i] > maxD) {
+        maxD = dArr[i];
+        maxIdx = i;
+      }
+    }
+    const weights = new Array(n).fill(0.0);
+    weights[maxIdx] = 1.0;
+    return weights;
+  }
+
+  let rawWeights = [];
+  if (mVal === 'feather' || mVal === 'distance_transform') {
+    rawWeights = dArr.map((d) => Math.pow(d, gamma));
+  } else if (mVal === 'cosine_bell') {
+    const maxD = Math.max(...dArr, 1e-6);
+    rawWeights = dArr.map((d) => 0.5 * (1.0 - Math.cos(Math.PI * Math.min(1.0, d / maxD))));
+  } else if (mVal === 'linear_ramp') {
+    rawWeights = dArr.map((d) => Math.min(1.0, d));
+  } else if (mVal === 'min_cloud' && Array.isArray(cloudPcts) && cloudPcts.length === n) {
+    rawWeights = dArr.map((d, idx) => {
+      const c = Math.max(0.0, Math.min(100.0, Number(cloudPcts[idx]) || 0.0));
+      return Math.pow(d, gamma) * ((100.0 - c) / 100.0);
+    });
+  } else {
+    rawWeights = dArr.map((d) => Math.pow(d, gamma));
+  }
+
+  const sumW = rawWeights.reduce((acc, val) => acc + val, 0.0);
+  if (sumW > 1e-9) {
+    return rawWeights.map((w) => Number((w / sumW).toFixed(6)));
+  }
+  const uniform = Number((1.0 / n).toFixed(6));
+  return new Array(n).fill(uniform);
+};
+
+/**
+ * Generates a 2D normalized Euclidean / Chebyshev distance-to-edge grid.
+ * 
+ * @param {number} width - Grid width in cells
+ * @param {number} height - Grid height in cells
+ * @param {number} [featherBufferPx=64] - Buffer distance to full 1.0 weight
+ * @returns {number[][]} 2D array of normalized distance values [0.0, 1.0]
+ */
+export const calculateDistanceToEdge2d = (width, height, featherBufferPx = 64) => {
+  const grid = [];
+  const buf = Math.max(1, featherBufferPx);
+  for (let r = 0; r < height; r += 1) {
+    const row = [];
+    const dY = Math.min(r, height - 1 - r);
+    for (let c = 0; c < width; c += 1) {
+      const dX = Math.min(c, width - 1 - c);
+      const dEdge = Math.min(dX, dY);
+      const normD = Math.min(1.0, dEdge / buf);
+      row.push(Number(normD.toFixed(4)));
+    }
+    grid.push(row);
+  }
+  return grid;
+};
+
+/**
+ * Calculates geometric overlap area, overlap fraction, seamline mid-longitude, and radiometric tier between two granules.
+ * 
+ * @param {number[]} bboxA - [min_lon, min_lat, max_lon, max_lat]
+ * @param {number[]} bboxB - [min_lon, min_lat, max_lon, max_lat]
+ * @param {number} [meanReflA=0.285] - Mean surface reflectance for Granule A
+ * @param {number} [meanReflB=0.282] - Mean surface reflectance for Granule B
+ * @returns {Object} Overlap geometry and radiometric metrics
+ */
+export const calculateMgrsGranuleOverlap = (
+  bboxA,
+  bboxB,
+  meanReflA = 0.285,
+  meanReflB = 0.282
+) => {
+  const ba = bboxA.map(Number);
+  const bb = bboxB.map(Number);
+
+  const overlapMinLon = Math.max(ba[0], bb[0]);
+  const overlapMinLat = Math.max(ba[1], bb[1]);
+  const overlapMaxLon = Math.min(ba[2], bb[2]);
+  const overlapMaxLat = Math.min(ba[3], bb[3]);
+
+  const hasOverlap = overlapMaxLon > overlapMinLon && overlapMaxLat > overlapMinLat;
+  if (!hasOverlap) {
+    return {
+      has_overlap: false,
+      overlap_area_sqkm: 0.0,
+      overlap_percentage_a: 0.0,
+      overlap_percentage_b: 0.0,
+      seamline_mid_lon: (ba[2] + bb[0]) / 2.0,
+      overlap_bbox: [0.0, 0.0, 0.0, 0.0],
+      estimated_delta_rho: 0.0,
+      seamline_tier: MOSAIC_SEAMLINE_TIERS.SEAMLESS
+    };
+  }
+
+  const midLat = (overlapMinLat + overlapMaxLat) / 2.0;
+  const dxKm = (overlapMaxLon - overlapMinLon) * 111.32 * Math.cos((midLat * Math.PI) / 180.0);
+  const dyKm = (overlapMaxLat - overlapMinLat) * 111.32;
+  const overlapSqkm = dxKm * dyKm;
+
+  const areaA = (ba[2] - ba[0]) * 111.32 * Math.cos(((ba[1] + ba[3]) / 2.0 * Math.PI) / 180.0) * ((ba[3] - ba[1]) * 111.32);
+  const areaB = (bb[2] - bb[0]) * 111.32 * Math.cos(((bb[1] + bb[3]) / 2.0 * Math.PI) / 180.0) * ((bb[3] - bb[1]) * 111.32);
+
+  const pctA = Math.min(100.0, (overlapSqkm / Math.max(areaA, 1e-4)) * 100.0);
+  const pctB = Math.min(100.0, (overlapSqkm / Math.max(areaB, 1e-4)) * 100.0);
+  const seamLon = (overlapMinLon + overlapMaxLon) / 2.0;
+
+  const deltaRho = Number(Math.abs(Number(meanReflA) - Number(meanReflB)).toFixed(4));
+  const tier = classifyMosaicSeamlineTier(deltaRho);
+
+  return {
+    has_overlap: true,
+    overlap_area_sqkm: Number(overlapSqkm.toFixed(2)),
+    overlap_percentage_a: Number(pctA.toFixed(2)),
+    overlap_percentage_b: Number(pctB.toFixed(2)),
+    seamline_mid_lon: Number(seamLon.toFixed(6)),
+    overlap_bbox: [
+      Number(overlapMinLon.toFixed(6)),
+      Number(overlapMinLat.toFixed(6)),
+      Number(overlapMaxLon.toFixed(6)),
+      Number(overlapMaxLat.toFixed(6))
+    ],
+    estimated_delta_rho: deltaRho,
+    seamline_tier: tier
+  };
+};
+
+/**
+ * Generates a standard GDAL Virtual Raster (VRT) XML catalog definition.
+ * 
+ * @param {string} mosaicId - Unique mosaic identifier
+ * @param {string} collection - Satellite collection identifier
+ * @param {Object[]} granules - Granule metadata objects with granule_id and source_uri
+ * @param {string} [crs='EPSG:3857'] - Output coordinate reference system
+ * @returns {string} GDAL VRT XML string
+ */
+export const generateVrtXmlDefinition = (
+  mosaicId,
+  collection,
+  granules,
+  crs = 'EPSG:3857'
+) => {
+  const sourcesXml = (granules || []).map((g, idx) => {
+    const gid = g.granule_id || `G${idx + 1}`;
+    const uri = g.source_uri || `stac://${collection}/${gid}`;
+    return `    <SimpleSource>
+      <SourceFilename relativeToVRT="0">${uri}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="10980" RasterYSize="10980" DataType="Float32" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="10980" ySize="10980" />
+      <DstRect xOff="${idx * 8500}" yOff="0" xSize="10980" ySize="10980" />
+      <NODATA>0</NODATA>
+    </SimpleSource>`;
+  }).join('\n');
+
+  return `<VRTDataset rasterXSize="20000" rasterYSize="10980">
+  <SRS dataAxisToSRSAxisMapping="1,2">${crs}</SRS>
+  <GeoTransform>-121.20, 0.0001, 0.0, 37.45, 0.0, -0.0001</GeoTransform>
+  <VRTRasterBand dataType="Float32" band="1">
+    <ColorInterp>Gray</ColorInterp>
+${sourcesXml}
+  </VRTRasterBand>
+</VRTDataset>`;
+};
+
+/**
+ * Constructs a dynamic XYZ tile URL for multi-tile seamless mosaic raster tiles.
+ * 
+ * @param {Object} [options={}] - Tile coordinates and rendering parameters
+ * @returns {string} Fully formed XYZ tile URL
+ */
+export const buildMosaicTileUrl = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    z = 0,
+    x = 0,
+    y = 0,
+    featherWidthM = 200.0,
+    blendMethod = 'feather',
+    colormap,
+    rescale,
+    bands
+  } = options;
+
+  const base = `/api/v1/tiles/mosaic/${collection}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (featherWidthM !== 200.0) params.push(`feather_width_m=${featherWidthM}`);
+  if (blendMethod !== 'feather') params.push(`blend_method=${blendMethod}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  if (bands) params.push(`bands=${bands}`);
+
+  return params.length ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Constructs a dynamic Leaflet tile URL template for multi-tile seamless mosaic raster tiles.
+ * 
+ * @param {Object} [options={}] - Rendering options (collection, featherWidthM, blendMethod, colormap, rescale, bands)
+ * @returns {string} Leaflet tile URL template with {z}/{x}/{y} placeholders
+ */
+export const buildMosaicTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    featherWidthM = 200.0,
+    blendMethod = 'feather',
+    colormap,
+    rescale,
+    bands
+  } = options;
+
+  const base = `/api/v1/tiles/mosaic/${collection}/{z}/{x}/{y}.png`;
+  const params = [];
+  if (featherWidthM !== 200.0) params.push(`feather_width_m=${featherWidthM}`);
+  if (blendMethod !== 'feather') params.push(`blend_method=${blendMethod}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  if (bands) params.push(`bands=${bands}`);
+
+  return params.length ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Constructs a dynamic Leaflet tile URL template for mosaic feathering weight gradient tiles.
+ * 
+ * @param {Object} [options={}] - collection, featherWidthM, blendMethod
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const buildMosaicFeatherTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    featherWidthM = 200.0,
+    blendMethod = 'feather'
+  } = options;
+  return `/api/v1/tiles/mosaic/feather/{z}/{x}/{y}.png?collection=${collection}&feather_width_m=${featherWidthM}&blend_method=${blendMethod}`;
+};
+
+/**
+ * Constructs a dynamic Leaflet tile URL template for mosaic seamline boundary line overlay tiles.
+ * 
+ * @param {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const buildMosaicSeamlineTileUrlTemplate = (collection = 'sentinel-2-l2a') => {
+  return `/api/v1/tiles/mosaic/seamline/{z}/{x}/{y}.png?collection=${collection}`;
+};
+

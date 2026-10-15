@@ -230,7 +230,9 @@ import WebhookManagerModal from '../components/WebhookManagerModal';
 import DronePhotogrammetryModal from '../components/DronePhotogrammetryModal';
 import BandMathStudioModal from '../components/BandMathStudioModal';
 import DemTopographyModal from '../components/DemTopographyModal';
+import MosaicStudioModal from '../components/MosaicStudioModal';
 import { 
+  MGRS_BENCHMARK_GRANULES,
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
   COREGISTRATION_STATUSES,
@@ -1334,6 +1336,23 @@ export default function MapExplorer() {
   const [demColormap, setDemColormap] = useState('terrain');
   const [demOpacity, setDemOpacity] = useState(0.85);
   const [demBlendMode, setDemBlendMode] = useState('multiply');
+
+  // T-222/T-224: Virtual Raster (VRT) Mosaic & Seamline Feathering States (Cycle v2.5.27)
+  const [mosaicModalOpen, setMosaicModalOpen] = useState(false);
+  const [showMosaicLayer, setShowMosaicLayer] = useState(false);
+  const [mosaicVrtId, setMosaicVrtId] = useState('VRT_MGRS_CALIFORNIA_01');
+  const [mosaicTileUrlTemplate, setMosaicTileUrlTemplate] = useState('');
+  const [mosaicIndex, setMosaicIndex] = useState('true_color_rgb');
+  const [mosaicColormap, setMosaicColormap] = useState('spectral');
+  const [mosaicRescale, setMosaicRescale] = useState('0.0,1.0');
+  const [mosaicOpacity, setMosaicOpacity] = useState(0.90);
+  const [mosaicBlendMode, setMosaicBlendMode] = useState('normal');
+  const [mosaicSeamlineMode, setMosaicSeamlineMode] = useState('feather');
+  const [mosaicFeatherWidthM, setMosaicFeatherWidthM] = useState(120);
+  const [mosaicGranuleIds, setMosaicGranuleIds] = useState(['10SEJ', '10SEH']);
+  const [mosaicShowSeamlines, setMosaicShowSeamlines] = useState(true);
+  const [mosaicShowFootprints, setMosaicShowFootprints] = useState(true);
+  const [mosaicSeamSegments, setMosaicSeamSegments] = useState([]);
 
   // T-168/T-170: Wave Arrival Playback Timer Ticker
   useEffect(() => {
@@ -4572,6 +4591,83 @@ export default function MapExplorer() {
                 zIndex={440}
               />
             )}
+
+            {/* T-222/T-224: Virtual Raster (VRT) Mosaic & Seamline Tile Layer (Cycle v2.5.27) */}
+            {showMosaicLayer && !curtainActive && (
+              <TileLayer 
+                key={`vrt-mosaic-${mosaicVrtId}-${mosaicIndex}-${mosaicColormap}-${mosaicOpacity}-${mosaicBlendMode}`}
+                url={mosaicTileUrlTemplate || buildVrtTileUrl(mosaicVrtId, '{z}', '{x}', '{y}', {
+                  index: mosaicIndex !== 'true_color_rgb' ? mosaicIndex : undefined,
+                  colormap: mosaicIndex !== 'true_color_rgb' ? mosaicColormap : undefined,
+                  rescale: mosaicRescale
+                })}
+                opacity={mosaicOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={435}
+              />
+            )}
+
+            {/* T-224: MGRS Granule Footprint Boundaries Overlay */}
+            {showMosaicLayer && mosaicShowFootprints && mosaicGranuleIds.map((gid) => {
+              const meta = MGRS_BENCHMARK_GRANULES[gid];
+              if (!meta || !meta.bbox) return null;
+              const [minX, minY, maxX, maxY] = meta.bbox;
+              const positions = [
+                [minY, minX],
+                [maxY, minX],
+                [maxY, maxX],
+                [minY, maxX]
+              ];
+              return (
+                <Polygon
+                  key={`mgrs-footprint-${gid}`}
+                  positions={positions}
+                  pathOptions={{
+                    color: meta.color || '#10b981',
+                    weight: 2,
+                    dashArray: '6, 6',
+                    fillOpacity: 0.04
+                  }}
+                >
+                  <Popup>
+                    <div className="font-mono text-xs p-1 space-y-1">
+                      <div className="font-bold text-emerald-400">MGRS Granule: {meta.tile_id}</div>
+                      <div>UTM Zone: {meta.utm_zone}N (EPSG:{meta.epsg_code})</div>
+                      <div>Location: {meta.name}</div>
+                      <div>Cloud Cover: {meta.cloud_cover_pct}%</div>
+                    </div>
+                  </Popup>
+                </Polygon>
+              );
+            })}
+
+            {/* T-224: Graph-Cut Seamline Polylines Overlay */}
+            {showMosaicLayer && mosaicShowSeamlines && mosaicSeamSegments.map((seg) => {
+              if (!seg.path_coordinates || seg.path_coordinates.length < 2) return null;
+              return (
+                <Polyline
+                  key={`seamline-seg-${seg.segment_id}`}
+                  positions={seg.path_coordinates}
+                  pathOptions={{
+                    color: '#f59e0b',
+                    weight: 3,
+                    dashArray: '8, 4'
+                  }}
+                >
+                  <Popup>
+                    <div className="font-mono text-xs p-1 space-y-1">
+                      <div className="font-bold text-amber-400">Seamline Segment #{seg.segment_id}</div>
+                      <div>Stationing: {seg.start_station_m}m → {seg.end_station_m}m</div>
+                      <div>Length: {seg.length_m} m</div>
+                      <div>Gradient Cost: {seg.mean_gradient_cost}</div>
+                      <div>Color Delta: {seg.mean_color_delta}</div>
+                    </div>
+                  </Popup>
+                </Polyline>
+              );
+            })}
 
             {/* T-57/T-58: Multi-Temporal Quality Composite Tile Layer */}
             {compositeActive && compositeResult && !curtainActive && compositeTileUrl && (
@@ -8696,6 +8792,90 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-222/T-224: Floating Virtual Raster (VRT) Mosaic HUD Card (Cycle v2.5.27) */}
+          {showMosaicLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-emerald-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[540px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Grid className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[280px]">
+                    VRT Mosaic: {mosaicVrtId}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {mosaicSeamlineMode}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setMosaicModalOpen(true)}
+                    className="px-2 py-1 bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust Mosaic
+                  </button>
+                  <button
+                    onClick={() => setShowMosaicLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Mosaic Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-zinc-500 uppercase">Granules:</span>
+                  {mosaicGranuleIds.map((gid) => (
+                    <span key={gid} className="px-1.5 py-0.2 rounded bg-zinc-800 text-emerald-300 font-bold text-[10px]">
+                      {gid}
+                    </span>
+                  ))}
+                  <span className="text-zinc-500 uppercase ml-1">Feather:</span>
+                  <span className="text-emerald-400 font-bold">{mosaicFeatherWidthM}m</span>
+                  <span className="text-zinc-500 uppercase ml-1">Index:</span>
+                  <span className="text-amber-400 font-bold text-[10px]">{mosaicIndex}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <span className="text-zinc-500 text-[10px] uppercase">Opacity:</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={mosaicOpacity}
+                  onChange={(e) => setMosaicOpacity(parseFloat(e.target.value))}
+                  className="w-36 accent-emerald-500 cursor-pointer"
+                />
+                <span className="text-emerald-400 font-bold text-[11px]">
+                  {Math.round(mosaicOpacity * 100)}%
+                </span>
+
+                <div className="flex items-center gap-2 text-[10px]">
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={mosaicShowFootprints}
+                      onChange={(e) => setMosaicShowFootprints(e.target.checked)}
+                      className="w-3 h-3 text-emerald-500 bg-zinc-900 border-zinc-700 rounded"
+                    />
+                    <span className="text-slate-400">Tiles</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={mosaicShowSeamlines}
+                      onChange={(e) => setMosaicShowSeamlines(e.target.checked)}
+                      className="w-3 h-3 text-emerald-500 bg-zinc-900 border-zinc-700 rounded"
+                    />
+                    <span className="text-slate-400">Seamlines</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -9573,6 +9753,18 @@ export default function MapExplorer() {
               >
                 <Mountain className="w-3.5 h-3.5 text-emerald-400" />
                 <span>DEM Relief (v2.5.26)</span>
+              </button>
+
+              {/* T-222/T-224 Virtual Raster (VRT) Mosaic & Seamline Feathering Studio Shortcut (Cycle v2.5.27) */}
+              <button
+                onClick={() => setMosaicModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-emerald-300 hover:text-white hover:bg-emerald-500/20 border border-emerald-500/30 ${
+                  mosaicModalOpen || showMosaicLayer ? 'bg-emerald-600 text-white font-extrabold shadow-[0_0_12px_rgba(16,185,129,0.6)]' : ''
+                }`}
+                title="Virtual Raster Mosaic Studio, MGRS Granule Seamline Visualizer, Dynamic Overlap Blending & TileLayer (Cycle v2.5.27)"
+              >
+                <Grid className="w-3.5 h-3.5 text-emerald-400" />
+                <span>VRT Mosaic (v2.5.27)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -21434,6 +21626,33 @@ export default function MapExplorer() {
           setDemOpacity(payload.opacity ?? 0.85);
           setDemBlendMode(payload.blendMode || 'multiply');
           setShowDemLayer(true);
+        }}
+      />
+
+      {/* T-222/T-224: Virtual Raster Mosaic Studio Modal (Cycle v2.5.27) */}
+      <MosaicStudioModal
+        isOpen={mosaicModalOpen}
+        onClose={() => setMosaicModalOpen(false)}
+        _activeBbox={
+          customPolygonVertices.length >= 3 
+            ? bboxFromPoints(customPolygonVertices) 
+            : (selectedEvent ? [selectedEvent.lng - 0.04, selectedEvent.lat - 0.04, selectedEvent.lng + 0.04, selectedEvent.lat + 0.04] : [-121.25, 36.0, -120.15, 37.85])
+        }
+        onApply={(payload) => {
+          setMosaicVrtId(payload.vrtId || 'VRT_MGRS_CALIFORNIA_01');
+          setMosaicTileUrlTemplate(payload.tileUrlTemplate || '');
+          setMosaicIndex(payload.spectralIndex || 'true_color_rgb');
+          setMosaicColormap(payload.colormap || 'spectral');
+          setMosaicRescale(payload.rescale || '0.0,1.0');
+          setMosaicOpacity(payload.opacity ?? 0.90);
+          setMosaicBlendMode(payload.blendMode || 'normal');
+          setMosaicSeamlineMode(payload.seamlineMode || 'feather');
+          setMosaicFeatherWidthM(payload.featherWidthM || 120);
+          setMosaicGranuleIds(payload.granuleIds || ['10SEJ', '10SEH']);
+          setMosaicShowSeamlines(payload.showSeamlines ?? true);
+          setMosaicShowFootprints(payload.showFootprints ?? true);
+          setMosaicSeamSegments(payload.seamSegments || []);
+          setShowMosaicLayer(true);
         }}
       />
 

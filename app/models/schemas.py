@@ -919,6 +919,17 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_mosaic_id": "/api/v1/tiles/mosaic/{mosaic_id}/{z}/{x}/{y}.png",
     "tiles_mosaic_id_short": "/tiles/mosaic/{mosaic_id}/{z}/{x}/{y}.png",
     "tiles_mosaic_seamline_debug": "/api/v1/tiles/mosaic/{mosaic_id}/seamline-debug/{z}/{x}/{y}.png",
+    # Cycle v2.5.28: Multi-Temporal Scene Stacking & Temporal Composite Contracts
+    "analysis_temporal_composite": "/api/v1/analysis/temporal/composite",
+    "analysis_temporal_composite_short": "/analysis/temporal/composite",
+    "analysis_temporal_stack": "/api/v1/analysis/temporal/stack",
+    "analysis_temporal_stack_short": "/analysis/temporal/stack",
+    "analysis_temporal_reducers": "/api/v1/analysis/temporal/reducers",
+    "analysis_temporal_reducers_short": "/analysis/temporal/reducers",
+    "tiles_temporal_composite": "/api/v1/tiles/temporal/{collection}/{reducer}/{z}/{x}/{y}.png",
+    "tiles_temporal_composite_short": "/tiles/temporal/{collection}/{reducer}/{z}/{x}/{y}.png",
+    "tiles_temporal_quality_mosaic": "/api/v1/tiles/temporal/quality-mosaic/{collection}/{z}/{x}/{y}.png",
+    "tiles_temporal_quality_mosaic_short": "/tiles/temporal/quality-mosaic/{collection}/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1050,6 +1061,16 @@ def format_api_route(route_name: str, **kwargs) -> str:
                     break
             if "mosaic_id" not in kwargs:
                 kwargs["mosaic_id"] = "seamless"
+    elif route_name in ("tiles_temporal_composite", "tiles_temporal_composite_short"):
+        if "collection" not in kwargs:
+            kwargs["collection"] = "sentinel-2-l2a"
+        if "reducer" not in kwargs:
+            kwargs["reducer"] = "median"
+        elif hasattr(kwargs["reducer"], "value"):
+            kwargs["reducer"] = kwargs["reducer"].value
+    elif route_name in ("tiles_temporal_quality_mosaic", "tiles_temporal_quality_mosaic_short"):
+        if "collection" not in kwargs:
+            kwargs["collection"] = "sentinel-2-l2a"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -26984,7 +27005,10 @@ def calculate_horn_gradient(
     grid_3x3: List[List[float]],
     cell_size_x: float = 30.0,
     cell_size_y: float = 30.0,
-    z_factor: float = 1.0
+    z_factor: float = 1.0,
+    cell_size_x_m: Optional[float] = None,
+    cell_size_y_m: Optional[float] = None,
+    **kwargs: Any
 ) -> HornGradientResult:
     """Computes Horn's 3x3 weighted finite-difference gradient operator.
     
@@ -26999,6 +27023,13 @@ def calculate_horn_gradient(
         slope = atan(sqrt((dz/dx)^2 + (dz/dy)^2))
         aspect = compass azimuth of downhill gradient (clockwise from North, 0-360 deg)
     """
+    if cell_size_x_m is not None:
+        cell_size_x = float(cell_size_x_m)
+    elif "cell_size" in kwargs and kwargs["cell_size"] is not None:
+        cell_size_x = float(kwargs["cell_size"])
+        cell_size_y = float(kwargs["cell_size"])
+    if cell_size_y_m is not None:
+        cell_size_y = float(cell_size_y_m)
     if len(grid_3x3) != 3 or any(len(row) != 3 for row in grid_3x3):
         raise ValueError("grid_3x3 must be a 3x3 matrix of elevation floats.")
     if cell_size_x <= 0.0 or cell_size_y <= 0.0:
