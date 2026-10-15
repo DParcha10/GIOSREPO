@@ -2793,6 +2793,193 @@ class TestGIOSApi(unittest.TestCase):
             self.assertGreater(len(res_tile.content), 100)
             self.assertEqual(res_tile.content[:4], b"\x89PNG")
 
+    def test_insar_persistent_scatterer_and_velocity_field_api(self):
+        """Test Cycle v2.5.20: InSAR Persistent Scatterer (PSI) time series, velocity field, dual-orbit decomposition, and dynamic tiles."""
+        payload = {
+            "simulationId": "SIM_TEST_INSAR_API_01",
+            "assetId": "DAM_CADIA_CREST",
+            "assetName": "Cadia Valley Tailings Crest",
+            "satelliteMission": "sentinel-1",
+            "sensorBand": "c_band",
+            "orbitDirection": "ascending",
+            "incidenceAngleDeg": 38.5,
+            "headingAngleDeg": 348.0,
+            "temporalCoherenceThreshold": 0.65,
+            "amplitudeDispersionThreshold": 0.25,
+            "perpendicularBaselineM": 45.0,
+            "parallelBaselineM": 5.0,
+            "psPointsCount": 20
+        }
+
+        # 1. Primary PSI Analysis Endpoint
+        res = self.client.post("/api/v1/analysis/geotechnical/insar-persistent-scatterers", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["simulation_id"], "SIM_TEST_INSAR_API_01")
+        self.assertEqual(data["asset_id"], "DAM_CADIA_CREST")
+        self.assertIn("baseline_geometry", data)
+        self.assertIn("atmospheric_phase_screen", data)
+        self.assertIn("ps_points", data)
+        self.assertIn("ps_geojson", data)
+        self.assertIn("dual_orbit_decomposition", data)
+        self.assertIn("tile_url_template", data)
+        self.assertGreaterEqual(data["ps_points_retained"], 1)
+
+        # 2. Canonical Route Aliases
+        res_alias1 = self.client.post("/api/v1/analysis/insar-persistent-scatterers", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/geotechnical/insar-persistent-scatterers", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+        res_alias3 = self.client.post("/api/v1/geotechnical/insar-ps", json=payload)
+        self.assertEqual(res_alias3.status_code, 200)
+
+        # 3. InSAR Velocity Field Endpoint & Aliases
+        res_vf1 = self.client.post("/api/v1/analysis/geotechnical/insar-velocity-field", json=payload)
+        self.assertEqual(res_vf1.status_code, 200)
+        res_vf2 = self.client.post("/api/v1/analysis/insar-velocity-field", json=payload)
+        self.assertEqual(res_vf2.status_code, 200)
+        res_vf3 = self.client.post("/api/v1/geotechnical/insar-velocity-field", json=payload)
+        self.assertEqual(res_vf3.status_code, 200)
+        res_vf4 = self.client.post("/api/v1/geotechnical/insar-velocity", json=payload)
+        self.assertEqual(res_vf4.status_code, 200)
+
+        # 4. GET Detail Endpoints & Aliases
+        sim_id = "SIM_TEST_INSAR_API_01"
+        res_get1 = self.client.get(f"/api/v1/analysis/geotechnical/insar-velocity-field/{sim_id}")
+        self.assertEqual(res_get1.status_code, 200)
+        self.assertEqual(res_get1.json()["simulation_id"], sim_id)
+        res_get2 = self.client.get(f"/api/v1/geotechnical/insar-velocity-field/{sim_id}")
+        self.assertEqual(res_get2.status_code, 200)
+        res_get3 = self.client.get(f"/api/v1/geotechnical/insar-velocity/{sim_id}")
+        self.assertEqual(res_get3.status_code, 200)
+        res_get4 = self.client.get(f"/api/v1/geotechnical/insar-ps/{sim_id}")
+        self.assertEqual(res_get4.status_code, 200)
+        res_get5 = self.client.get(f"/api/v1/analysis/geotechnical/insar-persistent-scatterers/{sim_id}")
+        self.assertEqual(res_get5.status_code, 200)
+
+        # 5. Dual-Orbit Decomposition Endpoint & Aliases
+        dual_payload = {
+            "velocityAscMmYr": -12.5,
+            "velocityDescMmYr": -9.8,
+            "incAngleAscDeg": 38.5,
+            "incAngleDescDeg": 39.2,
+            "headingAscDeg": 348.0,
+            "headingDescDeg": 192.0
+        }
+        res_dual1 = self.client.post("/api/v1/analysis/geotechnical/insar-dual-orbit-decomposition", json=dual_payload)
+        self.assertEqual(res_dual1.status_code, 200)
+        dual_data = res_dual1.json()
+        self.assertIn("velocity_vertical_mm_yr", dual_data)
+        self.assertIn("velocity_east_west_mm_yr", dual_data)
+        self.assertIn("total_magnitude_mm_yr", dual_data)
+        self.assertIn("hazard_tier", dual_data)
+
+        res_dual2 = self.client.post("/api/v1/analysis/insar-dual-orbit-decomposition", json=dual_payload)
+        self.assertEqual(res_dual2.status_code, 200)
+        res_dual3 = self.client.post("/api/v1/geotechnical/insar-dual-orbit-decomposition", json=dual_payload)
+        self.assertEqual(res_dual3.status_code, 200)
+        res_dual4 = self.client.post("/api/v1/geotechnical/insar-dual-orbit", json=dual_payload)
+        self.assertEqual(res_dual4.status_code, 200)
+
+        # 6. Dynamic XYZ InSAR Velocity Tiles across all metrics
+        tile_urls = [
+            f"/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/velocity_vertical/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/velocity_los/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/velocity_east_west/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/temporal_coherence/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/height_residual/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/hazard_tier/12/2048/1024.png",
+            f"/api/v1/geotechnical/tiles/insar-velocity/{sim_id}/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/insar-velocity/{sim_id}/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed InSAR tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
+    def test_damage_proxy_mapping_and_coherence_loss_api(self):
+        """Test Cycle v2.5.21: POST /api/v1/analysis/geotechnical/sar-coherence-damage, damage-proxy-map, GET detail, and dynamic DPM tiles."""
+        # 1. Complex SAR Coherence Loss Endpoint & Aliases
+        loss_payload = {
+            "coherencePre": 0.85,
+            "coherenceEvent": 0.20
+        }
+        res_loss1 = self.client.post("/api/v1/analysis/geotechnical/sar-coherence-damage", json=loss_payload)
+        self.assertEqual(res_loss1.status_code, 200)
+        loss_data = res_loss1.json()
+        self.assertEqual(loss_data["coherence_loss"], 0.65)
+        self.assertEqual(loss_data["damage_severity_tier"], "catastrophic_collapse")
+        self.assertIn("structural_damage_ratio", loss_data)
+        self.assertIn("collapse_probability", loss_data)
+
+        res_loss2 = self.client.post("/api/v1/analysis/sar-coherence-damage", json=loss_payload)
+        self.assertEqual(res_loss2.status_code, 200)
+        res_loss3 = self.client.post("/api/v1/geotechnical/sar-coherence-damage", json=loss_payload)
+        self.assertEqual(res_loss3.status_code, 200)
+        res_loss4 = self.client.post("/api/v1/geotechnical/dpm-damage", json=loss_payload)
+        self.assertEqual(res_loss4.status_code, 200)
+
+        # 2. Full-Scene Damage Proxy Mapping Endpoint & Aliases
+        dpm_payload = {
+            "simulationId": "SIM_TEST_DPM_API_01",
+            "eventId": "EVENT_TEST_01",
+            "eventName": "Kahramanmaras M7.8 Earthquake DPM",
+            "preEventDate": "2026-08-10",
+            "eventDate": "2026-08-22",
+            "latitude": 37.05,
+            "longitude": -120.85,
+            "footprintSampleCount": 16
+        }
+        res_dpm1 = self.client.post("/api/v1/analysis/geotechnical/damage-proxy-map", json=dpm_payload)
+        self.assertEqual(res_dpm1.status_code, 200)
+        dpm_data = res_dpm1.json()
+        self.assertEqual(dpm_data["simulation_id"], "SIM_TEST_DPM_API_01")
+        self.assertEqual(dpm_data["event_id"], "EVENT_TEST_01")
+        self.assertIn("summary", dpm_data)
+        self.assertIn("building_footprints", dpm_data)
+        self.assertIn("footprints_geojson", dpm_data)
+        self.assertIn("tile_url_template", dpm_data)
+        self.assertEqual(dpm_data["summary"]["total_footprints_evaluated"], 16)
+
+        res_dpm2 = self.client.post("/api/v1/analysis/damage-proxy-map", json=dpm_payload)
+        self.assertEqual(res_dpm2.status_code, 200)
+        res_dpm3 = self.client.post("/api/v1/geotechnical/damage-proxy-map", json=dpm_payload)
+        self.assertEqual(res_dpm3.status_code, 200)
+        res_dpm4 = self.client.post("/api/v1/geotechnical/dpm", json=dpm_payload)
+        self.assertEqual(res_dpm4.status_code, 200)
+
+        # 3. GET Detail Endpoint & Aliases
+        sim_id = "SIM_TEST_DPM_API_01"
+        res_get1 = self.client.get(f"/api/v1/analysis/geotechnical/damage-proxy-map/{sim_id}")
+        self.assertEqual(res_get1.status_code, 200)
+        self.assertEqual(res_get1.json()["simulation_id"], sim_id)
+        res_get2 = self.client.get(f"/api/v1/geotechnical/damage-proxy-map/{sim_id}")
+        self.assertEqual(res_get2.status_code, 200)
+        res_get3 = self.client.get(f"/api/v1/geotechnical/dpm/{sim_id}")
+        self.assertEqual(res_get3.status_code, 200)
+
+        # 4. Dynamic XYZ Damage Proxy Tile Streaming across all 6 raster metrics
+        tile_urls = [
+            f"/api/v1/tiles/geotechnical/dpm/{sim_id}/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dpm/{sim_id}/coherence_delta/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dpm/{sim_id}/pre_coherence/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dpm/{sim_id}/event_coherence/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dpm/{sim_id}/damage_severity_tier/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dpm/{sim_id}/building_loss_ratio/12/2048/1024.png",
+            f"/api/v1/tiles/geotechnical/dpm/{sim_id}/hazard_rating_tier/12/2048/1024.png",
+            f"/api/v1/geotechnical/tiles/dpm/{sim_id}/12/2048/1024.png",
+            f"/api/v1/analysis/tiles/geotechnical/dpm/{sim_id}/12/2048/1024.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed DPM tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
 if __name__ == "__main__":
     unittest.main()
 

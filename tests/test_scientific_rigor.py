@@ -12,6 +12,7 @@ Verifies:
 6. Zonal Polygon Statistics & Climatological MAD Anomaly Normalization
 """
 import unittest
+import math
 import numpy as np
 from app.services.preprocessing import preprocessing_service, PreprocessingService
 from app.services.indices import index_service
@@ -1216,6 +1217,582 @@ class TestScientificRigor(unittest.TestCase):
         self.assertEqual(tile_url, "/api/v1/tiles/geotechnical/flownet/SIM_RIGOR_PIPING_01/hydraulic_head/14/1024/512.png")
         tile_tpl = build_flownet_tile_url_template("SIM_RIGOR_PIPING_01", metric="exit_gradient")
         self.assertEqual(tile_tpl, "/api/v1/tiles/geotechnical/flownet/SIM_RIGOR_PIPING_01/exit_gradient/{z}/{x}/{y}.png")
+
+    def test_insar_persistent_scatterer_phase_scaling_and_vector_decomposition(self):
+        """Task T-184: Verify InSAR Phase-to-Displacement Scaling (dr = -lambda/(4*pi)*dphi),
+        Temporal Coherence (gamma in [0, 1]), Baseline Geometry, APS OLS Decomposition,
+        and Dual-Orbit 2D Velocity Vector Inversion."""
+        from app.models.schemas import (
+            calculate_insar_displacement_mm,
+            calculate_insar_velocity_mm_yr,
+            calculate_ps_temporal_coherence,
+            calculate_amplitude_dispersion_index,
+            calculate_interferometric_baseline_geometry,
+            decompose_atmospheric_phase_screen,
+            project_los_to_vertical_and_horizontal,
+            decompose_dual_orbit_insar_velocities,
+            calculate_insar_ps_analysis,
+            classify_insar_deformation_hazard_tier,
+            build_insar_velocity_tile_url,
+            build_insar_velocity_tile_url_template,
+            InSARDeformationHazardTier,
+            INSAR_SENSOR_WAVELENGTHS,
+            INSAR_VELOCITY_TILE_METRICS,
+            InSARPersistentScattererAnalysisRequest
+        )
+
+        # 1. Physical Phase-to-Displacement Scaling: Delta r = -(lambda / 4pi) * Delta phi
+        # Full 2pi phase fringe for Sentinel-1 C-band (lambda = 55.465 mm)
+        disp_2pi = calculate_insar_displacement_mm(2.0 * math.pi, wavelength_mm=55.465)
+        # Expected: -(55.465 / (4 * pi)) * 2 * pi = -55.465 / 2 = -27.73 mm
+        self.assertAlmostEqual(disp_2pi, -27.73, places=2)
+
+        # Negative differential phase produces positive range change (motion away from sensor)
+        disp_neg_pi = calculate_insar_displacement_mm(-math.pi, wavelength_mm=55.465)
+        self.assertAlmostEqual(disp_neg_pi, 13.87, places=2)
+
+        # Multi-frequency radar band scaling (L-band, C-band, X-band)
+        lam_l = INSAR_SENSOR_WAVELENGTHS["l_band"] * 1000.0   # ~236.05 mm
+        lam_c = INSAR_SENSOR_WAVELENGTHS["c_band"] * 1000.0   # ~55.465 mm
+        lam_x = INSAR_SENSOR_WAVELENGTHS["x_band"] * 1000.0   # ~31.0 mm
+        self.assertGreater(lam_l, lam_c)
+        self.assertGreater(lam_c, lam_x)
+
+        disp_l = calculate_insar_displacement_mm(math.pi, wavelength_mm=lam_l)
+        disp_c = calculate_insar_displacement_mm(math.pi, wavelength_mm=lam_c)
+        disp_x = calculate_insar_displacement_mm(math.pi, wavelength_mm=lam_x)
+        # Displacement magnitude scales strictly proportionally to wavelength for identical phase
+        self.assertGreater(abs(disp_l), abs(disp_c))
+        self.assertGreater(abs(disp_c), abs(disp_x))
+
+        # Temporal Rate Annualization: v = displacement / (dt / 365.25)
+        vel_1yr = calculate_insar_velocity_mm_yr(-15.0, temporal_baseline_days=365.25)
+        self.assertAlmostEqual(vel_1yr, -15.0, places=2)
+        vel_6mo = calculate_insar_velocity_mm_yr(-15.0, temporal_baseline_days=182.625)
+        self.assertAlmostEqual(vel_6mo, -30.0, places=2)
+        self.assertEqual(calculate_insar_velocity_mm_yr(-15.0, temporal_baseline_days=0.0), 0.0)
+
+        # 2. Temporal Coherence (gamma in [0, 1]) & Amplitude Dispersion Index (D_A)
+        # Identical phase residuals over time -> perfect coherence gamma = 1.0
+        phases_identical = [0.42] * 24
+        gamma_perfect = calculate_ps_temporal_coherence(phases_identical)
+        self.assertEqual(gamma_perfect, 1.0)
+
+        # Uniformly dispersed phases around unit circle -> decorrelation gamma ~ 0.0
+        phases_random = [(2.0 * math.pi * k) / 24.0 for k in range(24)]
+        gamma_random = calculate_ps_temporal_coherence(phases_random)
+        self.assertLess(gamma_random, 0.05)
+
+        # Monotonicity with phase noise variance
+        phases_low_noise = [0.1 * math.sin(k) for k in range(20)]
+        phases_high_noise = [1.8 * math.sin(k) for k in range(20)]
+        gamma_low_noise = calculate_ps_temporal_coherence(phases_low_noise)
+        gamma_high_noise = calculate_ps_temporal_coherence(phases_high_noise)
+        self.assertGreater(gamma_low_noise, gamma_high_noise)
+
+        # Complex SLC pixel correlation: u1, u2 pairs
+        identical_slc = [(complex(1.0, 0.5), complex(1.0, 0.5)) for _ in range(12)]
+        self.assertEqual(calculate_ps_temporal_coherence(identical_slc), 1.0)
+        orthogonal_slc = [(complex(1.0, 0.0), complex(0.0, 1.0)) for _ in range(12)]
+        self.assertEqual(calculate_ps_temporal_coherence(orthogonal_slc), 1.0)  # absolute normalized magnitude
+
+        # Amplitude Dispersion Index (Ferretti et al., 2001) D_A = sigma_A / mu_A
+        amps_constant = [100.0] * 20
+        da_constant = calculate_amplitude_dispersion_index(amps_constant)
+        self.assertEqual(da_constant, 0.0)
+
+        amps_stable = [100.0 + 5.0 * math.sin(k) for k in range(20)]
+        da_stable = calculate_amplitude_dispersion_index(amps_stable)
+        self.assertLess(da_stable, 0.25)  # Candidate Persistent Scatterer threshold
+
+        amps_noisy = [100.0 + 45.0 * math.sin(k) for k in range(20)]
+        da_noisy = calculate_amplitude_dispersion_index(amps_noisy)
+        self.assertGreater(da_noisy, 0.25)
+
+        # 3. Interferometric Baseline Geometry & Ambiguity Height
+        base_geom = calculate_interferometric_baseline_geometry(
+            perpendicular_baseline_m=60.0,
+            parallel_baseline_m=80.0,
+            slant_range_m=850000.0,
+            incidence_angle_deg=38.5,
+            wavelength_m=0.055465
+        )
+        # Total baseline Pythagoras: sqrt(60^2 + 80^2) = 100.0 m
+        self.assertEqual(base_geom["total_baseline_m"], 100.0)
+        self.assertGreater(base_geom["height_of_ambiguity_m"], 0.0)
+        self.assertGreater(base_geom["critical_baseline_m"], 1000.0)
+        self.assertGreater(base_geom["topographic_phase_sensitivity_rad_m"], 0.0)
+
+        # Baseline Monotonicity: larger B_perp increases phase sensitivity and reduces height of ambiguity
+        base_small = calculate_interferometric_baseline_geometry(perpendicular_baseline_m=30.0, slant_range_m=850000.0)
+        base_large = calculate_interferometric_baseline_geometry(perpendicular_baseline_m=120.0, slant_range_m=850000.0)
+        self.assertGreater(base_small["height_of_ambiguity_m"], base_large["height_of_ambiguity_m"])
+        self.assertLess(base_small["topographic_phase_sensitivity_rad_m"], base_large["topographic_phase_sensitivity_rad_m"])
+
+        # 4. Atmospheric Phase Screen (APS) Polynomial Decomposition
+        # Construct synthetic spatial points with known vertical stratified delay k_elev and planar ramp
+        known_k_elev = 0.0085  # rad/m
+        known_a0 = 1.2
+        known_a1 = 0.0002
+        known_a2 = -0.0001
+        aps_pts = []
+        for ix in range(5):
+            for iy in range(5):
+                x = float(ix * 50.0)
+                y = float(iy * 50.0)
+                z = float(300.0 + 10.0 * ix - 5.0 * iy + 8.0 * ((ix + iy) % 3))
+                phi = known_a0 + known_a1 * x + known_a2 * y + known_k_elev * z
+                aps_pts.append({"x_m": x, "y_m": y, "elevation_m": z, "phase_rad": phi})
+
+        aps_decomp = decompose_atmospheric_phase_screen(aps_pts, polynomial_order=1)
+        self.assertAlmostEqual(aps_decomp["elevation_delay_coefficient_rad_m"], known_k_elev, places=3)
+        self.assertAlmostEqual(aps_decomp["spatial_ramp_a0"], known_a0, places=1)
+        self.assertAlmostEqual(aps_decomp["spatial_ramp_a1"], known_a1, places=4)
+        self.assertAlmostEqual(aps_decomp["spatial_ramp_a2"], known_a2, places=4)
+        self.assertLess(aps_decomp["residual_std_dev_rad"], 0.01)
+
+        # 5. 1D Line-of-Sight (LOS) to 3D Vertical/Horizontal Velocity Projection
+        # v_vert = v_los / cos(theta)
+        inc_deg = 38.5
+        cos_inc = math.cos(math.radians(inc_deg))
+        sin_inc = math.sin(math.radians(inc_deg))
+        proj = project_los_to_vertical_and_horizontal(
+            velocity_los_mm_yr=-10.0,
+            incidence_angle_deg=inc_deg,
+            satellite_heading_deg=348.0
+        )
+        expected_v_vert = round(-10.0 / cos_inc, 2)
+        expected_v_horiz = round(-10.0 / sin_inc, 2)
+        self.assertEqual(proj["velocity_vertical_mm_yr"], expected_v_vert)
+        self.assertEqual(proj["velocity_horizontal_mm_yr"], expected_v_horiz)
+        # Look azimuth = (348.0 - 90.0) % 360 = 258.0 deg
+        self.assertEqual(proj["look_azimuth_deg"], 258.0)
+        self.assertIn("hazard_tier", proj)
+
+        # 6. Dual-Orbit Ascending and Descending 2D Velocity Inversion
+        # Pure vertical subsidence test: v_v = -20.0 mm/yr, v_e = 0.0 mm/yr
+        # v_asc = s_v_asc * v_v = cos(38.5 deg) * (-20.0) = -15.65 mm/yr
+        # v_desc = s_v_desc * v_v = cos(39.2 deg) * (-20.0) = -15.50 mm/yr
+        th_asc = math.radians(38.5)
+        th_desc = math.radians(39.2)
+        syn_v_asc = -20.0 * math.cos(th_asc)
+        syn_v_desc = -20.0 * math.cos(th_desc)
+
+        decomp_pure_vert = decompose_dual_orbit_insar_velocities(
+            velocity_asc_mm_yr=syn_v_asc,
+            velocity_desc_mm_yr=syn_v_desc,
+            inc_angle_asc_deg=38.5,
+            inc_angle_desc_deg=39.2,
+            heading_asc_deg=348.0,
+            heading_desc_deg=192.0
+        )
+        self.assertAlmostEqual(decomp_pure_vert["velocity_vertical_mm_yr"], -20.0, delta=0.1)
+        self.assertAlmostEqual(decomp_pure_vert["velocity_east_west_mm_yr"], 0.0, delta=0.1)
+
+        # Combined vertical settlement (-14.0 mm/yr) and eastward shear (+6.0 mm/yr)
+        s_e_asc = -math.sin(th_asc) * math.cos(math.radians(348.0))
+        s_v_asc = math.cos(th_asc)
+        s_e_desc = -math.sin(th_desc) * math.cos(math.radians(192.0))
+        s_v_desc = math.cos(th_desc)
+        target_vv = -14.0
+        target_ve = 6.0
+        v_asc_comb = s_e_asc * target_ve + s_v_asc * target_vv
+        v_desc_comb = s_e_desc * target_ve + s_v_desc * target_vv
+
+        decomp_comb = decompose_dual_orbit_insar_velocities(
+            velocity_asc_mm_yr=v_asc_comb,
+            velocity_desc_mm_yr=v_desc_comb,
+            inc_angle_asc_deg=38.5,
+            inc_angle_desc_deg=39.2,
+            heading_asc_deg=348.0,
+            heading_desc_deg=192.0
+        )
+        self.assertAlmostEqual(decomp_comb["velocity_vertical_mm_yr"], target_vv, delta=0.1)
+        self.assertAlmostEqual(decomp_comb["velocity_east_west_mm_yr"], target_ve, delta=0.1)
+        self.assertAlmostEqual(decomp_comb["total_magnitude_mm_yr"], math.sqrt(target_vv**2 + target_ve**2), delta=0.1)
+
+        # 7. Hazard Tier Classification Monotonicity
+        self.assertEqual(classify_insar_deformation_hazard_tier(0.5), InSARDeformationHazardTier.STABLE)
+        self.assertEqual(classify_insar_deformation_hazard_tier(-3.5), InSARDeformationHazardTier.MINOR_CREEP)
+        self.assertEqual(classify_insar_deformation_hazard_tier(-8.5), InSARDeformationHazardTier.MODERATE_DISPLACEMENT)
+        self.assertEqual(classify_insar_deformation_hazard_tier(-16.0), InSARDeformationHazardTier.ACCELERATING_DEFORMATION)
+        self.assertEqual(classify_insar_deformation_hazard_tier(-32.0), InSARDeformationHazardTier.CRITICAL_INSTABILITY)
+
+        # 8. End-to-End InSAR PS Analysis Synthesis & Tile Streaming URLs
+        ps_req = InSARPersistentScattererAnalysisRequest(
+            simulation_id="SIM_RIGOR_INSAR_01",
+            asset_id="DAM_CREST_RIGOR",
+            asset_name="Cadia Embankment Centerline",
+            temporal_coherence_threshold=0.65,
+            ps_points_count=20
+        )
+        full_res = calculate_insar_ps_analysis(ps_req)
+        self.assertEqual(full_res["simulation_id"], "SIM_RIGOR_INSAR_01")
+        self.assertIn("baseline_geometry", full_res)
+        self.assertIn("atmospheric_phase_screen", full_res)
+        self.assertIn("ps_points", full_res)
+        self.assertIn("dual_orbit_decomposition", full_res)
+        self.assertIn("tile_url_template", full_res)
+
+        # Verify all retained PS points satisfy gamma >= 0.65 threshold
+        for pt in full_res["ps_points"]:
+            self.assertGreaterEqual(pt["temporal_coherence"], 0.65)
+            self.assertIn("time_series", pt)
+            self.assertEqual(len(pt["time_series"]), 24)
+            self.assertIn("displacement_mm", pt["time_series"][0])
+
+        # GeoJSON FeatureCollection verification
+        geojson = full_res["ps_geojson"]
+        self.assertEqual(geojson["type"], "FeatureCollection")
+        self.assertEqual(len(geojson["features"]), len(full_res["ps_points"]))
+
+        # Dynamic Tile URL builder templates
+        tile_url = build_insar_velocity_tile_url("SIM_RIGOR_INSAR_01", metric="velocity_vertical", z=14, x=1024, y=512)
+        self.assertEqual(tile_url, "/api/v1/tiles/geotechnical/insar-velocity/SIM_RIGOR_INSAR_01/velocity_vertical/14/1024/512.png")
+        tile_tpl = build_insar_velocity_tile_url_template("SIM_RIGOR_INSAR_01", metric="temporal_coherence")
+        self.assertEqual(tile_tpl, "/api/v1/tiles/geotechnical/insar-velocity/SIM_RIGOR_INSAR_01/temporal_coherence/{z}/{x}/{y}.png")
+
+    def test_sar_coherence_damage_proxy_mapping_scientific_rigor(self):
+        """Task T-190: Continuous Scientific QA for Cycle v2.5.21 SAR Coherence Change Detection,
+        Damage Proxy Mapping (DPM), ARIA Severity Tiers, and Building Exposure Fragility Curves."""
+        from app.models.schemas import (
+            calculate_sar_coherence_loss,
+            classify_sar_damage_tier,
+            calculate_building_structural_exposure,
+            simulate_damage_proxy_mapping,
+            SARCoherenceDamageTier,
+            SAR_DAMAGE_TIER_CONFIGS,
+            DAMAGE_PROXY_TILE_METRICS,
+            build_damage_proxy_tile_url,
+            build_damage_proxy_tile_url_template
+        )
+
+        # 1. Complex Interferometric Coherence Normalization & Bounds Verification (gamma in [0.0, 1.0])
+        # Delta gamma = max(0.0, min(1.0, gamma_pre - gamma_event))
+        zero_loss = calculate_sar_coherence_loss(0.85, 0.85)
+        self.assertEqual(zero_loss["coherence_loss"], 0.0)
+        self.assertEqual(zero_loss["relative_loss_percent"], 0.0)
+        self.assertEqual(zero_loss["damage_severity_tier"], SARCoherenceDamageTier.NEGLIGIBLE.value)
+        self.assertEqual(zero_loss["structural_damage_ratio"], 0.0)
+
+        # Non-negative differencing invariant: coherence increase (e.g. vegetation clearing or moisture drying) clamped to 0.0
+        neg_diff = calculate_sar_coherence_loss(0.40, 0.70)
+        self.assertEqual(neg_diff["coherence_loss"], 0.0)
+        self.assertGreaterEqual(neg_diff["coherence_loss"], 0.0)
+
+        # Full decorrelation: pre=1.0, event=0.0 -> loss=1.0
+        full_decorr = calculate_sar_coherence_loss(1.0, 0.0)
+        self.assertEqual(full_decorr["coherence_loss"], 1.0)
+        self.assertEqual(full_decorr["relative_loss_percent"], 100.0)
+        self.assertEqual(full_decorr["damage_severity_tier"], SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE.value)
+        self.assertEqual(full_decorr["structural_damage_ratio"], 1.0)
+        self.assertAlmostEqual(full_decorr["collapse_probability"], 1.0 / (1.0 + math.exp(-12.0 * 0.5)), places=3)
+
+        # 2. Copernicus / NASA JPL ARIA Damage Severity Tier Monotonicity
+        self.assertEqual(classify_sar_damage_tier(0.05), SARCoherenceDamageTier.NEGLIGIBLE)
+        self.assertEqual(classify_sar_damage_tier(0.14), SARCoherenceDamageTier.NEGLIGIBLE)
+        self.assertEqual(classify_sar_damage_tier(0.15), SARCoherenceDamageTier.MODERATE)
+        self.assertEqual(classify_sar_damage_tier(0.34), SARCoherenceDamageTier.MODERATE)
+        self.assertEqual(classify_sar_damage_tier(0.35), SARCoherenceDamageTier.SEVERE)
+        self.assertEqual(classify_sar_damage_tier(0.54), SARCoherenceDamageTier.SEVERE)
+        self.assertEqual(classify_sar_damage_tier(0.55), SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE)
+        self.assertEqual(classify_sar_damage_tier(0.85), SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE)
+
+        # 3. Fragility Curve Structural Damage Ratio Monotonicity: DR(delta_gamma) is strictly non-decreasing
+        gamma_steps = [0.0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]
+        dr_values = [calculate_sar_coherence_loss(1.0, 1.0 - dg)["structural_damage_ratio"] for dg in gamma_steps]
+        for i in range(1, len(dr_values)):
+            self.assertGreaterEqual(dr_values[i], dr_values[i - 1])
+            self.assertGreaterEqual(dr_values[i], 0.0)
+            self.assertLessEqual(dr_values[i], 1.0)
+
+        # 4. Sigmoid Collapse Probability Bounds & Symmetry
+        # At delta_gamma = 0.50 (midpoint of sigmoid): P(collapse) must equal 0.5000 exactly
+        midpoint_loss = calculate_sar_coherence_loss(1.0, 0.50)
+        self.assertAlmostEqual(midpoint_loss["collapse_probability"], 0.5000, places=4)
+
+        # Symmetry: P(0.50 + x) - 0.5 == 0.5 - P(0.50 - x)
+        p_high = calculate_sar_coherence_loss(1.0, 0.35)["collapse_probability"]  # delta_gamma = 0.65 (+0.15)
+        p_low = calculate_sar_coherence_loss(1.0, 0.65)["collapse_probability"]   # delta_gamma = 0.35 (-0.15)
+        self.assertAlmostEqual(p_high - 0.5, 0.5 - p_low, places=4)
+
+        # 5. Critical Asset Structural Exposure & Economic Valuation
+        # Hospital (critical facility, weight = 2.0) vs Residential (standard facility, weight = 1.0)
+        hosp_exp = calculate_building_structural_exposure(
+            mean_coherence_loss=0.45,
+            building_type="hospital",
+            replacement_cost_per_m2=2500.0,
+            footprint_area_m2=2000.0
+        )
+        res_exp = calculate_building_structural_exposure(
+            mean_coherence_loss=0.45,
+            building_type="residential",
+            replacement_cost_per_m2=2500.0,
+            footprint_area_m2=2000.0
+        )
+        # Expected replacement value: 2000 * 2500 = 5,000,000 USD
+        self.assertEqual(hosp_exp["replacement_value_usd"], 5000000.0)
+        self.assertEqual(res_exp["replacement_value_usd"], 5000000.0)
+        self.assertEqual(hosp_exp["criticality_weight"], 2.0)
+        self.assertEqual(res_exp["criticality_weight"], 1.0)
+        self.assertEqual(hosp_exp["is_critical_infrastructure"], True)
+        self.assertEqual(res_exp["is_critical_infrastructure"], False)
+
+        # Economic loss = replacement_value * structural_damage_ratio
+        expected_loss = round(5000000.0 * hosp_exp["structural_damage_ratio"], 2)
+        self.assertEqual(hosp_exp["estimated_loss_usd"], expected_loss)
+
+        # 6. High-Fidelity DPM Simulation Synthesis & GeoJSON Validation
+        dpm_sim = simulate_damage_proxy_mapping({
+            "simulation_id": "SIM_RIGOR_DPM_01",
+            "footprint_sample_count": 24,
+            "latitude": 37.05,
+            "longitude": -120.85
+        })
+        self.assertEqual(dpm_sim["simulation_id"], "SIM_RIGOR_DPM_01")
+        self.assertIn("summary", dpm_sim)
+        self.assertIn("building_footprints", dpm_sim)
+        self.assertIn("footprints_geojson", dpm_sim)
+        self.assertIn("tile_url_template", dpm_sim)
+
+        # Summary telemetry checks
+        summary = dpm_sim["summary"]
+        self.assertEqual(summary["total_footprints_evaluated"], 24)
+        dist = summary["tier_distribution"]
+        self.assertEqual(
+            summary["total_footprints_evaluated"],
+            dist["negligible"] + dist["moderate"] + dist["severe"] + dist["catastrophic_collapse"]
+        )
+        self.assertGreater(summary["total_estimated_loss_usd"], 0.0)
+        self.assertGreaterEqual(summary["mean_coherence_loss"], 0.0)
+        self.assertLessEqual(summary["mean_coherence_loss"], 1.0)
+
+        # RFC 7946 GeoJSON FeatureCollection checks
+        geojson = dpm_sim["footprints_geojson"]
+        self.assertEqual(geojson["type"], "FeatureCollection")
+        self.assertEqual(len(geojson["features"]), 24)
+        for feat in geojson["features"]:
+            self.assertEqual(feat["type"], "Feature")
+            self.assertEqual(feat["geometry"]["type"], "Polygon")
+            props = feat["properties"]
+            self.assertIn("mean_coherence_loss", props)
+            self.assertIn("damage_severity_tier", props)
+            self.assertIn("structural_damage_ratio", props)
+            self.assertIn("collapse_risk", props)
+            self.assertIn("estimated_loss_usd", props)
+
+        # 7. Dynamic XYZ Tile Streaming URL Formatting
+        tile_url = build_damage_proxy_tile_url("SIM_RIGOR_DPM_01", metric="coherence_delta", z=14, x=1024, y=512)
+        self.assertEqual(tile_url, "/api/v1/tiles/geotechnical/dpm/SIM_RIGOR_DPM_01/coherence_delta/14/1024/512.png")
+        tile_tpl = build_damage_proxy_tile_url_template("SIM_RIGOR_DPM_01", metric="building_loss_ratio")
+        self.assertEqual(tile_tpl, "/api/v1/tiles/geotechnical/dpm/SIM_RIGOR_DPM_01/building_loss_ratio/{z}/{x}/{y}.png")
+
+    def test_phenology_harmonic_fourier_and_theil_sen_scientific_rigor(self):
+        """Task T-196: Continuous Scientific QA for Cycle v2.5.22 Multi-Temporal Phenology,
+        Multi-Harmonic Fourier Regression, Theil-Sen Robust Slope, Mann-Kendall Trend,
+        and Climatological Monthly MAD Anomaly Normalization."""
+        from app.models.schemas import (
+            fit_harmonic_fourier_regression,
+            evaluate_harmonic_model,
+            calculate_theil_sen_slope,
+            calculate_mann_kendall_test,
+            calculate_climatological_monthly_mad,
+            calculate_seasonal_mad_anomalies,
+            simulate_phenology_decomposition,
+            build_phenology_anomaly_tile_url,
+            build_phenology_anomaly_tile_url_template,
+            PhenologyAnomalyTier,
+            PhenologyTileMetric,
+            PHENOLOGY_ANOMALY_TIER_CONFIGS,
+            PHENOLOGY_TILE_METRIC_CONFIGS
+        )
+
+        # 1. Harmonic Fourier Regression Orthogonality & Exact Multi-Harmonic Reconstruction
+        # Construct synthetic curve: y(t) = a0 + a1*t + A1*cos(2*pi*t) + B1*sin(2*pi*t) + A2*cos(4*pi*t) + B2*sin(4*pi*t)
+        # Period T = 1.0 year, sampled regularly over 2 full annual cycles (N = 72 observations)
+        N = 72
+        T = 1.0
+        times = [i / 36.0 for i in range(N)]
+        a0_true, a1_true = 0.50, 0.04
+        A1_true, B1_true = 0.15, 0.20  # Amplitude C1 = sqrt(0.15^2 + 0.20^2) = 0.25
+        A2_true, B2_true = -0.06, 0.08  # Amplitude C2 = sqrt((-0.06)^2 + 0.08^2) = 0.10
+
+        values = [
+            a0_true + a1_true * t +
+            A1_true * math.cos(2.0 * math.pi * 1 * t / T) + B1_true * math.sin(2.0 * math.pi * 1 * t / T) +
+            A2_true * math.cos(2.0 * math.pi * 2 * t / T) + B2_true * math.sin(2.0 * math.pi * 2 * t / T)
+            for t in times
+        ]
+
+        model = fit_harmonic_fourier_regression(times, values, num_harmonics=2, period=T)
+        self.assertAlmostEqual(model["intercept_a0"], a0_true, places=3)
+        self.assertAlmostEqual(model["linear_slope_a1"], a1_true, places=3)
+        self.assertGreaterEqual(model["r_squared"], 0.999)
+        self.assertLessEqual(model["rmse"], 0.005)
+
+        comps = model["components"]
+        self.assertEqual(len(comps), 2)
+        # Harmonic 1
+        self.assertAlmostEqual(comps[0]["a_k"], A1_true, places=3)
+        self.assertAlmostEqual(comps[0]["b_k"], B1_true, places=3)
+        self.assertAlmostEqual(comps[0]["amplitude"], 0.2500, places=3)
+        expected_phase1 = math.atan2(B1_true, A1_true)
+        self.assertAlmostEqual(comps[0]["phase_rad"], expected_phase1, places=3)
+
+        # Harmonic 2
+        self.assertAlmostEqual(comps[1]["a_k"], A2_true, places=3)
+        self.assertAlmostEqual(comps[1]["b_k"], B2_true, places=3)
+        self.assertAlmostEqual(comps[1]["amplitude"], 0.1000, places=3)
+
+        # Discrete Orthogonality Invariant Check: sum cos(2*pi*t) * sin(2*pi*t) approx 0 on full cycles
+        dot_cos_sin = sum(math.cos(2.0 * math.pi * t) * math.sin(2.0 * math.pi * t) for t in times)
+        self.assertAlmostEqual(dot_cos_sin, 0.0, places=4)
+        dot_harm1_harm2 = sum(math.cos(2.0 * math.pi * t) * math.cos(4.0 * math.pi * t) for t in times)
+        self.assertAlmostEqual(dot_harm1_harm2, 0.0, places=4)
+
+        # evaluate_harmonic_model consistency
+        t_eval = [0.25, 0.50, 0.75]
+        fitted_eval = evaluate_harmonic_model(model, t_eval)
+        self.assertEqual(len(fitted_eval), 3)
+        for t_val, y_fit in zip(t_eval, fitted_eval):
+            y_expected = (
+                a0_true + a1_true * t_val +
+                A1_true * math.cos(2.0 * math.pi * 1 * t_val) + B1_true * math.sin(2.0 * math.pi * 1 * t_val) +
+                A2_true * math.cos(2.0 * math.pi * 2 * t_val) + B2_true * math.sin(2.0 * math.pi * 2 * t_val)
+            )
+            self.assertAlmostEqual(y_fit, y_expected, places=3)
+
+        # 2. Non-Parametric Theil-Sen Robust Estimator & Outlier Breakdown Point
+        # Test clean trend
+        t_clean = [float(i) for i in range(20)]
+        y_clean = [0.20 + 0.05 * t for t in t_clean]
+        res_clean = calculate_theil_sen_slope(t_clean, y_clean)
+        self.assertAlmostEqual(res_clean["slope_per_year"], 0.0500, places=4)
+        self.assertAlmostEqual(res_clean["intercept"], 0.2000, places=4)
+        self.assertEqual(res_clean["trend_direction"], "increasing")
+
+        # Test Gross Outlier Resistance (up to 25% gross corruption)
+        # Corrupt 5 out of 20 points (25%) with severe cloud shadow dropouts (y = -2.0)
+        y_corrupt = list(y_clean)
+        for idx in [2, 6, 11, 15, 18]:
+            y_corrupt[idx] = -2.0
+
+        res_corrupt = calculate_theil_sen_slope(t_clean, y_corrupt)
+        # Theil-Sen estimator must remain resistant to the 25% outliers
+        self.assertAlmostEqual(res_corrupt["slope_per_year"], 0.0500, places=2)
+        # Sen 95% Confidence Interval must bound the true slope
+        self.assertLessEqual(res_corrupt["slope_ci_lower"], 0.0500)
+        self.assertGreaterEqual(res_corrupt["slope_ci_upper"], 0.0500)
+
+        # 3. Mann-Kendall Monotonic Rank Correlation Test
+        # Strictly increasing monotonic series
+        mk_inc = calculate_mann_kendall_test(list(range(1, 16)))
+        self.assertGreater(mk_inc["mann_kendall_s"], 0)
+        self.assertEqual(mk_inc["kendall_tau"], 1.0)
+        self.assertTrue(mk_inc["is_significant"])
+        self.assertEqual(mk_inc["trend_direction"], "increasing")
+
+        # Strictly decreasing monotonic series
+        mk_dec = calculate_mann_kendall_test(list(range(15, 0, -1)))
+        self.assertLess(mk_dec["mann_kendall_s"], 0)
+        self.assertEqual(mk_dec["kendall_tau"], -1.0)
+        self.assertTrue(mk_dec["is_significant"])
+        self.assertEqual(mk_dec["trend_direction"], "decreasing")
+
+        # Stationary series with tied values (no trend)
+        mk_tie = calculate_mann_kendall_test([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+        self.assertEqual(mk_tie["mann_kendall_s"], 0)
+        self.assertEqual(mk_tie["kendall_tau"], 0.0)
+        self.assertFalse(mk_tie["is_significant"])
+        self.assertEqual(mk_tie["trend_direction"], "no_trend")
+
+        # 4. Climatological Monthly MAD Baseline & Normalized Seasonal Anomaly Z-Score
+        # Construct 3 years of monthly NDVI with a strong seasonal cycle (Dec-Feb ~0.25, Jun-Aug ~0.75)
+        clim_dates = []
+        clim_values = []
+        for yr in [2022, 2023, 2024]:
+            for m in range(1, 13):
+                clim_dates.append(f"{yr}-{m:02d}-15")
+                # Seasonal sinusoidal curve
+                val = 0.50 + 0.25 * math.cos(2.0 * math.pi * (m - 7) / 12.0)
+                clim_values.append(val)
+
+        clim = calculate_climatological_monthly_mad(clim_dates, clim_values)
+        self.assertIn("monthly_records", clim)
+        records = clim["monthly_records"]
+        self.assertEqual(len(records), 12)
+
+        # Verify envelope ordering for each month: p10 <= p25 <= median <= p75 <= p90
+        for rec in records:
+            self.assertLessEqual(rec["p10"], rec["p25"] + 1e-6)
+            self.assertLessEqual(rec["p25"], rec["median"] + 1e-6)
+            self.assertLessEqual(rec["median"], rec["p75"] + 1e-6)
+            self.assertLessEqual(rec["p75"], rec["p90"] + 1e-6)
+            self.assertGreaterEqual(rec["scale"], 0.0)
+
+        # July (m=7, peak) vs January (m=1, trough)
+        self.assertGreater(records[6]["median"], records[0]["median"])
+
+        # Test Absence of False Winter Alarms & Detection of Summer Drought Anomaly
+        test_dates = ["2025-01-15", "2025-07-15", "2025-07-28"]
+        # Jan 15: normal winter value 0.26 (close to Jan median ~0.25) -> normal
+        # Jul 15: severe drought 0.25 (when Jul median is ~0.75) -> extreme negative anomaly
+        # Jul 28: unseasonal greening 0.95 (when Jul median is ~0.75) -> positive anomaly
+        test_values = [0.26, 0.25, 0.95]
+        anoms = calculate_seasonal_mad_anomalies(test_dates, test_values, clim)
+
+        self.assertEqual(anoms["total_observations"], 3)
+        self.assertEqual(anoms["anomaly_count"], 2)  # Jul drought and Jul greening
+        pts = anoms["points"]
+
+        # Jan: normal winter senescence produces normal tier (|z| < 1.5)
+        self.assertEqual(pts[0]["anomaly_tier"], PhenologyAnomalyTier.NORMAL.value)
+        self.assertFalse(pts[0]["is_anomaly"])
+        self.assertLess(abs(pts[0]["seasonal_z_score"]), 1.5)
+
+        # Jul drought: severe deviation produces negative z <= -2.5
+        self.assertLessEqual(pts[1]["seasonal_z_score"], -2.5)
+        self.assertTrue(pts[1]["is_anomaly"])
+        self.assertIn(pts[1]["anomaly_tier"], [PhenologyAnomalyTier.SEVERE_ANOMALY.value, PhenologyAnomalyTier.EXTREME_ANOMALY.value])
+
+        # Jul greening: positive deviation produces z >= +2.5
+        self.assertGreaterEqual(pts[2]["seasonal_z_score"], 2.5)
+        self.assertTrue(pts[2]["is_anomaly"])
+
+        # 5. High-Fidelity Phenology Simulation Synthesis & GeoJSON Validation
+        sim_res = simulate_phenology_decomposition({
+            "simulation_id": "SIM_RIGOR_PHENO_01",
+            "asset_id": "ASSET-TEST-001",
+            "asset_name": "Test Embankment Slope",
+            "index_name": "ndvi",
+            "sample_polygon_count": 8
+        })
+
+        self.assertEqual(sim_res["simulation_id"], "SIM_RIGOR_PHENO_01")
+        self.assertIn("summary", sim_res)
+        self.assertIn("harmonic_model", sim_res)
+        self.assertIn("theil_sen_trend", sim_res)
+        self.assertIn("monthly_climatology", sim_res)
+        self.assertIn("geojson_collection", sim_res)
+        self.assertIn("tile_url_template", sim_res)
+
+        # RFC 7946 GeoJSON FeatureCollection validation
+        gj = sim_res["geojson_collection"]
+        self.assertEqual(gj["type"], "FeatureCollection")
+        self.assertGreater(len(gj["features"]), 0)
+        for feat in gj["features"]:
+            self.assertEqual(feat["type"], "Feature")
+            self.assertEqual(feat["geometry"]["type"], "Polygon")
+            props = feat["properties"]
+            self.assertIn("theil_sen_slope", props)
+            self.assertIn("annual_amplitude", props)
+            self.assertIn("worst_tier", props)
+
+        # 6. Dynamic XYZ Phenology Anomaly Tile Streaming URL Formatting
+        tile_url = build_phenology_anomaly_tile_url("SIM_RIGOR_PHENO_01", metric="theil_sen_slope", z=12, x=1024, y=512)
+        self.assertEqual(tile_url, "/api/v1/tiles/phenology/anomaly/SIM_RIGOR_PHENO_01/theil_sen_slope/12/1024/512.png")
+        tile_tpl = build_phenology_anomaly_tile_url_template("SIM_RIGOR_PHENO_01", metric="mad_anomaly_zscore")
+        self.assertEqual(tile_tpl, "/api/v1/tiles/phenology/anomaly/SIM_RIGOR_PHENO_01/mad_anomaly_zscore/{z}/{x}/{y}.png")
 
 if __name__ == "__main__":
     unittest.main()

@@ -220,6 +220,9 @@ import SettlementModal from '../components/SettlementModal';
 import TopographicDeltaModal from '../components/TopographicDeltaModal';
 import DamBreachModal from '../components/DamBreachModal';
 import InternalErosionModal from '../components/InternalErosionModal';
+import InSARVelocityModal from '../components/InSARVelocityModal';
+import DamageProxyModal from '../components/DamageProxyModal';
+import PhenologyStudioModal from '../components/PhenologyStudioModal';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -316,7 +319,14 @@ import {
   DAM_BREACH_HAZARD_CONFIGS,
   buildHydrodynamicTileUrlTemplate,
   INTERNAL_EROSION_HAZARD_CONFIGS,
-  buildFlownetTileUrlTemplate
+  buildFlownetTileUrlTemplate,
+  INSAR_HAZARD_CONFIGS,
+  INSAR_VELOCITY_TILE_METRICS,
+  buildInSARVelocityTileUrlTemplate,
+  SAR_DAMAGE_TIER_CONFIGS,
+  buildDamageProxyTileUrlTemplate,
+  PHENOLOGY_ANOMALY_TIER_CONFIGS,
+  buildPhenologyAnomalyTileUrlTemplate
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -1254,6 +1264,27 @@ export default function MapExplorer() {
   const [internalErosionSimulation, setInternalErosionSimulation] = useState(null);
   const [flownetMetric, setFlownetMetric] = useState('hydraulic_head');
   const [flownetOpacity, setFlownetOpacity] = useState(0.85);
+
+  // T-180 & T-182: InSAR Persistent Scatterer Velocity States (Cycle v2.5.20)
+  const [insarVelocityModalOpen, setInsarVelocityModalOpen] = useState(false);
+  const [showInSARVelocityLayer, setShowInSARVelocityLayer] = useState(false);
+  const [insarVelocitySimulation, setInsarVelocitySimulation] = useState(null);
+  const [insarVelocityMetric, setInsarVelocityMetric] = useState('velocity_vertical');
+  const [insarVelocityOpacity, setInsarVelocityOpacity] = useState(0.85);
+
+  // T-186 & T-188: SAR Damage Proxy Mapping States (Cycle v2.5.21)
+  const [damageProxyModalOpen, setDamageProxyModalOpen] = useState(false);
+  const [showDamageProxyLayer, setShowDamageProxyLayer] = useState(false);
+  const [damageProxySimulation, setDamageProxySimulation] = useState(null);
+  const [damageProxyMetric, setDamageProxyMetric] = useState('coherence_delta');
+  const [damageProxyOpacity, setDamageProxyOpacity] = useState(0.85);
+
+  // T-192 & T-194: Phenology Seasonality & Climatological MAD Anomaly States (Cycle v2.5.22)
+  const [phenologyModalOpen, setPhenologyModalOpen] = useState(false);
+  const [showPhenologyLayer, setShowPhenologyLayer] = useState(false);
+  const [phenologySimulation, setPhenologySimulation] = useState(null);
+  const [phenologyTileMetric, setPhenologyTileMetric] = useState('mad_anomaly_zscore');
+  const [phenologyOpacity, setPhenologyOpacity] = useState(0.85);
 
   // T-168/T-170: Wave Arrival Playback Timer Ticker
   useEffect(() => {
@@ -5740,6 +5771,162 @@ export default function MapExplorer() {
               );
             })}
 
+            {/* T-180/T-182: InSAR Persistent Scatterer Dynamic Deformation Tile Layer (Cycle v2.5.20) */}
+            {showInSARVelocityLayer && insarVelocitySimulation && !curtainActive && (
+              <TileLayer
+                key={`insar-vel-tile-${insarVelocitySimulation.simulation_id}-${insarVelocityMetric}-${insarVelocityOpacity}`}
+                url={buildInSARVelocityTileUrlTemplate(insarVelocitySimulation.simulation_id, insarVelocityMetric)}
+                opacity={insarVelocityOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                zIndex={446}
+              />
+            )}
+
+            {/* High-Coherence InSAR Persistent Scatterer Markers */}
+            {showInSARVelocityLayer && insarVelocitySimulation?.ps_points?.map((ps) => {
+              const hCfg = INSAR_HAZARD_CONFIGS[ps.hazard_tier] || INSAR_HAZARD_CONFIGS.stable;
+              const markerPos = [ps.latitude, ps.longitude];
+              const isPeak = ps.point_id === insarVelocitySimulation.critical_ps_point_id;
+              return (
+                <CircleMarker
+                  key={`insar-ps-${ps.point_id}`}
+                  center={markerPos}
+                  radius={isPeak ? 7 : 5}
+                  pathOptions={{
+                    fillColor: hCfg.color,
+                    fillOpacity: 0.9,
+                    color: isPeak ? '#ffffff' : '#0f172a',
+                    weight: isPeak ? 2.5 : 1.5
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold text-violet-400 flex items-center justify-between">
+                        <span>Scatterer: {ps.point_id}</span>
+                        {isPeak && <span className="text-[9px] px-1 bg-rose-950 text-rose-300 rounded font-bold">PEAK</span>}
+                      </div>
+                      <div>Elevation: <strong>{ps.elevation_m.toFixed(1)} m</strong></div>
+                      <div>Coherence γ: <strong>{ps.temporal_coherence.toFixed(3)}</strong></div>
+                      <div>Amp Disp D_A: <strong>{ps.amplitude_dispersion.toFixed(3)}</strong></div>
+                      <div>v_LOS: <strong>{ps.velocity_los_mm_yr.toFixed(2)} mm/yr</strong></div>
+                      <div>v_Vertical: <strong className={ps.velocity_vertical_mm_yr <= -12 ? 'text-rose-400' : ps.velocity_vertical_mm_yr <= -5 ? 'text-amber-400' : 'text-emerald-400'}>{ps.velocity_vertical_mm_yr.toFixed(2)} mm/yr</strong></div>
+                      <div>Hazard: <span className="font-bold uppercase" style={{ color: hCfg.color }}>{hCfg.label}</span></div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
+            {/* T-186/T-188: SAR Damage Proxy Mapping Dynamic Tile Layer (Cycle v2.5.21) */}
+            {showDamageProxyLayer && damageProxySimulation && !curtainActive && (
+              <TileLayer
+                key={`dpm-tile-${damageProxySimulation.simulation_id}-${damageProxyMetric}-${damageProxyOpacity}`}
+                url={buildDamageProxyTileUrlTemplate(damageProxySimulation.simulation_id, damageProxyMetric)}
+                opacity={damageProxyOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                zIndex={447}
+              />
+            )}
+
+            {/* High-Resolution Evaluated Building Footprint Polygons */}
+            {showDamageProxyLayer && damageProxySimulation?.footprints_geojson?.features?.map((feat, fIdx) => {
+              if (feat.geometry?.type === 'Polygon' && feat.geometry.coordinates?.[0]) {
+                const latLngs = feat.geometry.coordinates[0].map((coord) => [coord[1], coord[0]]);
+                const props = feat.properties || {};
+                const tierCfg = SAR_DAMAGE_TIER_CONFIGS[props.damage_severity_tier] || SAR_DAMAGE_TIER_CONFIGS.negligible;
+                const isCollapse = props.damage_severity_tier === 'catastrophic_collapse';
+                const isSevere = props.damage_severity_tier === 'severe';
+                return (
+                  <Polygon
+                    key={`dpm-poly-${props.building_id || fIdx}`}
+                    positions={latLngs}
+                    pathOptions={{
+                      color: tierCfg.color,
+                      weight: isCollapse ? 3 : isSevere ? 2.5 : 1.5,
+                      fillColor: tierCfg.color,
+                      fillOpacity: isCollapse ? 0.55 : isSevere ? 0.40 : 0.22,
+                      dashArray: isCollapse ? '6, 4' : undefined
+                    }}
+                  >
+                    <Popup className="custom-popup">
+                      <div className="p-1 space-y-1 font-mono text-xs">
+                        <div className="font-bold flex items-center justify-between" style={{ color: tierCfg.color }}>
+                          <span>{props.building_name || props.building_id}</span>
+                          {props.is_critical && (
+                            <span className="text-[9px] px-1 bg-rose-950 text-rose-300 rounded font-bold">CRITICAL</span>
+                          )}
+                        </div>
+                        <div>Type: <strong>{props.building_type ? props.building_type.replace('_', ' ').toUpperCase() : 'UNKNOWN'}</strong></div>
+                        <div>Severity: <span className="font-bold uppercase" style={{ color: tierCfg.color }}>{tierCfg.label}</span></div>
+                        <div>Coherence Loss Δγ: <strong className="text-amber-300">{props.mean_coherence_loss != null ? Number(props.mean_coherence_loss).toFixed(4) : '—'}</strong></div>
+                        <div>Baseline γ_pre: <strong>{props.mean_coherence_pre != null ? Number(props.mean_coherence_pre).toFixed(3) : '—'}</strong> | Event γ: <strong>{props.mean_coherence_event != null ? Number(props.mean_coherence_event).toFixed(3) : '—'}</strong></div>
+                        <div>Damage Ratio: <strong>{props.structural_damage_ratio != null ? (props.structural_damage_ratio * 100).toFixed(1) : '0.0'}%</strong></div>
+                        <div>Collapse Prob: <strong className={props.collapse_probability >= 0.5 ? 'text-rose-400 font-bold' : 'text-slate-300'}>{props.collapse_probability != null ? (props.collapse_probability * 100).toFixed(1) : '0.0'}%</strong> ({props.collapse_risk})</div>
+                        <div>Estimated Loss: <strong className="text-emerald-400">${Number(props.estimated_loss_usd || 0).toLocaleString()}</strong></div>
+                        <div className="text-[10px] text-gray-400 border-t border-gray-800 pt-1">
+                          Action: {tierCfg.action_required}
+                        </div>
+                      </div>
+                    </Popup>
+                  </Polygon>
+                );
+              }
+              return null;
+            })}
+
+            {/* T-192/T-194: Phenological Seasonality & Climatological MAD Anomaly Dynamic Tile Layer (Cycle v2.5.22) */}
+            {showPhenologyLayer && phenologySimulation && !curtainActive && (
+              <TileLayer
+                key={`phenology-tile-${phenologySimulation.simulation_id}-${phenologyTileMetric}-${phenologyOpacity}`}
+                url={buildPhenologyAnomalyTileUrlTemplate(phenologySimulation.simulation_id, phenologyTileMetric)}
+                opacity={phenologyOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                zIndex={448}
+              />
+            )}
+
+            {/* High-Resolution Evaluated Phenology AOI Polygons */}
+            {showPhenologyLayer && phenologySimulation?.geojson_collection?.features?.map((feat, fIdx) => {
+              if (feat.geometry?.type === 'Polygon' && feat.geometry.coordinates?.[0]) {
+                const latLngs = feat.geometry.coordinates[0].map((coord) => [coord[1], coord[0]]);
+                const props = feat.properties || {};
+                const tierCfg = PHENOLOGY_ANOMALY_TIER_CONFIGS[props.worst_tier] || PHENOLOGY_ANOMALY_TIER_CONFIGS.normal;
+                return (
+                  <Polygon
+                    key={`phenology-poly-${props.asset_id || fIdx}`}
+                    positions={latLngs}
+                    pathOptions={{
+                      color: tierCfg.color,
+                      weight: 2,
+                      fillColor: tierCfg.color,
+                      fillOpacity: 0.25,
+                      dashArray: props.worst_tier === 'extreme_anomaly' ? '6, 4' : undefined
+                    }}
+                  >
+                    <Popup className="custom-popup">
+                      <div className="p-1 space-y-1 font-mono text-xs">
+                        <div className="font-bold flex items-center justify-between" style={{ color: tierCfg.color }}>
+                          <span>{props.asset_name || props.asset_id}</span>
+                          <span className="text-[9px] px-1 bg-emerald-950 text-emerald-300 rounded font-bold uppercase">{props.index_name || 'NDVI'}</span>
+                        </div>
+                        <div>Status: <span className="font-bold uppercase" style={{ color: tierCfg.color }}>{tierCfg.label}</span></div>
+                        <div>Theil-Sen Trend: <strong className="text-emerald-300">{props.theil_sen_slope > 0 ? `+${props.theil_sen_slope}` : props.theil_sen_slope} yr⁻¹</strong></div>
+                        <div>Annual Amplitude: <strong>{props.annual_amplitude != null ? Number(props.annual_amplitude).toFixed(3) : '—'}</strong></div>
+                        <div>Anomalies Detected: <strong className="text-amber-400">{props.anomaly_count ?? 0}</strong></div>
+                        <div className="text-[10px] text-gray-400 border-t border-gray-800 pt-1">
+                          {tierCfg.description}
+                        </div>
+                      </div>
+                    </Popup>
+                  </Polygon>
+                );
+              }
+              return null;
+            })}
+
             {/* T-114/T-116: Automated Sub-Pixel Tie-Point Pins */}
             {(showRpcTiePointsLayer || showRpcLayer) && rpcTiePointPins.map((tp, idx) => {
               const baseLat = 37.0585;
@@ -7634,6 +7821,340 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-180/T-182: Floating InSAR Persistent Scatterer Velocity HUD Controller Card (Cycle v2.5.20) */}
+          {showInSARVelocityLayer && insarVelocitySimulation && (
+            <div className="absolute top-20 left-4 z-[937] glass-panel p-3.5 rounded-xl border-violet-500/40 shadow-2xl bg-black/90 backdrop-blur-md flex flex-col gap-2.5 w-[460px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-violet-500/20 text-violet-400">
+                    <Radio className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-violet-300">
+                      {insarVelocitySimulation.asset_name || 'InSAR Persistent Scatterer Velocity'}
+                    </div>
+                    <div className="text-[10px] text-gray-400">
+                      {insarVelocitySimulation.simulation_id} • Band: {insarVelocitySimulation.sensor_band?.toUpperCase() || 'C-BAND'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setInsarVelocityModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold transition"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowInSARVelocityLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Key Telemetry Badges */}
+              <div className="grid grid-cols-4 gap-2 text-center font-mono">
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">PS Count</div>
+                  <span className="text-violet-400 font-bold">
+                    {insarVelocitySimulation.ps_points_retained || 0}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Mean Coherence</div>
+                  <span className="text-amber-400 font-bold">
+                    {insarVelocitySimulation.mean_temporal_coherence?.toFixed(3) || '—'}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Max Subsidence</div>
+                  <span className={`font-bold ${
+                    (insarVelocitySimulation.max_subsidence_velocity_mm_yr || 0) <= -12 ? 'text-rose-400' :
+                    (insarVelocitySimulation.max_subsidence_velocity_mm_yr || 0) <= -5 ? 'text-amber-400' : 'text-emerald-400'
+                  }`}>
+                    {insarVelocitySimulation.max_subsidence_velocity_mm_yr?.toFixed(2) || '0.00'} mm/yr
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Worst Hazard</div>
+                  <span className={`font-bold text-[10px] ${
+                    insarVelocitySimulation.worst_hazard_tier === 'critical_instability' ? 'text-rose-400 animate-pulse' :
+                    insarVelocitySimulation.worst_hazard_tier === 'accelerating_deformation' ? 'text-orange-400' :
+                    insarVelocitySimulation.worst_hazard_tier === 'moderate_displacement' ? 'text-amber-400' : 'text-emerald-400'
+                  }`}>
+                    {(insarVelocitySimulation.worst_hazard_tier || 'STABLE').replace('_', ' ').toUpperCase()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Opacity Slider */}
+              <div className="flex items-center gap-2 text-xs font-mono">
+                <span className="text-gray-400 text-[10px] uppercase w-16">Opacity</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={insarVelocityOpacity}
+                  onChange={(e) => setInsarVelocityOpacity(Number(e.target.value))}
+                  className="flex-1 accent-violet-500 h-1 bg-gray-800 rounded cursor-pointer"
+                />
+                <span className="text-[10px] text-gray-400 w-8 text-right">
+                  {Math.round(insarVelocityOpacity * 100)}%
+                </span>
+              </div>
+
+              {/* Metric Switcher Pills */}
+              <div className="flex flex-wrap gap-1 border-t border-gray-800/80 pt-2">
+                {[
+                  { id: 'velocity_vertical', label: 'Vertical (v_v)' },
+                  { id: 'velocity_los', label: 'LOS (v_los)' },
+                  { id: 'velocity_east_west', label: 'East-West (v_ew)' },
+                  { id: 'temporal_coherence', label: 'Coherence (γ)' },
+                  { id: 'height_residual', label: 'Topo Residual' },
+                  { id: 'hazard_tier', label: 'Hazard Tier' }
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setInsarVelocityMetric(m.id)}
+                    className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all ${
+                      insarVelocityMetric === m.id
+                        ? 'bg-violet-600 text-white font-bold shadow'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* T-186/T-188: Floating SAR Damage Proxy Mapping HUD Controller Card (Cycle v2.5.21) */}
+          {showDamageProxyLayer && damageProxySimulation && (
+            <div className="absolute top-20 left-4 z-[937] glass-panel p-3.5 rounded-xl border-amber-500/40 shadow-2xl bg-black/90 backdrop-blur-md flex flex-col gap-2.5 w-[460px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-amber-500/20 text-amber-400">
+                    <ShieldAlert className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-amber-300">
+                      {damageProxySimulation.event_name || 'SAR Damage Proxy Mapping (DPM)'}
+                    </div>
+                    <div className="text-[10px] text-gray-400">
+                      {damageProxySimulation.simulation_id} • Mission: {damageProxySimulation.satellite_mission?.toUpperCase() || 'SENTINEL-1'} ({damageProxySimulation.polarization || 'VV'})
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setDamageProxyModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold transition"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowDamageProxyLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Key Disaster Telemetry Badges */}
+              <div className="grid grid-cols-4 gap-2 text-center font-mono">
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Structures</div>
+                  <span className="text-amber-400 font-bold">
+                    {damageProxySimulation.summary?.total_footprints_evaluated ?? damageProxySimulation.building_footprints?.length ?? 0}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Mean Δγ</div>
+                  <span className="text-orange-400 font-bold">
+                    {damageProxySimulation.summary?.mean_coherence_loss != null ? Number(damageProxySimulation.summary.mean_coherence_loss).toFixed(3) : '—'}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Estimated Loss</div>
+                  <span className="text-emerald-400 font-bold text-[10px]">
+                    ${damageProxySimulation.summary?.total_estimated_loss_usd != null ? (damageProxySimulation.summary.total_estimated_loss_usd >= 1e6 ? `${(damageProxySimulation.summary.total_estimated_loss_usd / 1e6).toFixed(2)}M` : `${Math.round(damageProxySimulation.summary.total_estimated_loss_usd / 1000)}k`) : '$0'}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Worst Tier</div>
+                  {(() => {
+                    const wt = damageProxySimulation.summary?.worst_damage_tier || 'negligible';
+                    const cfg = SAR_DAMAGE_TIER_CONFIGS[wt] || SAR_DAMAGE_TIER_CONFIGS.negligible;
+                    return (
+                      <span className="font-bold text-[10px]" style={{ color: cfg.color }}>
+                        {cfg.badge || wt.toUpperCase()}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Opacity Slider */}
+              <div className="flex items-center gap-2 text-xs font-mono">
+                <span className="text-gray-400 text-[10px] uppercase w-16">Opacity</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={damageProxyOpacity}
+                  onChange={(e) => setDamageProxyOpacity(Number(e.target.value))}
+                  className="flex-1 accent-amber-500 h-1 bg-gray-800 rounded cursor-pointer"
+                />
+                <span className="text-[10px] text-gray-400 w-8 text-right">
+                  {Math.round(damageProxyOpacity * 100)}%
+                </span>
+              </div>
+
+              {/* Metric Switcher Pills */}
+              <div className="flex flex-wrap gap-1 border-t border-gray-800/80 pt-2">
+                {[
+                  { id: 'coherence_delta', label: 'Coherence Loss (Δγ)' },
+                  { id: 'pre_coherence', label: 'Pre-Event (γ_pre)' },
+                  { id: 'event_coherence', label: 'Co-Event (γ_event)' },
+                  { id: 'damage_severity_tier', label: 'Severity Tier' },
+                  { id: 'building_loss_ratio', label: 'Loss Ratio' },
+                  { id: 'hazard_rating_tier', label: 'Hazard Rating' }
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setDamageProxyMetric(m.id)}
+                    className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all ${
+                      damageProxyMetric === m.id
+                        ? 'bg-amber-600 text-white font-bold shadow'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* T-192/T-194: Floating Phenology Seasonality HUD Controller Card (Cycle v2.5.22) */}
+          {showPhenologyLayer && phenologySimulation && (
+            <div className="absolute top-20 left-4 z-[938] glass-panel p-3.5 rounded-xl border-emerald-500/40 shadow-2xl bg-black/90 backdrop-blur-md flex flex-col gap-2.5 w-[460px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded bg-emerald-500/20 text-emerald-400">
+                    <Sprout className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-emerald-300">
+                      {phenologySimulation.asset_name || 'Phenological Seasonality & Climatological MAD'}
+                    </div>
+                    <div className="text-[10px] text-gray-400">
+                      {phenologySimulation.simulation_id} • Index: {phenologySimulation.index_name?.toUpperCase() || 'NDVI'} (Harmonics: {phenologySimulation.harmonic_model?.components?.length || 2})
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPhenologyModalOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white uppercase font-bold transition"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowPhenologyLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Key Phenology Telemetry Badges */}
+              <div className="grid grid-cols-4 gap-2 text-center font-mono">
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Trend Slope</div>
+                  <span className={`font-bold text-[10px] ${phenologySimulation.summary?.trend_slope_per_year >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {phenologySimulation.summary?.trend_slope_per_year > 0 ? `+${phenologySimulation.summary.trend_slope_per_year}` : phenologySimulation.summary?.trend_slope_per_year ?? '0.000'}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Amplitude (C₁)</div>
+                  <span className="text-cyan-400 font-bold text-[10px]">
+                    {phenologySimulation.summary?.annual_amplitude != null ? Number(phenologySimulation.summary.annual_amplitude).toFixed(3) : '—'}
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Anomalies</div>
+                  <span className="text-amber-400 font-bold text-[10px]">
+                    {phenologySimulation.summary?.anomaly_count ?? 0} pts
+                  </span>
+                </div>
+                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                  <div className="text-[9px] text-gray-400 uppercase">Worst Tier</div>
+                  {(() => {
+                    const wt = phenologySimulation.summary?.worst_anomaly_tier || 'normal';
+                    const cfg = PHENOLOGY_ANOMALY_TIER_CONFIGS[wt] || PHENOLOGY_ANOMALY_TIER_CONFIGS.normal;
+                    return (
+                      <span className="font-bold text-[10px]" style={{ color: cfg.color }}>
+                        {cfg.id.split('_')[0].toUpperCase()}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Opacity Slider */}
+              <div className="flex items-center gap-2 text-xs font-mono">
+                <span className="text-gray-400 text-[10px] uppercase w-16">Opacity</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={phenologyOpacity}
+                  onChange={(e) => setPhenologyOpacity(Number(e.target.value))}
+                  className="flex-1 accent-emerald-500 h-1 bg-gray-800 rounded cursor-pointer"
+                />
+                <span className="text-[10px] text-gray-400 w-8 text-right">
+                  {Math.round(phenologyOpacity * 100)}%
+                </span>
+              </div>
+
+              {/* Metric Switcher Pills */}
+              <div className="flex flex-wrap gap-1 border-t border-gray-800/80 pt-2">
+                {[
+                  { id: 'mad_anomaly_zscore', label: 'MAD Anomaly (Z)' },
+                  { id: 'baseline_ndvi', label: 'Seasonal Baseline' },
+                  { id: 'seasonal_amplitude', label: 'Amplitude (C₁)' },
+                  { id: 'phase_angle', label: 'Phase Angle' },
+                  { id: 'theil_sen_slope', label: 'Theil-Sen Slope' },
+                  { id: 'anomaly_tier', label: 'Anomaly Tier' }
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setPhenologyTileMetric(m.id)}
+                    className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all ${
+                      phenologyTileMetric === m.id
+                        ? 'bg-emerald-600 text-white font-bold shadow'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -8427,6 +8948,42 @@ export default function MapExplorer() {
               >
                 <Waves className="w-3.5 h-3.5 text-amber-400" />
                 <span>Piping & Flownet (v2.5.19)</span>
+              </button>
+
+              {/* T-180/T-182 InSAR PS Velocity Studio Shortcut (Cycle v2.5.20) */}
+              <button
+                onClick={() => setInsarVelocityModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-violet-300 hover:text-white hover:bg-violet-500/20 border border-violet-500/30 ${
+                  insarVelocityModalOpen || showInSARVelocityLayer ? 'bg-violet-600 text-white font-extrabold shadow-[0_0_12px_rgba(139,92,246,0.6)]' : ''
+                }`}
+                title="InSAR Persistent Scatterer Velocity Studio, StaMPS Millimeter Creep Inversion, 3D Orbit Decomposition & Deformation Tiles (Cycle v2.5.20)"
+              >
+                <Radio className="w-3.5 h-3.5 text-violet-400" />
+                <span>InSAR PS (v2.5.20)</span>
+              </button>
+
+              {/* T-186/T-188 SAR Damage Proxy Mapping Studio Shortcut (Cycle v2.5.21) */}
+              <button
+                onClick={() => setDamageProxyModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-amber-300 hover:text-white hover:bg-amber-500/20 border border-amber-500/30 ${
+                  damageProxyModalOpen || showDamageProxyLayer ? 'bg-amber-600 text-white font-extrabold shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
+                }`}
+                title="SAR Damage Proxy Mapping Studio, ARIA Interferometric Coherence Loss (Δγ) & Structural Damage Tiles (Cycle v2.5.21)"
+              >
+                <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                <span>SAR DPM (v2.5.21)</span>
+              </button>
+
+              {/* T-192/T-194 Phenology & Climatological Seasonality Studio Shortcut (Cycle v2.5.22) */}
+              <button
+                onClick={() => setPhenologyModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-emerald-300 hover:text-white hover:bg-emerald-500/20 border border-emerald-500/30 ${
+                  phenologyModalOpen || showPhenologyLayer ? 'bg-emerald-600 text-white font-extrabold shadow-[0_0_12px_rgba(16,185,129,0.6)]' : ''
+                }`}
+                title="Phenology Seasonality Studio, Multi-Harmonic Fourier Regression, Theil-Sen Robust Trend & Climatological MAD Anomaly Tiles (Cycle v2.5.22)"
+              >
+                <Sprout className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Phenology (v2.5.22)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -20132,6 +20689,78 @@ export default function MapExplorer() {
               lat: sim.coordinates[1],
               lng: sim.coordinates[0],
               zoom: 14
+            });
+          }
+        }}
+      />
+
+      {/* T-180/T-182: InSAR Persistent Scatterer Velocity Studio Modal (Cycle v2.5.20) */}
+      <InSARVelocityModal
+        isOpen={insarVelocityModalOpen}
+        onClose={() => setInsarVelocityModalOpen(false)}
+        activeSimulation={insarVelocitySimulation}
+        onApplyToMap={(sim, opts) => {
+          setInsarVelocitySimulation(sim);
+          setShowInSARVelocityLayer(true);
+          if (opts?.selectedMetric) {
+            setInsarVelocityMetric(opts.selectedMetric);
+          }
+          if (opts?.opacity !== undefined) {
+            setInsarVelocityOpacity(opts.opacity);
+          }
+          if (sim?.coordinates) {
+            setCustomFlyTarget({
+              lat: sim.coordinates[1],
+              lng: sim.coordinates[0],
+              zoom: 14
+            });
+          }
+        }}
+      />
+
+      {/* T-186/T-188: SAR Damage Proxy Mapping Studio Modal (Cycle v2.5.21) */}
+      <DamageProxyModal
+        isOpen={damageProxyModalOpen}
+        onClose={() => setDamageProxyModalOpen(false)}
+        activeSimulation={damageProxySimulation}
+        onApplyToMap={(sim, opts) => {
+          setDamageProxySimulation(sim);
+          setShowDamageProxyLayer(true);
+          if (opts?.selectedMetric) {
+            setDamageProxyMetric(opts.selectedMetric);
+          }
+          if (opts?.opacity !== undefined) {
+            setDamageProxyOpacity(opts.opacity);
+          }
+          if (sim?.coordinates) {
+            setCustomFlyTarget({
+              lat: sim.coordinates[1],
+              lng: sim.coordinates[0],
+              zoom: 14
+            });
+          }
+        }}
+      />
+
+      {/* T-192/T-194: Phenological Seasonality Studio Modal (Cycle v2.5.22) */}
+      <PhenologyStudioModal
+        isOpen={phenologyModalOpen}
+        onClose={() => setPhenologyModalOpen(false)}
+        activeSimulation={phenologySimulation}
+        onApplyToMap={(sim, opts) => {
+          setPhenologySimulation(sim);
+          setShowPhenologyLayer(true);
+          if (opts?.selectedMetric) {
+            setPhenologyTileMetric(opts.selectedMetric);
+          }
+          if (opts?.opacity !== undefined) {
+            setPhenologyOpacity(opts.opacity);
+          }
+          if (opts?.coordinates) {
+            setCustomFlyTarget({
+              lat: opts.coordinates[1],
+              lng: opts.coordinates[0],
+              zoom: 13
             });
           }
         }}

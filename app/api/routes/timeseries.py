@@ -1,10 +1,17 @@
-from fastapi import APIRouter
+from typing import Union, Dict, Any
+from fastapi import APIRouter, Body
 from app.models.schemas import (
     TrendRequest,
     TimeSeriesResponse,
     parse_bbox,
     MannKendallAnalysisRequest,
-    MannKendallAnalysisResponse
+    MannKendallAnalysisResponse,
+    PhenologyHarmonicAnalysisRequest,
+    PhenologyHarmonicAnalysisResponse,
+    PhenologyMADAnalysisRequest,
+    PhenologyMADAnalysisResponse,
+    PhenologyDecompositionRequest,
+    PhenologyDecompositionResponse
 )
 from app.services.timeseries import timeseries_service
 import numpy as np
@@ -31,3 +38,23 @@ def get_temporal_trend(req: TrendRequest):
 def post_timeseries_mann_kendall(req: MannKendallAnalysisRequest):
     from app.api.routes.analysis import analyze_mann_kendall_trend
     return analyze_mann_kendall_trend(req)
+
+@router.post("/phenology/harmonic-decomposition", response_model=PhenologyHarmonicAnalysisResponse, include_in_schema=False)
+def post_timeseries_phenology_harmonic(req: PhenologyHarmonicAnalysisRequest):
+    from app.api.routes.analysis import analyze_phenology_harmonic_endpoint
+    return analyze_phenology_harmonic_endpoint(req)
+
+@router.post("/phenology/climatological-mad-anomaly", response_model=Union[PhenologyDecompositionResponse, PhenologyMADAnalysisResponse], include_in_schema=False)
+def post_timeseries_phenology_mad(payload: Dict[str, Any] = Body(...)):
+    from app.api.routes.analysis import analyze_phenology_climatological_mad_anomaly_endpoint
+    return analyze_phenology_climatological_mad_anomaly_endpoint(payload)
+
+@router.post("/phenology/decomposition", response_model=PhenologyDecompositionResponse, include_in_schema=False)
+def post_timeseries_phenology_decomp(req: PhenologyDecompositionRequest):
+    from app.api.routes.analysis import simulate_phenology_decomposition_endpoint
+    return simulate_phenology_decomposition_endpoint(req)
+
+@router.get("/phenology/{simulation_id}", response_model=PhenologyDecompositionResponse, include_in_schema=False)
+def get_timeseries_phenology_detail(simulation_id: str):
+    from app.api.routes.analysis import get_phenology_simulation_detail
+    return get_phenology_simulation_detail(simulation_id)

@@ -238,7 +238,16 @@ DEFAULT_INDEX_RANGES = {
     "velocity_east_west": (-8.0, 8.0),
     "temporal_coherence": (0.0, 1.0),
     "height_residual": (-5.0, 5.0),
-    "insar_hazard_tier": (1.0, 5.0)
+    "insar_hazard_tier": (1.0, 5.0),
+    "coherence_delta": (0.0, 1.0),
+    "coherence_loss": (0.0, 1.0),
+    "pre_coherence": (0.0, 1.0),
+    "event_coherence": (0.0, 1.0),
+    "damage_severity_tier": (1.0, 4.0),
+    "building_loss_ratio": (0.0, 1.0),
+    "structural_damage_ratio": (0.0, 1.0),
+    "hazard_rating_tier": (1.0, 5.0),
+    "dpm_hazard_tier": (1.0, 5.0)
 }
 
 class TileService:
@@ -355,7 +364,7 @@ class TileService:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
         raw_idx = str(index.value if hasattr(index, "value") else index).lower().strip() if index else "rgb"
-        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"geotechnical_insar_velocity", "insar_velocity", "geotechnical_insar", "insar", "geotechnical_flownet", "flownet", "hydrodynamic_inundation", "inundation", "hydrodynamic", "dam_breach", "dam_breach_hydrodynamic", "topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf", "geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement", "geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
+        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"geotechnical_damage_proxy", "damage_proxy", "dpm", "sar_dpm", "sar_damage_proxy", "geotechnical_dpm", "geotechnical_insar_velocity", "insar_velocity", "geotechnical_insar", "insar", "geotechnical_flownet", "flownet", "hydrodynamic_inundation", "inundation", "hydrodynamic", "dam_breach", "dam_breach_hydrodynamic", "topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf", "geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement", "geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
             idx_clean = raw_idx
         else:
             idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
@@ -1289,6 +1298,118 @@ class TileService:
                     val = tier_insar
                 else:
                     val = v_vert
+            elif col_clean in {"geotechnical_damage_proxy", "damage_proxy", "dpm", "sar_dpm", "sar_damage_proxy", "geotechnical_dpm"} or (col_clean in {"geotechnical", "sar"} and idx_clean in {"coherence_delta", "pre_coherence", "event_coherence", "damage_severity_tier", "building_loss_ratio", "hazard_rating_tier"}) or idx_clean in {"coherence_delta", "pre_coherence", "event_coherence", "damage_severity_tier", "building_loss_ratio", "hazard_rating_tier", "coherence_loss", "structural_damage_ratio", "dpm_hazard_tier"}:
+                # Complex Interferometric SAR Damage Proxy Mapping (DPM) (Cycle v2.5.21)
+                u_s = ((xx - min_lon) / (max_lon - min_lon + 1e-6)).astype(np.float32)
+                v_s = ((yy - min_lat) / (max_lat - min_lat + 1e-6)).astype(np.float32)
+
+                # Event epicenter and regional decorrelation falloff
+                dist_epicenter = np.sqrt((u_s - 0.50) ** 2 + (v_s - 0.50) ** 2)
+                decorrelation_field = np.exp(-(dist_epicenter / 0.28) ** 2)
+
+                # Secondary structural damage concentrations (e.g. mine processing plant, dam crest, urban sector)
+                cluster_a = np.exp(-(((u_s - 0.36) / 0.12) ** 2 + ((v_s - 0.62) / 0.12) ** 2))
+                cluster_b = np.exp(-(((u_s - 0.64) / 0.14) ** 2 + ((v_s - 0.38) / 0.14) ** 2))
+
+                damage_pattern = np.clip(0.60 * decorrelation_field + 0.26 * cluster_a + 0.22 * cluster_b + (base_variation.astype(np.float32) - 0.5) * 0.10, 0.0, 1.0)
+
+                # Pre-event baseline coherence gamma_pre in [0, 1]
+                gamma_pre = np.clip(0.76 + (base_variation.astype(np.float32) - 0.5) * 0.14, 0.12, 0.98)
+
+                # Coherence loss Delta gamma in [0, 1]
+                coherence_delta = np.clip(gamma_pre * damage_pattern * 0.88, 0.0, 0.96)
+
+                # Co-event interferometric coherence gamma_event in [0, 1]
+                gamma_event = np.clip(gamma_pre - coherence_delta, 0.02, 0.98)
+
+                # ARIA / Copernicus Damage Severity Tier (1: Negligible, 2: Moderate, 3: Severe, 4: Catastrophic Collapse)
+                tier_dpm = np.where(
+                    coherence_delta >= 0.55, 4.0,
+                    np.where(
+                        coherence_delta >= 0.35, 3.0,
+                        np.where(
+                            coherence_delta >= 0.15, 2.0,
+                            1.0
+                        )
+                    )
+                ).astype(np.float32)
+
+                # Structural fragility building damage ratio DR in [0, 1] (non-linear power law)
+                loss_ratio = np.clip(1.25 * np.power(coherence_delta, 1.35), 0.0, 1.0).astype(np.float32)
+
+                # Composite emergency response hazard tier (1 to 5)
+                hazard_tier_dpm = np.clip(1.0 + 4.0 * (0.55 * coherence_delta + 0.45 * loss_ratio), 1.0, 5.0).astype(np.float32)
+
+                if idx_clean in {"coherence_delta", "coherence_loss", "delta_gamma", "loss"}:
+                    val = coherence_delta
+                elif idx_clean in {"pre_coherence", "gamma_pre", "baseline"}:
+                    val = gamma_pre
+                elif idx_clean in {"event_coherence", "gamma_event", "co_event"}:
+                    val = gamma_event
+                elif idx_clean in {"damage_severity_tier", "damage_tier", "severity"}:
+                    val = tier_dpm
+                elif idx_clean in {"building_loss_ratio", "loss_ratio", "damage_ratio", "structural_damage_ratio"}:
+                    val = loss_ratio
+                elif idx_clean in {"hazard_rating_tier", "hazard_tier", "hazard", "dpm_hazard_tier"}:
+                    val = hazard_tier_dpm
+                else:
+                    val = coherence_delta
+            elif col_clean in {"phenology_anomaly", "phenology", "climatological_mad", "phenological_delta", "phenology_cube"} or (col_clean in {"phenology", "analysis"} and idx_clean in {"baseline_ndvi", "seasonal_amplitude", "phase_angle", "theil_sen_slope", "mad_anomaly_zscore", "anomaly_tier"}) or idx_clean in {"baseline_ndvi", "seasonal_amplitude", "phase_angle", "theil_sen_slope", "mad_anomaly_zscore", "anomaly_tier"}:
+                # Multi-Temporal Phenology, BFAST Trend Inversion & Climatological MAD Anomaly (Cycle v2.5.22 - Task T-193)
+                u_s = ((xx - min_lon) / (max_lon - min_lon + 1e-6)).astype(np.float32)
+                v_s = ((yy - min_lat) / (max_lat - min_lat + 1e-6)).astype(np.float32)
+
+                # Base vegetation spatial pattern
+                spatial_veg = np.clip(0.50 + 0.22 * np.sin(np.pi * u_s) * np.cos(np.pi * v_s) + 0.08 * (base_variation.astype(np.float32) - 0.5), 0.05, 0.95).astype(np.float32)
+
+                # Annual harmonic seasonal amplitude C1 in [0.0, 0.45]
+                amp_field = np.clip(0.24 * (0.8 + 0.4 * u_s) + 0.04 * (base_variation.astype(np.float32) - 0.5), 0.02, 0.45).astype(np.float32)
+
+                # Phase angle (peak green-up timing in degrees [0, 360])
+                phase_field = np.clip((196.0 + 40.0 * (v_s - 0.5) + 20.0 * (u_s - 0.5)) % 360.0, 0.0, 360.0).astype(np.float32)
+
+                # Theil-Sen non-parametric robust trend slope (yr^-1)
+                slope_field = np.clip(0.012 + 0.025 * (u_s - 0.5) - 0.020 * (v_s - 0.5) + 0.005 * (base_variation.astype(np.float32) - 0.5), -0.06, 0.06).astype(np.float32)
+
+                # Localized anomaly core (e.g. unseasonal browning, severe summer drought or embankment die-off)
+                dist_anom1 = np.sqrt((u_s - 0.45) ** 2 + (v_s - 0.55) ** 2)
+                dist_anom2 = np.sqrt((u_s - 0.72) ** 2 + (v_s - 0.35) ** 2)
+                patch_anom1 = np.exp(-(dist_anom1 / 0.20) ** 2)
+                patch_anom2 = np.exp(-(dist_anom2 / 0.15) ** 2)
+
+                # Seasonally normalized climatological MAD z-score in [-4, +4]
+                zscore_field = np.clip(-3.2 * patch_anom1 - 2.8 * patch_anom2 + 0.6 * np.sin(2.0 * np.pi * u_s) + 0.3 * (base_variation.astype(np.float32) - 0.5), -4.0, 4.0).astype(np.float32)
+
+                # Phenology anomaly classification tier (0: normal, 1: mild, 2: moderate, 3: severe, 4: extreme)
+                abs_z = np.abs(zscore_field)
+                tier_field = np.where(
+                    abs_z >= 3.0, 4.0,
+                    np.where(
+                        abs_z >= 2.5, 3.0,
+                        np.where(
+                            abs_z >= 2.0, 2.0,
+                            np.where(
+                                abs_z >= 1.5, 1.0,
+                                0.0
+                            )
+                        )
+                    )
+                ).astype(np.float32)
+
+                if idx_clean in {"baseline_ndvi", "baseline", "fitted_baseline", "seasonal_baseline"}:
+                    val = spatial_veg
+                elif idx_clean in {"seasonal_amplitude", "amplitude", "fourier_amplitude", "annual_amplitude"}:
+                    val = amp_field
+                elif idx_clean in {"phase_angle", "phase", "phase_deg", "peak_greenup"}:
+                    val = phase_field
+                elif idx_clean in {"theil_sen_slope", "theil_sen", "trend_slope", "slope"}:
+                    val = slope_field
+                elif idx_clean in {"anomaly_tier", "tier", "phenology_tier", "anomaly_classification"}:
+                    val = tier_field
+                elif idx_clean in {"mad_anomaly_zscore", "z_score", "seasonal_zscore", "zscore", "mad_zscore", "anomaly"}:
+                    val = zscore_field
+                else:
+                    val = zscore_field
             else:
                 val = base_variation
 
@@ -1398,6 +1519,22 @@ class TileService:
                 rgba[seepage_mask & (val >= 1.0), 3] = 235
             elif col_clean in {"geotechnical_insar_velocity", "insar_velocity", "insar_ps", "geotechnical_insar", "insar"} or idx_clean in {"velocity_los", "velocity_vertical", "velocity_east_west", "temporal_coherence", "height_residual", "insar_hazard_tier"}:
                 rgba[:, :, 3] = 230
+            elif col_clean in {"geotechnical_damage_proxy", "damage_proxy", "dpm", "sar_dpm", "sar_damage_proxy", "geotechnical_dpm"} or idx_clean in {"coherence_delta", "pre_coherence", "event_coherence", "damage_severity_tier", "building_loss_ratio", "hazard_rating_tier", "coherence_loss", "structural_damage_ratio", "dpm_hazard_tier"}:
+                if idx_clean in {"coherence_delta", "coherence_loss", "building_loss_ratio", "structural_damage_ratio"}:
+                    dpm_mask = val > 0.03
+                    rgba[~dpm_mask, 3] = 0
+                    rgba[dpm_mask & (val < 0.20), 3] = 160
+                    rgba[dpm_mask & (val >= 0.20), 3] = 230
+                else:
+                    rgba[:, :, 3] = 230
+            elif col_clean in {"phenology_anomaly", "phenology", "climatological_mad", "phenological_delta", "phenology_cube"} or idx_clean in {"baseline_ndvi", "seasonal_amplitude", "phase_angle", "theil_sen_slope", "mad_anomaly_zscore", "anomaly_tier", "z_score", "seasonal_zscore"}:
+                if idx_clean in {"mad_anomaly_zscore", "z_score", "seasonal_zscore", "zscore", "mad_zscore", "anomaly", "anomaly_tier", "tier"}:
+                    anom_mask = (np.abs(val) >= 1.5) if idx_clean not in {"anomaly_tier", "tier"} else (val >= 1.0)
+                    rgba[~anom_mask, 3] = 40
+                    rgba[anom_mask & ((np.abs(val) if idx_clean not in {"anomaly_tier", "tier"} else val) < 2.5), 3] = 180
+                    rgba[anom_mask & ((np.abs(val) if idx_clean not in {"anomaly_tier", "tier"} else val) >= 2.5), 3] = 235
+                else:
+                    rgba[:, :, 3] = 230
 
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
@@ -3061,6 +3198,199 @@ class TileService:
         return self.render_tile(
             collection="geotechnical_flownet",
             item_id=sim_id or "FLOWNET_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_insar_velocity_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "velocity_vertical",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Persistent Scatterer InSAR and deformation velocity field."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "velocity_vertical"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"velocity_vertical", "vertical_velocity", "v_vert", "v_v", "subsidence"}:
+                chosen_cmap = "rdylbu"
+            elif metric_clean in {"velocity_los", "los_velocity", "v_los", "los"}:
+                chosen_cmap = "rdylbu"
+            elif metric_clean in {"velocity_east_west", "east_west_velocity", "v_east", "v_e", "horizontal"}:
+                chosen_cmap = "bwr"
+            elif metric_clean in {"temporal_coherence", "coherence", "gamma", "ps_coherence"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"height_residual", "dem_residual", "height_error", "delta_h"}:
+                chosen_cmap = "bwr"
+            elif metric_clean in {"hazard_tier", "hazard_rating_tier", "hazard", "tier", "insar_hazard_tier"}:
+                chosen_cmap = "rdylbu"
+            else:
+                chosen_cmap = "rdylbu"
+        else:
+            clean_cm = colormap.lower().replace("_r", "").strip()
+            chosen_cmap = clean_cm if clean_cm in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues"} else "rdylbu"
+
+        if not rescale:
+            if metric_clean in {"velocity_vertical", "vertical_velocity", "v_vert", "v_v", "subsidence"}:
+                chosen_rescale = "-20.0,5.0"
+            elif metric_clean in {"velocity_los", "los_velocity", "v_los", "los"}:
+                chosen_rescale = "-15.0,5.0"
+            elif metric_clean in {"velocity_east_west", "east_west_velocity", "v_east", "v_e", "horizontal"}:
+                chosen_rescale = "-8.0,8.0"
+            elif metric_clean in {"temporal_coherence", "coherence", "gamma", "ps_coherence"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"height_residual", "dem_residual", "height_error", "delta_h"}:
+                chosen_rescale = "-5.0,5.0"
+            elif metric_clean in {"hazard_tier", "hazard_rating_tier", "hazard", "tier", "insar_hazard_tier"}:
+                chosen_rescale = "1.0,5.0"
+            else:
+                chosen_rescale = "-20.0,5.0"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="geotechnical_insar_velocity",
+            item_id=sim_id or "INSAR_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_damage_proxy_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "coherence_delta",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for SAR Interferometric Damage Proxy Mapping (DPM)."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "coherence_delta"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        if not colormap:
+            if metric_clean in {"coherence_delta", "coherence_loss", "delta_gamma", "loss"}:
+                chosen_cmap = "turbo"
+            elif metric_clean in {"pre_coherence", "gamma_pre", "baseline"}:
+                chosen_cmap = "viridis"
+            elif metric_clean in {"event_coherence", "gamma_event", "co_event"}:
+                chosen_cmap = "plasma"
+            elif metric_clean in {"damage_severity_tier", "damage_tier", "severity"}:
+                chosen_cmap = "rdylbu"
+            elif metric_clean in {"building_loss_ratio", "loss_ratio", "structural_damage_ratio"}:
+                chosen_cmap = "hot"
+            elif metric_clean in {"hazard_rating_tier", "hazard_tier", "hazard", "dpm_hazard_tier"}:
+                chosen_cmap = "inferno"
+            else:
+                chosen_cmap = "turbo"
+        else:
+            clean_cm = colormap.lower().replace("_r", "").strip()
+            chosen_cmap = clean_cm if clean_cm in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues"} else "turbo"
+
+        if not rescale:
+            if metric_clean in {"coherence_delta", "coherence_loss", "delta_gamma", "loss"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"pre_coherence", "gamma_pre", "baseline"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"event_coherence", "gamma_event", "co_event"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"damage_severity_tier", "damage_tier", "severity"}:
+                chosen_rescale = "1.0,4.0"
+            elif metric_clean in {"building_loss_ratio", "loss_ratio", "structural_damage_ratio"}:
+                chosen_rescale = "0.0,1.0"
+            elif metric_clean in {"hazard_rating_tier", "hazard_tier", "hazard", "dpm_hazard_tier"}:
+                chosen_rescale = "1.0,5.0"
+            else:
+                chosen_rescale = "0.0,1.0"
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="geotechnical_damage_proxy",
+            item_id=sim_id or "DPM_001",
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
+        )
+
+    def render_phenology_anomaly_tile(
+        self,
+        sim_id: str,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "mad_anomaly_zscore",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for Multi-Temporal Phenology, BFAST Trend & Climatological MAD Anomaly."""
+        if isinstance(z, str) and not z.isdigit():
+            actual_metric = z
+            actual_z = int(x)
+            actual_x = int(y)
+            actual_y = int(metric) if isinstance(metric, (int, str)) and str(metric).isdigit() else 0
+        else:
+            actual_metric = metric or "mad_anomaly_zscore"
+            actual_z = int(z)
+            actual_x = int(x)
+            actual_y = int(y)
+
+        metric_clean = actual_metric.lower().replace("-", "_")
+        from app.models.schemas import PHENOLOGY_TILE_METRIC_CONFIGS
+        metric_cfg = PHENOLOGY_TILE_METRIC_CONFIGS.get(metric_clean, {})
+
+        if not colormap:
+            chosen_cmap = metric_cfg.get("colormap", "rdylbu")
+        else:
+            clean_cm = colormap.lower().replace("_r", "").strip()
+            chosen_cmap = clean_cm if clean_cm in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues"} else metric_cfg.get("colormap", "rdylbu")
+
+        if not rescale:
+            chosen_rescale = metric_cfg.get("default_rescale", "-3.0,3.0")
+        else:
+            chosen_rescale = rescale
+
+        return self.render_tile(
+            collection="phenology_anomaly",
+            item_id=sim_id or "PHEN_001",
             z=actual_z,
             x=actual_x,
             y=actual_y,

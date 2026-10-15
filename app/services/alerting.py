@@ -261,7 +261,7 @@ class AlertEngine:
 
     def subscribe(self, req: Union[HazardAlertSubscriptionRequest, Dict[str, Any]]) -> Dict[str, Any]:
         """Registers a multi-hazard early warning notification subscription."""
-        data = req.dict() if hasattr(req, "dict") else dict(req)
+        data = req.model_dump() if hasattr(req, "model_dump") else (req.dict() if hasattr(req, "dict") else dict(req))
         sid = data.get("subscription_id") or f"SUB_{uuid.uuid4().hex[:8].upper()}"
         data["subscription_id"] = sid
         data["created_at"] = data.get("created_at") or datetime.now(timezone.utc).isoformat()
@@ -275,7 +275,7 @@ class AlertEngine:
 
     def dispatch_hazard_alert(self, req: Union[HazardAlertEvent, Dict[str, Any]]) -> Dict[str, Any]:
         """Dispatches a multi-hazard early warning notification across configured channels (webhook/SSE)."""
-        data = req.dict() if hasattr(req, "dict") else dict(req)
+        data = req.model_dump() if hasattr(req, "model_dump") else (req.dict() if hasattr(req, "dict") else dict(req))
         alert_type = data.get("alert_type") or data.get("alertType") or "tailings_crest_deformation"
         z_val = data.get("z_score") if data.get("z_score") is not None else data.get("zScore")
         z_score = float(z_val if z_val is not None else 3.2)

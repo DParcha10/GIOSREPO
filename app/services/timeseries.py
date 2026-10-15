@@ -127,4 +127,69 @@ class TimeSeriesService:
             "points": points
         }
 
+    @classmethod
+    def fit_harmonic_decomposition(
+        cls,
+        dates: List[str],
+        values: List[float],
+        num_harmonics: int = 2,
+        period_years: float = 1.0
+    ) -> Dict[str, Any]:
+        """Fits multi-harmonic Fourier regression model to time-series observations."""
+        from app.models.schemas import fit_harmonic_fourier_regression, _extract_month_and_day_of_year
+        times_frac = []
+        for d in dates:
+            _, _, dec_yr = _extract_month_and_day_of_year(str(d))
+            times_frac.append(dec_yr)
+        return fit_harmonic_fourier_regression(times_frac, values, num_harmonics=num_harmonics, period=period_years)
+
+    @classmethod
+    def compute_climatological_mad(
+        cls,
+        dates: List[str],
+        values: List[float],
+        anomaly_threshold: float = 2.5,
+        min_mad_scale: float = 0.015
+    ) -> Dict[str, Any]:
+        """Calculates monthly climatological MAD baselines, non-parametric Theil-Sen trend, and normalized anomalies."""
+        from app.models.schemas import (
+            calculate_climatological_monthly_mad,
+            calculate_seasonal_mad_anomalies,
+            calculate_theil_sen_slope,
+            _extract_month_and_day_of_year
+        )
+        times_frac = []
+        for d in dates:
+            _, _, dec_yr = _extract_month_and_day_of_year(str(d))
+            times_frac.append(dec_yr)
+
+        theil_sen = calculate_theil_sen_slope(times_frac, values)
+        climatology = calculate_climatological_monthly_mad(dates, values, min_mad_scale=min_mad_scale)
+        anomalies = calculate_seasonal_mad_anomalies(
+            dates,
+            values,
+            monthly_climatology=climatology,
+            anomaly_threshold=anomaly_threshold,
+            min_mad_scale=min_mad_scale
+        )
+        return {
+            "theil_sen_trend": theil_sen,
+            "monthly_climatology": climatology["monthly_records"],
+            "points": anomalies["points"],
+            "total_observations": anomalies["total_observations"],
+            "anomaly_count": anomalies["anomaly_count"],
+            "critical_anomaly_count": anomalies["critical_anomaly_count"],
+            "max_z_score": anomalies["max_z_score"],
+            "worst_anomaly_tier": anomalies["worst_anomaly_tier"]
+        }
+
+    @classmethod
+    def simulate_phenology(
+        cls,
+        req: Any
+    ) -> Dict[str, Any]:
+        """Generates high-fidelity multi-temporal phenology decomposition simulation."""
+        from app.models.schemas import simulate_phenology_decomposition
+        return simulate_phenology_decomposition(req)
+
 timeseries_service = TimeSeriesService()

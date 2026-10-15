@@ -11,6 +11,9 @@ Comprehensive shared contracts for GIOS v2.5:
 """
 import math
 import re
+import hashlib
+import hmac
+import json
 from enum import Enum
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Union, Sequence
@@ -814,6 +817,38 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "analysis_insar_dual_orbit_short": "/geotechnical/insar-dual-orbit-decomposition",
     "tiles_insar_velocity": "/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/{z}/{x}/{y}.png",
     "tiles_insar_velocity_metric": "/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/{metric}/{z}/{x}/{y}.png",
+    "analysis_sar_coherence_damage": "/api/v1/analysis/geotechnical/sar-coherence-damage",
+    "analysis_sar_coherence_damage_short": "/geotechnical/sar-coherence-damage",
+    "analysis_damage_proxy_map": "/api/v1/analysis/geotechnical/damage-proxy-map",
+    "analysis_damage_proxy_map_short": "/geotechnical/damage-proxy-map",
+    "analysis_damage_proxy_detail": "/api/v1/analysis/geotechnical/damage-proxy-map/{simulation_id}",
+    "analysis_damage_proxy_detail_short": "/geotechnical/damage-proxy-map/{simulation_id}",
+    "tiles_damage_proxy": "/api/v1/tiles/geotechnical/dpm/{sim_id}/{z}/{x}/{y}.png",
+    "tiles_damage_proxy_metric": "/api/v1/tiles/geotechnical/dpm/{sim_id}/{metric}/{z}/{x}/{y}.png",
+    "analysis_phenology_harmonic": "/api/v1/analysis/phenology/harmonic-decomposition",
+    "analysis_phenology_harmonic_short": "/phenology/harmonic-decomposition",
+    "analysis_phenology_mad_anomaly": "/api/v1/analysis/phenology/climatological-mad-anomaly",
+    "analysis_phenology_mad_anomaly_short": "/phenology/climatological-mad-anomaly",
+    "analysis_phenology_detail": "/api/v1/analysis/phenology/climatological-mad-anomaly/{simulation_id}",
+    "analysis_phenology_detail_short": "/phenology/climatological-mad-anomaly/{simulation_id}",
+    "tiles_phenology_anomaly": "/api/v1/tiles/phenology/anomaly/{sim_id}/{z}/{x}/{y}.png",
+    "tiles_phenology_anomaly_metric": "/api/v1/tiles/phenology/anomaly/{sim_id}/{metric}/{z}/{x}/{y}.png",
+    "operations_webhooks": "/api/v1/operations/webhooks",
+    "operations_webhooks_short": "/operations/webhooks",
+    "operations_webhook_detail": "/api/v1/operations/webhooks/{webhook_id}",
+    "operations_webhook_detail_short": "/operations/webhooks/{webhook_id}",
+    "operations_webhook_test": "/api/v1/operations/webhooks/{webhook_id}/test",
+    "operations_webhook_test_short": "/operations/webhooks/{webhook_id}/test",
+    "operations_harvester_subscriptions": "/api/v1/operations/harvester/subscriptions",
+    "operations_harvester_subscriptions_short": "/operations/harvester/subscriptions",
+    "operations_harvester_detail": "/api/v1/operations/harvester/subscriptions/{subscription_id}",
+    "operations_harvester_detail_short": "/operations/harvester/subscriptions/{subscription_id}",
+    "operations_harvester_trigger": "/api/v1/operations/harvester/trigger",
+    "operations_harvester_trigger_short": "/operations/harvester/trigger",
+    "operations_dlq": "/api/v1/operations/dlq",
+    "operations_dlq_short": "/operations/dlq",
+    "operations_dlq_retry": "/api/v1/operations/dlq/retry",
+    "operations_dlq_retry_short": "/operations/dlq/retry",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -844,6 +879,10 @@ def format_api_route(route_name: str, **kwargs) -> str:
         template = API_ROUTE_CONTRACTS.get("tiles_flownet_metric", "/api/v1/tiles/geotechnical/flownet/{sim_id}/{metric}/{z}/{x}/{y}.png")
     elif route_name == "tiles_insar_velocity" and "metric" in kwargs:
         template = API_ROUTE_CONTRACTS.get("tiles_insar_velocity_metric", "/api/v1/tiles/geotechnical/insar-velocity/{sim_id}/{metric}/{z}/{x}/{y}.png")
+    elif route_name == "tiles_damage_proxy" and "metric" in kwargs:
+        template = API_ROUTE_CONTRACTS.get("tiles_damage_proxy_metric", "/api/v1/tiles/geotechnical/dpm/{sim_id}/{metric}/{z}/{x}/{y}.png")
+    elif route_name == "tiles_phenology_anomaly" and "metric" in kwargs:
+        template = API_ROUTE_CONTRACTS.get("tiles_phenology_anomaly_metric", "/api/v1/tiles/phenology/anomaly/{sim_id}/{metric}/{z}/{x}/{y}.png")
     elif route_name in ("analysis_liquefaction_detail", "analysis_liquefaction_detail_short"):
         if "simulation_id" not in kwargs and "sim_id" in kwargs:
             kwargs["simulation_id"] = kwargs["sim_id"]
@@ -874,6 +913,28 @@ def format_api_route(route_name: str, **kwargs) -> str:
             kwargs["simulation_id"] = kwargs["sim_id"]
         elif "sim_id" not in kwargs and "simulation_id" in kwargs:
             kwargs["sim_id"] = kwargs["simulation_id"]
+    elif route_name in ("analysis_damage_proxy_detail", "analysis_damage_proxy_detail_short"):
+        if "simulation_id" not in kwargs and "sim_id" in kwargs:
+            kwargs["simulation_id"] = kwargs["sim_id"]
+        elif "sim_id" not in kwargs and "simulation_id" in kwargs:
+            kwargs["sim_id"] = kwargs["simulation_id"]
+    elif route_name in ("analysis_phenology_detail", "analysis_phenology_detail_short"):
+        if "simulation_id" not in kwargs and "sim_id" in kwargs:
+            kwargs["simulation_id"] = kwargs["sim_id"]
+        elif "sim_id" not in kwargs and "simulation_id" in kwargs:
+            kwargs["sim_id"] = kwargs["simulation_id"]
+    elif route_name in ("operations_webhook_detail", "operations_webhook_detail_short", "operations_webhook_test", "operations_webhook_test_short"):
+        if "webhook_id" not in kwargs and "id" in kwargs:
+            kwargs["webhook_id"] = kwargs["id"]
+        elif "id" not in kwargs and "webhook_id" in kwargs:
+            kwargs["id"] = kwargs["webhook_id"]
+    elif route_name in ("operations_harvester_detail", "operations_harvester_detail_short"):
+        if "subscription_id" not in kwargs and "id" in kwargs:
+            kwargs["subscription_id"] = kwargs["id"]
+        elif "subscription_id" not in kwargs and "sub_id" in kwargs:
+            kwargs["subscription_id"] = kwargs["sub_id"]
+        elif "id" not in kwargs and "subscription_id" in kwargs:
+            kwargs["id"] = kwargs["subscription_id"]
     elif route_name in ("analysis_vs30_proxy", "analysis_vs30_proxy_short"):
         if "lat" not in kwargs and "latitude" in kwargs:
             kwargs["lat"] = kwargs["latitude"]
@@ -22070,3 +22131,2451 @@ def build_insar_velocity_tile_url_template(
     return f"{base_prefix}/tiles/geotechnical/insar-velocity/{sim_id}/{metric}/{{z}}/{{x}}/{{y}}.png"
 
 
+# ==============================================================================
+# Cycle v2.5.21: Complex Interferometric SAR Coherence Loss, Damage Proxy Mapping (DPM) & Structural Exposure Contracts
+# ==============================================================================
+
+class SARCoherenceDamageTier(str, Enum):
+    """Copernicus / NASA JPL ARIA Damage Proxy Mapping (DPM) severity classification tiers."""
+    NEGLIGIBLE = "negligible"
+    MODERATE = "moderate"
+    SEVERE = "severe"
+    CATASTROPHIC_COLLAPSE = "catastrophic_collapse"
+
+
+class DamageProxyTileMetric(str, Enum):
+    """Streaming raster tile metrics for dynamic SAR Damage Proxy Mapping layers."""
+    COHERENCE_DELTA = "coherence_delta"
+    PRE_COHERENCE = "pre_coherence"
+    EVENT_COHERENCE = "event_coherence"
+    DAMAGE_SEVERITY_TIER = "damage_severity_tier"
+    BUILDING_LOSS_RATIO = "building_loss_ratio"
+    HAZARD_RATING_TIER = "hazard_rating_tier"
+
+
+SAR_DAMAGE_TIER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "negligible": {
+        "id": "negligible",
+        "name": "Negligible / Superficial",
+        "label": "Negligible Damage",
+        "badge": "NEGLIGIBLE",
+        "min_delta_coherence": 0.0,
+        "max_delta_coherence": 0.15,
+        "color": "#10B981",  # Green
+        "severity_level": 1,
+        "action_required": "Routine Monitoring",
+        "description": "Surface coherence maintained (Δγ < 0.15); structural integrity intact."
+    },
+    "moderate": {
+        "id": "moderate",
+        "name": "Moderate Damage",
+        "label": "Moderate Damage",
+        "badge": "MODERATE",
+        "min_delta_coherence": 0.15,
+        "max_delta_coherence": 0.35,
+        "color": "#F59E0B",  # Amber/Yellow
+        "severity_level": 2,
+        "action_required": "Ground Reconnaissance / Non-Structural Inspection",
+        "description": "Noticeable decorrelation (0.15 ≤ Δγ < 0.35); partial damage to cladding, roof, or ground."
+    },
+    "severe": {
+        "id": "severe",
+        "name": "Severe Structural Damage",
+        "label": "Severe Structural Damage",
+        "badge": "SEVERE",
+        "min_delta_coherence": 0.35,
+        "max_delta_coherence": 0.55,
+        "color": "#F97316",  # Orange
+        "severity_level": 3,
+        "action_required": "Immediate Structural Evacuation / Red Tagging",
+        "description": "Extensive decorrelation (0.35 ≤ Δγ < 0.55); major structural wall cracking, partial collapse."
+    },
+    "catastrophic_collapse": {
+        "id": "catastrophic_collapse",
+        "name": "Catastrophic Collapse",
+        "label": "Catastrophic Collapse",
+        "badge": "COLLAPSE",
+        "min_delta_coherence": 0.55,
+        "max_delta_coherence": 1.0,
+        "color": "#EF4444",  # Red
+        "severity_level": 4,
+        "action_required": "Search and Rescue Priority / Complete Exclusion Zone",
+        "description": "Severe decorrelation / total scatterer loss (Δγ ≥ 0.55); complete structural failure or washout."
+    }
+}
+
+DAMAGE_PROXY_TILE_METRICS: Dict[str, str] = {
+    "coherence_delta": "Interferometric Coherence Loss (Δγ in [0, 1])",
+    "pre_coherence": "Pre-Disaster Baseline Coherence (γ_pre in [0, 1])",
+    "event_coherence": "Co-Event Interferometric Coherence (γ_event in [0, 1])",
+    "damage_severity_tier": "Copernicus / ARIA Damage Severity Tier (1 to 4)",
+    "building_loss_ratio": "Structural Fragility Damage Ratio ([0, 1])",
+    "hazard_rating_tier": "Disaster Response Hazard Rating Tier (1 to 5)"
+}
+
+DAMAGE_PROXY_TILE_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "coherence_delta": {
+        "id": "coherence_delta",
+        "name": "Interferometric Coherence Loss (Δγ)",
+        "unit": "ratio",
+        "min": 0.0,
+        "max": 1.0,
+        "colormap": "turbo",
+        "description": "Pre-event minus co-event SAR interferometric coherence decorrelation magnitude"
+    },
+    "pre_coherence": {
+        "id": "pre_coherence",
+        "name": "Pre-Disaster Baseline Coherence (γ_pre)",
+        "unit": "ratio",
+        "min": 0.0,
+        "max": 1.0,
+        "colormap": "viridis",
+        "description": "Baseline temporal coherence prior to disaster or failure event"
+    },
+    "event_coherence": {
+        "id": "event_coherence",
+        "name": "Co-Event Interferometric Coherence (γ_event)",
+        "unit": "ratio",
+        "min": 0.0,
+        "max": 1.0,
+        "colormap": "plasma",
+        "description": "Interferometric coherence spanning the disaster date interval"
+    },
+    "damage_severity_tier": {
+        "id": "damage_severity_tier",
+        "name": "ARIA Damage Severity Tier",
+        "unit": "tier",
+        "min": 1.0,
+        "max": 4.0,
+        "colormap": "rdylbu",
+        "description": "Categorical ARIA severity tier (1: Negligible, 2: Moderate, 3: Severe, 4: Catastrophic Collapse)"
+    },
+    "building_loss_ratio": {
+        "id": "building_loss_ratio",
+        "name": "Structural Damage Ratio",
+        "unit": "fraction",
+        "min": 0.0,
+        "max": 1.0,
+        "colormap": "hot",
+        "description": "Estimated structural vulnerability loss ratio based on fragility curves"
+    },
+    "hazard_rating_tier": {
+        "id": "hazard_rating_tier",
+        "name": "Composite Disaster Hazard Tier",
+        "unit": "tier",
+        "min": 1.0,
+        "max": 5.0,
+        "colormap": "inferno",
+        "description": "Composite priority hazard level for emergency response deployment"
+    }
+}
+
+
+def list_damage_proxy_tile_metrics() -> List[str]:
+    """Returns list of valid streaming raster tile metrics for SAR Damage Proxy Mapping."""
+    return list(DAMAGE_PROXY_TILE_METRICS.keys())
+
+
+def get_damage_proxy_tile_metric_config(metric: str) -> Dict[str, Any]:
+    """Retrieves metadata configuration for specific DPM tile metric."""
+    clean_m = str(metric).lower().replace("-", "_").strip()
+    return DAMAGE_PROXY_TILE_METRIC_CONFIGS.get(clean_m, DAMAGE_PROXY_TILE_METRIC_CONFIGS["coherence_delta"])
+
+
+# ------------------------------------------------------------------------------
+# Mathematical Solvers & Damage Proxy Mapping Helpers
+# ------------------------------------------------------------------------------
+
+def classify_sar_damage_tier(coherence_loss: float) -> SARCoherenceDamageTier:
+    """Classifies interferometric coherence loss into Copernicus / ARIA damage tiers.
+    
+    Tiers:
+        - negligible: Delta gamma < 0.15
+        - moderate: 0.15 <= Delta gamma < 0.35
+        - severe: 0.35 <= Delta gamma < 0.55
+        - catastrophic_collapse: Delta gamma >= 0.55
+    """
+    cl = float(coherence_loss)
+    if cl >= 0.55:
+        return SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE
+    elif cl >= 0.35:
+        return SARCoherenceDamageTier.SEVERE
+    elif cl >= 0.15:
+        return SARCoherenceDamageTier.MODERATE
+    else:
+        return SARCoherenceDamageTier.NEGLIGIBLE
+
+
+def calculate_sar_coherence_loss(
+    gamma_pre: float,
+    gamma_event: float
+) -> Dict[str, Any]:
+    """Calculates complex interferometric coherence loss and structural damage fragility metrics.
+    
+    Formulae:
+        Delta gamma = max(0.0, min(1.0, gamma_pre - gamma_event))
+        Delta gamma_rel = (Delta gamma / max(1e-4, gamma_pre)) * 100%
+        P(collapse) = 1 / (1 + exp(-12.0 * (Delta gamma - 0.50)))
+    """
+    g_pre = max(0.0, min(1.0, float(gamma_pre)))
+    g_event = max(0.0, min(1.0, float(gamma_event)))
+
+    delta_gamma = max(0.0, min(1.0, g_pre - g_event))
+    rel_loss = (delta_gamma / max(1e-4, g_pre)) * 100.0
+
+    tier = classify_sar_damage_tier(delta_gamma).value
+
+    # Structural Damage Ratio DR in [0.0, 1.0] from empirical SAR fragility curve
+    if delta_gamma < 0.15:
+        damage_ratio = 0.05 * (delta_gamma / 0.15)
+    elif delta_gamma < 0.35:
+        damage_ratio = 0.05 + 0.35 * ((delta_gamma - 0.15) / 0.20)
+    elif delta_gamma < 0.55:
+        damage_ratio = 0.40 + 0.45 * ((delta_gamma - 0.35) / 0.20)
+    else:
+        damage_ratio = 0.85 + 0.15 * min(1.0, (delta_gamma - 0.55) / 0.25)
+    damage_ratio = max(0.0, min(1.0, damage_ratio))
+
+    # Collapse probability sigmoid
+    collapse_prob = 1.0 / (1.0 + math.exp(-12.0 * (delta_gamma - 0.50)))
+    collapse_prob = max(0.0, min(1.0, collapse_prob))
+
+    return {
+        "coherence_pre": round(g_pre, 4),
+        "coherence_event": round(g_event, 4),
+        "coherence_loss": round(delta_gamma, 4),
+        "relative_loss_percent": round(rel_loss, 2),
+        "damage_severity_tier": tier,
+        "structural_damage_ratio": round(damage_ratio, 4),
+        "collapse_probability": round(collapse_prob, 4)
+    }
+
+
+def calculate_building_structural_exposure(
+    mean_coherence_loss: float,
+    building_type: str = "residential",
+    replacement_cost_per_m2: float = 1200.0,
+    footprint_area_m2: float = 250.0,
+    building_name: Optional[str] = None,
+    building_id: Optional[str] = None,
+    latitude: float = 37.05,
+    longitude: float = -120.85,
+    mean_coherence_pre: Optional[float] = None
+) -> Dict[str, Any]:
+    """Calculates building footprint structural exposure, replacement value, and estimated direct economic loss."""
+    cl = max(0.0, min(1.0, float(mean_coherence_loss)))
+    b_type = str(building_type).lower().strip()
+    area = max(1.0, float(footprint_area_m2))
+    cost_m2 = max(10.0, float(replacement_cost_per_m2))
+
+    g_pre = float(mean_coherence_pre) if mean_coherence_pre is not None else 0.82
+    g_pre = max(0.0, min(1.0, g_pre))
+    g_event = max(0.0, min(1.0, g_pre - cl))
+
+    loss_metrics = calculate_sar_coherence_loss(g_pre, g_event)
+    damage_ratio = loss_metrics["structural_damage_ratio"]
+    tier = loss_metrics["damage_severity_tier"]
+
+    # Critical facility weighting
+    critical_types = {
+        "hospital", "school", "emergency_services", "tailings_facility",
+        "power_substation", "water_treatment", "bridge", "fire_station"
+    }
+    is_critical = b_type in critical_types
+    criticality_weight = 2.0 if is_critical else 1.0
+
+    replacement_value = round(area * cost_m2, 2)
+    estimated_loss = round(replacement_value * damage_ratio, 2)
+
+    # Collapse risk categorization
+    if damage_ratio >= 0.85 or cl >= 0.55:
+        collapse_risk = "extreme"
+    elif damage_ratio >= 0.40:
+        collapse_risk = "high"
+    elif damage_ratio >= 0.15:
+        collapse_risk = "moderate"
+    elif damage_ratio > 0.02:
+        collapse_risk = "low"
+    else:
+        collapse_risk = "safe"
+
+    b_id = building_id or "BLD_001"
+    b_name = building_name or f"{b_type.replace('_', ' ').title()} #{b_id}"
+
+    return {
+        "building_id": b_id,
+        "building_name": b_name,
+        "building_type": b_type,
+        "latitude": round(float(latitude), 6),
+        "longitude": round(float(longitude), 6),
+        "footprint_area_m2": round(area, 2),
+        "mean_coherence_pre": round(g_pre, 4),
+        "mean_coherence_event": round(g_event, 4),
+        "mean_coherence_loss": round(cl, 4),
+        "damage_severity_tier": tier,
+        "structural_damage_ratio": round(damage_ratio, 4),
+        "collapse_risk": collapse_risk,
+        "estimated_loss_usd": estimated_loss,
+        "replacement_value_usd": replacement_value,
+        "criticality_weight": round(criticality_weight, 2),
+        "is_critical_infrastructure": is_critical
+    }
+
+
+def calculate_damage_proxy_summary(
+    footprints: List[Dict[str, Any]],
+    aoi_area_km2: float = 12.5
+) -> Dict[str, Any]:
+    """Aggregates building footprint exposures into Damage Proxy Mapping simulation summary."""
+    n_total = len(footprints)
+    if n_total == 0:
+        return {
+            "total_footprints_evaluated": 0,
+            "damaged_footprints_count": 0,
+            "critical_facilities_affected": 0,
+            "total_estimated_loss_usd": 0.0,
+            "mean_coherence_loss": 0.0,
+            "max_coherence_loss": 0.0,
+            "worst_damage_tier": SARCoherenceDamageTier.NEGLIGIBLE.value,
+            "tier_distribution": {t.value: 0 for t in SARCoherenceDamageTier}
+        }
+
+    damaged_count = 0
+    crit_affected = 0
+    total_loss = 0.0
+    sum_coherence_loss = 0.0
+    max_coherence_loss = 0.0
+    worst_tier = SARCoherenceDamageTier.NEGLIGIBLE.value
+    tier_counts = {t.value: 0 for t in SARCoherenceDamageTier}
+
+    tier_severity_rank = {
+        SARCoherenceDamageTier.NEGLIGIBLE.value: 1,
+        SARCoherenceDamageTier.MODERATE.value: 2,
+        SARCoherenceDamageTier.SEVERE.value: 3,
+        SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE.value: 4
+    }
+
+    for fp in footprints:
+        cl = fp.get("mean_coherence_loss", 0.0)
+        tier = fp.get("damage_severity_tier", SARCoherenceDamageTier.NEGLIGIBLE.value)
+        loss = fp.get("estimated_loss_usd", 0.0)
+        is_crit = fp.get("is_critical_infrastructure", False)
+
+        sum_coherence_loss += cl
+        total_loss += loss
+        if cl > max_coherence_loss:
+            max_coherence_loss = cl
+
+        if tier in tier_counts:
+            tier_counts[tier] += 1
+
+        if tier != SARCoherenceDamageTier.NEGLIGIBLE.value:
+            damaged_count += 1
+            if is_crit:
+                crit_affected += 1
+
+        if tier_severity_rank.get(tier, 0) > tier_severity_rank.get(worst_tier, 0):
+            worst_tier = tier
+
+    mean_coherence_loss = sum_coherence_loss / float(n_total)
+
+    return {
+        "total_footprints_evaluated": n_total,
+        "damaged_footprints_count": damaged_count,
+        "critical_facilities_affected": crit_affected,
+        "total_estimated_loss_usd": round(total_loss, 2),
+        "mean_coherence_loss": round(mean_coherence_loss, 4),
+        "max_coherence_loss": round(max_coherence_loss, 4),
+        "worst_damage_tier": worst_tier,
+        "tier_distribution": tier_counts
+    }
+
+
+def simulate_damage_proxy_mapping(
+    request: Union["DamageProxyMapRequest", Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Generates synthetic high-fidelity Copernicus/ARIA Damage Proxy Mapping (DPM) simulation.
+    
+    Simulates:
+    1. Disaster event center and SAR baseline pair
+    2. Building footprints with realistic coherence decorrelation decay
+    3. Structural damage ratios, economic loss, and collapse risks
+    4. RFC 7946 GeoJSON FeatureCollection with polygon boundaries
+    5. Summary statistics and dynamic XYZ tile streaming URL template
+    """
+    if hasattr(request, "model_dump"):
+        req_dict = request.model_dump(by_alias=False)
+    else:
+        req_dict = dict(request)
+
+    sim_id = req_dict.get("simulation_id") or f"DPM_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    event_id = req_dict.get("event_id", "EVENT_2026_01")
+    event_name = req_dict.get("event_name", "Co-Seismic SAR Coherence Decorrelation Event")
+    pre_date = req_dict.get("pre_event_date", "2026-08-10")
+    event_date = req_dict.get("event_date", "2026-08-22")
+    mission = req_dict.get("satellite_mission", "sentinel-1")
+    orbit_dir = req_dict.get("orbit_direction", "descending")
+    pol = req_dict.get("polarization", "VV")
+    center_lat = float(req_dict.get("latitude", 37.05))
+    center_lon = float(req_dict.get("longitude", -120.85))
+    n_sample = max(4, min(100, int(req_dict.get("footprint_sample_count", 20))))
+
+    # Building archetypes
+    archetypes = [
+        ("residential", 220.0, 1100.0),
+        ("residential", 280.0, 1150.0),
+        ("commercial", 850.0, 1600.0),
+        ("hospital", 3200.0, 2400.0),
+        ("school", 2400.0, 1800.0),
+        ("industrial", 1500.0, 1300.0),
+        ("tailings_facility", 4500.0, 2100.0),
+        ("power_substation", 1200.0, 2600.0),
+        ("residential", 190.0, 1050.0),
+        ("commercial", 1100.0, 1750.0)
+    ]
+
+    footprints: List[Dict[str, Any]] = []
+    features: List[Dict[str, Any]] = []
+
+    # Generate spatial distribution radially out from epicenter
+    for idx in range(n_sample):
+        arch = archetypes[idx % len(archetypes)]
+        b_type, area, cost_m2 = arch
+
+        # Distribute within 2 km radius
+        angle_rad = (idx / float(n_sample)) * 2.0 * math.pi
+        dist_km = 0.2 + 1.8 * ((idx * 7) % n_sample) / float(n_sample)
+
+        # Epicenter proximity gradient (closer = more decorrelation)
+        delta_lat = (dist_km / 111.0) * math.cos(angle_rad)
+        delta_lon = (dist_km / (111.0 * math.cos(math.radians(center_lat)))) * math.sin(angle_rad)
+        b_lat = center_lat + delta_lat
+        b_lon = center_lon + delta_lon
+
+        # Pre-event coherence in [0.75, 0.92]
+        g_pre = round(0.85 + 0.05 * math.sin(idx * 1.3), 4)
+
+        # Decay decorrelation with distance from epicenter
+        # Close to epicenter (dist < 0.6 km) -> high decorrelation (0.45 to 0.75)
+        # Moderate dist (0.6 to 1.2 km) -> moderate decorrelation (0.20 to 0.45)
+        # Far (> 1.2 km) -> negligible decorrelation (< 0.15)
+        raw_cl = 0.70 * math.exp(-dist_km / 0.8) + 0.08 * math.cos(idx * 2.1)
+        cl = max(0.02, min(0.85, raw_cl))
+
+        b_id = f"BLD_{idx + 1:03d}"
+        exposure = calculate_building_structural_exposure(
+            mean_coherence_loss=cl,
+            building_type=b_type,
+            replacement_cost_per_m2=cost_m2,
+            footprint_area_m2=area,
+            building_name=f"{b_type.replace('_', ' ').title()} Unit #{idx + 1:02d}",
+            building_id=b_id,
+            latitude=b_lat,
+            longitude=b_lon,
+            mean_coherence_pre=g_pre
+        )
+        footprints.append(exposure)
+
+        # Approximate polygon coordinates (square footprint)
+        half_deg_lat = (math.sqrt(area) / 2.0) / 111000.0
+        half_deg_lon = (math.sqrt(area) / 2.0) / (111000.0 * math.cos(math.radians(b_lat)))
+        poly_coords = [
+            [round(b_lon - half_deg_lon, 6), round(b_lat - half_deg_lat, 6)],
+            [round(b_lon + half_deg_lon, 6), round(b_lat - half_deg_lat, 6)],
+            [round(b_lon + half_deg_lon, 6), round(b_lat + half_deg_lat, 6)],
+            [round(b_lon - half_deg_lon, 6), round(b_lat + half_deg_lat, 6)],
+            [round(b_lon - half_deg_lon, 6), round(b_lat - half_deg_lat, 6)]
+        ]
+
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [poly_coords]
+            },
+            "properties": {
+                "building_id": exposure["building_id"],
+                "building_name": exposure["building_name"],
+                "building_type": exposure["building_type"],
+                "mean_coherence_loss": exposure["mean_coherence_loss"],
+                "damage_severity_tier": exposure["damage_severity_tier"],
+                "structural_damage_ratio": exposure["structural_damage_ratio"],
+                "collapse_risk": exposure["collapse_risk"],
+                "estimated_loss_usd": exposure["estimated_loss_usd"],
+                "is_critical_infrastructure": exposure["is_critical_infrastructure"]
+            }
+        })
+
+    summary = calculate_damage_proxy_summary(footprints)
+    geojson_collection = {
+        "type": "FeatureCollection",
+        "features": features
+    }
+
+    tile_template = f"/api/v1/tiles/geotechnical/dpm/{sim_id}/{{metric}}/{{z}}/{{x}}/{{y}}.png"
+
+    return {
+        "simulation_id": sim_id,
+        "event_id": event_id,
+        "event_name": event_name,
+        "pre_event_date": pre_date,
+        "event_date": event_date,
+        "satellite_mission": mission,
+        "orbit_direction": orbit_dir,
+        "polarization": pol,
+        "summary": summary,
+        "building_footprints": footprints,
+        "footprints_geojson": geojson_collection,
+        "tile_url_template": tile_template,
+        "analyzed_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+calculate_damage_proxy_map_analysis = simulate_damage_proxy_mapping
+
+
+def build_damage_proxy_tile_url(
+    sim_id: str,
+    metric: str = "coherence_delta",
+    z: int = 12,
+    x: int = 2048,
+    y: int = 1024,
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Constructs dynamic XYZ tile streaming URL for SAR Damage Proxy Mapping layer."""
+    return f"{base_prefix}/tiles/geotechnical/dpm/{sim_id}/{metric}/{z}/{x}/{y}.png"
+
+
+def build_damage_proxy_tile_url_template(
+    sim_id: str,
+    metric: str = "coherence_delta",
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Constructs dynamic XYZ tile URL template for SAR Damage Proxy Mapping layer."""
+    return f"{base_prefix}/tiles/geotechnical/dpm/{sim_id}/{metric}/{{z}}/{{x}}/{{y}}.png"
+
+
+# ------------------------------------------------------------------------------
+# Pydantic Schemas for Damage Proxy Mapping (DPM) Contracts
+# ------------------------------------------------------------------------------
+
+class BuildingFootprintExposure(BaseModel):
+    """Building or critical infrastructure footprint with SAR coherence damage exposure."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    building_id: str = Field(..., alias="buildingId", description="Unique building or structure identifier")
+    building_name: str = Field(..., alias="buildingName", description="Human-readable building name or description")
+    building_type: str = Field(..., alias="buildingType", description="Structure classification (residential, commercial, hospital, etc.)")
+    latitude: float = Field(..., description="WGS84 centroid latitude")
+    longitude: float = Field(..., description="WGS84 centroid longitude")
+    footprint_area_m2: float = Field(..., alias="footprintAreaM2", description="Building footprint area in square meters")
+    mean_coherence_pre: float = Field(..., alias="meanCoherencePre", description="Pre-event baseline coherence")
+    mean_coherence_event: float = Field(..., alias="meanCoherenceEvent", description="Co-event interferometric coherence")
+    mean_coherence_loss: float = Field(..., alias="meanCoherenceLoss", description="Interferometric coherence loss Delta gamma")
+    damage_severity_tier: str = Field(..., alias="damageSeverityTier", description="Copernicus/ARIA damage tier")
+    structural_damage_ratio: float = Field(..., alias="structuralDamageRatio", description="Estimated loss ratio in [0, 1]")
+    collapse_risk: str = Field(..., alias="collapseRisk", description="Risk level (safe, low, moderate, high, extreme)")
+    estimated_loss_usd: float = Field(..., alias="estimatedLossUsd", description="Estimated direct structural economic loss in USD")
+    replacement_value_usd: float = Field(..., alias="replacementValueUsd", description="Total structural replacement asset value in USD")
+    criticality_weight: float = Field(default=1.0, alias="criticalityWeight", description="Criticality weighting factor")
+    is_critical_infrastructure: bool = Field(default=False, alias="isCriticalInfrastructure", description="Flag for emergency/critical infrastructure")
+
+
+class SARCoherenceDamageRequest(BaseModel):
+    """Request payload for point or polygon SAR coherence damage loss calculation."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    coherence_pre: float = Field(..., alias="coherencePre", ge=0.0, le=1.0, description="Pre-event baseline interferometric coherence")
+    coherence_event: float = Field(..., alias="coherenceEvent", ge=0.0, le=1.0, description="Co-event interferometric coherence")
+    building_type: str = Field(default="residential", alias="buildingType", description="Structure occupancy / asset type")
+    footprint_area_m2: float = Field(default=250.0, alias="footprintAreaM2", ge=1.0, description="Footprint area in m2")
+    replacement_cost_per_m2: float = Field(default=1200.0, alias="replacementCostPerM2", ge=10.0, description="Replacement cost per square meter in USD")
+
+
+class SARCoherenceDamageResponse(BaseModel):
+    """Output response containing coherence loss and structural damage metrics."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    coherence_pre: float = Field(..., alias="coherencePre")
+    coherence_event: float = Field(..., alias="coherenceEvent")
+    coherence_loss: float = Field(..., alias="coherenceLoss")
+    relative_loss_percent: float = Field(..., alias="relativeLossPercent")
+    damage_severity_tier: str = Field(..., alias="damageSeverityTier")
+    structural_damage_ratio: float = Field(..., alias="structuralDamageRatio")
+    collapse_probability: float = Field(..., alias="collapseProbability")
+    estimated_loss_usd: Optional[float] = Field(default=None, alias="estimatedLossUsd")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="analyzedAt")
+
+
+class DamageProxySimulationSummary(BaseModel):
+    """Aggregated statistics for Damage Proxy Mapping simulation."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    total_footprints_evaluated: int = Field(..., alias="totalFootprintsEvaluated")
+    damaged_footprints_count: int = Field(..., alias="damagedFootprintsCount")
+    critical_facilities_affected: int = Field(..., alias="criticalFacilitiesAffected")
+    total_estimated_loss_usd: float = Field(..., alias="totalEstimatedLossUsd")
+    mean_coherence_loss: float = Field(..., alias="meanCoherenceLoss")
+    max_coherence_loss: float = Field(..., alias="maxCoherenceLoss")
+    worst_damage_tier: str = Field(..., alias="worstDamageTier")
+    tier_distribution: Dict[str, int] = Field(..., alias="tierDistribution")
+
+
+class DamageProxyMapRequest(BaseModel):
+    """Request payload for full-scene Damage Proxy Mapping inversion."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    simulation_id: Optional[str] = Field(default=None, alias="simulationId", description="Unique simulation execution identifier")
+    event_id: str = Field(default="EVENT_2026_01", alias="eventId", description="Disaster or geotechnical incident identifier")
+    event_name: str = Field(default="Co-Seismic SAR Coherence Decorrelation Event", alias="eventName", description="Human-readable event name")
+    pre_event_date: str = Field(default="2026-08-10", alias="preEventDate", description="Pre-event baseline acquisition date (YYYY-MM-DD)")
+    event_date: str = Field(default="2026-08-22", alias="eventDate", description="Co-event / post-event acquisition date (YYYY-MM-DD)")
+    satellite_mission: str = Field(default="sentinel-1", alias="satelliteMission", description="Satellite SAR mission ('sentinel-1', 'alos-2', 'terrasar-x')")
+    orbit_direction: str = Field(default="descending", alias="orbitDirection", description="Orbit pass direction ('ascending', 'descending')")
+    polarization: str = Field(default="VV", alias="polarization", description="SAR polarization ('VV', 'VH', 'HH', 'HV')")
+    aoi_name: str = Field(default="Mine Infrastructure Valley", alias="aoiName", description="Area of interest label")
+    latitude: float = Field(default=37.05, alias="latitude", description="Center WGS84 latitude")
+    longitude: float = Field(default=-120.85, alias="longitude", description="Center WGS84 longitude")
+    coherence_threshold_negligible: float = Field(default=0.15, alias="coherenceThresholdNegligible")
+    coherence_threshold_moderate: float = Field(default=0.35, alias="coherenceThresholdModerate")
+    coherence_threshold_severe: float = Field(default=0.55, alias="coherenceThresholdSevere")
+    footprint_sample_count: int = Field(default=20, alias="footprintSampleCount", ge=1, le=200)
+
+
+class DamageProxyMapResponse(BaseModel):
+    """Output response containing Damage Proxy Mapping simulation results."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    simulation_id: str = Field(..., alias="simulationId")
+    event_id: str = Field(..., alias="eventId")
+    event_name: str = Field(..., alias="eventName")
+    pre_event_date: str = Field(..., alias="preEventDate")
+    event_date: str = Field(..., alias="eventDate")
+    satellite_mission: str = Field(..., alias="satelliteMission")
+    orbit_direction: str = Field(..., alias="orbitDirection")
+    polarization: str = Field(..., alias="polarization")
+    summary: DamageProxySimulationSummary = Field(..., alias="summary")
+    building_footprints: List[BuildingFootprintExposure] = Field(default_factory=list, alias="buildingFootprints")
+    footprints_geojson: Dict[str, Any] = Field(..., alias="footprintsGeojson")
+    tile_url_template: str = Field(..., alias="tileUrlTemplate")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="analyzedAt")
+
+
+# ============================================================================
+# MULTI-TEMPORAL PHENOLOGY, HARMONIC FOURIER REGRESSION & CLIMATOLOGICAL MAD
+# ============================================================================
+
+class PhenologyAnomalyTier(str, Enum):
+    """Categorical environmental and phenological departure classifications."""
+    NORMAL = "normal"
+    MILD_DEVIATION = "mild_deviation"
+    MODERATE_ANOMALY = "moderate_anomaly"
+    SEVERE_ANOMALY = "severe_anomaly"
+    EXTREME_ANOMALY = "extreme_anomaly"
+
+
+class PhenologyTileMetric(str, Enum):
+    """Raster tile metrics for dynamic multi-temporal phenology visualization."""
+    BASELINE_NDVI = "baseline_ndvi"
+    SEASONAL_AMPLITUDE = "seasonal_amplitude"
+    PHASE_ANGLE = "phase_angle"
+    THEIL_SEN_SLOPE = "theil_sen_slope"
+    MAD_ANOMALY_ZSCORE = "mad_anomaly_zscore"
+    ANOMALY_TIER = "anomaly_tier"
+
+
+PHENOLOGY_ANOMALY_TIER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "normal": {
+        "id": "normal",
+        "min_z": 0.0,
+        "max_z": 1.5,
+        "label": "Normal Seasonal Variation (|z| < 1.5)",
+        "severity": "normal",
+        "color": "#10b981",
+        "badge_class": "bg-emerald-950/80 text-emerald-300 border-emerald-800",
+        "badgeClass": "bg-emerald-950/80 text-emerald-300 border-emerald-800",
+        "is_anomaly": False,
+        "description": "Observation lies within expected historical seasonal phenological baseline."
+    },
+    "mild_deviation": {
+        "id": "mild_deviation",
+        "min_z": 1.5,
+        "max_z": 2.0,
+        "label": "Mild Seasonal Deviation (1.5 <= |z| < 2.0)",
+        "severity": "mild",
+        "color": "#06b6d4",
+        "badge_class": "bg-cyan-950/80 text-cyan-300 border-cyan-800",
+        "badgeClass": "bg-cyan-950/80 text-cyan-300 border-cyan-800",
+        "is_anomaly": False,
+        "description": "Minor statistical departure from historical climatological mean/median."
+    },
+    "moderate_anomaly": {
+        "id": "moderate_anomaly",
+        "min_z": 2.0,
+        "max_z": 2.5,
+        "label": "Moderate Anomaly (2.0 <= |z| < 2.5)",
+        "severity": "moderate",
+        "color": "#f59e0b",
+        "badge_class": "bg-amber-950/80 text-amber-300 border-amber-800",
+        "badgeClass": "bg-amber-950/80 text-amber-300 border-amber-800",
+        "is_anomaly": True,
+        "description": "Noticeable biophysical departure indicating localized canopy stress or drought moisture deficit."
+    },
+    "severe_anomaly": {
+        "id": "severe_anomaly",
+        "min_z": 2.5,
+        "max_z": 3.0,
+        "label": "Severe Climatological Anomaly (2.5 <= |z| < 3.0)",
+        "severity": "severe",
+        "color": "#f97316",
+        "badge_class": "bg-orange-950/80 text-orange-300 border-orange-800",
+        "badgeClass": "bg-orange-950/80 text-orange-300 border-orange-800",
+        "is_anomaly": True,
+        "description": "Significant biophysical anomaly exceeding 2.5 MAD from historical seasonal baseline."
+    },
+    "extreme_anomaly": {
+        "id": "extreme_anomaly",
+        "min_z": 3.0,
+        "max_z": None,
+        "label": "Extreme Biophysical Outlier (|z| >= 3.0)",
+        "severity": "critical",
+        "color": "#ef4444",
+        "badge_class": "bg-red-950/80 text-red-300 border-red-800",
+        "badgeClass": "bg-red-950/80 text-red-300 border-red-800",
+        "is_anomaly": True,
+        "description": "Acute biophysical disturbance (severe deforestation, fire defoliation, or tailings inundation)."
+    }
+}
+
+
+PHENOLOGY_TILE_METRICS: Dict[str, str] = {
+    "baseline_ndvi": "Harmonic Seasonal Baseline (NDVI [0, 1])",
+    "seasonal_amplitude": "Annual Seasonal Amplitude (C1 [0, 0.5])",
+    "phase_angle": "Seasonal Phase Angle / Peak Timing (degrees [0, 360])",
+    "theil_sen_slope": "Multi-Year Theil-Sen Robust Trend Slope (delta-index / year)",
+    "mad_anomaly_zscore": "Climatological MAD Anomaly Z-Score (z_seasonal)",
+    "anomaly_tier": "Phenological Anomaly Classification Tier (0 to 4)"
+}
+
+
+PHENOLOGY_TILE_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "baseline_ndvi": {
+        "id": "baseline_ndvi",
+        "name": "Harmonic Seasonal Baseline",
+        "unit": "NDVI",
+        "min": 0.0,
+        "max": 1.0,
+        "default_rescale": "0.1,0.85",
+        "colormap": "viridis",
+        "description": "Multi-harmonic seasonal model fitted baseline index value."
+    },
+    "seasonal_amplitude": {
+        "id": "seasonal_amplitude",
+        "name": "Annual Seasonal Amplitude",
+        "unit": "amplitude",
+        "min": 0.0,
+        "max": 0.5,
+        "default_rescale": "0.0,0.4",
+        "colormap": "plasma",
+        "description": "First-order annual Fourier harmonic amplitude C1 = sqrt(A1^2 + B1^2)."
+    },
+    "phase_angle": {
+        "id": "phase_angle",
+        "name": "Seasonal Phase Angle (Peak Green-up)",
+        "unit": "degrees",
+        "min": 0.0,
+        "max": 360.0,
+        "default_rescale": "0,360",
+        "colormap": "turbo",
+        "description": "Fourier phase angle corresponding to timing of annual peak greenness."
+    },
+    "theil_sen_slope": {
+        "id": "theil_sen_slope",
+        "name": "Theil-Sen Robust Trend Slope",
+        "unit": "yr^-1",
+        "min": -0.1,
+        "max": 0.1,
+        "default_rescale": "-0.05,0.05",
+        "colormap": "rdylbu",
+        "description": "Median pairwise monotonic slope representing multi-year vegetation greening/browning."
+    },
+    "mad_anomaly_zscore": {
+        "id": "mad_anomaly_zscore",
+        "name": "Climatological MAD Anomaly Z-Score",
+        "unit": "sigma_MAD",
+        "min": -4.0,
+        "max": 4.0,
+        "default_rescale": "-3.0,3.0",
+        "colormap": "rdylbu",
+        "description": "Monthly climatologically normalized anomaly z_seasonal = (x_t - med) / (1.4826 * MAD)."
+    },
+    "anomaly_tier": {
+        "id": "anomaly_tier",
+        "name": "Phenological Anomaly Classification Tier",
+        "unit": "tier",
+        "min": 0,
+        "max": 4,
+        "default_rescale": "0,4",
+        "colormap": "turbo",
+        "description": "Classified operational tier from normal (0) to extreme anomaly (4)."
+    }
+}
+
+
+def classify_phenology_anomaly_tier(z: Any) -> Dict[str, Any]:
+    """Classifies a climatological seasonal z-score into operational phenology anomaly tiers."""
+    if z is None:
+        return PHENOLOGY_ANOMALY_TIER_CONFIGS["normal"]
+    try:
+        val = abs(float(z))
+        if math.isnan(val) or not math.isfinite(val):
+            return PHENOLOGY_ANOMALY_TIER_CONFIGS["normal"]
+        if val >= 3.0:
+            return PHENOLOGY_ANOMALY_TIER_CONFIGS["extreme_anomaly"]
+        if val >= 2.5:
+            return PHENOLOGY_ANOMALY_TIER_CONFIGS["severe_anomaly"]
+        if val >= 2.0:
+            return PHENOLOGY_ANOMALY_TIER_CONFIGS["moderate_anomaly"]
+        if val >= 1.5:
+            return PHENOLOGY_ANOMALY_TIER_CONFIGS["mild_deviation"]
+        return PHENOLOGY_ANOMALY_TIER_CONFIGS["normal"]
+    except (ValueError, TypeError):
+        return PHENOLOGY_ANOMALY_TIER_CONFIGS["normal"]
+
+
+def _extract_month_and_day_of_year(date_str: str) -> Tuple[int, int, float]:
+    """Extracts calendar month (1-12), day of year (1-366), and decimal year from date string."""
+    try:
+        match = re.search(r"(\d{4})-(\d{2})-(\d{2})", str(date_str))
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            day = int(match.group(3))
+            dt = datetime(year, month, day)
+        else:
+            clean = str(date_str).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean)
+            year, month, day = dt.year, dt.month, dt.day
+            
+        doy = dt.timetuple().tm_yday
+        is_leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+        days_in_year = 366.0 if is_leap else 365.0
+        decimal_year = year + (doy - 1.0) / days_in_year
+        return month, doy, decimal_year
+    except Exception:
+        return 1, 1, 2026.0
+
+
+def _percentile_1d(values: Sequence[float], p: float) -> float:
+    """Computes linear percentile interpolation for 1D float sequences."""
+    if not values:
+        return 0.0
+    sorted_v = sorted(float(v) for v in values if v is not None and not math.isnan(v))
+    if not sorted_v:
+        return 0.0
+    n = len(sorted_v)
+    if n == 1:
+        return sorted_v[0]
+    p_clamped = max(0.0, min(100.0, float(p)))
+    k = (n - 1) * (p_clamped / 100.0)
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return sorted_v[int(k)]
+    d0 = sorted_v[int(f)] * (c - k)
+    d1 = sorted_v[int(c)] * (k - f)
+    return d0 + d1
+
+
+def _solve_linear_system_gaussian(A: List[List[float]], b: List[float]) -> List[float]:
+    """Solves A x = b via Gaussian elimination with partial pivoting."""
+    n = len(b)
+    M = [[float(A[i][j]) for j in range(n)] + [float(b[i])] for i in range(n)]
+    
+    for i in range(n):
+        max_row = i
+        max_val = abs(M[i][i])
+        for k in range(i + 1, n):
+            if abs(M[k][i]) > max_val:
+                max_val = abs(M[k][i])
+                max_row = k
+        if max_row != i:
+            M[i], M[max_row] = M[max_row], M[i]
+            
+        pivot = M[i][i]
+        if abs(pivot) < 1e-12:
+            pivot = 1e-12 if pivot >= 0 else -1e-12
+            
+        for k in range(i + 1, n):
+            factor = M[k][i] / pivot
+            for j in range(i, n + 1):
+                M[k][j] -= factor * M[i][j]
+                
+    x = [0.0] * n
+    for i in range(n - 1, -1, -1):
+        total = M[i][n]
+        for j in range(i + 1, n):
+            total -= M[i][j] * x[j]
+        pivot = M[i][i]
+        if abs(pivot) < 1e-12:
+            pivot = 1e-12 if pivot >= 0 else -1e-12
+        x[i] = total / pivot
+    return x
+
+
+def fit_harmonic_fourier_regression(
+    times: Sequence[float],
+    values: Sequence[float],
+    num_harmonics: int = 2,
+    period: float = 1.0
+) -> Dict[str, Any]:
+    """Fits multi-harmonic Fourier regression model to satellite time-series observations.
+    
+    Model:
+    y(t) = a0 + a1 * t + sum_{k=1}^K [ Ak * cos(2*pi*k*t / T) + Bk * sin(2*pi*k*t / T) ]
+    """
+    K = max(1, min(6, int(num_harmonics)))
+    T = float(period) if period > 0 else 1.0
+    
+    clean_pairs = []
+    for t, v in zip(times, values):
+        if t is not None and v is not None and not math.isnan(t) and not math.isnan(v):
+            clean_pairs.append((float(t), float(v)))
+            
+    n = len(clean_pairs)
+    p_params = 2 + 2 * K
+    if n < p_params:
+        avg_val = sum(p[1] for p in clean_pairs) / n if n > 0 else 0.0
+        components = []
+        for k in range(1, K + 1):
+            components.append({
+                "k": k,
+                "a_k": 0.0,
+                "b_k": 0.0,
+                "amplitude": 0.0,
+                "phase_rad": 0.0,
+                "phase_deg": 0.0,
+                "peak_time_fraction": 0.0
+            })
+        return {
+            "intercept_a0": round(avg_val, 4),
+            "linear_slope_a1": 0.0,
+            "components": components,
+            "rmse": 0.0,
+            "r_squared": 1.0 if n > 0 else 0.0,
+            "fitted_values": [round(avg_val, 4)] * n,
+            "residuals": [0.0] * n,
+            "formula_string": f"y(t) = {avg_val:.4f}"
+        }
+        
+    ts = [p[0] for p in clean_pairs]
+    ys = [p[1] for p in clean_pairs]
+    
+    A = [[0.0] * p_params for _ in range(p_params)]
+    b = [0.0] * p_params
+    
+    for t, y in zip(ts, ys):
+        row = [1.0, t]
+        for k in range(1, K + 1):
+            omega = 2.0 * math.pi * k / T
+            row.append(math.cos(omega * t))
+            row.append(math.sin(omega * t))
+            
+        for i in range(p_params):
+            b[i] += row[i] * y
+            for j in range(p_params):
+                A[i][j] += row[i] * row[j]
+                
+    for i in range(p_params):
+        A[i][i] += 1e-8
+        
+    beta = _solve_linear_system_gaussian(A, b)
+    a0 = beta[0]
+    a1 = beta[1]
+    
+    components = []
+    for k in range(1, K + 1):
+        ak = beta[2 + 2 * (k - 1)]
+        bk = beta[2 + 2 * (k - 1) + 1]
+        amp = math.sqrt(ak * ak + bk * bk)
+        phase_rad = math.atan2(bk, ak)
+        phase_deg = (phase_rad * 180.0 / math.pi) % 360.0
+        omega = 2.0 * math.pi * k / T
+        t_peak = (phase_rad / omega) % T
+        if t_peak < 0:
+            t_peak += T
+        peak_fraction = (t_peak / T) % 1.0
+        
+        components.append({
+            "k": k,
+            "a_k": round(ak, 4),
+            "b_k": round(bk, 4),
+            "amplitude": round(amp, 4),
+            "phase_rad": round(phase_rad, 4),
+            "phase_deg": round(phase_deg, 2),
+            "peak_time_fraction": round(peak_fraction, 4)
+        })
+        
+    fitted = []
+    residuals = []
+    ss_res = 0.0
+    mean_y = sum(ys) / n
+    ss_tot = sum((y - mean_y) ** 2 for y in ys)
+    
+    for t, y in zip(ts, ys):
+        y_hat = a0 + a1 * t
+        for k in range(1, K + 1):
+            omega = 2.0 * math.pi * k / T
+            ak = beta[2 + 2 * (k - 1)]
+            bk = beta[2 + 2 * (k - 1) + 1]
+            y_hat += ak * math.cos(omega * t) + bk * math.sin(omega * t)
+        res = y - y_hat
+        fitted.append(round(y_hat, 4))
+        residuals.append(round(res, 4))
+        ss_res += res * res
+        
+    rmse = math.sqrt(ss_res / n)
+    r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 1e-12 else 1.0
+    r_squared = max(0.0, min(1.0, r_squared))
+    
+    comp_strs = [f"{c['amplitude']:.3f}*cos({c['k']}wt - {c['phase_rad']:.2f})" for c in components]
+    formula = f"y(t) = {a0:.3f} + {a1:.3f}*t + " + " + ".join(comp_strs)
+    
+    return {
+        "intercept_a0": round(a0, 4),
+        "linear_slope_a1": round(a1, 4),
+        "components": components,
+        "rmse": round(rmse, 4),
+        "r_squared": round(r_squared, 4),
+        "fitted_values": fitted,
+        "residuals": residuals,
+        "formula_string": formula
+    }
+
+
+def evaluate_harmonic_model(
+    model_result: Union[Dict[str, Any], "HarmonicFourierModelResult"],
+    t: Union[float, Sequence[float]],
+    period: float = 1.0
+) -> Union[float, List[float]]:
+    """Evaluates fitted Fourier harmonic model at arbitrary time coordinates."""
+    if hasattr(model_result, "model_dump"):
+        m_dict = model_result.model_dump(by_alias=False)
+    else:
+        m_dict = dict(model_result)
+        
+    a0 = float(m_dict.get("intercept_a0", 0.0))
+    a1 = float(m_dict.get("linear_slope_a1", 0.0))
+    components = m_dict.get("components", [])
+    T = float(period) if period > 0 else 1.0
+    
+    is_sequence = isinstance(t, (list, tuple))
+    t_list = [float(x) for x in t] if is_sequence else [float(t)]
+    
+    results = []
+    for time_val in t_list:
+        y_hat = a0 + a1 * time_val
+        for comp in components:
+            k = int(comp.get("k", 1))
+            ak = float(comp.get("a_k", 0.0))
+            bk = float(comp.get("b_k", 0.0))
+            omega = 2.0 * math.pi * k / T
+            y_hat += ak * math.cos(omega * time_val) + bk * math.sin(omega * time_val)
+        results.append(round(y_hat, 4))
+        
+    return results if is_sequence else results[0]
+
+
+def calculate_theil_sen_slope(
+    times: Sequence[float],
+    values: Sequence[float]
+) -> Dict[str, Any]:
+    """Calculates non-parametric Theil-Sen robust slope estimator with 95% CI and Mann-Kendall test."""
+    clean_pairs = []
+    for t, v in zip(times, values):
+        if t is not None and v is not None and not math.isnan(t) and not math.isnan(v):
+            clean_pairs.append((float(t), float(v)))
+    clean_pairs.sort(key=lambda p: p[0])
+    n = len(clean_pairs)
+    if n < 2:
+        return {
+            "slope_per_year": 0.0,
+            "intercept": clean_pairs[0][1] if n == 1 else 0.0,
+            "slope_ci_lower": 0.0,
+            "slope_ci_upper": 0.0,
+            "kendall_tau": 0.0,
+            "mann_kendall_s": 0,
+            "p_value": 1.0,
+            "z_score": 0.0,
+            "is_significant": False,
+            "trend_direction": "no_trend"
+        }
+        
+    ts = [p[0] for p in clean_pairs]
+    ys = [p[1] for p in clean_pairs]
+    
+    slopes = []
+    for i in range(n - 1):
+        for j in range(i + 1, n):
+            dt = ts[j] - ts[i]
+            if abs(dt) > 1e-12:
+                slopes.append((ys[j] - ys[i]) / dt)
+                
+    if not slopes:
+        return {
+            "slope_per_year": 0.0,
+            "intercept": ys[0],
+            "slope_ci_lower": 0.0,
+            "slope_ci_upper": 0.0,
+            "kendall_tau": 0.0,
+            "mann_kendall_s": 0,
+            "p_value": 1.0,
+            "z_score": 0.0,
+            "is_significant": False,
+            "trend_direction": "no_trend"
+        }
+        
+    slopes.sort()
+    m_pairs = len(slopes)
+    if m_pairs % 2 == 1:
+        med_slope = slopes[m_pairs // 2]
+    else:
+        med_slope = 0.5 * (slopes[m_pairs // 2 - 1] + slopes[m_pairs // 2])
+        
+    intercepts = [ys[i] - med_slope * ts[i] for i in range(n)]
+    intercepts.sort()
+    if n % 2 == 1:
+        med_intercept = intercepts[n // 2]
+    else:
+        med_intercept = 0.5 * (intercepts[n // 2 - 1] + intercepts[n // 2])
+        
+    var_s = n * (n - 1) * (2 * n + 5) / 18.0
+    c_alpha = 1.95996 * math.sqrt(var_s)
+    k1 = max(0, int((m_pairs - c_alpha) / 2.0))
+    k2 = min(m_pairs - 1, int((m_pairs + c_alpha) / 2.0))
+    slope_lower = slopes[k1]
+    slope_upper = slopes[k2]
+    
+    mk_res = calculate_mann_kendall_test(ys)
+    
+    return {
+        "slope_per_year": round(med_slope, 4),
+        "intercept": round(med_intercept, 4),
+        "slope_ci_lower": round(slope_lower, 4),
+        "slope_ci_upper": round(slope_upper, 4),
+        "kendall_tau": round(mk_res["kendall_tau"], 4),
+        "mann_kendall_s": mk_res["mann_kendall_s"],
+        "p_value": round(mk_res["p_value"], 4),
+        "z_score": round(mk_res["z_score"], 4),
+        "is_significant": mk_res["is_significant"],
+        "trend_direction": mk_res["trend_direction"]
+    }
+
+
+def calculate_mann_kendall_test(values: Sequence[float]) -> Dict[str, Any]:
+    """Calculates non-parametric Mann-Kendall rank correlation test for monotonic trend detection."""
+    clean_vals = [float(v) for v in values if v is not None and not math.isnan(v)]
+    n = len(clean_vals)
+    if n < 3:
+        return {
+            "mann_kendall_s": 0,
+            "kendall_tau": 0.0,
+            "variance_s": 0.0,
+            "z_score": 0.0,
+            "p_value": 1.0,
+            "is_significant": False,
+            "trend_direction": "no_trend"
+        }
+        
+    S = 0
+    for i in range(n - 1):
+        for j in range(i + 1, n):
+            diff = clean_vals[j] - clean_vals[i]
+            if diff > 1e-9:
+                S += 1
+            elif diff < -1e-9:
+                S -= 1
+                
+    m_pairs = n * (n - 1) / 2.0
+    tau = S / m_pairs if m_pairs > 0 else 0.0
+    
+    sorted_vals = sorted(clean_vals)
+    tie_groups = []
+    curr_len = 1
+    for i in range(1, n):
+        if abs(sorted_vals[i] - sorted_vals[i - 1]) < 1e-9:
+            curr_len += 1
+        else:
+            if curr_len > 1:
+                tie_groups.append(curr_len)
+            curr_len = 1
+    if curr_len > 1:
+        tie_groups.append(curr_len)
+        
+    tie_penalty = sum(t * (t - 1) * (2 * t + 5) for t in tie_groups)
+    var_s = (n * (n - 1) * (2 * n + 5) - tie_penalty) / 18.0
+    if var_s <= 0:
+        var_s = 1e-6
+        
+    if S > 0:
+        z = (S - 1) / math.sqrt(var_s)
+    elif S < 0:
+        z = (S + 1) / math.sqrt(var_s)
+    else:
+        z = 0.0
+        
+    p_val = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(z) / math.sqrt(2.0))))
+    p_val = max(0.0, min(1.0, p_val))
+    is_sig = p_val < 0.05
+    
+    direction = "no_trend"
+    if is_sig:
+        direction = "increasing" if S > 0 else "decreasing"
+        
+    return {
+        "mann_kendall_s": S,
+        "kendall_tau": round(tau, 4),
+        "variance_s": round(var_s, 4),
+        "z_score": round(z, 4),
+        "p_value": round(p_val, 4),
+        "is_significant": is_sig,
+        "trend_direction": direction
+    }
+
+
+MONTH_NAMES = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+]
+
+
+def calculate_climatological_monthly_mad(
+    dates: Sequence[str],
+    values: Sequence[float],
+    min_mad_scale: float = 0.015
+) -> Dict[str, Any]:
+    """Computes monthly climatological median and Median Absolute Deviation (MAD) baselines."""
+    monthly_buckets: Dict[int, List[float]] = {m: [] for m in range(1, 13)}
+    valid_values = []
+    
+    for d, v in zip(dates, values):
+        if d is not None and v is not None and not math.isnan(v):
+            m, _, _ = _extract_month_and_day_of_year(str(d))
+            monthly_buckets[m].append(float(v))
+            valid_values.append(float(v))
+            
+    if valid_values:
+        sorted_all = sorted(valid_values)
+        n_all = len(sorted_all)
+        global_med = sorted_all[n_all // 2] if n_all % 2 == 1 else 0.5 * (sorted_all[n_all // 2 - 1] + sorted_all[n_all // 2])
+        global_devs = sorted(abs(x - global_med) for x in sorted_all)
+        global_mad = global_devs[n_all // 2] if n_all % 2 == 1 else 0.5 * (global_devs[n_all // 2 - 1] + global_devs[n_all // 2])
+    else:
+        global_med = 0.45
+        global_mad = 0.05
+        
+    global_scale = max(global_mad, float(min_mad_scale)) * 1.4826
+    
+    records = []
+    for m in range(1, 13):
+        vals = monthly_buckets[m]
+        n_m = len(vals)
+        if n_m > 0:
+            s_vals = sorted(vals)
+            med = s_vals[n_m // 2] if n_m % 2 == 1 else 0.5 * (s_vals[n_m // 2 - 1] + s_vals[n_m // 2])
+            devs = sorted(abs(x - med) for x in s_vals)
+            mad_val = devs[n_m // 2] if n_m % 2 == 1 else 0.5 * (devs[n_m // 2 - 1] + devs[n_m // 2])
+            scale = max(mad_val, float(min_mad_scale)) * 1.4826
+            p10 = _percentile_1d(s_vals, 10.0)
+            p25 = _percentile_1d(s_vals, 25.0)
+            p75 = _percentile_1d(s_vals, 75.0)
+            p90 = _percentile_1d(s_vals, 90.0)
+        else:
+            med = global_med
+            mad_val = global_mad
+            scale = global_scale
+            p10 = global_med - 1.28 * global_scale
+            p25 = global_med - 0.67 * global_scale
+            p75 = global_med + 0.67 * global_scale
+            p90 = global_med + 1.28 * global_scale
+            
+        records.append({
+            "month": m,
+            "month_name": MONTH_NAMES[m - 1],
+            "median": round(med, 4),
+            "mad": round(mad_val, 4),
+            "scale": round(scale, 4),
+            "p10": round(p10, 4),
+            "p25": round(p25, 4),
+            "p75": round(p75, 4),
+            "p90": round(p90, 4),
+            "sample_count": n_m
+        })
+        
+    return {
+        "monthly_records": records,
+        "global_median": round(global_med, 4),
+        "global_mad": round(global_mad, 4),
+        "global_scale": round(global_scale, 4),
+        "total_observations": len(valid_values)
+    }
+
+
+def calculate_seasonal_mad_anomalies(
+    dates: Sequence[str],
+    values: Sequence[float],
+    monthly_climatology: Optional[Dict[str, Any]] = None,
+    anomaly_threshold: float = 2.5,
+    min_mad_scale: float = 0.015
+) -> Dict[str, Any]:
+    """Calculates seasonally normalized MAD anomalies z_seasonal(t) across multi-temporal observations."""
+    if monthly_climatology is None:
+        monthly_climatology = calculate_climatological_monthly_mad(dates, values, min_mad_scale=min_mad_scale)
+        
+    records = monthly_climatology.get("monthly_records", [])
+    clim_map = {r["month"]: r for r in records}
+    
+    points = []
+    anomaly_count = 0
+    crit_count = 0
+    max_z = 0.0
+    worst_tier = PhenologyAnomalyTier.NORMAL.value
+    
+    tier_rank = {
+        PhenologyAnomalyTier.NORMAL.value: 0,
+        PhenologyAnomalyTier.MILD_DEVIATION.value: 1,
+        PhenologyAnomalyTier.MODERATE_ANOMALY.value: 2,
+        PhenologyAnomalyTier.SEVERE_ANOMALY.value: 3,
+        PhenologyAnomalyTier.EXTREME_ANOMALY.value: 4
+    }
+    
+    for d, v in zip(dates, values):
+        if d is None or v is None or math.isnan(v):
+            continue
+        m, doy, dec_yr = _extract_month_and_day_of_year(str(d))
+        clim_rec = clim_map.get(m, {
+            "median": 0.45,
+            "mad": 0.05,
+            "scale": 0.074,
+            "p10": 0.35,
+            "p90": 0.55
+        })
+        
+        med = float(clim_rec["median"])
+        scale = float(clim_rec["scale"])
+        z = (float(v) - med) / (scale + 1e-6)
+        abs_z = abs(z)
+        if abs_z > max_z:
+            max_z = abs_z
+            
+        tier_cfg = classify_phenology_anomaly_tier(z)
+        tier_id = tier_cfg["id"]
+        is_anom = abs_z >= float(anomaly_threshold)
+        
+        if is_anom:
+            anomaly_count += 1
+            if abs_z >= 3.0:
+                crit_count += 1
+                
+        if tier_rank.get(tier_id, 0) > tier_rank.get(worst_tier, 0):
+            worst_tier = tier_id
+            
+        points.append({
+            "date": str(d),
+            "month": m,
+            "day_of_year": doy,
+            "decimal_year": round(dec_yr, 4),
+            "observed_value": round(float(v), 4),
+            "seasonal_median": round(med, 4),
+            "seasonal_mad": round(float(clim_rec["mad"]), 4),
+            "seasonal_scale": round(scale, 4),
+            "seasonal_z_score": round(z, 4),
+            "anomaly_tier": tier_id,
+            "is_anomaly": is_anom,
+            "p10": round(float(clim_rec["p10"]), 4),
+            "p90": round(float(clim_rec["p90"]), 4)
+        })
+        
+    return {
+        "points": points,
+        "total_observations": len(points),
+        "anomaly_count": anomaly_count,
+        "critical_anomaly_count": crit_count,
+        "max_z_score": round(max_z, 4),
+        "worst_anomaly_tier": worst_tier
+    }
+
+
+def simulate_phenology_decomposition(
+    request: Union[Dict[str, Any], "PhenologyDecompositionRequest"]
+) -> Dict[str, Any]:
+    """Generates synthetic high-fidelity multi-temporal phenology decomposition and anomaly simulation."""
+    if hasattr(request, "model_dump"):
+        req_dict = request.model_dump(by_alias=False)
+    else:
+        req_dict = dict(request)
+        
+    sim_id = req_dict.get("simulation_id") or f"PHEN_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    asset_id = req_dict.get("asset_id", "ASSET-VEG-001")
+    asset_name = req_dict.get("asset_name", "Northern Embankment & Catchment Buffer")
+    idx_name = req_dict.get("index_name", "ndvi")
+    center_lat = float(req_dict.get("latitude", 37.05))
+    center_lon = float(req_dict.get("longitude", -120.85))
+    k_harm = max(1, min(4, int(req_dict.get("num_harmonics", 2))))
+    trend_slope = float(req_dict.get("trend_slope_per_year", 0.012))
+    thresh = float(req_dict.get("anomaly_threshold", 2.5))
+    
+    dates = []
+    vals = []
+    times_frac = []
+    
+    years = [2024, 2025, 2026]
+    step_idx = 0
+    for y in years:
+        for step in range(26):
+            doy = int(1 + step * (365.0 / 26.0))
+            is_leap = (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)
+            days_yr = 366.0 if is_leap else 365.0
+            dt = datetime.fromordinal(datetime(y, 1, 1).toordinal() + min(int(days_yr) - 1, doy - 1))
+            date_str = dt.strftime("%Y-%m-%d")
+            t_frac = (y - 2024) + (doy - 1.0) / days_yr
+            
+            phase1 = 2.0 * math.pi * ((doy - 196.0) / 365.25)
+            phase2 = 4.0 * math.pi * ((doy - 100.0) / 365.25)
+            
+            val = 0.48 + trend_slope * t_frac + 0.22 * math.cos(phase1) + 0.04 * math.cos(phase2)
+            noise = 0.015 * math.sin(step_idx * 1.7)
+            val += noise
+            
+            if y == 2025 and step == 14:
+                val = 0.38
+            if y == 2026 and step == 16:
+                val = 0.34
+                
+            dates.append(date_str)
+            vals.append(round(val, 4))
+            times_frac.append(round(t_frac, 4))
+            step_idx += 1
+            
+    harmonic_fit = fit_harmonic_fourier_regression(times_frac, vals, num_harmonics=k_harm, period=1.0)
+    theil_sen = calculate_theil_sen_slope(times_frac, vals)
+    climatology = calculate_climatological_monthly_mad(dates, vals)
+    anomaly_eval = calculate_seasonal_mad_anomalies(dates, vals, monthly_climatology=climatology, anomaly_threshold=thresh)
+    
+    obs_points = []
+    for idx, pt in enumerate(anomaly_eval["points"]):
+        pt["harmonic_baseline"] = harmonic_fit["fitted_values"][idx]
+        pt["residual"] = harmonic_fit["residuals"][idx]
+        obs_points.append(pt)
+        
+    amp1 = harmonic_fit["components"][0]["amplitude"] if harmonic_fit["components"] else 0.0
+    phase_deg = harmonic_fit["components"][0]["phase_deg"] if harmonic_fit["components"] else 0.0
+    peak_doy = int(round((harmonic_fit["components"][0]["peak_time_fraction"] * 365.25))) if harmonic_fit["components"] else 196
+    
+    summary = {
+        "total_observations": len(obs_points),
+        "years_covered": 3.0,
+        "mean_index": round(sum(vals) / len(vals), 4),
+        "trend_slope_per_year": theil_sen["slope_per_year"],
+        "trend_direction": theil_sen["trend_direction"],
+        "annual_amplitude": amp1,
+        "phase_angle_deg": phase_deg,
+        "peak_greenup_doy": peak_doy,
+        "r_squared": harmonic_fit["r_squared"],
+        "rmse": harmonic_fit["rmse"],
+        "anomaly_count": anomaly_eval["anomaly_count"],
+        "critical_anomaly_count": anomaly_eval["critical_anomaly_count"],
+        "worst_anomaly_z": anomaly_eval["max_z_score"],
+        "worst_anomaly_tier": anomaly_eval["worst_anomaly_tier"]
+    }
+    
+    d_lat = 0.008
+    d_lon = 0.008 / math.cos(math.radians(center_lat))
+    poly_coords = [
+        [round(center_lon - d_lon, 6), round(center_lat - d_lat, 6)],
+        [round(center_lon + d_lon, 6), round(center_lat - d_lat, 6)],
+        [round(center_lon + d_lon, 6), round(center_lat + d_lat, 6)],
+        [round(center_lon - d_lon, 6), round(center_lat + d_lat, 6)],
+        [round(center_lon - d_lon, 6), round(center_lat - d_lat, 6)]
+    ]
+    
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [poly_coords]
+            },
+            "properties": {
+                "asset_id": asset_id,
+                "asset_name": asset_name,
+                "index_name": idx_name,
+                "theil_sen_slope": theil_sen["slope_per_year"],
+                "annual_amplitude": amp1,
+                "anomaly_count": anomaly_eval["anomaly_count"],
+                "worst_tier": anomaly_eval["worst_anomaly_tier"]
+            }
+        }
+    ]
+    
+    tile_template = f"/api/v1/tiles/phenology/anomaly/{sim_id}/{{metric}}/{{z}}/{{x}}/{{y}}.png"
+    
+    return {
+        "simulation_id": sim_id,
+        "asset_id": asset_id,
+        "asset_name": asset_name,
+        "index_name": idx_name,
+        "summary": summary,
+        "harmonic_model": harmonic_fit,
+        "theil_sen_trend": theil_sen,
+        "monthly_climatology": climatology["monthly_records"],
+        "observation_points": obs_points,
+        "geojson_collection": {
+            "type": "FeatureCollection",
+            "features": features
+        },
+        "tile_url_template": tile_template,
+        "analyzed_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+calculate_phenology_decomposition_analysis = simulate_phenology_decomposition
+
+
+def build_phenology_anomaly_tile_url(
+    sim_id: str,
+    metric: str = "mad_anomaly_zscore",
+    z: int = 12,
+    x: int = 2048,
+    y: int = 1024,
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Constructs dynamic XYZ tile streaming URL for phenology anomaly raster layer."""
+    return f"{base_prefix}/tiles/phenology/anomaly/{sim_id}/{metric}/{z}/{x}/{y}.png"
+
+
+def build_phenology_anomaly_tile_url_template(
+    sim_id: str,
+    metric: str = "mad_anomaly_zscore",
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Constructs dynamic XYZ tile URL template for phenology anomaly raster layer."""
+    return f"{base_prefix}/tiles/phenology/anomaly/{sim_id}/{metric}/{{z}}/{{x}}/{{y}}.png"
+
+
+# ------------------------------------------------------------------------------
+# Pydantic Schemas for Multi-Temporal Phenology & Seasonality Contracts
+# ------------------------------------------------------------------------------
+
+class HarmonicFourierComponent(BaseModel):
+    """Single Fourier harmonic component parameters."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    k: int = Field(..., description="Harmonic frequency order (1=annual, 2=semi-annual)")
+    a_k: float = Field(..., alias="aK", description="Cosine Fourier coefficient")
+    b_k: float = Field(..., alias="bK", description="Sine Fourier coefficient")
+    amplitude: float = Field(..., ge=0.0, description="Harmonic amplitude C_k = sqrt(A_k^2 + B_k^2)")
+    phase_rad: float = Field(..., alias="phaseRad", description="Phase angle in radians")
+    phase_deg: float = Field(..., alias="phaseDeg", description="Phase angle in degrees [0, 360)")
+    peak_time_fraction: float = Field(..., alias="peakTimeFraction", ge=0.0, le=1.0, description="Normalized timing of harmonic peak within fundamental period")
+
+
+class HarmonicFourierModelResult(BaseModel):
+    """Fitted multi-harmonic Fourier regression model results."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    intercept_a0: float = Field(..., alias="interceptA0", description="Model baseline intercept constant")
+    linear_slope_a1: float = Field(..., alias="linearSlopeA1", description="Linear trend rate parameter")
+    components: List[HarmonicFourierComponent] = Field(default_factory=list, description="Harmonic components")
+    rmse: float = Field(..., ge=0.0, description="Root Mean Squared Error of harmonic fit")
+    r_squared: float = Field(..., alias="rSquared", ge=0.0, le=1.0, description="Coefficient of determination R^2")
+    formula_string: str = Field(..., alias="formulaString", description="Human-readable mathematical regression formula")
+
+
+class TheilSenTrendResult(BaseModel):
+    """Non-parametric Theil-Sen slope and Mann-Kendall trend statistical metrics."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    slope_per_year: float = Field(..., alias="slopePerYear", description="Theil-Sen median monotonic slope per year")
+    intercept: float = Field(..., description="Theil-Sen robust median intercept")
+    slope_ci_lower: float = Field(..., alias="slopeCiLower", description="Lower 95% confidence interval bound for slope")
+    slope_ci_upper: float = Field(..., alias="slopeCiUpper", description="Upper 95% confidence interval bound for slope")
+    kendall_tau: float = Field(..., alias="kendallTau", description="Kendall's rank correlation coefficient tau in [-1, 1]")
+    mann_kendall_s: int = Field(..., alias="mannKendallS", description="Mann-Kendall test score S")
+    p_value: float = Field(..., alias="pValue", ge=0.0, le=1.0, description="Two-tailed p-value for trend significance")
+    z_score: float = Field(..., alias="zScore", description="Standardized Mann-Kendall test statistic Z")
+    is_significant: bool = Field(..., alias="isSignificant", description="True if p-value < 0.05")
+    trend_direction: str = Field(..., alias="trendDirection", description="Trend trajectory: 'increasing', 'decreasing', or 'no_trend'")
+
+
+class MonthlyClimatologyRecord(BaseModel):
+    """Monthly climatological median and Median Absolute Deviation (MAD) baseline entry."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    month: int = Field(..., ge=1, le=12, description="Calendar month integer (1=Jan, 12=Dec)")
+    month_name: str = Field(..., alias="monthName", description="English calendar month name")
+    median: float = Field(..., description="Monthly historical median index value")
+    mad: float = Field(..., ge=0.0, description="Median Absolute Deviation (MAD)")
+    scale: float = Field(..., ge=0.0, description="Normal-consistent scale factor (1.4826 * MAD)")
+    p10: float = Field(..., description="10th percentile baseline envelope bound")
+    p25: float = Field(..., description="25th percentile baseline envelope bound")
+    p75: float = Field(..., description="75th percentile baseline envelope bound")
+    p90: float = Field(..., description="90th percentile baseline envelope bound")
+    sample_count: int = Field(default=0, alias="sampleCount", ge=0, description="Number of historical scene observations in month")
+
+
+class PhenologyObservationPoint(BaseModel):
+    """Individual multi-temporal satellite observation with seasonal normalization and anomaly status."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    date: str = Field(..., description="Observation ISO date string (YYYY-MM-DD)")
+    month: int = Field(..., ge=1, le=12, description="Calendar month integer")
+    day_of_year: int = Field(..., alias="dayOfYear", ge=1, le=366, description="Day of year (1-366)")
+    decimal_year: float = Field(..., alias="decimalYear", description="Fractional calendar year")
+    observed_value: float = Field(..., alias="observedValue", description="Observed biophysical spectral index value")
+    harmonic_baseline: Optional[float] = Field(default=None, alias="harmonicBaseline", description="Harmonic model fitted baseline value")
+    residual: Optional[float] = Field(default=None, description="Difference between observed and harmonic baseline")
+    seasonal_median: float = Field(..., alias="seasonalMedian", description="Historical monthly climatological median")
+    seasonal_mad: float = Field(..., alias="seasonalMad", description="Historical monthly climatological MAD")
+    seasonal_scale: float = Field(..., alias="seasonalScale", description="Applied scale factor")
+    seasonal_z_score: float = Field(..., alias="seasonalZScore", description="Normalized climatological z-score")
+    anomaly_tier: str = Field(..., alias="anomalyTier", description="Classified phenology anomaly tier")
+    is_anomaly: bool = Field(..., alias="isAnomaly", description="True if |seasonal_z_score| >= anomaly_threshold")
+    p10: float = Field(..., description="10th percentile expected lower envelope bound")
+    p90: float = Field(..., description="90th percentile expected upper envelope bound")
+
+
+class PhenologySimulationSummary(BaseModel):
+    """Aggregated summary metrics for multi-temporal phenology decomposition simulation."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    total_observations: int = Field(..., alias="totalObservations", ge=0)
+    years_covered: float = Field(..., alias="yearsCovered", ge=0.0)
+    mean_index: float = Field(..., alias="meanIndex")
+    trend_slope_per_year: float = Field(..., alias="trendSlopePerYear")
+    trend_direction: str = Field(..., alias="trendDirection")
+    annual_amplitude: float = Field(..., alias="annualAmplitude", ge=0.0)
+    phase_angle_deg: float = Field(..., alias="phaseAngleDeg")
+    peak_greenup_doy: int = Field(..., alias="peakGreenupDoy", ge=1, le=366)
+    r_squared: float = Field(..., alias="rSquared", ge=0.0, le=1.0)
+    rmse: float = Field(..., ge=0.0)
+    anomaly_count: int = Field(..., alias="anomalyCount", ge=0)
+    critical_anomaly_count: int = Field(..., alias="criticalAnomalyCount", ge=0)
+    worst_anomaly_z: float = Field(..., alias="worstAnomalyZ")
+    worst_anomaly_tier: str = Field(..., alias="worstAnomalyTier")
+
+
+class PhenologyHarmonicAnalysisRequest(BaseModel):
+    """Request payload for multi-harmonic Fourier regression analysis."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    asset_id: str = Field(default="ASSET-VEG-001", alias="assetId")
+    index_name: str = Field(default="ndvi", alias="indexName")
+    dates: List[str] = Field(..., description="List of observation dates (YYYY-MM-DD)")
+    values: List[float] = Field(..., description="List of observed spectral index values")
+    num_harmonics: int = Field(default=2, alias="numHarmonics", ge=1, le=4)
+    period_years: float = Field(default=1.0, alias="periodYears", gt=0.0)
+
+
+class PhenologyHarmonicAnalysisResponse(BaseModel):
+    """Output response from multi-harmonic Fourier regression analysis."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    asset_id: str = Field(..., alias="assetId")
+    index_name: str = Field(..., alias="indexName")
+    model_result: HarmonicFourierModelResult = Field(..., alias="modelResult")
+    observation_count: int = Field(..., alias="observationCount")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="analyzedAt")
+
+
+class PhenologyMADAnalysisRequest(BaseModel):
+    """Request payload for climatological monthly MAD anomaly detection."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    asset_id: str = Field(default="ASSET-VEG-001", alias="assetId")
+    index_name: str = Field(default="ndvi", alias="indexName")
+    dates: List[str] = Field(..., description="List of observation dates (YYYY-MM-DD)")
+    values: List[float] = Field(..., description="List of observed spectral index values")
+    anomaly_threshold: float = Field(default=2.5, alias="anomalyThreshold", ge=1.0, le=5.0)
+    min_mad_scale: float = Field(default=0.015, alias="minMadScale", gt=0.0)
+
+
+class PhenologyMADAnalysisResponse(BaseModel):
+    """Output response from climatological monthly MAD anomaly analysis."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    asset_id: str = Field(..., alias="assetId")
+    index_name: str = Field(..., alias="indexName")
+    monthly_climatology: List[MonthlyClimatologyRecord] = Field(..., alias="monthlyClimatology")
+    theil_sen_trend: TheilSenTrendResult = Field(..., alias="theilSenTrend")
+    points: List[PhenologyObservationPoint] = Field(default_factory=list)
+    total_observations: int = Field(..., alias="totalObservations")
+    anomaly_count: int = Field(..., alias="anomalyCount")
+    critical_anomaly_count: int = Field(..., alias="criticalAnomalyCount")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="analyzedAt")
+
+
+class PhenologyDecompositionRequest(BaseModel):
+    """Request payload for full-spectrum multi-temporal phenology simulation."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    simulation_id: Optional[str] = Field(default=None, alias="simulationId")
+    asset_id: str = Field(default="ASSET-VEG-001", alias="assetId")
+    asset_name: str = Field(default="Northern Embankment & Catchment Buffer", alias="assetName")
+    latitude: float = Field(default=37.05, alias="latitude")
+    longitude: float = Field(default=-120.85, alias="longitude")
+    index_name: str = Field(default="ndvi", alias="indexName")
+    num_harmonics: int = Field(default=2, alias="numHarmonics", ge=1, le=4)
+    trend_slope_per_year: float = Field(default=0.012, alias="trendSlopePerYear")
+    anomaly_threshold: float = Field(default=2.5, alias="anomalyThreshold", ge=1.0, le=5.0)
+
+
+class PhenologyDecompositionResponse(BaseModel):
+    """Output response containing full multi-temporal phenology decomposition simulation."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    simulation_id: str = Field(..., alias="simulationId")
+    asset_id: str = Field(..., alias="assetId")
+    asset_name: str = Field(..., alias="assetName")
+    index_name: str = Field(..., alias="indexName")
+    summary: PhenologySimulationSummary = Field(..., alias="summary")
+    harmonic_model: HarmonicFourierModelResult = Field(..., alias="harmonicModel")
+    theil_sen_trend: TheilSenTrendResult = Field(..., alias="theilSenTrend")
+    monthly_climatology: List[MonthlyClimatologyRecord] = Field(..., alias="monthlyClimatology")
+    observation_points: List[PhenologyObservationPoint] = Field(default_factory=list, alias="observationPoints")
+    geojson_collection: Dict[str, Any] = Field(..., alias="geojsonCollection")
+    tile_url_template: str = Field(..., alias="tileUrlTemplate")
+    analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="analyzedAt")
+
+
+# ============================================================================
+# CYCLE v2.5.23: AUTOMATED STAC HARVESTER, SECURE WEBHOOK ENGINE & ALERT DISPATCHER
+# ============================================================================
+
+class STACCollectionName(str, Enum):
+    """Canonical STAC asset collections monitored by automated harvesters."""
+    SENTINEL_2 = "sentinel-2-l2a"
+    LANDSAT_C2 = "landsat-c2-l2"
+    SENTINEL_1 = "sentinel-1-rtc"
+    COP_DEM = "cop-dem-glo-30"
+
+
+class HarvestScheduleInterval(str, Enum):
+    """Periodic execution schedules for STAC asset polling."""
+    HOURLY = "hourly"
+    SIX_HOURS = "6h"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    CUSTOM_CRON = "custom_cron"
+
+
+class WebhookChannelType(str, Enum):
+    """Outbound multi-channel delivery transport mechanisms."""
+    SLACK = "slack"
+    MS_TEAMS = "ms_teams"
+    PAGERDUTY = "pagerduty"
+    EMAIL_SMTP = "email_smtp"
+    CUSTOM_WEBHOOK = "custom_webhook"
+
+
+class WebhookDeliveryStatus(str, Enum):
+    """Lifecycle states of an outbound webhook dispatch."""
+    QUEUED = "queued"
+    DELIVERED = "delivered"
+    RETRYING = "retrying"
+    FAILED = "failed"
+    DEAD_LETTER = "dead_letter"
+
+
+class HarvesterAlertSeverity(str, Enum):
+    """Operational urgency tiers for automated harvester notifications."""
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+    EMERGENCY = "emergency"
+
+
+class PerimeterTriggerCondition(str, Enum):
+    """Evaluation triggers determining when an anomaly envelope is generated."""
+    NEW_SCENE = "new_scene"
+    ANOMALY_EXCEEDED = "anomaly_exceeded"
+    CLOUD_COVER_BELOW = "cloud_cover_below"
+    SEISMIC_INDUCED = "seismic_induced"
+    PIPING_BREACH = "piping_breach"
+
+
+HARVEST_SCHEDULE_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "hourly": {
+        "id": "hourly",
+        "name": "Hourly Scan",
+        "interval_seconds": 3600,
+        "cron": "0 * * * *",
+        "description": "Polls STAC catalog at the top of every hour."
+    },
+    "6h": {
+        "id": "6h",
+        "name": "6-Hour Scan",
+        "interval_seconds": 21600,
+        "cron": "0 */6 * * *",
+        "description": "Polls STAC catalog four times per day."
+    },
+    "daily": {
+        "id": "daily",
+        "name": "Daily Midnight Scan",
+        "interval_seconds": 86400,
+        "cron": "0 0 * * *",
+        "description": "Polls STAC catalog once per day at 00:00 UTC."
+    },
+    "weekly": {
+        "id": "weekly",
+        "name": "Weekly Digest Scan",
+        "interval_seconds": 604800,
+        "cron": "0 0 * * 0",
+        "description": "Polls STAC catalog once per week on Sunday 00:00 UTC."
+    },
+    "custom_cron": {
+        "id": "custom_cron",
+        "name": "Custom Cron Schedule",
+        "interval_seconds": 0,
+        "cron": "*/15 * * * *",
+        "description": "User-defined crontab format execution schedule."
+    }
+}
+
+WEBHOOK_CHANNEL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "slack": {
+        "id": "slack",
+        "name": "Slack Incoming Webhook",
+        "content_type": "application/json",
+        "supports_blocks": True,
+        "requires_secret": False,
+        "default_color": "#4A154B",
+        "description": "Incoming Webhooks formatted with Slack Block Kit cards."
+    },
+    "ms_teams": {
+        "id": "ms_teams",
+        "name": "Microsoft Teams Connector",
+        "content_type": "application/json",
+        "supports_blocks": True,
+        "requires_secret": False,
+        "default_color": "#6264A7",
+        "description": "Adaptive Cards v1.4 payload dispatched to Teams webhooks."
+    },
+    "pagerduty": {
+        "id": "pagerduty",
+        "name": "PagerDuty Events API v2",
+        "content_type": "application/json",
+        "supports_blocks": False,
+        "requires_secret": True,
+        "default_color": "#06AC38",
+        "description": "Triggers or resolves PagerDuty incidents with routing key."
+    },
+    "email_smtp": {
+        "id": "email_smtp",
+        "name": "Email SMTP Notification",
+        "content_type": "text/html",
+        "supports_blocks": False,
+        "requires_secret": False,
+        "default_color": "#2563EB",
+        "description": "MIME multipart text and HTML alert summary dispatched via SMTP."
+    },
+    "custom_webhook": {
+        "id": "custom_webhook",
+        "name": "Custom HTTPS Webhook (RFC 7946 GeoJSON + HMAC-SHA256)",
+        "content_type": "application/json",
+        "supports_blocks": True,
+        "requires_secret": True,
+        "default_color": "#10B981",
+        "description": "Raw JSON event envelope with X-GIOS-Signature HMAC-SHA256 headers."
+    }
+}
+
+
+def generate_hmac_sha256_signature(payload: Union[str, bytes, dict], secret_key: str) -> str:
+    """Generate RFC 2104 compliant HMAC-SHA256 hexadecimal digest for webhook verification.
+    
+    If payload is a dictionary, it is serialized to canonical sorted UTF-8 JSON.
+    """
+    if isinstance(payload, dict):
+        data_bytes = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    elif isinstance(payload, str):
+        data_bytes = payload.encode('utf-8')
+    elif isinstance(payload, bytes):
+        data_bytes = payload
+    else:
+        data_bytes = str(payload).encode('utf-8')
+        
+    key_bytes = secret_key.encode('utf-8') if isinstance(secret_key, str) else secret_key
+    return hmac.new(key_bytes, data_bytes, hashlib.sha256).hexdigest()
+
+
+def verify_hmac_sha256_signature(payload: Union[str, bytes, dict], secret_key: str, signature: str) -> bool:
+    """Verify HMAC-SHA256 signature using constant-time comparison to prevent timing attacks.
+    
+    Strips optional 'sha256=' header prefix if present.
+    """
+    if not signature or not secret_key:
+        return False
+        
+    cleaned_sig = signature.strip()
+    if cleaned_sig.lower().startswith("sha256="):
+        cleaned_sig = cleaned_sig[7:].strip()
+        
+    expected_sig = generate_hmac_sha256_signature(payload, secret_key)
+    return hmac.compare_digest(expected_sig.lower(), cleaned_sig.lower())
+
+
+def point_in_perimeter_polygon(point_lon: float, point_lat: float, polygon_coords: List[List[float]]) -> bool:
+    """Ray-casting Point-in-Polygon (PIP) with collinear edge and vertex boundary tolerance.
+    
+    Args:
+        point_lon: Longitude of test point (X coordinate)
+        point_lat: Latitude of test point (Y coordinate)
+        polygon_coords: Sequence of [lon, lat] pairs forming a closed boundary ring.
+        
+    Returns:
+        True if point lies inside or on the boundary of the polygon, False otherwise.
+    """
+    if not polygon_coords or len(polygon_coords) < 3:
+        return False
+        
+    eps = 1e-9
+    # Vertex check
+    for vx, vy in polygon_coords:
+        if abs(vx - point_lon) < eps and abs(vy - point_lat) < eps:
+            return True
+            
+    n = len(polygon_coords)
+    inside = False
+    p1x, p1y = polygon_coords[0]
+    
+    for i in range(1, n + 1):
+        p2x, p2y = polygon_coords[i % n]
+        
+        # Check if point lies on segment (collinear with bounding box test)
+        cross = (point_lat - p1y) * (p2x - p1x) - (point_lon - p1x) * (p2y - p1y)
+        if abs(cross) < eps:
+            if min(p1x, p2x) - eps <= point_lon <= max(p1x, p2x) + eps and \
+               min(p1y, p2y) - eps <= point_lat <= max(p1y, p2y) + eps:
+                return True
+                
+        # Ray casting in +X direction
+        if min(p1y, p2y) < point_lat <= max(p1y, p2y):
+            if point_lon <= max(p1x, p2x):
+                if p1y != p2y:
+                    xinters = (point_lat - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                if p1x == p2x or point_lon <= xinters:
+                    inside = not inside
+        p1x, p1y = p2x, p2y
+        
+    return inside
+
+
+def calculate_retry_backoff(attempt: int, base_delay: float = 1.0, max_delay: float = 60.0, jitter_factor: float = 0.0) -> float:
+    """Calculates exponential retry backoff: delay = min(max_delay, base * 2^attempt) * (1 + jitter)."""
+    attempt_clamped = max(0, int(attempt))
+    base = float(base_delay)
+    cap = float(max_delay)
+    delay = min(cap, base * (2.0 ** attempt_clamped))
+    if jitter_factor != 0.0:
+        delay = max(0.0, min(cap * 1.5, delay * (1.0 + float(jitter_factor))))
+    return round(delay, 4)
+
+
+def format_channel_notification_payload(
+    channel_type: Union[str, WebhookChannelType],
+    envelope: Dict[str, Any],
+    webhook_url: Optional[str] = None
+) -> Dict[str, Any]:
+    """Formats standardized notification payload tailored to recipient channel architecture."""
+    ch = channel_type.value if hasattr(channel_type, "value") else str(channel_type).lower()
+    
+    event_id = envelope.get("event_id", "EVT-STAC-001")
+    event_type = envelope.get("event_type", "stac_harvester.anomaly_detected")
+    sub_id = envelope.get("subscription_id", "SUB-STAC-001")
+    severity = envelope.get("severity", "warning")
+    if hasattr(severity, "value"):
+        severity = severity.value
+    severity = str(severity).lower()
+    
+    ts = envelope.get("timestamp", datetime.now(timezone.utc).isoformat())
+    metrics = envelope.get("metrics", {})
+    z_score = metrics.get("z_score", 2.85)
+    cloud_cover = metrics.get("cloud_cover", 4.2)
+    sig = envelope.get("hmac_signature", "")
+    
+    color_map = {
+        "info": "#3B82F6",
+        "warning": "#F59E0B",
+        "critical": "#EF4444",
+        "emergency": "#7F1D1D"
+    }
+    hex_color = color_map.get(severity, "#F59E0B")
+    
+    if ch == WebhookChannelType.SLACK.value:
+        parsed_ts = 0
+        try:
+            if 'T' in ts:
+                parsed_ts = int(datetime.fromisoformat(ts.replace('Z', '+00:00')).timestamp())
+        except Exception:
+            parsed_ts = 0
+            
+        return {
+            "channel": "#gios-alerts",
+            "text": f"🚨 GIOS STAC Alert [{severity.upper()}]: {event_type} on {sub_id}",
+            "attachments": [
+                {
+                    "color": hex_color,
+                    "title": f"STAC Harvester Anomaly: {event_type}",
+                    "fields": [
+                        {"title": "Subscription ID", "value": sub_id, "short": True},
+                        {"title": "Severity", "value": severity.upper(), "short": True},
+                        {"title": "Anomaly Z-Score", "value": f"{z_score:.2f}", "short": True},
+                        {"title": "Cloud Cover", "value": f"{cloud_cover:.1f}%", "short": True},
+                        {"title": "Timestamp", "value": ts, "short": False}
+                    ],
+                    "footer": "GIOS Automated Watchdog",
+                    "ts": parsed_ts
+                }
+            ]
+        }
+    elif ch == WebhookChannelType.MS_TEAMS.value:
+        return {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": {
+                        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                        "type": "AdaptiveCard",
+                        "version": "1.4",
+                        "body": [
+                            {
+                                "type": "TextBlock",
+                                "size": "Medium",
+                                "weight": "Bolder",
+                                "text": f"🚨 GIOS Harvester Alert: {event_type}",
+                                "color": "Attention" if severity in ("critical", "emergency") else "Warning"
+                            },
+                            {
+                                "type": "FactSet",
+                                "facts": [
+                                    {"title": "Subscription ID", "value": sub_id},
+                                    {"title": "Event ID", "value": event_id},
+                                    {"title": "Severity", "value": severity.upper()},
+                                    {"title": "Z-Score", "value": str(z_score)},
+                                    {"title": "Cloud Cover", "value": f"{cloud_cover}%"},
+                                    {"title": "Timestamp", "value": ts}
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    elif ch == WebhookChannelType.PAGERDUTY.value:
+        pd_severity = "critical" if severity in ("critical", "emergency") else "warning" if severity == "warning" else "info"
+        return {
+            "routing_key": webhook_url or "default-routing-key",
+            "event_action": "trigger",
+            "dedup_key": f"{sub_id}:{event_id}",
+            "payload": {
+                "summary": f"GIOS Harvester [{severity.upper()}]: {event_type} on {sub_id} (z={z_score})",
+                "source": "GIOS Automated Harvester",
+                "severity": pd_severity,
+                "timestamp": ts,
+                "component": "stac_harvester",
+                "group": "remote_sensing",
+                "custom_details": envelope
+            }
+        }
+    elif ch == WebhookChannelType.EMAIL_SMTP.value:
+        target = webhook_url if (webhook_url and "@" in webhook_url) else "alerts@gios-monitoring.internal"
+        return {
+            "subject": f"[GIOS {severity.upper()}] STAC Harvester: {event_type} ({sub_id})",
+            "to": [target],
+            "body_text": f"GIOS STAC Harvester Alert\nSeverity: {severity}\nSubscription: {sub_id}\nEvent: {event_id}\nZ-Score: {z_score}\nTimestamp: {ts}",
+            "body_html": f"<h2>GIOS STAC Harvester Alert</h2><p><strong>Severity:</strong> {severity}</p><p><strong>Subscription:</strong> {sub_id}</p><p><strong>Z-Score:</strong> {z_score}</p><p><strong>Timestamp:</strong> {ts}</p>"
+        }
+    else:  # custom_webhook
+        return {
+            "event_id": event_id,
+            "event_type": event_type,
+            "timestamp": ts,
+            "subscription_id": sub_id,
+            "severity": severity,
+            "geojson_feature": envelope.get("geojson_feature", {}),
+            "metrics": metrics,
+            "hmac_signature": sig
+        }
+
+
+def simulate_stac_harvester_cycle(
+    subscription: Dict[str, Any],
+    candidate_scenes: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """Simulates an automated STAC ingestion cycle: queries scenes, checks perimeters & thresholds,
+    constructs RFC 7946 envelopes with HMAC signatures, and simulates multi-channel dispatch.
+    """
+    sub_copy = dict(subscription)
+    sub_id = sub_copy.get("subscription_id") or sub_copy.get("subscriptionId") or "SUB-HARVEST-001"
+    sub_name = sub_copy.get("name", "Automated STAC Perimeter Watchdog")
+    sched = sub_copy.get("schedule", {})
+    cloud_max = sched.get("cloud_cover_max") if "cloud_cover_max" in sched else sched.get("cloudCoverMax", 20.0)
+    z_thresh = sub_copy.get("z_score_threshold") if "z_score_threshold" in sub_copy else sub_copy.get("zScoreThreshold", 2.5)
+    
+    perimeter = sub_copy.get("perimeter", {})
+    poly_coords = perimeter.get("polygon_coordinates") or perimeter.get("polygonCoordinates") or [
+        [-120.90, 37.00], [-120.80, 37.00], [-120.80, 37.10], [-120.90, 37.10], [-120.90, 37.00]
+    ]
+    
+    endpoints = sub_copy.get("webhook_endpoints") or sub_copy.get("webhookEndpoints") or [
+        {
+            "endpoint_id": "EP-01",
+            "channel_type": "custom_webhook",
+            "target_url": "https://api.gios.internal/webhooks/incoming",
+            "secret_token": "gios-super-secret-key-32chars!!",
+            "is_active": True,
+            "max_retries": 3
+        }
+    ]
+    
+    if candidate_scenes is None:
+        candidate_scenes = [
+            {
+                "scene_id": "S2A_MSIL2A_20261015T184521_T10SEG",
+                "collection": "sentinel-2-l2a",
+                "acquisition_time": "2026-10-15T18:45:21Z",
+                "cloud_cover": 4.5,
+                "center_lon": -120.85,
+                "center_lat": 37.05,
+                "z_score": 2.92,
+                "mean_ndvi": 0.284
+            },
+            {
+                "scene_id": "LC09_L2SP_042034_20261014_02_T1",
+                "collection": "landsat-c2-l2",
+                "acquisition_time": "2026-10-14T18:30:10Z",
+                "cloud_cover": 42.0,  # exceeds cloud_max
+                "center_lon": -120.84,
+                "center_lat": 37.04,
+                "z_score": 3.10,
+                "mean_ndvi": 0.260
+            },
+            {
+                "scene_id": "S2B_MSIL2A_20261010T184015_T10SEG",
+                "collection": "sentinel-2-l2a",
+                "acquisition_time": "2026-10-10T18:40:15Z",
+                "cloud_cover": 1.2,
+                "center_lon": -120.86,
+                "center_lat": 37.06,
+                "z_score": 1.15,  # normal variation
+                "mean_ndvi": 0.510
+            }
+        ]
+        
+    evaluated_scenes = []
+    dispatched_events = []
+    delivery_attempts = []
+    dlq_items = []
+    
+    for scene in candidate_scenes:
+        s_id = scene.get("scene_id", "SCENE_001")
+        cc = scene.get("cloud_cover", 0.0)
+        c_lon = scene.get("center_lon", -120.85)
+        c_lat = scene.get("center_lat", 37.05)
+        z_sc = scene.get("z_score", 0.0)
+        
+        in_perimeter = point_in_perimeter_polygon(c_lon, c_lat, poly_coords)
+        cloud_ok = (cc <= cloud_max)
+        anomaly_ok = (abs(z_sc) >= z_thresh)
+        
+        status = "evaluated"
+        if not in_perimeter:
+            status = "outside_perimeter"
+        elif not cloud_ok:
+            status = "cloud_cover_exceeded"
+        elif not anomaly_ok:
+            status = "normal_variation"
+        else:
+            status = "anomaly_triggered"
+            
+        evaluated_scenes.append({
+            "scene_id": s_id,
+            "collection": scene.get("collection", "sentinel-2-l2a"),
+            "cloud_cover": cc,
+            "in_perimeter": in_perimeter,
+            "z_score": z_sc,
+            "status": status
+        })
+        
+        if status == "anomaly_triggered":
+            evt_id = f"EVT-{s_id[:16]}-{int(datetime.now(timezone.utc).timestamp())}"
+            severity = "critical" if abs(z_sc) >= 3.0 else "warning"
+            
+            geojson_feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [c_lon, c_lat]
+                },
+                "properties": {
+                    "scene_id": s_id,
+                    "collection": scene.get("collection", "sentinel-2-l2a"),
+                    "cloud_cover": cc,
+                    "z_score": z_sc,
+                    "subscription_id": sub_id
+                }
+            }
+            
+            first_ep = endpoints[0] if endpoints else {}
+            secret = first_ep.get("secret_token") or first_ep.get("secretToken") or "default-secret-key"
+            payload_dict = {
+                "event_id": evt_id,
+                "event_type": "stac_harvester.anomaly_detected",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "subscription_id": sub_id,
+                "severity": severity,
+                "geojson_feature": geojson_feature,
+                "metrics": {
+                    "z_score": z_sc,
+                    "cloud_cover": cc,
+                    "mean_ndvi": scene.get("mean_ndvi", 0.3)
+                }
+            }
+            sig = generate_hmac_sha256_signature(payload_dict, secret)
+            payload_dict["hmac_signature"] = sig
+            
+            dispatched_events.append(payload_dict)
+            
+            for ep in endpoints:
+                ep_id = ep.get("endpoint_id") or ep.get("endpointId") or "EP-01"
+                ch_type = ep.get("channel_type") or ep.get("channelType") or "custom_webhook"
+                is_active = ep.get("is_active", True)
+                if not is_active:
+                    continue
+                    
+                target = ep.get("target_url") or ep.get("targetUrl") or "https://api.gios.internal"
+                max_retries = ep.get("max_retries") if "max_retries" in ep else ep.get("maxRetries", 3)
+                
+                attempt = {
+                    "attempt_id": f"ATT-{evt_id}-{ep_id}",
+                    "event_id": evt_id,
+                    "endpoint_id": ep_id,
+                    "channel_type": ch_type,
+                    "status": "delivered",
+                    "status_code": 200,
+                    "attempt_number": 1,
+                    "dispatched_at": datetime.now(timezone.utc).isoformat(),
+                    "response_latency_ms": 42.5,
+                    "error_message": None
+                }
+                delivery_attempts.append(attempt)
+                
+    return {
+        "subscription_id": sub_id,
+        "subscription_name": sub_name,
+        "evaluated_scenes_count": len(evaluated_scenes),
+        "triggered_anomalies_count": len(dispatched_events),
+        "dispatches_count": len(delivery_attempts),
+        "dlq_count": len(dlq_items),
+        "evaluated_scenes": evaluated_scenes,
+        "events": dispatched_events,
+        "delivery_attempts": delivery_attempts,
+        "dead_letter_queue": dlq_items,
+        "executed_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+class STACSubscriptionSchedule(BaseModel):
+    """Execution schedule configuration for automated STAC polling."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    interval: HarvestScheduleInterval = Field(default=HarvestScheduleInterval.HOURLY)
+    cron_expression: Optional[str] = Field(default="0 * * * *", alias="cronExpression")
+    cloud_cover_max: float = Field(default=20.0, alias="cloudCoverMax", ge=0.0, le=100.0)
+    collections: List[str] = Field(default_factory=lambda: ["sentinel-2-l2a", "landsat-c2-l2"])
+    lookback_hours: int = Field(default=48, alias="lookbackHours", ge=1, le=720)
+
+
+class PerimeterGeoFence(BaseModel):
+    """Geographic area of interest bounding box and polygon perimeter."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    fence_id: str = Field(default="FENCE-001", alias="fenceId")
+    name: str = Field(default="San Luis Dam & Reservoir Buffer")
+    bbox: Optional[BoundingBox] = Field(default=None)
+    polygon_coordinates: Optional[List[List[float]]] = Field(default=None, alias="polygonCoordinates")
+    asset_id: Optional[str] = Field(default="ASSET-DAM-01", alias="assetId")
+
+
+class WebhookEndpointConfig(BaseModel):
+    """Outbound destination endpoint specification with authentication credentials."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    endpoint_id: str = Field(default="EP-001", alias="endpointId")
+    channel_type: WebhookChannelType = Field(default=WebhookChannelType.CUSTOM_WEBHOOK, alias="channelType")
+    target_url: str = Field(default="https://api.gios.internal/webhooks/incoming", alias="targetUrl")
+    secret_token: str = Field(default="gios-secure-hmac-token-2026", alias="secretToken")
+    is_active: bool = Field(default=True, alias="isActive")
+    custom_headers: Dict[str, str] = Field(default_factory=dict, alias="customHeaders")
+    max_retries: int = Field(default=3, alias="maxRetries", ge=0, le=10)
+
+
+class STACHarvesterSubscription(BaseModel):
+    """Persistent automated harvester registration entity."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    subscription_id: str = Field(default="SUB-STAC-001", alias="subscriptionId")
+    name: str = Field(default="California Aqueduct STAC Watchdog")
+    description: Optional[str] = Field(default="Automated Sentinel-2 & Landsat anomaly detection.")
+    schedule: STACSubscriptionSchedule = Field(default_factory=STACSubscriptionSchedule)
+    perimeter: PerimeterGeoFence = Field(default_factory=PerimeterGeoFence)
+    webhook_endpoints: List[WebhookEndpointConfig] = Field(default_factory=list, alias="webhookEndpoints")
+    trigger_conditions: List[PerimeterTriggerCondition] = Field(
+        default_factory=lambda: [PerimeterTriggerCondition.ANOMALY_EXCEEDED, PerimeterTriggerCondition.NEW_SCENE],
+        alias="triggerConditions"
+    )
+    z_score_threshold: float = Field(default=2.5, alias="zScoreThreshold", ge=1.0, le=5.0)
+    is_enabled: bool = Field(default=True, alias="isEnabled")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="createdAt")
+    last_run_at: Optional[str] = Field(default=None, alias="lastRunAt")
+    total_dispatches: int = Field(default=0, alias="totalDispatches")
+
+
+class WebhookEventEnvelope(BaseModel):
+    """Standardized event envelope compliant with RFC 7946 GeoJSON and HMAC signature."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    event_id: str = Field(..., alias="eventId")
+    event_type: str = Field(default="stac_harvester.anomaly_detected", alias="eventType")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    subscription_id: str = Field(..., alias="subscriptionId")
+    severity: HarvesterAlertSeverity = Field(default=HarvesterAlertSeverity.WARNING)
+    geojson_feature: Dict[str, Any] = Field(..., alias="geojsonFeature")
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    hmac_signature: str = Field(..., alias="hmacSignature")
+
+
+class WebhookDeliveryAttempt(BaseModel):
+    """Record of an outbound webhook transmission attempt."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    attempt_id: str = Field(..., alias="attemptId")
+    event_id: str = Field(..., alias="eventId")
+    endpoint_id: str = Field(..., alias="endpointId")
+    channel_type: WebhookChannelType = Field(..., alias="channelType")
+    status: WebhookDeliveryStatus = Field(...)
+    status_code: Optional[int] = Field(default=None, alias="statusCode")
+    attempt_number: int = Field(default=1, alias="attemptNumber")
+    dispatched_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="dispatchedAt")
+    response_latency_ms: float = Field(default=0.0, alias="responseLatencyMs")
+    error_message: Optional[str] = Field(default=None, alias="errorMessage")
+
+
+class DeadLetterQueueItem(BaseModel):
+    """Failed delivery envelope quarantined in Dead-Letter Queue (DLQ)."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    dlq_id: str = Field(..., alias="dlqId")
+    event: WebhookEventEnvelope = Field(...)
+    endpoint_id: str = Field(..., alias="endpointId")
+    failure_reason: str = Field(..., alias="failureReason")
+    failed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="failedAt")
+    retry_count: int = Field(default=0, alias="retryCount")
+    can_retry: bool = Field(default=True, alias="canRetry")
+
+
+class STACHarvesterSubscriptionCreateRequest(BaseModel):
+    """Request payload to register a new automated STAC harvester subscription."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(...)
+    description: Optional[str] = Field(default=None)
+    schedule: STACSubscriptionSchedule = Field(default_factory=STACSubscriptionSchedule)
+    perimeter: PerimeterGeoFence = Field(default_factory=PerimeterGeoFence)
+    webhook_endpoints: List[WebhookEndpointConfig] = Field(default_factory=list, alias="webhookEndpoints")
+    trigger_conditions: List[PerimeterTriggerCondition] = Field(
+        default_factory=lambda: [PerimeterTriggerCondition.ANOMALY_EXCEEDED],
+        alias="triggerConditions"
+    )
+    z_score_threshold: float = Field(default=2.5, alias="zScoreThreshold")
+    is_enabled: bool = Field(default=True, alias="isEnabled")
+
+
+class STACHarvesterSubscriptionResponse(BaseModel):
+    """Response containing harvester subscription details."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    subscription: STACHarvesterSubscription = Field(...)
+    status: str = Field(default="active")
+    message: str = Field(default="Subscription successfully registered.")
+
+
+class STACHarvesterTriggerRequest(BaseModel):
+    """Request payload to manually trigger or test a STAC harvester execution."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    subscription_id: str = Field(default="SUB-STAC-001", alias="subscriptionId")
+    lookback_hours: Optional[int] = Field(default=None, alias="lookbackHours")
+    force_all_scenes: bool = Field(default=False, alias="forceAllScenes")
+    dry_run: bool = Field(default=False, alias="dryRun")
+
+
+class STACHarvesterTriggerResponse(BaseModel):
+    """Response payload detailing harvester execution results."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    subscription_id: str = Field(..., alias="subscriptionId")
+    subscription_name: str = Field(..., alias="subscriptionName")
+    evaluated_scenes_count: int = Field(..., alias="evaluatedScenesCount")
+    triggered_anomalies_count: int = Field(..., alias="triggeredAnomaliesCount")
+    dispatches_count: int = Field(..., alias="dispatchesCount")
+    dlq_count: int = Field(..., alias="dlqCount")
+    evaluated_scenes: List[Dict[str, Any]] = Field(default_factory=list, alias="evaluatedScenes")
+    events: List[Dict[str, Any]] = Field(default_factory=list)
+    delivery_attempts: List[Dict[str, Any]] = Field(default_factory=list, alias="deliveryAttempts")
+    dead_letter_queue: List[Dict[str, Any]] = Field(default_factory=list, alias="deadLetterQueue")
+    executed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="executedAt")
+
+
+class WebhookTestDispatchPayloadRequest(BaseModel):
+    """Request payload to test-fire an outbound webhook endpoint."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    endpoint_id: str = Field(default="EP-001", alias="endpointId")
+    test_severity: HarvesterAlertSeverity = Field(default=HarvesterAlertSeverity.WARNING, alias="testSeverity")
+    custom_message: Optional[str] = Field(default="Test notification dispatch from GIOS Watchdog.", alias="customMessage")
+
+
+class WebhookTestDispatchPayloadResponse(BaseModel):
+    """Response payload acknowledging webhook dispatch test."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    endpoint_id: str = Field(..., alias="endpointId")
+    channel_type: WebhookChannelType = Field(..., alias="channelType")
+    target_url: str = Field(..., alias="targetUrl")
+    status_code: int = Field(..., alias="statusCode")
+    delivery_status: WebhookDeliveryStatus = Field(..., alias="deliveryStatus")
+    dispatched_payload: Dict[str, Any] = Field(..., alias="dispatchedPayload")
+    latency_ms: float = Field(..., alias="latencyMs")
+    dispatched_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="dispatchedAt")
+
+
+class DeadLetterQueueRetryRequest(BaseModel):
+    """Request payload to replay failed deliveries stored in DLQ."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    dlq_ids: Optional[List[str]] = Field(default=None, alias="dlqIds")
+    retry_all: bool = Field(default=True, alias="retryAll")
+
+
+class DeadLetterQueueRetryResponse(BaseModel):
+    """Response payload detailing dead letter retry results."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    replayed_count: int = Field(..., alias="replayedCount")
+    succeeded_count: int = Field(..., alias="succeededCount")
+    failed_count: int = Field(..., alias="failedCount")
+    remaining_dlq_count: int = Field(..., alias="remainingDlqCount")
+    replayed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="replayedAt")

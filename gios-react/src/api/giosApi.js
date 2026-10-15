@@ -48,7 +48,10 @@ import {
   calculateDamBreachInundationAnalysis,
   calculateInternalErosionPipingAnalysis,
   calculateInSARPersistentScattererAnalysis,
-  decomposeDualOrbitInSARVelocities
+  decomposeDualOrbitInSARVelocities,
+  calculateSarCoherenceLoss,
+  calculateDamageProxyMappingAnalysis,
+  calculatePhenologyDecompositionAnalysis
 } from '../config/constants.js';
 
 export {
@@ -2645,6 +2648,34 @@ const demoAdapter = async (config) => {
         } else {
           data = calculateInSARPersistentScattererAnalysis(parsed);
         }
+      }
+      else if (url.includes('/sar-coherence-damage') || url.includes('/damage-proxy-map')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (!parsed.simulation_id && !parsed.simulationId) {
+          const parts = url.split('/');
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && !lastPart.includes('damage-proxy-map') && !lastPart.includes('sar-coherence-damage')) {
+            parsed.simulation_id = lastPart;
+          }
+        }
+        if (url.includes('/sar-coherence-damage')) {
+          data = calculateSarCoherenceLoss(parsed.coherence_pre ?? parsed.coherencePre ?? 0.82, parsed.coherence_event ?? parsed.coherenceEvent ?? 0.35);
+        } else {
+          data = calculateDamageProxyMappingAnalysis(parsed);
+        }
+      }
+      else if (url.includes('/harmonic-decomposition') || url.includes('/climatological-mad-anomaly')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (!parsed.simulation_id && !parsed.simulationId) {
+          const parts = url.split('/');
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && !lastPart.includes('harmonic-decomposition') && !lastPart.includes('climatological-mad-anomaly')) {
+            parsed.simulation_id = lastPart;
+          }
+        }
+        data = calculatePhenologyDecompositionAnalysis(parsed);
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -6903,8 +6934,412 @@ export const getInSARVelocityTileUrlTemplate = (simId, metric = 'velocity_vertic
 };
 
 export const buildInSARVelocityTileUrlTemplateInternal = getInSARVelocityTileUrlTemplate;
+export const buildInSARVelocityTileUrlTemplate = getInSARVelocityTileUrlTemplate;
+
+/**
+ * @typedef {Object} BuildingFootprintExposure
+ * @property {string} building_id - Unique building or structure identifier
+ * @property {string} building_name - Human-readable building name or description
+ * @property {string} building_type - Structure classification (residential, commercial, hospital, etc.)
+ * @property {number} latitude - WGS84 centroid latitude
+ * @property {number} longitude - WGS84 centroid longitude
+ * @property {number} footprint_area_m2 - Building footprint area in square meters
+ * @property {number} mean_coherence_pre - Pre-event baseline coherence
+ * @property {number} mean_coherence_event - Co-event interferometric coherence
+ * @property {number} mean_coherence_loss - Interferometric coherence loss Delta gamma
+ * @property {string} damage_severity_tier - Copernicus/ARIA damage tier
+ * @property {number} structural_damage_ratio - Estimated loss ratio in [0, 1]
+ * @property {string} collapse_risk - Risk level (safe, low, moderate, high, extreme)
+ * @property {number} estimated_loss_usd - Estimated direct structural economic loss in USD
+ * @property {number} replacement_value_usd - Total structural replacement asset value in USD
+ * @property {number} [criticality_weight=1.0] - Criticality weighting factor
+ * @property {boolean} [is_critical_infrastructure=false] - Flag for emergency/critical infrastructure
+ */
+
+/**
+ * @typedef {Object} SARCoherenceDamageRequest
+ * @property {number} coherence_pre - Pre-event baseline interferometric coherence [0, 1]
+ * @property {number} coherence_event - Co-event interferometric coherence [0, 1]
+ * @property {string} [building_type='residential'] - Structure occupancy / asset type
+ * @property {number} [footprint_area_m2=250.0] - Footprint area in m2
+ * @property {number} [replacement_cost_per_m2=1200.0] - Replacement cost per square meter in USD
+ */
+
+/**
+ * @typedef {Object} SARCoherenceDamageResponse
+ * @property {number} coherence_pre - Pre-event baseline coherence
+ * @property {number} coherence_event - Co-event interferometric coherence
+ * @property {number} coherence_loss - Delta gamma coherence loss
+ * @property {number} relative_loss_percent - Relative coherence reduction percentage
+ * @property {string} damage_severity_tier - ARIA damage tier (negligible, moderate, severe, catastrophic_collapse)
+ * @property {number} structural_damage_ratio - Vulnerability loss ratio in [0, 1]
+ * @property {number} collapse_probability - Estimated structural collapse probability
+ * @property {number|null} [estimated_loss_usd] - Direct structural economic loss in USD
+ * @property {string} analyzed_at - ISO 8601 UTC timestamp
+ */
+
+/**
+ * @typedef {Object} DamageProxySimulationSummary
+ * @property {number} total_footprints_evaluated - Total footprints evaluated
+ * @property {number} damaged_footprints_count - Count of buildings with damage >= moderate
+ * @property {number} critical_facilities_affected - Count of critical facilities with damage
+ * @property {number} total_estimated_loss_usd - Sum of direct structural economic loss
+ * @property {number} mean_coherence_loss - Spatial average coherence loss
+ * @property {number} max_coherence_loss - Peak coherence loss
+ * @property {string} worst_damage_tier - Highest damage severity level observed
+ * @property {Record<string, number>} tier_distribution - Distribution of buildings across damage tiers
+ */
+
+/**
+ * @typedef {Object} DamageProxyMapRequest
+ * @property {string} [simulation_id] - Simulation execution identifier
+ * @property {string} [event_id='EVENT_2026_01'] - Disaster or incident identifier
+ * @property {string} [event_name='Co-Seismic SAR Coherence Decorrelation Event'] - Event description
+ * @property {string} [pre_event_date='2026-08-10'] - Pre-event baseline acquisition date (YYYY-MM-DD)
+ * @property {string} [event_date='2026-08-22'] - Co-event / post-event acquisition date (YYYY-MM-DD)
+ * @property {string} [satellite_mission='sentinel-1'] - Satellite SAR mission ('sentinel-1' | 'alos-2' | 'terrasar-x')
+ * @property {string} [orbit_direction='descending'] - Orbit pass direction ('ascending' | 'descending')
+ * @property {string} [polarization='VV'] - SAR polarization ('VV' | 'VH' | 'HH' | 'HV')
+ * @property {string} [aoi_name='Mine Infrastructure Valley'] - Area of interest label
+ * @property {number} [latitude=37.05] - Center WGS84 latitude
+ * @property {number} [longitude=-120.85] - Center WGS84 longitude
+ * @property {number} [coherence_threshold_negligible=0.15] - ARIA negligible threshold
+ * @property {number} [coherence_threshold_moderate=0.35] - ARIA moderate threshold
+ * @property {number} [coherence_threshold_severe=0.55] - ARIA severe threshold
+ * @property {number} [footprint_sample_count=20] - Number of synthetic building footprints
+ */
+
+/**
+ * @typedef {Object} DamageProxyMapResponse
+ * @property {string} simulation_id - Simulation identifier
+ * @property {string} event_id - Disaster event identifier
+ * @property {string} event_name - Disaster event label
+ * @property {string} pre_event_date - Pre-disaster acquisition date
+ * @property {string} event_date - Post-disaster acquisition date
+ * @property {string} satellite_mission - Satellite radar platform
+ * @property {string} orbit_direction - Orbit pass flight direction
+ * @property {string} polarization - Radar antenna polarization
+ * @property {DamageProxySimulationSummary} summary - Aggregated simulation metrics
+ * @property {BuildingFootprintExposure[]} building_footprints - Evaluated building structures
+ * @property {Object} footprints_geojson - RFC 7946 GeoJSON FeatureCollection
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 UTC timestamp
+ */
+
+/**
+ * Calculates point or asset SAR interferometric coherence loss and structural damage fragility.
+ * 
+ * @param {SARCoherenceDamageRequest} params - Pre and co-event coherence values
+ * @returns {Promise<SARCoherenceDamageResponse>} Coherence loss and damage severity metrics
+ */
+export const analyzeSarCoherenceDamage = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/sar-coherence-damage', params);
+  return response.data;
+};
+
+/**
+ * Simulates or computes full-scene Copernicus / ARIA Damage Proxy Mapping (DPM).
+ * 
+ * @param {DamageProxyMapRequest} params - DPM request payload
+ * @returns {Promise<DamageProxyMapResponse>} DPM simulation results and GeoJSON polygons
+ */
+export const simulateDamageProxyMapping = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/geotechnical/damage-proxy-map', params);
+  return response.data;
+};
+
+export const calculateDamageProxyMapAnalysis = simulateDamageProxyMapping;
+
+/**
+ * Retrieves a previously computed Damage Proxy Mapping simulation by execution ID.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @returns {Promise<DamageProxyMapResponse>} Stored DPM simulation results
+ */
+export const fetchDamageProxySimulation = async (simId) => {
+  const response = await giosApi.get(`/api/v1/analysis/geotechnical/damage-proxy-map/${simId}`);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic XYZ tile streaming URL template for SAR Damage Proxy Mapping layers.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @param {string} [metric='coherence_delta'] - Raster metric ('coherence_delta' | 'pre_coherence' | 'event_coherence' | 'damage_severity_tier' | 'building_loss_ratio' | 'hazard_rating_tier')
+ * @returns {string} Dynamic tile URL template
+ */
+export const getDamageProxyTileUrlTemplate = (simId, metric = 'coherence_delta') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/geotechnical/dpm/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildDamageProxyTileUrlTemplateInternal = getDamageProxyTileUrlTemplate;
+export const buildDamageProxyTileUrlTemplate = getDamageProxyTileUrlTemplate;
+
+/**
+ * @typedef {Object} HarmonicFourierComponent
+ * @property {number} k - Harmonic order (1=annual, 2=semi-annual)
+ * @property {number} a_k - Cosine coefficient
+ * @property {number} b_k - Sine coefficient
+ * @property {number} amplitude - Harmonic amplitude C_k = sqrt(A_k^2 + B_k^2)
+ * @property {number} phase_rad - Phase angle in radians
+ * @property {number} phase_deg - Phase angle in degrees [0, 360)
+ * @property {number} peak_time_fraction - Normalized timing of annual peak within period
+ */
+
+/**
+ * @typedef {Object} HarmonicFourierModelResult
+ * @property {number} intercept_a0 - Model baseline intercept constant
+ * @property {number} linear_slope_a1 - Linear trend slope parameter
+ * @property {HarmonicFourierComponent[]} components - Fitted harmonic components
+ * @property {number} rmse - Root Mean Squared Error of harmonic fit
+ * @property {number} r_squared - Coefficient of determination R^2
+ * @property {string} formula_string - Human-readable regression formula
+ */
+
+/**
+ * @typedef {Object} TheilSenTrendResult
+ * @property {number} slope_per_year - Theil-Sen robust monotonic slope per year
+ * @property {number} intercept - Theil-Sen robust median intercept
+ * @property {number} slope_ci_lower - Lower 95% confidence interval bound
+ * @property {number} slope_ci_upper - Upper 95% confidence interval bound
+ * @property {number} kendall_tau - Kendall's rank correlation coefficient tau
+ * @property {number} mann_kendall_s - Mann-Kendall score S
+ * @property {number} p_value - Two-tailed p-value for trend significance
+ * @property {number} z_score - Standardized test statistic Z
+ * @property {boolean} is_significant - True if p-value < 0.05
+ * @property {string} trend_direction - 'increasing' | 'decreasing' | 'no_trend'
+ */
+
+/**
+ * @typedef {Object} MonthlyClimatologyRecord
+ * @property {number} month - Calendar month (1-12)
+ * @property {string} month_name - Calendar month name
+ * @property {number} median - Monthly historical median index value
+ * @property {number} mad - Median Absolute Deviation (MAD)
+ * @property {number} scale - Applied normal-consistent scale (1.4826 * MAD)
+ * @property {number} p10 - 10th percentile expected lower bound
+ * @property {number} p25 - 25th percentile expected lower bound
+ * @property {number} p75 - 75th percentile expected upper bound
+ * @property {number} p90 - 90th percentile expected upper bound
+ * @property {number} sample_count - Total sample scene count
+ */
+
+/**
+ * @typedef {Object} PhenologyObservationPoint
+ * @property {string} date - Observation ISO date (YYYY-MM-DD)
+ * @property {number} month - Calendar month (1-12)
+ * @property {number} day_of_year - Day of year (1-366)
+ * @property {number} decimal_year - Fractional calendar year
+ * @property {number} observed_value - Observed spectral index value
+ * @property {number} [harmonic_baseline] - Fitted harmonic baseline value
+ * @property {number} [residual] - Difference from harmonic baseline
+ * @property {number} seasonal_median - Historical monthly climatological median
+ * @property {number} seasonal_mad - Historical monthly climatological MAD
+ * @property {number} seasonal_scale - Scale factor
+ * @property {number} seasonal_z_score - Seasonally normalized z-score
+ * @property {string} anomaly_tier - Classified phenology anomaly tier
+ * @property {boolean} is_anomaly - True if |seasonal_z_score| >= anomaly_threshold
+ * @property {number} p10 - 10th percentile expected lower bound
+ * @property {number} p90 - 90th percentile expected upper bound
+ */
+
+/**
+ * @typedef {Object} PhenologySimulationSummary
+ * @property {number} total_observations - Total observations evaluated
+ * @property {number} years_covered - Time span in years
+ * @property {number} mean_index - Mean biophysical index value
+ * @property {number} trend_slope_per_year - Theil-Sen annual rate of change
+ * @property {string} trend_direction - Monotonic trajectory
+ * @property {number} annual_amplitude - Annual harmonic amplitude
+ * @property {number} phase_angle_deg - Phase angle in degrees
+ * @property {number} peak_greenup_doy - Day of year of maximum greenness
+ * @property {number} r_squared - Fourier model R^2
+ * @property {number} rmse - Fourier model RMSE
+ * @property {number} anomaly_count - Count of observations exceeding anomaly threshold
+ * @property {number} critical_anomaly_count - Count of acute anomalies (|z| >= 3.0)
+ * @property {number} worst_anomaly_z - Peak absolute z-score
+ * @property {string} worst_anomaly_tier - Most severe anomaly tier detected
+ */
+
+/**
+ * @typedef {Object} PhenologyHarmonicAnalysisRequest
+ * @property {string} [asset_id='ASSET-VEG-001'] - Asset identifier
+ * @property {string} [index_name='ndvi'] - Spectral index name
+ * @property {string[]} dates - Array of observation dates (YYYY-MM-DD)
+ * @property {number[]} values - Array of index values
+ * @property {number} [num_harmonics=2] - Number of Fourier harmonics (1-4)
+ * @property {number} [period_years=1.0] - Fundamental seasonal period in years
+ */
+
+/**
+ * @typedef {Object} PhenologyHarmonicAnalysisResponse
+ * @property {string} asset_id - Asset identifier
+ * @property {string} index_name - Spectral index evaluated
+ * @property {HarmonicFourierModelResult} model_result - Fitted harmonic parameters
+ * @property {number} observation_count - Number of observations analyzed
+ * @property {string} analyzed_at - ISO 8601 UTC timestamp
+ */
+
+/**
+ * @typedef {Object} PhenologyMADAnalysisRequest
+ * @property {string} [asset_id='ASSET-VEG-001'] - Asset identifier
+ * @property {string} [index_name='ndvi'] - Spectral index name
+ * @property {string[]} dates - Array of observation dates (YYYY-MM-DD)
+ * @property {number[]} values - Array of index values
+ * @property {number} [anomaly_threshold=2.5] - MAD anomaly threshold
+ * @property {number} [min_mad_scale=0.015] - Minimum MAD scale floor
+ */
+
+/**
+ * @typedef {Object} PhenologyMADAnalysisResponse
+ * @property {string} asset_id - Asset identifier
+ * @property {string} index_name - Spectral index evaluated
+ * @property {MonthlyClimatologyRecord[]} monthly_climatology - Monthly climatological baselines
+ * @property {TheilSenTrendResult} theil_sen_trend - Theil-Sen monotonic slope and Mann-Kendall statistics
+ * @property {PhenologyObservationPoint[]} points - Analyzed time series observation points
+ * @property {number} total_observations - Total observations evaluated
+ * @property {number} anomaly_count - Count of detected anomalies
+ * @property {number} critical_anomaly_count - Count of critical anomalies (|z| >= 3.0)
+ * @property {string} analyzed_at - ISO 8601 UTC timestamp
+ */
+
+/**
+ * @typedef {Object} PhenologyDecompositionRequest
+ * @property {string} [simulation_id] - Simulation execution identifier
+ * @property {string} [asset_id='ASSET-VEG-001'] - Asset identifier
+ * @property {string} [asset_name='Northern Embankment & Catchment Buffer'] - Asset name
+ * @property {number} [latitude=37.05] - Latitude center
+ * @property {number} [longitude=-120.85] - Longitude center
+ * @property {string} [index_name='ndvi'] - Spectral index ('ndvi', 'ndmi', 'evi', etc.)
+ * @property {number} [num_harmonics=2] - Number of harmonics (1-4)
+ * @property {number} [trend_slope_per_year=0.012] - Annual trend slope
+ * @property {number} [anomaly_threshold=2.5] - Z-score anomaly threshold
+ */
+
+/**
+ * @typedef {Object} PhenologyDecompositionResponse
+ * @property {string} simulation_id - Unique simulation identifier
+ * @property {string} asset_id - Asset identifier
+ * @property {string} asset_name - Asset name
+ * @property {string} index_name - Spectral index name
+ * @property {PhenologySimulationSummary} summary - Aggregated simulation metrics
+ * @property {HarmonicFourierModelResult} harmonic_model - Fitted Fourier model
+ * @property {TheilSenTrendResult} theil_sen_trend - Robust monotonic trend statistics
+ * @property {MonthlyClimatologyRecord[]} monthly_climatology - 12-month baseline records
+ * @property {PhenologyObservationPoint[]} observation_points - Time series observation records
+ * @property {Object} geojson_collection - RFC 7946 GeoJSON FeatureCollection
+ * @property {string} tile_url_template - Dynamic XYZ tile streaming URL template
+ * @property {string} analyzed_at - ISO 8601 UTC timestamp
+ */
+
+/**
+ * Fits multi-harmonic Fourier regression model to multi-temporal satellite observations.
+ * 
+ * @param {PhenologyHarmonicAnalysisRequest} params - Harmonic analysis request payload
+ * @returns {Promise<PhenologyHarmonicAnalysisResponse>} Fitted harmonic model result
+ */
+export const analyzePhenologyHarmonic = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/phenology/harmonic-decomposition', params);
+  return response.data;
+};
+
+/**
+ * Computes monthly climatological Median Absolute Deviation (MAD) baselines and flags seasonal anomalies.
+ * 
+ * @param {PhenologyMADAnalysisRequest} params - Climatological MAD analysis request payload
+ * @returns {Promise<PhenologyMADAnalysisResponse>} Monthly baseline and anomaly evaluation
+ */
+export const analyzePhenologyMADAnomaly = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/phenology/climatological-mad-anomaly', params);
+  return response.data;
+};
+
+/**
+ * Simulates or computes full multi-temporal phenology decomposition, harmonic curves, Theil-Sen trend, and MAD anomalies.
+ * 
+ * @param {PhenologyDecompositionRequest} params - Full phenology simulation request payload
+ * @returns {Promise<PhenologyDecompositionResponse>} Complete phenology simulation results
+ */
+export const simulatePhenologyDecomposition = async (params) => {
+  const response = await giosApi.post('/api/v1/analysis/phenology/climatological-mad-anomaly', params);
+  return response.data;
+};
+
+export const calculatePhenologyDecomposition = simulatePhenologyDecomposition;
+
+/**
+ * Retrieves a previously computed multi-temporal phenology simulation by execution ID.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @returns {Promise<PhenologyDecompositionResponse>} Stored phenology simulation results
+ */
+export const fetchPhenologySimulation = async (simId) => {
+  const response = await giosApi.get(`/api/v1/analysis/phenology/climatological-mad-anomaly/${simId}`);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic XYZ tile streaming URL template for multi-temporal phenology anomaly layers.
+ * 
+ * @param {string} simId - Simulation identifier
+ * @param {string} [metric='mad_anomaly_zscore'] - Raster metric ('baseline_ndvi' | 'seasonal_amplitude' | 'phase_angle' | 'theil_sen_slope' | 'mad_anomaly_zscore' | 'anomaly_tier')
+ * @returns {string} Dynamic tile URL template
+ */
+export const getPhenologyAnomalyTileUrlTemplate = (simId, metric = 'mad_anomaly_zscore') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  return `${base}/api/v1/tiles/phenology/anomaly/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+export const buildPhenologyAnomalyTileUrlTemplateInternal = getPhenologyAnomalyTileUrlTemplate;
+export const buildPhenologyAnomalyTileUrlTemplate = getPhenologyAnomalyTileUrlTemplate;
+
+export {
+  InSARDeformationHazardTier,
+  INSAR_HAZARD_CONFIGS,
+  INSAR_VELOCITY_TILE_METRICS,
+  INSAR_SENSOR_WAVELENGTHS,
+  calculatePsTemporalCoherence,
+  calculateAmplitudeDispersionIndex,
+  calculateInterferometricBaselineGeometry,
+  decomposeAtmosphericPhaseScreen,
+  classifyInSARDeformationHazardTier,
+  projectLosToVerticalAndHorizontal,
+  decomposeDualOrbitInSARVelocities,
+  calculateInSARPersistentScattererAnalysis,
+  calculateInSARVelocityFieldAnalysis,
+  buildInSARVelocityTileUrl,
+  SARCoherenceDamageTier,
+  SAR_DAMAGE_TIERS,
+  DamageProxyTileMetric,
+  SAR_DAMAGE_TIER_CONFIGS,
+  DAMAGE_PROXY_TILE_METRICS,
+  DAMAGE_PROXY_TILE_METRIC_CONFIGS,
+  classifySarDamageTier,
+  calculateSarCoherenceLoss,
+  calculateBuildingStructuralExposure,
+  calculateDamageProxySummary,
+  buildDamageProxyTileUrl,
+  PhenologyAnomalyTier,
+  PHENOLOGY_ANOMALY_TIERS,
+  PhenologyTileMetric,
+  PHENOLOGY_ANOMALY_TIER_CONFIGS,
+  PHENOLOGY_TILE_METRICS,
+  PHENOLOGY_TILE_METRIC_CONFIGS,
+  classifyPhenologyAnomalyTier,
+  classifyPhenologyAnomaly,
+  fitHarmonicFourierRegression,
+  evaluateHarmonicModel,
+  calculateTheilSenSlope,
+  calculateMannKendallTest,
+  calculateClimatologicalMonthlyMad,
+  calculateSeasonalMadAnomalies,
+  calculatePhenologyDecompositionAnalysis,
+  buildPhenologyAnomalyTileUrl
+} from '../config/constants.js';
 
 export default giosApi;
+
 
 
 

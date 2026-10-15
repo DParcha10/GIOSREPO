@@ -12,7 +12,7 @@ from shapely.geometry import shape
 from shapely.ops import transform
 from rasterio.features import geometry_mask
 from rasterio.transform import from_bounds
-from fastapi import APIRouter, Query, HTTPException, Response
+from fastapi import APIRouter, Query, HTTPException, Response, Body
 from pydantic import BaseModel, Field
 
 import uuid
@@ -573,7 +573,80 @@ from app.models.schemas import (
     classify_internal_erosion_hazard_tier,
     calculate_internal_erosion_piping_analysis,
     build_flownet_tile_url,
-    build_flownet_tile_url_template
+    build_flownet_tile_url_template,
+    InSAROrbitDirection,
+    InSARSensorBand,
+    InSARDeformationHazardTier,
+    InSARVelocityTileMetric,
+    INSAR_SENSOR_WAVELENGTHS,
+    INSAR_HAZARD_CONFIGS,
+    INSAR_VELOCITY_TILE_METRICS,
+    InSARTimeSeriesPoint,
+    PersistentScattererPoint,
+    InterferometricBaselineGeometry,
+    AtmosphericPhaseScreenResult,
+    DualOrbitDecompositionResult,
+    InSARPersistentScattererAnalysisRequest,
+    InSARPersistentScattererAnalysisResponse,
+    InSARDualOrbitDecompositionRequest,
+    InSARDualOrbitDecompositionResponse,
+    calculate_ps_temporal_coherence,
+    calculate_amplitude_dispersion_index,
+    calculate_interferometric_baseline_geometry,
+    decompose_atmospheric_phase_screen,
+    project_los_to_vertical_and_horizontal,
+    decompose_dual_orbit_insar_velocities,
+    classify_insar_deformation_hazard_tier,
+    calculate_insar_ps_analysis,
+    build_insar_velocity_tile_url,
+    build_insar_velocity_tile_url_template,
+    SARCoherenceDamageTier,
+    DamageProxyTileMetric,
+    DAMAGE_PROXY_TILE_METRICS,
+    DAMAGE_PROXY_TILE_METRIC_CONFIGS,
+    BuildingFootprintExposure,
+    SARCoherenceDamageRequest,
+    SARCoherenceDamageResponse,
+    DamageProxySimulationSummary,
+    DamageProxyMapRequest,
+    DamageProxyMapResponse,
+    calculate_sar_coherence_loss,
+    calculate_building_structural_exposure,
+    calculate_damage_proxy_summary,
+    simulate_damage_proxy_mapping,
+    calculate_damage_proxy_map_analysis,
+    build_damage_proxy_tile_url,
+    build_damage_proxy_tile_url_template,
+    list_damage_proxy_tile_metrics,
+    get_damage_proxy_tile_metric_config,
+    PhenologyAnomalyTier,
+    PhenologyTileMetric,
+    PHENOLOGY_ANOMALY_TIER_CONFIGS,
+    PHENOLOGY_TILE_METRIC_CONFIGS,
+    HarmonicFourierComponent,
+    HarmonicFourierModelResult,
+    TheilSenTrendResult,
+    MonthlyClimatologyRecord,
+    PhenologyObservationPoint,
+    PhenologySimulationSummary,
+    PhenologyHarmonicAnalysisRequest,
+    PhenologyHarmonicAnalysisResponse,
+    PhenologyMADAnalysisRequest,
+    PhenologyMADAnalysisResponse,
+    PhenologyDecompositionRequest,
+    PhenologyDecompositionResponse,
+    fit_harmonic_fourier_regression,
+    evaluate_harmonic_model,
+    calculate_theil_sen_slope,
+    calculate_mann_kendall_test,
+    calculate_climatological_monthly_mad,
+    calculate_seasonal_mad_anomalies,
+    simulate_phenology_decomposition,
+    calculate_phenology_decomposition_analysis,
+    build_phenology_anomaly_tile_url,
+    build_phenology_anomaly_tile_url_template,
+    classify_phenology_anomaly_tier,
+    _extract_month_and_day_of_year
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -593,6 +666,7 @@ geotechnical_router = APIRouter(prefix="/geotechnical", tags=["Geotechnical & Da
 thermal_router = APIRouter(prefix="/thermal", tags=["Thermal Remote Sensing"])
 topography_router = APIRouter(prefix="/topography", tags=["Topography & Elevation"])
 hydrodynamic_router = APIRouter(prefix="/hydrodynamic", tags=["Hydrodynamics & Dam Breach"])
+phenology_router = APIRouter(prefix="/phenology", tags=["Multi-Temporal Phenology & Seasonality"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -7926,6 +8000,443 @@ def get_geotechnical_flownet_tile_metric(
         content=png_bytes,
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Flownet-{metric}"}
+    )
+
+
+# ==============================================================================
+# InSAR Persistent Scatterer (PSI) & Velocity Field Simulation Store (Cycle v2.5.20)
+# ==============================================================================
+
+INSAR_PS_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_INSAR_PS_STORE_SIZE = 100
+
+
+def _store_insar_ps_simulation(sim_res: Dict[str, Any]):
+    """Caches InSAR Persistent Scatterer simulation result with LRU eviction and memory bounds."""
+    sim_id = sim_res.get("simulation_id") or sim_res.get("simulationId")
+    if not sim_id:
+        return
+    if len(INSAR_PS_STORE) >= MAX_INSAR_PS_STORE_SIZE:
+        oldest_key = next(iter(INSAR_PS_STORE))
+        INSAR_PS_STORE.pop(oldest_key, None)
+        gc.collect()
+    INSAR_PS_STORE[sim_id] = sim_res
+
+
+# ==============================================================================
+# Persistent Scatterer InSAR & Velocity Field Endpoints (Cycle v2.5.20 - Task T-181)
+# ==============================================================================
+
+@router.post("/geotechnical/insar-persistent-scatterers", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False)
+@router.post("/insar-persistent-scatterers", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/insar-persistent-scatterers", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False)
+@geotechnical_router.post("/insar-ps", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_insar_persistent_scatterers_endpoint(req: InSARPersistentScattererAnalysisRequest):
+    """Calculates comprehensive InSAR Persistent Scatterer (PSI) time-series creep inversion."""
+    res = calculate_insar_ps_analysis(req)
+    _store_insar_ps_simulation(res)
+    return InSARPersistentScattererAnalysisResponse(**res) if isinstance(res, dict) else res
+
+
+@router.post("/geotechnical/insar-velocity-field", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False)
+@router.post("/insar-velocity-field", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/insar-velocity-field", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False)
+@geotechnical_router.post("/insar-velocity", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_insar_velocity_field_endpoint(req: InSARPersistentScattererAnalysisRequest):
+    """Calculates InSAR deformation velocity field with baseline geometry, APS filtering, and 3D projections."""
+    res = calculate_insar_ps_analysis(req)
+    _store_insar_ps_simulation(res)
+    return InSARPersistentScattererAnalysisResponse(**res) if isinstance(res, dict) else res
+
+
+@router.get("/geotechnical/insar-velocity-field/{simulation_id}", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False)
+@router.get("/insar-velocity-field/{simulation_id}", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/insar-velocity-field/{simulation_id}", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False)
+@geotechnical_router.get("/insar-velocity/{simulation_id}", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/insar-ps/{simulation_id}", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/geotechnical/insar-persistent-scatterers/{simulation_id}", response_model=InSARPersistentScattererAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def get_insar_velocity_field_detail(simulation_id: str):
+    """Retrieves InSAR persistent scatterer / velocity field simulation by simulation ID."""
+    sim_res = INSAR_PS_STORE.get(simulation_id)
+    if not sim_res:
+        sim_res = calculate_insar_ps_analysis({"simulation_id": simulation_id})
+        _store_insar_ps_simulation(sim_res)
+    return InSARPersistentScattererAnalysisResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@router.post("/geotechnical/insar-dual-orbit-decomposition", response_model=InSARDualOrbitDecompositionResponse, response_model_by_alias=False)
+@router.post("/insar-dual-orbit-decomposition", response_model=InSARDualOrbitDecompositionResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/insar-dual-orbit-decomposition", response_model=InSARDualOrbitDecompositionResponse, response_model_by_alias=False)
+@geotechnical_router.post("/insar-dual-orbit", response_model=InSARDualOrbitDecompositionResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_insar_dual_orbit_endpoint(req: InSARDualOrbitDecompositionRequest):
+    """Decomposes Ascending and Descending InSAR Line-of-Sight velocities into 2D Vertical and East-West components."""
+    decomp = decompose_dual_orbit_insar_velocities(
+        velocity_asc_mm_yr=req.velocity_asc_mm_yr,
+        velocity_desc_mm_yr=req.velocity_desc_mm_yr,
+        inc_angle_asc_deg=req.inc_angle_asc_deg,
+        inc_angle_desc_deg=req.inc_angle_desc_deg,
+        heading_asc_deg=req.heading_asc_deg,
+        heading_desc_deg=req.heading_desc_deg
+    )
+    return InSARDualOrbitDecompositionResponse(
+        velocity_vertical_mm_yr=decomp["velocity_vertical_mm_yr"],
+        velocity_east_west_mm_yr=decomp["velocity_east_west_mm_yr"],
+        total_magnitude_mm_yr=decomp["total_magnitude_mm_yr"],
+        hazard_tier=decomp["hazard_tier"],
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/geotechnical/insar-velocity/{sim_id}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/insar-velocity/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/geotechnical/insar-velocity/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_geotechnical_insar_velocity_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = "rdylbu",
+    rescale: Optional[str] = "-20.0,5.0"
+):
+    """Dynamic XYZ tile streaming for geotechnical InSAR vertical velocity raster layer."""
+    png_bytes = tile_service.render_insar_velocity_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="velocity_vertical",
+        colormap=colormap or "rdylbu",
+        rescale=rescale or "-20.0,5.0"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-InSAR-v2.5"}
+    )
+
+
+@tiles_router.get("/geotechnical/insar-velocity/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/insar-velocity/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/geotechnical/insar-velocity/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_geotechnical_insar_velocity_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for geotechnical InSAR velocity field with selectable metric."""
+    png_bytes = tile_service.render_insar_velocity_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-InSAR-{metric}"}
+    )
+
+
+# ==============================================================================
+# Damage Proxy Mapping (DPM) In-Memory Store & LRU Eviction (Cycle v2.5.21 - Task T-187)
+# ==============================================================================
+
+DAMAGE_PROXY_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_DAMAGE_PROXY_STORE_SIZE = 100
+
+
+def _store_damage_proxy_simulation(sim_res: Dict[str, Any]):
+    """Caches Damage Proxy Mapping simulation result with LRU eviction and memory bounds."""
+    sim_id = sim_res.get("simulation_id") or sim_res.get("simulationId")
+    if not sim_id:
+        return
+    if len(DAMAGE_PROXY_STORE) >= MAX_DAMAGE_PROXY_STORE_SIZE:
+        oldest_key = next(iter(DAMAGE_PROXY_STORE))
+        DAMAGE_PROXY_STORE.pop(oldest_key, None)
+        gc.collect()
+    DAMAGE_PROXY_STORE[sim_id] = sim_res
+
+
+# ==============================================================================
+# SAR Coherence Change Detection & Damage Proxy Mapping Endpoints (Cycle v2.5.21 - Task T-187)
+# ==============================================================================
+
+@router.post("/geotechnical/sar-coherence-damage", response_model=SARCoherenceDamageResponse, response_model_by_alias=False)
+@router.post("/sar-coherence-damage", response_model=SARCoherenceDamageResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/sar-coherence-damage", response_model=SARCoherenceDamageResponse, response_model_by_alias=False)
+@geotechnical_router.post("/sar-coherence", response_model=SARCoherenceDamageResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/dpm-damage", response_model=SARCoherenceDamageResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_sar_coherence_damage_endpoint(req: SARCoherenceDamageRequest):
+    """Calculates complex interferometric SAR coherence loss, relative loss, and fragility structural damage."""
+    loss = calculate_sar_coherence_loss(gamma_pre=req.coherence_pre, gamma_event=req.coherence_event)
+    exposure = calculate_building_structural_exposure(
+        mean_coherence_loss=loss["coherence_loss"],
+        building_type=req.building_type,
+        replacement_cost_per_m2=req.replacement_cost_per_m2,
+        footprint_area_m2=req.footprint_area_m2,
+        mean_coherence_pre=loss["coherence_pre"]
+    )
+    loss["estimated_loss_usd"] = exposure["estimated_loss_usd"]
+    loss["analyzed_at"] = datetime.now(timezone.utc).isoformat()
+    return SARCoherenceDamageResponse(**loss)
+
+
+@router.post("/geotechnical/damage-proxy-map", response_model=DamageProxyMapResponse, response_model_by_alias=False)
+@router.post("/damage-proxy-map", response_model=DamageProxyMapResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.post("/damage-proxy-map", response_model=DamageProxyMapResponse, response_model_by_alias=False)
+@geotechnical_router.post("/dpm", response_model=DamageProxyMapResponse, response_model_by_alias=False, include_in_schema=False)
+def calculate_damage_proxy_map_endpoint(req: DamageProxyMapRequest):
+    """Generates synthetic high-fidelity Copernicus / NASA JPL ARIA Damage Proxy Mapping (DPM) simulation."""
+    res = simulate_damage_proxy_mapping(req)
+    _store_damage_proxy_simulation(res)
+    return DamageProxyMapResponse(**res) if isinstance(res, dict) else res
+
+
+@router.get("/geotechnical/damage-proxy-map/{simulation_id}", response_model=DamageProxyMapResponse, response_model_by_alias=False)
+@router.get("/damage-proxy-map/{simulation_id}", response_model=DamageProxyMapResponse, response_model_by_alias=False, include_in_schema=False)
+@geotechnical_router.get("/damage-proxy-map/{simulation_id}", response_model=DamageProxyMapResponse, response_model_by_alias=False)
+@geotechnical_router.get("/dpm/{simulation_id}", response_model=DamageProxyMapResponse, response_model_by_alias=False, include_in_schema=False)
+def get_damage_proxy_map_detail(simulation_id: str):
+    """Retrieves Damage Proxy Mapping simulation results by simulation ID."""
+    sim_res = DAMAGE_PROXY_STORE.get(simulation_id)
+    if not sim_res:
+        sim_res = simulate_damage_proxy_mapping({"simulation_id": simulation_id})
+        _store_damage_proxy_simulation(sim_res)
+    return DamageProxyMapResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@tiles_router.get("/geotechnical/dpm/{sim_id}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/dpm/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/geotechnical/dpm/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_geotechnical_dpm_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for geotechnical SAR Damage Proxy Mapping (coherence loss layer)."""
+    png_bytes = tile_service.render_damage_proxy_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="coherence_delta",
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-DPM-v2.5"}
+    )
+
+
+@tiles_router.get("/geotechnical/dpm/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@geotechnical_router.get("/tiles/dpm/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/geotechnical/dpm/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_geotechnical_dpm_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for geotechnical SAR Damage Proxy Mapping with selectable metric."""
+    png_bytes = tile_service.render_damage_proxy_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-DPM-{metric}"}
+    )
+
+
+# ==============================================================================
+# Multi-Temporal Phenology, BFAST Trend Inversion & Climatological MAD Store (Cycle v2.5.22 - Task T-193)
+# ==============================================================================
+
+PHENOLOGY_SIMULATION_STORE: Dict[str, Dict[str, Any]] = {}
+MAX_PHENOLOGY_SIMULATION_STORE_SIZE = 100
+
+
+def _store_phenology_simulation(sim_res: Dict[str, Any]):
+    """Caches Multi-Temporal Phenology Decomposition simulation result with LRU eviction and memory bounds."""
+    sim_id = sim_res.get("simulation_id") or sim_res.get("simulationId")
+    if not sim_id:
+        return
+    if len(PHENOLOGY_SIMULATION_STORE) >= MAX_PHENOLOGY_SIMULATION_STORE_SIZE:
+        oldest_key = next(iter(PHENOLOGY_SIMULATION_STORE))
+        PHENOLOGY_SIMULATION_STORE.pop(oldest_key, None)
+        gc.collect()
+    PHENOLOGY_SIMULATION_STORE[sim_id] = sim_res
+
+
+# ==============================================================================
+# Multi-Temporal Phenology & Harmonic Fourier Regression Endpoints
+# ==============================================================================
+
+@router.post("/phenology/harmonic-decomposition", response_model=PhenologyHarmonicAnalysisResponse, response_model_by_alias=False)
+@router.post("/phenology/harmonic", response_model=PhenologyHarmonicAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@phenology_router.post("/harmonic-decomposition", response_model=PhenologyHarmonicAnalysisResponse, response_model_by_alias=False)
+@phenology_router.post("/harmonic", response_model=PhenologyHarmonicAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_phenology_harmonic_endpoint(req: PhenologyHarmonicAnalysisRequest):
+    """Fits multi-harmonic Fourier seasonal regression model y(t) = a0 + a1*t + sum[Ak cos + Bk sin]."""
+    times = []
+    for d in req.dates:
+        _, _, dec_yr = _extract_month_and_day_of_year(str(d))
+        times.append(dec_yr)
+    model_res = fit_harmonic_fourier_regression(times, req.values, num_harmonics=req.num_harmonics, period=req.period_years)
+    return PhenologyHarmonicAnalysisResponse(
+        asset_id=req.asset_id,
+        index_name=req.index_name,
+        model_result=HarmonicFourierModelResult(**model_res),
+        observation_count=len(req.values),
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@router.post("/phenology/climatological-mad-anomaly", response_model=Union[PhenologyDecompositionResponse, PhenologyMADAnalysisResponse], response_model_by_alias=False)
+@router.post("/phenology/mad-anomaly", response_model=Union[PhenologyDecompositionResponse, PhenologyMADAnalysisResponse], response_model_by_alias=False, include_in_schema=False)
+@phenology_router.post("/climatological-mad-anomaly", response_model=Union[PhenologyDecompositionResponse, PhenologyMADAnalysisResponse], response_model_by_alias=False)
+@phenology_router.post("/mad-anomaly", response_model=Union[PhenologyDecompositionResponse, PhenologyMADAnalysisResponse], response_model_by_alias=False, include_in_schema=False)
+def analyze_phenology_climatological_mad_anomaly_endpoint(payload: Dict[str, Any] = Body(...)):
+    """Computes monthly climatological MAD baselines and normalized anomalies, or executes full phenology decomposition simulation."""
+    dates = payload.get("dates")
+    values = payload.get("values")
+    if dates is not None and values is not None and len(dates) > 0 and len(values) > 0:
+        req = PhenologyMADAnalysisRequest(**payload)
+        times = []
+        for d in req.dates:
+            _, _, dec_yr = _extract_month_and_day_of_year(str(d))
+            times.append(dec_yr)
+        theil_sen = calculate_theil_sen_slope(times, req.values)
+        clim = calculate_climatological_monthly_mad(req.dates, req.values, min_mad_scale=req.min_mad_scale)
+        anom = calculate_seasonal_mad_anomalies(
+            req.dates, req.values,
+            monthly_climatology=clim,
+            anomaly_threshold=req.anomaly_threshold,
+            min_mad_scale=req.min_mad_scale
+        )
+        return PhenologyMADAnalysisResponse(
+            asset_id=req.asset_id,
+            index_name=req.index_name,
+            monthly_climatology=[MonthlyClimatologyRecord(**r) for r in clim["monthly_records"]],
+            theil_sen_trend=TheilSenTrendResult(**theil_sen),
+            points=[PhenologyObservationPoint(**p) for p in anom["points"]],
+            total_observations=anom["total_observations"],
+            anomaly_count=anom["anomaly_count"],
+            critical_anomaly_count=anom["critical_anomaly_count"],
+            analyzed_at=datetime.now(timezone.utc).isoformat()
+        )
+    else:
+        req_sim = PhenologyDecompositionRequest(**payload)
+        sim_res = simulate_phenology_decomposition(req_sim)
+        _store_phenology_simulation(sim_res)
+        return PhenologyDecompositionResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@router.post("/phenology/decomposition", response_model=PhenologyDecompositionResponse, response_model_by_alias=False)
+@router.post("/phenology/simulation", response_model=PhenologyDecompositionResponse, response_model_by_alias=False, include_in_schema=False)
+@phenology_router.post("/decomposition", response_model=PhenologyDecompositionResponse, response_model_by_alias=False)
+@phenology_router.post("/simulation", response_model=PhenologyDecompositionResponse, response_model_by_alias=False, include_in_schema=False)
+def simulate_phenology_decomposition_endpoint(req: PhenologyDecompositionRequest):
+    """Executes full multi-temporal phenology simulation, harmonic decomposition, and seasonal MAD anomaly classification."""
+    sim_res = simulate_phenology_decomposition(req)
+    _store_phenology_simulation(sim_res)
+    return PhenologyDecompositionResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+@router.get("/phenology/climatological-mad-anomaly/{simulation_id}", response_model=PhenologyDecompositionResponse, response_model_by_alias=False)
+@router.get("/phenology/decomposition/{simulation_id}", response_model=PhenologyDecompositionResponse, response_model_by_alias=False, include_in_schema=False)
+@router.get("/phenology/{simulation_id}", response_model=PhenologyDecompositionResponse, response_model_by_alias=False, include_in_schema=False)
+@phenology_router.get("/climatological-mad-anomaly/{simulation_id}", response_model=PhenologyDecompositionResponse, response_model_by_alias=False)
+@phenology_router.get("/decomposition/{simulation_id}", response_model=PhenologyDecompositionResponse, response_model_by_alias=False, include_in_schema=False)
+@phenology_router.get("/{simulation_id}", response_model=PhenologyDecompositionResponse, response_model_by_alias=False, include_in_schema=False)
+def get_phenology_simulation_detail(simulation_id: str):
+    """Retrieves multi-temporal phenology decomposition simulation results by simulation ID."""
+    sim_res = PHENOLOGY_SIMULATION_STORE.get(simulation_id)
+    if not sim_res:
+        sim_res = simulate_phenology_decomposition({"simulation_id": simulation_id})
+        _store_phenology_simulation(sim_res)
+    return PhenologyDecompositionResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+# ==============================================================================
+# Dynamic XYZ Phenology Anomaly Tile Streaming Endpoints
+# ==============================================================================
+
+@tiles_router.get("/phenology/anomaly/{sim_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/phenology/anomaly/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+@phenology_router.get("/tiles/{sim_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_phenology_anomaly_tile_default(
+    sim_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multi-temporal phenology anomaly (default mad_anomaly_zscore metric)."""
+    png_bytes = tile_service.render_phenology_anomaly_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="mad_anomaly_zscore",
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Phenology-v2.5"}
+    )
+
+
+@tiles_router.get("/phenology/anomaly/{sim_id}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/phenology/anomaly/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@phenology_router.get("/tiles/{sim_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_phenology_anomaly_tile_metric(
+    sim_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multi-temporal phenology with selectable metric."""
+    png_bytes = tile_service.render_phenology_anomaly_tile(
+        sim_id=sim_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Phenology-{metric}"}
     )
 
 

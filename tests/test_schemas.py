@@ -805,7 +805,54 @@ from app.models.schemas import (
     classify_insar_deformation_hazard_tier,
     calculate_insar_ps_analysis,
     build_insar_velocity_tile_url,
-    build_insar_velocity_tile_url_template
+    build_insar_velocity_tile_url_template,
+    SARCoherenceDamageTier,
+    DamageProxyTileMetric,
+    SAR_DAMAGE_TIER_CONFIGS,
+    DAMAGE_PROXY_TILE_METRICS,
+    DAMAGE_PROXY_TILE_METRIC_CONFIGS,
+    BuildingFootprintExposure,
+    SARCoherenceDamageRequest,
+    SARCoherenceDamageResponse,
+    DamageProxySimulationSummary,
+    DamageProxyMapRequest,
+    DamageProxyMapResponse,
+    classify_sar_damage_tier,
+    calculate_sar_coherence_loss,
+    calculate_building_structural_exposure,
+    calculate_damage_proxy_summary,
+    simulate_damage_proxy_mapping,
+    calculate_damage_proxy_map_analysis,
+    build_damage_proxy_tile_url,
+    build_damage_proxy_tile_url_template,
+    PhenologyAnomalyTier,
+    PhenologyTileMetric,
+    PHENOLOGY_ANOMALY_TIER_CONFIGS,
+    PHENOLOGY_TILE_METRICS,
+    PHENOLOGY_TILE_METRIC_CONFIGS,
+    classify_phenology_anomaly_tier,
+    fit_harmonic_fourier_regression,
+    evaluate_harmonic_model,
+    calculate_theil_sen_slope,
+    calculate_mann_kendall_test,
+    calculate_climatological_monthly_mad,
+    calculate_seasonal_mad_anomalies,
+    simulate_phenology_decomposition,
+    calculate_phenology_decomposition_analysis,
+    build_phenology_anomaly_tile_url,
+    build_phenology_anomaly_tile_url_template,
+    HarmonicFourierComponent,
+    HarmonicFourierModelResult,
+    TheilSenTrendResult,
+    MonthlyClimatologyRecord,
+    PhenologyObservationPoint,
+    PhenologySimulationSummary,
+    PhenologyHarmonicAnalysisRequest,
+    PhenologyHarmonicAnalysisResponse,
+    PhenologyMADAnalysisRequest,
+    PhenologyMADAnalysisResponse,
+    PhenologyDecompositionRequest,
+    PhenologyDecompositionResponse
 )
 from app.config import settings
 
@@ -9234,8 +9281,551 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         zero_b = calculate_interferometric_baseline_geometry(perpendicular_baseline_m=0.0)
         self.assertEqual(zero_b["height_of_ambiguity_m"], 99999.0)
 
+    def test_sar_coherence_loss_calculation_and_bounds(self):
+        """Verify complex interferometric SAR coherence loss Delta gamma, relative loss, and bounds."""
+        # 1. Standard disaster decorrelation case
+        res1 = calculate_sar_coherence_loss(gamma_pre=0.85, gamma_event=0.30)
+        self.assertAlmostEqual(res1["coherence_loss"], 0.55, places=3)
+        self.assertAlmostEqual(res1["relative_loss_percent"], (0.55 / 0.85) * 100.0, delta=0.5)
+        self.assertEqual(res1["damage_severity_tier"], SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE.value)
+        self.assertGreater(res1["structural_damage_ratio"], 0.80)
+        self.assertGreater(res1["collapse_probability"], 0.60)
+
+        # 2. Minimal decorrelation (negligible)
+        res2 = calculate_sar_coherence_loss(gamma_pre=0.88, gamma_event=0.82)
+        self.assertAlmostEqual(res2["coherence_loss"], 0.06, places=3)
+        self.assertEqual(res2["damage_severity_tier"], SARCoherenceDamageTier.NEGLIGIBLE.value)
+        self.assertLess(res2["structural_damage_ratio"], 0.05)
+        self.assertLess(res2["collapse_probability"], 0.02)
+
+        # 3. Clamping bounds: pre < event decorrelation is 0.0
+        res3 = calculate_sar_coherence_loss(gamma_pre=0.50, gamma_event=0.75)
+        self.assertEqual(res3["coherence_loss"], 0.0)
+        self.assertEqual(res3["damage_severity_tier"], SARCoherenceDamageTier.NEGLIGIBLE.value)
+
+        # 4. Zero pre-coherence safe guard
+        res4 = calculate_sar_coherence_loss(gamma_pre=0.0, gamma_event=0.0)
+        self.assertEqual(res4["coherence_loss"], 0.0)
+        self.assertEqual(res4["relative_loss_percent"], 0.0)
+
+        # 5. Collapse probability monotonicity
+        loss_steps = [0.10, 0.30, 0.50, 0.70]
+        p_prev = 0.0
+        for l_val in loss_steps:
+            r = calculate_sar_coherence_loss(gamma_pre=0.90, gamma_event=0.90 - l_val)
+            self.assertGreater(r["collapse_probability"], p_prev)
+            p_prev = r["collapse_probability"]
+
+    def test_sar_damage_severity_tier_classification(self):
+        """Verify Copernicus / NASA JPL ARIA damage proxy mapping severity classification tiers."""
+        # Boundaries: < 0.15 (negligible), [0.15, 0.35) (moderate), [0.35, 0.55) (severe), >= 0.55 (catastrophic)
+        self.assertEqual(classify_sar_damage_tier(0.00), SARCoherenceDamageTier.NEGLIGIBLE)
+        self.assertEqual(classify_sar_damage_tier(0.149), SARCoherenceDamageTier.NEGLIGIBLE)
+        self.assertEqual(classify_sar_damage_tier(0.150), SARCoherenceDamageTier.MODERATE)
+        self.assertEqual(classify_sar_damage_tier(0.349), SARCoherenceDamageTier.MODERATE)
+        self.assertEqual(classify_sar_damage_tier(0.350), SARCoherenceDamageTier.SEVERE)
+        self.assertEqual(classify_sar_damage_tier(0.549), SARCoherenceDamageTier.SEVERE)
+        self.assertEqual(classify_sar_damage_tier(0.550), SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE)
+        self.assertEqual(classify_sar_damage_tier(0.950), SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE)
+
+        # Configuration dictionary integrity
+        for tier_enum in SARCoherenceDamageTier:
+            t_key = tier_enum.value
+            self.assertIn(t_key, SAR_DAMAGE_TIER_CONFIGS)
+            cfg = SAR_DAMAGE_TIER_CONFIGS[t_key]
+            self.assertIn("color", cfg)
+            self.assertIn("severity_level", cfg)
+            self.assertIn("action_required", cfg)
+            self.assertTrue(cfg["color"].startswith("#"))
+
+    def test_building_structural_exposure_and_loss_calculation(self):
+        """Verify building structural fragility, replacement values, and economic exposure calculations."""
+        # 1. Residential building - moderate damage
+        b1 = calculate_building_structural_exposure(
+            mean_coherence_loss=0.25,
+            building_type="residential",
+            replacement_cost_per_m2=1200.0,
+            footprint_area_m2=200.0,
+            building_id="BLD_RES_01"
+        )
+        self.assertEqual(b1["building_id"], "BLD_RES_01")
+        self.assertEqual(b1["damage_severity_tier"], SARCoherenceDamageTier.MODERATE.value)
+        self.assertAlmostEqual(b1["replacement_value_usd"], 240000.0, places=1)
+        self.assertGreater(b1["estimated_loss_usd"], 10000.0)
+        self.assertLess(b1["estimated_loss_usd"], 240000.0)
+        self.assertFalse(b1["is_critical_infrastructure"])
+        self.assertEqual(b1["criticality_weight"], 1.0)
+        self.assertIn(b1["collapse_risk"], ("moderate", "low", "high"))
+
+        # 2. Critical facility (hospital) - catastrophic collapse
+        b2 = calculate_building_structural_exposure(
+            mean_coherence_loss=0.65,
+            building_type="hospital",
+            replacement_cost_per_m2=2500.0,
+            footprint_area_m2=4000.0,
+            building_id="HOSP_01"
+        )
+        self.assertTrue(b2["is_critical_infrastructure"])
+        self.assertEqual(b2["criticality_weight"], 2.0)
+        self.assertEqual(b2["damage_severity_tier"], SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE.value)
+        self.assertEqual(b2["collapse_risk"], "extreme")
+        self.assertAlmostEqual(b2["replacement_value_usd"], 10000000.0, places=1)
+        self.assertGreater(b2["estimated_loss_usd"], 8500000.0)
+
+    def test_damage_proxy_simulation_and_mass_conservation(self):
+        """Verify DPM simulation synthesis, footprint aggregation, and summary loss conservation."""
+        req = DamageProxyMapRequest(
+            simulation_id="DPM_TEST_001",
+            event_id="CO_SEISMIC_2026",
+            event_name="Co-Seismic Embankment Liquefaction",
+            footprint_sample_count=16,
+            latitude=37.05,
+            longitude=-120.85
+        )
+        sim = simulate_damage_proxy_mapping(req)
+
+        self.assertEqual(sim["simulation_id"], "DPM_TEST_001")
+        self.assertEqual(len(sim["building_footprints"]), 16)
+        summary = sim["summary"]
+        self.assertEqual(summary["total_footprints_evaluated"], 16)
+
+        # Loss conservation: sum of building losses equals total_estimated_loss_usd within 1 cent
+        calc_loss_sum = sum(b["estimated_loss_usd"] for b in sim["building_footprints"])
+        self.assertAlmostEqual(summary["total_estimated_loss_usd"], calc_loss_sum, delta=0.05)
+
+        # Tier distribution sums to total
+        dist_sum = sum(summary["tier_distribution"].values())
+        self.assertEqual(dist_sum, 16)
+
+        # Damage count matches non-negligible
+        non_neg_count = sum(1 for b in sim["building_footprints"] if b["damage_severity_tier"] != "negligible")
+        self.assertEqual(summary["damaged_footprints_count"], non_neg_count)
+
+        # Spatial bounds
+        self.assertLessEqual(summary["mean_coherence_loss"], summary["max_coherence_loss"])
+
+    def test_damage_proxy_pydantic_models_and_bidirectional_serialization(self):
+        """Verify Pydantic models for Damage Proxy Mapping with camelCase aliases and round-trip serialization."""
+        raw_exposure = {
+            "buildingId": "BLD_TEST_99",
+            "buildingName": "Test Power Station",
+            "buildingType": "power_substation",
+            "latitude": 37.052,
+            "longitude": -120.848,
+            "footprintAreaM2": 1500.0,
+            "meanCoherencePre": 0.88,
+            "meanCoherenceEvent": 0.42,
+            "meanCoherenceLoss": 0.46,
+            "damageSeverityTier": "severe",
+            "structuralDamageRatio": 0.65,
+            "collapseRisk": "high",
+            "estimatedLossUsd": 2145000.0,
+            "replacementValueUsd": 3300000.0,
+            "criticalityWeight": 2.0,
+            "isCriticalInfrastructure": True
+        }
+        b_model = BuildingFootprintExposure.model_validate(raw_exposure)
+        self.assertEqual(b_model.building_id, "BLD_TEST_99")
+        self.assertTrue(b_model.is_critical_infrastructure)
+        self.assertEqual(b_model.damage_severity_tier, "severe")
+
+        # Dump with aliases and re-validate
+        dumped = b_model.model_dump(by_alias=True)
+        self.assertEqual(dumped["buildingId"], "BLD_TEST_99")
+        self.assertEqual(dumped["replacementValueUsd"], 3300000.0)
+
+        # SARCoherenceDamageRequest & Response
+        req_raw = {
+            "coherencePre": 0.84,
+            "coherenceEvent": 0.28,
+            "buildingType": "commercial",
+            "footprintAreaM2": 500.0,
+            "replacementCostPerM2": 1500.0
+        }
+        req_model = SARCoherenceDamageRequest.model_validate(req_raw)
+        self.assertAlmostEqual(req_model.coherence_pre, 0.84)
+
+        resp_raw = {
+            "coherencePre": 0.84,
+            "coherenceEvent": 0.28,
+            "coherenceLoss": 0.56,
+            "relativeLossPercent": 66.67,
+            "damageSeverityTier": "catastrophic_collapse",
+            "structuralDamageRatio": 0.86,
+            "collapseProbability": 0.67,
+            "estimatedLossUsd": 645000.0,
+            "analyzedAt": "2026-10-14T10:00:00Z"
+        }
+        resp_model = SARCoherenceDamageResponse.model_validate(resp_raw)
+        self.assertEqual(resp_model.damage_severity_tier, "catastrophic_collapse")
+
+    def test_damage_proxy_canonical_route_contracts_and_tile_urls(self):
+        """Verify API route contracts and dynamic XYZ tile streaming URLs for Cycle v2.5.21."""
+        # 1. API Route contracts
+        r1 = format_api_route("analysis_sar_coherence_damage")
+        self.assertEqual(r1, "/api/v1/analysis/geotechnical/sar-coherence-damage")
+
+        r2 = format_api_route("analysis_damage_proxy_map")
+        self.assertEqual(r2, "/api/v1/analysis/geotechnical/damage-proxy-map")
+
+        r3 = format_api_route("analysis_damage_proxy_detail", simulation_id="DPM_SIM_100")
+        self.assertEqual(r3, "/api/v1/analysis/geotechnical/damage-proxy-map/DPM_SIM_100")
+
+        # 2. Tile URLs
+        t1 = build_damage_proxy_tile_url("DPM_SIM_100", "coherence_delta", 14, 1024, 2048)
+        self.assertEqual(t1, "/api/v1/tiles/geotechnical/dpm/DPM_SIM_100/coherence_delta/14/1024/2048.png")
+
+        t2 = build_damage_proxy_tile_url_template("DPM_SIM_100", "building_loss_ratio")
+        self.assertEqual(t2, "/api/v1/tiles/geotechnical/dpm/DPM_SIM_100/building_loss_ratio/{z}/{x}/{y}.png")
+
+        # 3. format_api_route for tiles_damage_proxy
+        r_tile = format_api_route("tiles_damage_proxy", sim_id="DPM_SIM_100", metric="event_coherence", z=12, x=512, y=256)
+        self.assertEqual(r_tile, "/api/v1/tiles/geotechnical/dpm/DPM_SIM_100/event_coherence/12/512/256.png")
+
+    def test_damage_proxy_geojson_rfc7946_compliance(self):
+        """Verify RFC 7946 GeoJSON compliance for synthesized building footprints."""
+        sim = simulate_damage_proxy_mapping({
+            "simulation_id": "DPM_GEOJSON_TEST",
+            "footprint_sample_count": 8
+        })
+        geojson = sim["footprints_geojson"]
+        self.assertEqual(geojson["type"], "FeatureCollection")
+        self.assertEqual(len(geojson["features"]), 8)
+
+        for feat in geojson["features"]:
+            self.assertEqual(feat["type"], "Feature")
+            geom = feat["geometry"]
+            self.assertEqual(geom["type"], "Polygon")
+            rings = geom["coordinates"]
+            self.assertGreaterEqual(len(rings), 1)
+            exterior = rings[0]
+            # Valid closed polygon linear ring has at least 4 coordinates and first == last
+            self.assertGreaterEqual(len(exterior), 4)
+            self.assertEqual(exterior[0], exterior[-1])
+            # Properties contract
+            props = feat["properties"]
+            self.assertIn("building_id", props)
+            self.assertIn("mean_coherence_loss", props)
+            self.assertIn("damage_severity_tier", props)
+            self.assertIn("structural_damage_ratio", props)
+
+    def test_damage_proxy_edge_cases_and_immutability(self):
+        """Verify DPM solver caller dict immutability, empty inputs, and extreme boundary cases."""
+        # 1. Immutability
+        caller_dict = {
+            "simulation_id": "IMMUTABLE_DPM",
+            "event_id": "IMMUTABLE_EVT",
+            "latitude": 37.10,
+            "longitude": -120.90,
+            "footprint_sample_count": 6
+        }
+        dict_copy = dict(caller_dict)
+        _ = simulate_damage_proxy_mapping(caller_dict)
+        self.assertEqual(caller_dict, dict_copy)
+
+        # 2. Empty footprint list summary
+        empty_summary = calculate_damage_proxy_summary([])
+        self.assertEqual(empty_summary["total_footprints_evaluated"], 0)
+        self.assertEqual(empty_summary["total_estimated_loss_usd"], 0.0)
+        self.assertEqual(empty_summary["damaged_footprints_count"], 0)
+
+        # 3. Complete decorrelation extreme (1.0 loss)
+        ext1 = calculate_sar_coherence_loss(gamma_pre=1.0, gamma_event=0.0)
+        self.assertEqual(ext1["coherence_loss"], 1.0)
+        self.assertEqual(ext1["damage_severity_tier"], SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE.value)
+        self.assertEqual(ext1["structural_damage_ratio"], 1.0)
+
+        # 4. Alias parity
+        alias_res = calculate_damage_proxy_map_analysis({"simulation_id": "ALIAS_SIM"})
+        self.assertEqual(alias_res["simulation_id"], "ALIAS_SIM")
+
+    # =========================================================================
+    # CYCLE v2.5.22: MULTI-TEMPORAL PHENOLOGY, FOURIER & CLIMATOLOGICAL MAD
+    # =========================================================================
+
+    def test_harmonic_fourier_regression_and_orthogonality(self):
+        """Verify multi-harmonic Fourier regression model fit, parameter recovery, and evaluation."""
+        # Known synthetic multi-harmonic model:
+        # y(t) = 0.50 + 0.03*t + 0.22*cos(2pi*t - 1.10) + 0.05*cos(4pi*t - 0.40)
+        N = 52  # Weekly over 1 year
+        times = [i / 52.0 for i in range(N)]
+        values = [
+            0.50 + 0.03 * t + 0.22 * math.cos(2.0 * math.pi * t - 1.10) + 0.05 * math.cos(4.0 * math.pi * t - 0.40)
+            for t in times
+        ]
+
+        res = fit_harmonic_fourier_regression(times, values, num_harmonics=2, period=1.0)
+        self.assertGreaterEqual(res["r_squared"], 0.99)
+        self.assertLessEqual(res["rmse"], 0.01)
+        self.assertAlmostEqual(res["intercept_a0"], 0.50, delta=0.02)
+        self.assertAlmostEqual(res["linear_slope_a1"], 0.03, delta=0.02)
+
+        comps = res["components"]
+        self.assertEqual(len(comps), 2)
+        self.assertEqual(comps[0]["k"], 1)
+        self.assertAlmostEqual(comps[0]["amplitude"], 0.22, delta=0.02)
+        self.assertEqual(comps[1]["k"], 2)
+        self.assertAlmostEqual(comps[1]["amplitude"], 0.05, delta=0.02)
+
+        # Evaluation helper
+        y_eval_scalar = evaluate_harmonic_model(res, 0.5, period=1.0)
+        expected_05 = 0.50 + 0.03 * 0.5 + 0.22 * math.cos(math.pi - 1.10) + 0.05 * math.cos(2.0 * math.pi - 0.40)
+        self.assertAlmostEqual(y_eval_scalar, expected_05, delta=0.03)
+
+        y_eval_seq = evaluate_harmonic_model(res, [0.0, 0.5, 1.0], period=1.0)
+        self.assertEqual(len(y_eval_seq), 3)
+
+        # Formula string
+        self.assertIn("y(t) =", res["formula_string"])
+        self.assertIn("cos", res["formula_string"])
+
+    def test_theil_sen_robust_slope_and_outlier_immunity(self):
+        """Verify non-parametric Theil-Sen slope estimator with gross outlier immunity."""
+        times = [float(i) for i in range(20)]
+        # True linear slope = +0.025 per year, intercept = 0.40
+        values = [0.40 + 0.025 * t for t in times]
+
+        # Corrupt 5 values (25% gross outliers)
+        values[3] = 0.99   # sensor saturation
+        values[7] = 0.01   # cloud shadow
+        values[11] = 0.95  # sensor spike
+        values[15] = 0.02  # bad masking
+        values[18] = 0.98  # reflectance anomaly
+
+        res = calculate_theil_sen_slope(times, values)
+        # Theil-Sen resists up to 29% outliers and recovers slope
+        self.assertAlmostEqual(res["slope_per_year"], 0.025, delta=0.008)
+        self.assertEqual(res["trend_direction"], "increasing")
+        self.assertTrue(res["is_significant"])
+        self.assertLessEqual(res["slope_ci_lower"], res["slope_per_year"])
+        self.assertGreaterEqual(res["slope_ci_upper"], res["slope_per_year"])
+
+    def test_mann_kendall_monotonic_trend_and_tie_adjustment(self):
+        """Verify Mann-Kendall rank correlation test for increasing, decreasing, and tied series."""
+        # 1. Strictly increasing
+        inc_vals = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+        mk_inc = calculate_mann_kendall_test(inc_vals)
+        self.assertGreater(mk_inc["mann_kendall_s"], 0)
+        self.assertAlmostEqual(mk_inc["kendall_tau"], 1.0)
+        self.assertTrue(mk_inc["is_significant"])
+        self.assertEqual(mk_inc["trend_direction"], "increasing")
+
+        # 2. Strictly decreasing
+        dec_vals = [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]
+        mk_dec = calculate_mann_kendall_test(dec_vals)
+        self.assertLess(mk_dec["mann_kendall_s"], 0)
+        self.assertAlmostEqual(mk_dec["kendall_tau"], -1.0)
+        self.assertTrue(mk_dec["is_significant"])
+        self.assertEqual(mk_dec["trend_direction"], "decreasing")
+
+        # 3. Flat with multiple tied values
+        tied_vals = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+        mk_tied = calculate_mann_kendall_test(tied_vals)
+        self.assertEqual(mk_tied["mann_kendall_s"], 0)
+        self.assertEqual(mk_tied["kendall_tau"], 0.0)
+        self.assertFalse(mk_tied["is_significant"])
+        self.assertEqual(mk_tied["trend_direction"], "no_trend")
+
+    def test_climatological_monthly_mad_and_seasonal_z_score(self):
+        """Verify monthly climatological MAD baseline and elimination of false winter alarms."""
+        dates = []
+        vals = []
+        # 3 years of monthly NDVI: Summer peak (July) ~0.75, Winter low (Jan) ~0.25
+        for yr in (2024, 2025, 2026):
+            for m in range(1, 13):
+                dates.append(f"{yr}-{m:02d}-15")
+                base = 0.50 + 0.25 * math.cos(2.0 * math.pi * (m - 7) / 12.0)
+                vals.append(base)
+
+        clim = calculate_climatological_monthly_mad(dates, vals)
+        records = clim["monthly_records"]
+        self.assertEqual(len(records), 12)
+
+        july_rec = [r for r in records if r["month"] == 7][0]
+        jan_rec = [r for r in records if r["month"] == 1][0]
+        self.assertAlmostEqual(july_rec["median"], 0.75, delta=0.02)
+        self.assertAlmostEqual(jan_rec["median"], 0.25, delta=0.02)
+        self.assertLessEqual(jan_rec["p10"], jan_rec["median"])
+        self.assertGreaterEqual(jan_rec["p90"], jan_rec["median"])
+
+        # Test anomaly evaluation:
+        # Normal winter value (Jan 2027 NDVI = 0.24) -> NOT an anomaly despite low absolute value
+        test_dates = ["2027-01-15", "2027-07-15"]
+        # Normal winter 0.24, but severe summer drought 0.35 (normal summer is 0.75)
+        test_vals = [0.24, 0.35]
+
+        anom_res = calculate_seasonal_mad_anomalies(test_dates, test_vals, monthly_climatology=clim, anomaly_threshold=2.5)
+        points = anom_res["points"]
+        self.assertEqual(len(points), 2)
+
+        # Point 1 (Jan): low absolute NDVI, but seasonally normal
+        self.assertFalse(points[0]["is_anomaly"])
+        self.assertEqual(points[0]["anomaly_tier"], PhenologyAnomalyTier.NORMAL.value)
+        self.assertLess(abs(points[0]["seasonal_z_score"]), 1.5)
+
+        # Point 2 (July): high absolute NDVI compared to winter, but severe drought anomaly compared to summer baseline!
+        self.assertTrue(points[1]["is_anomaly"])
+        self.assertIn(points[1]["anomaly_tier"], [PhenologyAnomalyTier.SEVERE_ANOMALY.value, PhenologyAnomalyTier.EXTREME_ANOMALY.value])
+        self.assertLess(points[1]["seasonal_z_score"], -2.5)
+
+    def test_phenology_anomaly_tier_classification_and_configs(self):
+        """Verify operational phenology anomaly tier thresholds and configuration catalogs."""
+        self.assertEqual(PhenologyAnomalyTier.NORMAL.value, "normal")
+        self.assertEqual(PhenologyAnomalyTier.MILD_DEVIATION.value, "mild_deviation")
+        self.assertEqual(PhenologyAnomalyTier.MODERATE_ANOMALY.value, "moderate_anomaly")
+        self.assertEqual(PhenologyAnomalyTier.SEVERE_ANOMALY.value, "severe_anomaly")
+        self.assertEqual(PhenologyAnomalyTier.EXTREME_ANOMALY.value, "extreme_anomaly")
+
+        self.assertEqual(classify_phenology_anomaly_tier(0.4)["id"], "normal")
+        self.assertEqual(classify_phenology_anomaly_tier(1.49)["id"], "normal")
+        self.assertEqual(classify_phenology_anomaly_tier(1.50)["id"], "mild_deviation")
+        self.assertEqual(classify_phenology_anomaly_tier(1.99)["id"], "mild_deviation")
+        self.assertEqual(classify_phenology_anomaly_tier(2.00)["id"], "moderate_anomaly")
+        self.assertEqual(classify_phenology_anomaly_tier(2.49)["id"], "moderate_anomaly")
+        self.assertEqual(classify_phenology_anomaly_tier(2.50)["id"], "severe_anomaly")
+        self.assertEqual(classify_phenology_anomaly_tier(2.99)["id"], "severe_anomaly")
+        self.assertEqual(classify_phenology_anomaly_tier(3.00)["id"], "extreme_anomaly")
+        self.assertEqual(classify_phenology_anomaly_tier(-3.50)["id"], "extreme_anomaly")
+
+        for tier in PhenologyAnomalyTier:
+            self.assertIn(tier.value, PHENOLOGY_ANOMALY_TIER_CONFIGS)
+            cfg = PHENOLOGY_ANOMALY_TIER_CONFIGS[tier.value]
+            self.assertIn("color", cfg)
+            self.assertIn("badge_class", cfg)
+            self.assertIn("is_anomaly", cfg)
+
+        for metric in PhenologyTileMetric:
+            self.assertIn(metric.value, PHENOLOGY_TILE_METRIC_CONFIGS)
+            m_cfg = PHENOLOGY_TILE_METRIC_CONFIGS[metric.value]
+            self.assertIn("colormap", m_cfg)
+            self.assertIn("unit", m_cfg)
+
+    def test_phenology_pydantic_schemas_and_bidirectional_serialization(self):
+        """Verify Pydantic models, validation, and camelCase serialization contracts."""
+        # 1. HarmonicFourierComponent
+        comp = HarmonicFourierComponent(
+            k=1,
+            aK=0.15,
+            bK=-0.10,
+            amplitude=0.18,
+            phaseRad=-0.588,
+            phaseDeg=326.3,
+            peakTimeFraction=0.906
+        )
+        self.assertEqual(comp.k, 1)
+        self.assertAlmostEqual(comp.a_k, 0.15)
+        self.assertAlmostEqual(comp.amplitude, 0.18)
+
+        # 2. MonthlyClimatologyRecord
+        clim_rec = MonthlyClimatologyRecord(
+            month=7,
+            monthName="July",
+            median=0.745,
+            mad=0.042,
+            scale=0.062,
+            p10=0.67,
+            p25=0.71,
+            p75=0.78,
+            p90=0.82,
+            sampleCount=15
+        )
+        self.assertEqual(clim_rec.month, 7)
+        self.assertEqual(clim_rec.sample_count, 15)
+
+        # 3. TheilSenTrendResult
+        ts_res = TheilSenTrendResult(
+            slopePerYear=0.015,
+            intercept=0.45,
+            slopeCiLower=0.010,
+            slopeCiUpper=0.020,
+            kendallTau=0.65,
+            mannKendallS=42,
+            pValue=0.002,
+            zScore=3.10,
+            isSignificant=True,
+            trendDirection="increasing"
+        )
+        self.assertEqual(ts_res.slope_per_year, 0.015)
+        self.assertTrue(ts_res.is_significant)
+
+        # Serialization with camelCase aliases
+        dumped = ts_res.model_dump(by_alias=True)
+        self.assertEqual(dumped["slopePerYear"], 0.015)
+        self.assertEqual(dumped["pValue"], 0.002)
+
+        # Deserialization from camelCase
+        revalidated = TheilSenTrendResult.model_validate(dumped)
+        self.assertEqual(revalidated.slope_per_year, 0.015)
+
+    def test_phenology_canonical_route_contracts_and_tile_urls(self):
+        """Verify API route contracts and dynamic XYZ tile streaming URLs for Cycle v2.5.22."""
+        r1 = format_api_route("analysis_phenology_harmonic")
+        self.assertEqual(r1, "/api/v1/analysis/phenology/harmonic-decomposition")
+
+        r2 = format_api_route("analysis_phenology_mad_anomaly")
+        self.assertEqual(r2, "/api/v1/analysis/phenology/climatological-mad-anomaly")
+
+        r3 = format_api_route("analysis_phenology_detail", simulation_id="PHEN_SIM_001")
+        self.assertEqual(r3, "/api/v1/analysis/phenology/climatological-mad-anomaly/PHEN_SIM_001")
+
+        r4 = format_api_route("analysis_phenology_detail_short", sim_id="PHEN_SIM_001")
+        self.assertEqual(r4, "/phenology/climatological-mad-anomaly/PHEN_SIM_001")
+
+        # Tile URLs
+        t1 = build_phenology_anomaly_tile_url("PHEN_SIM_001", "theil_sen_slope", 12, 1024, 2048)
+        self.assertEqual(t1, "/api/v1/tiles/phenology/anomaly/PHEN_SIM_001/theil_sen_slope/12/1024/2048.png")
+
+        t2 = build_phenology_anomaly_tile_url_template("PHEN_SIM_001", "mad_anomaly_zscore")
+        self.assertEqual(t2, "/api/v1/tiles/phenology/anomaly/PHEN_SIM_001/mad_anomaly_zscore/{z}/{x}/{y}.png")
+
+        # Dynamic format_api_route for tiles_phenology_anomaly
+        t_dyn = format_api_route("tiles_phenology_anomaly", sim_id="PHEN_SIM_001", metric="seasonal_amplitude", z=14, x=512, y=256)
+        self.assertEqual(t_dyn, "/api/v1/tiles/phenology/anomaly/PHEN_SIM_001/seasonal_amplitude/14/512/256.png")
+
+    def test_phenology_simulation_rfc7946_and_edge_cases(self):
+        """Verify full phenology decomposition simulation, RFC 7946 GeoJSON, and edge cases."""
+        caller_dict = {
+            "simulation_id": "PHEN_TEST_GEOJSON",
+            "asset_id": "TEST_ASSET",
+            "latitude": 37.15,
+            "longitude": -120.75,
+            "num_harmonics": 2
+        }
+        dict_copy = dict(caller_dict)
+        sim = simulate_phenology_decomposition(caller_dict)
+
+        # 1. Immutability
+        self.assertEqual(caller_dict, dict_copy)
+
+        # 2. GeoJSON FeatureCollection
+        geojson = sim["geojson_collection"]
+        self.assertEqual(geojson["type"], "FeatureCollection")
+        self.assertGreaterEqual(len(geojson["features"]), 1)
+        feat = geojson["features"][0]
+        self.assertEqual(feat["geometry"]["type"], "Polygon")
+        coords = feat["geometry"]["coordinates"][0]
+        self.assertEqual(coords[0], coords[-1])  # closed linear ring
+
+        # 3. Observation points count
+        self.assertEqual(len(sim["observation_points"]), 78)  # 3 years bi-weekly
+        self.assertIn("harmonic_baseline", sim["observation_points"][0])
+
+        # 4. Alias parity
+        alias_sim = calculate_phenology_decomposition_analysis({"simulation_id": "ALIAS_PHEN"})
+        self.assertEqual(alias_sim["simulation_id"], "ALIAS_PHEN")
+
+        # 5. Empty / boundary fallback tests
+        empty_fit = fit_harmonic_fourier_regression([], [])
+        self.assertEqual(empty_fit["r_squared"], 0.0)
+
+        empty_ts = calculate_theil_sen_slope([], [])
+        self.assertEqual(empty_ts["slope_per_year"], 0.0)
+        self.assertEqual(empty_ts["trend_direction"], "no_trend")
+
 if __name__ == "__main__":
     unittest.main()
+
+
 
 
 

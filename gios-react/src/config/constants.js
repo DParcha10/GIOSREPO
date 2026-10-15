@@ -1011,7 +1011,39 @@ export const API_ENDPOINTS = {
   ANALYSIS_INSAR_DUAL_ORBIT: '/api/v1/analysis/geotechnical/insar-dual-orbit-decomposition',
   ANALYSIS_INSAR_DUAL_ORBIT_SHORT: '/geotechnical/insar-dual-orbit-decomposition',
   TILES_INSAR_VELOCITY: (simId, z, x, y) => `/api/v1/tiles/geotechnical/insar-velocity/${simId}/${z}/${x}/${y}.png`,
-  TILES_INSAR_VELOCITY_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/insar-velocity/${simId}/${metric}/${z}/${x}/${y}.png`
+  TILES_INSAR_VELOCITY_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/insar-velocity/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_SAR_COHERENCE_DAMAGE: '/api/v1/analysis/geotechnical/sar-coherence-damage',
+  ANALYSIS_SAR_COHERENCE_DAMAGE_SHORT: '/geotechnical/sar-coherence-damage',
+  ANALYSIS_DAMAGE_PROXY_MAP: '/api/v1/analysis/geotechnical/damage-proxy-map',
+  ANALYSIS_DAMAGE_PROXY_MAP_SHORT: '/geotechnical/damage-proxy-map',
+  ANALYSIS_DAMAGE_PROXY_DETAIL: (simId) => `/api/v1/analysis/geotechnical/damage-proxy-map/${simId}`,
+  ANALYSIS_DAMAGE_PROXY_DETAIL_SHORT: (simId) => `/geotechnical/damage-proxy-map/${simId}`,
+  TILES_DAMAGE_PROXY: (simId, z, x, y) => `/api/v1/tiles/geotechnical/dpm/${simId}/${z}/${x}/${y}.png`,
+  TILES_DAMAGE_PROXY_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/geotechnical/dpm/${simId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_PHENOLOGY_HARMONIC: '/api/v1/analysis/phenology/harmonic-decomposition',
+  ANALYSIS_PHENOLOGY_HARMONIC_SHORT: '/phenology/harmonic-decomposition',
+  ANALYSIS_PHENOLOGY_MAD_ANOMALY: '/api/v1/analysis/phenology/climatological-mad-anomaly',
+  ANALYSIS_PHENOLOGY_MAD_ANOMALY_SHORT: '/phenology/climatological-mad-anomaly',
+  ANALYSIS_PHENOLOGY_DETAIL: (simId) => `/api/v1/analysis/phenology/climatological-mad-anomaly/${simId}`,
+  ANALYSIS_PHENOLOGY_DETAIL_SHORT: (simId) => `/phenology/climatological-mad-anomaly/${simId}`,
+  TILES_PHENOLOGY_ANOMALY: (simId, z, x, y) => `/api/v1/tiles/phenology/anomaly/${simId}/${z}/${x}/${y}.png`,
+  TILES_PHENOLOGY_ANOMALY_METRIC: (simId, metric, z, x, y) => `/api/v1/tiles/phenology/anomaly/${simId}/${metric}/${z}/${x}/${y}.png`,
+  OPERATIONS_WEBHOOKS: '/api/v1/operations/webhooks',
+  OPERATIONS_WEBHOOKS_SHORT: '/operations/webhooks',
+  OPERATIONS_WEBHOOK_DETAIL: (id) => `/api/v1/operations/webhooks/${id}`,
+  OPERATIONS_WEBHOOK_DETAIL_SHORT: (id) => `/operations/webhooks/${id}`,
+  OPERATIONS_WEBHOOK_TEST: (id) => `/api/v1/operations/webhooks/${id}/test`,
+  OPERATIONS_WEBHOOK_TEST_SHORT: (id) => `/operations/webhooks/${id}/test`,
+  OPERATIONS_HARVESTER_SUBSCRIPTIONS: '/api/v1/operations/harvester/subscriptions',
+  OPERATIONS_HARVESTER_SUBSCRIPTIONS_SHORT: '/operations/harvester/subscriptions',
+  OPERATIONS_HARVESTER_DETAIL: (id) => `/api/v1/operations/harvester/subscriptions/${id}`,
+  OPERATIONS_HARVESTER_DETAIL_SHORT: (id) => `/operations/harvester/subscriptions/${id}`,
+  OPERATIONS_HARVESTER_TRIGGER: '/api/v1/operations/harvester/trigger',
+  OPERATIONS_HARVESTER_TRIGGER_SHORT: '/operations/harvester/trigger',
+  OPERATIONS_DLQ: '/api/v1/operations/dlq',
+  OPERATIONS_DLQ_SHORT: '/operations/dlq',
+  OPERATIONS_DLQ_RETRY: '/api/v1/operations/dlq/retry',
+  OPERATIONS_DLQ_RETRY_SHORT: '/operations/dlq/retry'
 };
 
 /**
@@ -1239,6 +1271,28 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'ANALYSIS_INSAR_VELOCITY_DETAIL':
       case 'ANALYSIS_INSAR_VELOCITY_DETAIL_SHORT':
         return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_INSAR_001');
+      case 'TILES_DAMAGE_PROXY':
+        return endpoint(params.simId || params.sim_id || 'SIM_DPM_001', params.z, params.x, params.y);
+      case 'TILES_DAMAGE_PROXY_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_DPM_001', params.metric || 'coherence_delta', params.z, params.x, params.y);
+      case 'ANALYSIS_DAMAGE_PROXY_DETAIL':
+      case 'ANALYSIS_DAMAGE_PROXY_DETAIL_SHORT':
+        return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_DPM_001');
+      case 'TILES_PHENOLOGY_ANOMALY':
+        return endpoint(params.simId || params.sim_id || 'SIM_PHEN_001', params.z, params.x, params.y);
+      case 'TILES_PHENOLOGY_ANOMALY_METRIC':
+        return endpoint(params.simId || params.sim_id || 'SIM_PHEN_001', params.metric || 'mad_anomaly_zscore', params.z, params.x, params.y);
+      case 'ANALYSIS_PHENOLOGY_DETAIL':
+      case 'ANALYSIS_PHENOLOGY_DETAIL_SHORT':
+        return endpoint(params.simId || params.sim_id || params.simulationId || params.simulation_id || 'SIM_PHEN_001');
+      case 'OPERATIONS_WEBHOOK_DETAIL':
+      case 'OPERATIONS_WEBHOOK_DETAIL_SHORT':
+      case 'OPERATIONS_WEBHOOK_TEST':
+      case 'OPERATIONS_WEBHOOK_TEST_SHORT':
+        return endpoint(params.webhookId || params.webhook_id || params.id || 'EP-001');
+      case 'OPERATIONS_HARVESTER_DETAIL':
+      case 'OPERATIONS_HARVESTER_DETAIL_SHORT':
+        return endpoint(params.subscriptionId || params.subscription_id || params.id || 'SUB-STAC-001');
       default:
         return endpoint(params);
     }
@@ -14708,6 +14762,1940 @@ export const buildInSARVelocityTileUrl = (simId, metric = 'velocity_vertical', z
 export const buildInSARVelocityTileUrlTemplate = (simId, metric = 'velocity_vertical', basePrefix = '/api/v1') => {
   return `${basePrefix}/tiles/geotechnical/insar-velocity/${simId}/${metric}/{z}/{x}/{y}.png`;
 };
+
+// ==============================================================================
+// Cycle v2.5.21: Complex Interferometric SAR Coherence Loss, Damage Proxy Mapping (DPM) & Structural Exposure Contracts
+// ==============================================================================
+
+export const SARCoherenceDamageTier = Object.freeze({
+  NEGLIGIBLE: 'negligible',
+  MODERATE: 'moderate',
+  SEVERE: 'severe',
+  CATASTROPHIC_COLLAPSE: 'catastrophic_collapse'
+});
+
+export const SAR_DAMAGE_TIERS = SARCoherenceDamageTier;
+
+export const DamageProxyTileMetric = Object.freeze({
+  COHERENCE_DELTA: 'coherence_delta',
+  PRE_COHERENCE: 'pre_coherence',
+  EVENT_COHERENCE: 'event_coherence',
+  DAMAGE_SEVERITY_TIER: 'damage_severity_tier',
+  BUILDING_LOSS_RATIO: 'building_loss_ratio',
+  HAZARD_RATING_TIER: 'hazard_rating_tier'
+});
+
+export const SAR_DAMAGE_TIER_CONFIGS = Object.freeze({
+  negligible: {
+    id: 'negligible',
+    name: 'Negligible / Superficial',
+    label: 'Negligible Damage',
+    badge: 'NEGLIGIBLE',
+    min_delta_coherence: 0.0,
+    max_delta_coherence: 0.15,
+    color: '#10B981',
+    severity_level: 1,
+    action_required: 'Routine Monitoring',
+    description: 'Surface coherence maintained (Δγ < 0.15); structural integrity intact.'
+  },
+  moderate: {
+    id: 'moderate',
+    name: 'Moderate Damage',
+    label: 'Moderate Damage',
+    badge: 'MODERATE',
+    min_delta_coherence: 0.15,
+    max_delta_coherence: 0.35,
+    color: '#F59E0B',
+    severity_level: 2,
+    action_required: 'Ground Reconnaissance / Non-Structural Inspection',
+    description: 'Noticeable decorrelation (0.15 ≤ Δγ < 0.35); partial damage to cladding, roof, or ground.'
+  },
+  severe: {
+    id: 'severe',
+    name: 'Severe Structural Damage',
+    label: 'Severe Structural Damage',
+    badge: 'SEVERE',
+    min_delta_coherence: 0.35,
+    max_delta_coherence: 0.55,
+    color: '#F97316',
+    severity_level: 3,
+    action_required: 'Immediate Structural Evacuation / Red Tagging',
+    description: 'Extensive decorrelation (0.35 ≤ Δγ < 0.55); major structural wall cracking, partial collapse.'
+  },
+  catastrophic_collapse: {
+    id: 'catastrophic_collapse',
+    name: 'Catastrophic Collapse',
+    label: 'Catastrophic Collapse',
+    badge: 'COLLAPSE',
+    min_delta_coherence: 0.55,
+    max_delta_coherence: 1.0,
+    color: '#EF4444',
+    severity_level: 4,
+    action_required: 'Search and Rescue Priority / Complete Exclusion Zone',
+    description: 'Severe decorrelation / total scatterer loss (Δγ ≥ 0.55); complete structural failure or washout.'
+  }
+});
+
+export const DAMAGE_PROXY_TILE_METRICS = Object.freeze({
+  coherence_delta: 'Interferometric Coherence Loss (Δγ in [0, 1])',
+  pre_coherence: 'Pre-Disaster Baseline Coherence (γ_pre in [0, 1])',
+  event_coherence: 'Co-Event Interferometric Coherence (γ_event in [0, 1])',
+  damage_severity_tier: 'Copernicus / ARIA Damage Severity Tier (1 to 4)',
+  building_loss_ratio: 'Structural Fragility Damage Ratio ([0, 1])',
+  hazard_rating_tier: 'Disaster Response Hazard Rating Tier (1 to 5)'
+});
+
+export const DAMAGE_PROXY_TILE_METRIC_CONFIGS = Object.freeze({
+  coherence_delta: {
+    id: 'coherence_delta',
+    name: 'Interferometric Coherence Loss (Δγ)',
+    unit: 'ratio',
+    min: 0.0,
+    max: 1.0,
+    colormap: 'turbo',
+    description: 'Pre-event minus co-event SAR interferometric coherence decorrelation magnitude'
+  },
+  pre_coherence: {
+    id: 'pre_coherence',
+    name: 'Pre-Disaster Baseline Coherence (γ_pre)',
+    unit: 'ratio',
+    min: 0.0,
+    max: 1.0,
+    colormap: 'viridis',
+    description: 'Baseline temporal coherence prior to disaster or failure event'
+  },
+  event_coherence: {
+    id: 'event_coherence',
+    name: 'Co-Event Interferometric Coherence (γ_event)',
+    unit: 'ratio',
+    min: 0.0,
+    max: 1.0,
+    colormap: 'plasma',
+    description: 'Interferometric coherence spanning the disaster date interval'
+  },
+  damage_severity_tier: {
+    id: 'damage_severity_tier',
+    name: 'ARIA Damage Severity Tier',
+    unit: 'tier',
+    min: 1.0,
+    max: 4.0,
+    colormap: 'rdylbu',
+    description: 'Categorical ARIA severity tier (1: Negligible, 2: Moderate, 3: Severe, 4: Catastrophic Collapse)'
+  },
+  building_loss_ratio: {
+    id: 'building_loss_ratio',
+    name: 'Structural Damage Ratio',
+    unit: 'fraction',
+    min: 0.0,
+    max: 1.0,
+    colormap: 'hot',
+    description: 'Estimated structural vulnerability loss ratio based on fragility curves'
+  },
+  hazard_rating_tier: {
+    id: 'hazard_rating_tier',
+    name: 'Composite Disaster Hazard Tier',
+    unit: 'tier',
+    min: 1.0,
+    max: 5.0,
+    colormap: 'inferno',
+    description: 'Composite priority hazard level for emergency response deployment'
+  }
+});
+
+export const classifySarDamageTier = (coherenceLoss) => {
+  const cl = Number(coherenceLoss);
+  if (cl >= 0.55) return SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE;
+  if (cl >= 0.35) return SARCoherenceDamageTier.SEVERE;
+  if (cl >= 0.15) return SARCoherenceDamageTier.MODERATE;
+  return SARCoherenceDamageTier.NEGLIGIBLE;
+};
+
+export const calculateSarCoherenceLoss = (gammaPre, gammaEvent) => {
+  const gPre = Math.max(0.0, Math.min(1.0, Number(gammaPre)));
+  const gEvent = Math.max(0.0, Math.min(1.0, Number(gammaEvent)));
+
+  const deltaGamma = Math.max(0.0, Math.min(1.0, gPre - gEvent));
+  const relLoss = (deltaGamma / Math.max(1e-4, gPre)) * 100.0;
+
+  const tier = classifySarDamageTier(deltaGamma);
+
+  let damageRatio = 0.0;
+  if (deltaGamma < 0.15) {
+    damageRatio = 0.05 * (deltaGamma / 0.15);
+  } else if (deltaGamma < 0.35) {
+    damageRatio = 0.05 + 0.35 * ((deltaGamma - 0.15) / 0.20);
+  } else if (deltaGamma < 0.55) {
+    damageRatio = 0.40 + 0.45 * ((deltaGamma - 0.35) / 0.20);
+  } else {
+    damageRatio = 0.85 + 0.15 * Math.min(1.0, (deltaGamma - 0.55) / 0.25);
+  }
+  damageRatio = Math.max(0.0, Math.min(1.0, damageRatio));
+
+  const collapseProb = 1.0 / (1.0 + Math.exp(-12.0 * (deltaGamma - 0.50)));
+
+  return {
+    coherence_pre: Number(gPre.toFixed(4)),
+    coherence_event: Number(gEvent.toFixed(4)),
+    coherence_loss: Number(deltaGamma.toFixed(4)),
+    relative_loss_percent: Number(relLoss.toFixed(2)),
+    damage_severity_tier: tier,
+    structural_damage_ratio: Number(damageRatio.toFixed(4)),
+    collapse_probability: Number(collapseProb.toFixed(4))
+  };
+};
+
+export const calculateBuildingStructuralExposure = (params = {}) => {
+  const cl = Math.max(0.0, Math.min(1.0, Number(params.mean_coherence_loss ?? params.meanCoherenceLoss ?? 0.0)));
+  const bType = String(params.building_type ?? params.buildingType ?? 'residential').toLowerCase().trim();
+  const area = Math.max(1.0, Number(params.footprint_area_m2 ?? params.footprintAreaM2 ?? 250.0));
+  const costM2 = Math.max(10.0, Number(params.replacement_cost_per_m2 ?? params.replacementCostPerM2 ?? 1200.0));
+  const lat = Number(params.latitude ?? 37.05);
+  const lon = Number(params.longitude ?? -120.85);
+
+  let gPre = params.mean_coherence_pre ?? params.meanCoherencePre;
+  gPre = gPre !== undefined ? Math.max(0.0, Math.min(1.0, Number(gPre))) : 0.82;
+  const gEvent = Math.max(0.0, Math.min(1.0, gPre - cl));
+
+  const lossMetrics = calculateSarCoherenceLoss(gPre, gEvent);
+  const damageRatio = lossMetrics.structural_damage_ratio;
+  const tier = lossMetrics.damage_severity_tier;
+
+  const criticalTypes = new Set([
+    'hospital', 'school', 'emergency_services', 'tailings_facility',
+    'power_substation', 'water_treatment', 'bridge', 'fire_station'
+  ]);
+  const isCritical = criticalTypes.has(bType);
+  const criticalityWeight = isCritical ? 2.0 : 1.0;
+
+  const replacementValue = Number((area * costM2).toFixed(2));
+  const estimatedLoss = Number((replacementValue * damageRatio).toFixed(2));
+
+  let collapseRisk = 'safe';
+  if (damageRatio >= 0.85 || cl >= 0.55) {
+    collapseRisk = 'extreme';
+  } else if (damageRatio >= 0.40) {
+    collapseRisk = 'high';
+  } else if (damageRatio >= 0.15) {
+    collapseRisk = 'moderate';
+  } else if (damageRatio > 0.02) {
+    collapseRisk = 'low';
+  }
+
+  const bId = params.building_id || params.buildingId || 'BLD_001';
+  const bName = params.building_name || params.buildingName || `${bType.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())} #${bId}`;
+
+  return {
+    building_id: bId,
+    building_name: bName,
+    building_type: bType,
+    latitude: Number(lat.toFixed(6)),
+    longitude: Number(lon.toFixed(6)),
+    footprint_area_m2: Number(area.toFixed(2)),
+    mean_coherence_pre: Number(gPre.toFixed(4)),
+    mean_coherence_event: Number(gEvent.toFixed(4)),
+    mean_coherence_loss: Number(cl.toFixed(4)),
+    damage_severity_tier: tier,
+    structural_damage_ratio: Number(damageRatio.toFixed(4)),
+    collapse_risk: collapseRisk,
+    estimated_loss_usd: estimatedLoss,
+    replacement_value_usd: replacementValue,
+    criticality_weight: Number(criticalityWeight.toFixed(2)),
+    is_critical_infrastructure: isCritical
+  };
+};
+
+export const calculateDamageProxySummary = (footprints = [], _aoiAreaKm2 = 12.5) => {
+  const nTotal = footprints.length;
+  if (nTotal === 0) {
+    return {
+      total_footprints_evaluated: 0,
+      damaged_footprints_count: 0,
+      critical_facilities_affected: 0,
+      total_estimated_loss_usd: 0.0,
+      mean_coherence_loss: 0.0,
+      max_coherence_loss: 0.0,
+      worst_damage_tier: SARCoherenceDamageTier.NEGLIGIBLE,
+      tier_distribution: {
+        [SARCoherenceDamageTier.NEGLIGIBLE]: 0,
+        [SARCoherenceDamageTier.MODERATE]: 0,
+        [SARCoherenceDamageTier.SEVERE]: 0,
+        [SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE]: 0
+      }
+    };
+  }
+
+  let damagedCount = 0;
+  let critAffected = 0;
+  let totalLoss = 0.0;
+  let sumCoherenceLoss = 0.0;
+  let maxCoherenceLoss = 0.0;
+  let worstTier = SARCoherenceDamageTier.NEGLIGIBLE;
+
+  const tierCounts = {
+    [SARCoherenceDamageTier.NEGLIGIBLE]: 0,
+    [SARCoherenceDamageTier.MODERATE]: 0,
+    [SARCoherenceDamageTier.SEVERE]: 0,
+    [SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE]: 0
+  };
+
+  const tierSeverityRank = {
+    [SARCoherenceDamageTier.NEGLIGIBLE]: 1,
+    [SARCoherenceDamageTier.MODERATE]: 2,
+    [SARCoherenceDamageTier.SEVERE]: 3,
+    [SARCoherenceDamageTier.CATASTROPHIC_COLLAPSE]: 4
+  };
+
+  footprints.forEach((fp) => {
+    const cl = Number(fp.mean_coherence_loss ?? fp.meanCoherenceLoss ?? 0.0);
+    const tier = fp.damage_severity_tier ?? fp.damageSeverityTier ?? SARCoherenceDamageTier.NEGLIGIBLE;
+    const loss = Number(fp.estimated_loss_usd ?? fp.estimatedLossUsd ?? 0.0);
+    const isCrit = Boolean(fp.is_critical_infrastructure ?? fp.isCriticalInfrastructure);
+
+    sumCoherenceLoss += cl;
+    totalLoss += loss;
+    if (cl > maxCoherenceLoss) maxCoherenceLoss = cl;
+
+    if (tierCounts[tier] !== undefined) tierCounts[tier] += 1;
+
+    if (tier !== SARCoherenceDamageTier.NEGLIGIBLE) {
+      damagedCount += 1;
+      if (isCrit) critAffected += 1;
+    }
+
+    if ((tierSeverityRank[tier] || 0) > (tierSeverityRank[worstTier] || 0)) {
+      worstTier = tier;
+    }
+  });
+
+  const meanCoherenceLoss = sumCoherenceLoss / Math.max(1, nTotal);
+
+  return {
+    total_footprints_evaluated: nTotal,
+    damaged_footprints_count: damagedCount,
+    critical_facilities_affected: critAffected,
+    total_estimated_loss_usd: Number(totalLoss.toFixed(2)),
+    mean_coherence_loss: Number(meanCoherenceLoss.toFixed(4)),
+    max_coherence_loss: Number(maxCoherenceLoss.toFixed(4)),
+    worst_damage_tier: worstTier,
+    tier_distribution: tierCounts
+  };
+};
+
+export const simulateDamageProxyMapping = (request = {}) => {
+  const simId = request.simulation_id || request.simulationId || `DPM_${new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 15)}`;
+  const eventId = request.event_id || request.eventId || 'EVENT_2026_01';
+  const eventName = request.event_name || request.eventName || 'Co-Seismic SAR Coherence Decorrelation Event';
+  const preDate = request.pre_event_date || request.preEventDate || '2026-08-10';
+  const eventDate = request.event_date || request.eventDate || '2026-08-22';
+  const mission = request.satellite_mission || request.satelliteMission || 'sentinel-1';
+  const orbitDir = request.orbit_direction || request.orbitDirection || 'descending';
+  const pol = request.polarization || 'VV';
+  const centerLat = Number(request.latitude ?? 37.05);
+  const centerLon = Number(request.longitude ?? -120.85);
+  const nSample = Math.max(4, Math.min(100, Number(request.footprint_sample_count ?? request.footprintSampleCount ?? 20)));
+
+  const archetypes = [
+    ['residential', 220.0, 1100.0],
+    ['residential', 280.0, 1150.0],
+    ['commercial', 850.0, 1600.0],
+    ['hospital', 3200.0, 2400.0],
+    ['school', 2400.0, 1800.0],
+    ['industrial', 1500.0, 1300.0],
+    ['tailings_facility', 4500.0, 2100.0],
+    ['power_substation', 1200.0, 2600.0],
+    ['residential', 190.0, 1050.0],
+    ['commercial', 1100.0, 1750.0]
+  ];
+
+  const footprints = [];
+  const features = [];
+
+  for (let idx = 0; idx < nSample; idx += 1) {
+    const arch = archetypes[idx % archetypes.length];
+    const [bType, area, costM2] = arch;
+
+    const angleRad = (idx / nSample) * 2.0 * Math.PI;
+    const distKm = 0.2 + 1.8 * ((idx * 7) % nSample) / nSample;
+
+    const deltaLat = (distKm / 111.0) * Math.cos(angleRad);
+    const deltaLon = (distKm / (111.0 * Math.cos((centerLat * Math.PI) / 180.0))) * Math.sin(angleRad);
+    const bLat = centerLat + deltaLat;
+    const bLon = centerLon + deltaLon;
+
+    const gPre = Number((0.85 + 0.05 * Math.sin(idx * 1.3)).toFixed(4));
+    const rawCl = 0.70 * Math.exp(-distKm / 0.8) + 0.08 * Math.cos(idx * 2.1);
+    const cl = Math.max(0.02, Math.min(0.85, rawCl));
+
+    const bId = `BLD_${String(idx + 1).padStart(3, '0')}`;
+    const exposure = calculateBuildingStructuralExposure({
+      mean_coherence_loss: cl,
+      building_type: bType,
+      replacement_cost_per_m2: costM2,
+      footprint_area_m2: area,
+      building_name: `${bType.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())} Unit #${String(idx + 1).padStart(2, '0')}`,
+      building_id: bId,
+      latitude: bLat,
+      longitude: bLon,
+      mean_coherence_pre: gPre
+    });
+    footprints.push(exposure);
+
+    const halfDegLat = (Math.sqrt(area) / 2.0) / 111000.0;
+    const halfDegLon = (Math.sqrt(area) / 2.0) / (111000.0 * Math.cos((bLat * Math.PI) / 180.0));
+    const polyCoords = [
+      [Number((bLon - halfDegLon).toFixed(6)), Number((bLat - halfDegLat).toFixed(6))],
+      [Number((bLon + halfDegLon).toFixed(6)), Number((bLat - halfDegLat).toFixed(6))],
+      [Number((bLon + halfDegLon).toFixed(6)), Number((bLat + halfDegLat).toFixed(6))],
+      [Number((bLon - halfDegLon).toFixed(6)), Number((bLat + halfDegLat).toFixed(6))],
+      [Number((bLon - halfDegLon).toFixed(6)), Number((bLat - halfDegLat).toFixed(6))]
+    ];
+
+    features.push({
+      type: 'Feature',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [polyCoords]
+      },
+      properties: {
+        building_id: exposure.building_id,
+        building_name: exposure.building_name,
+        building_type: exposure.building_type,
+        mean_coherence_loss: exposure.mean_coherence_loss,
+        damage_severity_tier: exposure.damage_severity_tier,
+        structural_damage_ratio: exposure.structural_damage_ratio,
+        collapse_risk: exposure.collapse_risk,
+        estimated_loss_usd: exposure.estimated_loss_usd,
+        is_critical_infrastructure: exposure.is_critical_infrastructure
+      }
+    });
+  }
+
+  const summary = calculateDamageProxySummary(footprints);
+  const geojson = {
+    type: 'FeatureCollection',
+    features
+  };
+
+  const tileTemplate = `/api/v1/tiles/geotechnical/dpm/${simId}/{metric}/{z}/{x}/{y}.png`;
+
+  return {
+    simulation_id: simId,
+    event_id: eventId,
+    event_name: eventName,
+    pre_event_date: preDate,
+    event_date: eventDate,
+    satellite_mission: mission,
+    orbit_direction: orbitDir,
+    polarization: pol,
+    summary,
+    building_footprints: footprints,
+    footprints_geojson: geojson,
+    tile_url_template: tileTemplate,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculateDamageProxyMappingAnalysis = simulateDamageProxyMapping;
+
+export const buildDamageProxyTileUrl = (simId, metric = 'coherence_delta', z = 12, x = 2048, y = 1024, basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/geotechnical/dpm/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildDamageProxyTileUrlTemplate = (simId, metric = 'coherence_delta', basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/geotechnical/dpm/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+// ============================================================================
+// MULTI-TEMPORAL PHENOLOGY, HARMONIC FOURIER REGRESSION & CLIMATOLOGICAL MAD
+// ============================================================================
+
+export const PhenologyAnomalyTier = Object.freeze({
+  NORMAL: 'normal',
+  MILD_DEVIATION: 'mild_deviation',
+  MODERATE_ANOMALY: 'moderate_anomaly',
+  SEVERE_ANOMALY: 'severe_anomaly',
+  EXTREME_ANOMALY: 'extreme_anomaly'
+});
+
+export const PHENOLOGY_ANOMALY_TIERS = Object.values(PhenologyAnomalyTier);
+
+export const PhenologyTileMetric = Object.freeze({
+  BASELINE_NDVI: 'baseline_ndvi',
+  SEASONAL_AMPLITUDE: 'seasonal_amplitude',
+  PHASE_ANGLE: 'phase_angle',
+  THEIL_SEN_SLOPE: 'theil_sen_slope',
+  MAD_ANOMALY_ZSCORE: 'mad_anomaly_zscore',
+  ANOMALY_TIER: 'anomaly_tier'
+});
+
+export const PHENOLOGY_ANOMALY_TIER_CONFIGS = Object.freeze({
+  [PhenologyAnomalyTier.NORMAL]: {
+    id: 'normal',
+    min_z: 0.0,
+    max_z: 1.5,
+    label: 'Normal Seasonal Variation (|z| < 1.5)',
+    severity: 'normal',
+    color: '#10b981',
+    badge_class: 'bg-emerald-950/80 text-emerald-300 border-emerald-800',
+    badgeClass: 'bg-emerald-950/80 text-emerald-300 border-emerald-800',
+    is_anomaly: false,
+    description: 'Observation lies within expected historical seasonal phenological baseline.'
+  },
+  [PhenologyAnomalyTier.MILD_DEVIATION]: {
+    id: 'mild_deviation',
+    min_z: 1.5,
+    max_z: 2.0,
+    label: 'Mild Seasonal Deviation (1.5 <= |z| < 2.0)',
+    severity: 'mild',
+    color: '#06b6d4',
+    badge_class: 'bg-cyan-950/80 text-cyan-300 border-cyan-800',
+    badgeClass: 'bg-cyan-950/80 text-cyan-300 border-cyan-800',
+    is_anomaly: false,
+    description: 'Minor statistical departure from historical climatological mean/median.'
+  },
+  [PhenologyAnomalyTier.MODERATE_ANOMALY]: {
+    id: 'moderate_anomaly',
+    min_z: 2.0,
+    max_z: 2.5,
+    label: 'Moderate Anomaly (2.0 <= |z| < 2.5)',
+    severity: 'moderate',
+    color: '#f59e0b',
+    badge_class: 'bg-amber-950/80 text-amber-300 border-amber-800',
+    badgeClass: 'bg-amber-950/80 text-amber-300 border-amber-800',
+    is_anomaly: true,
+    description: 'Noticeable biophysical departure indicating localized canopy stress or drought moisture deficit.'
+  },
+  [PhenologyAnomalyTier.SEVERE_ANOMALY]: {
+    id: 'severe_anomaly',
+    min_z: 2.5,
+    max_z: 3.0,
+    label: 'Severe Climatological Anomaly (2.5 <= |z| < 3.0)',
+    severity: 'severe',
+    color: '#f97316',
+    badge_class: 'bg-orange-950/80 text-orange-300 border-orange-800',
+    badgeClass: 'bg-orange-950/80 text-orange-300 border-orange-800',
+    is_anomaly: true,
+    description: 'Significant biophysical anomaly exceeding 2.5 MAD from historical seasonal baseline.'
+  },
+  [PhenologyAnomalyTier.EXTREME_ANOMALY]: {
+    id: 'extreme_anomaly',
+    min_z: 3.0,
+    max_z: null,
+    label: 'Extreme Biophysical Outlier (|z| >= 3.0)',
+    severity: 'critical',
+    color: '#ef4444',
+    badge_class: 'bg-red-950/80 text-red-300 border-red-800',
+    badgeClass: 'bg-red-950/80 text-red-300 border-red-800',
+    is_anomaly: true,
+    description: 'Acute biophysical disturbance (severe deforestation, fire defoliation, or tailings inundation).'
+  }
+});
+
+export const PHENOLOGY_TILE_METRICS = Object.freeze({
+  baseline_ndvi: 'Harmonic Seasonal Baseline (NDVI [0, 1])',
+  seasonal_amplitude: 'Annual Seasonal Amplitude (C1 [0, 0.5])',
+  phase_angle: 'Seasonal Phase Angle / Peak Timing (degrees [0, 360])',
+  theil_sen_slope: 'Multi-Year Theil-Sen Robust Trend Slope (delta-index / year)',
+  mad_anomaly_zscore: 'Climatological MAD Anomaly Z-Score (z_seasonal)',
+  anomaly_tier: 'Phenological Anomaly Classification Tier (0 to 4)'
+});
+
+export const PHENOLOGY_TILE_METRIC_CONFIGS = Object.freeze({
+  baseline_ndvi: {
+    id: 'baseline_ndvi',
+    name: 'Harmonic Seasonal Baseline',
+    unit: 'NDVI',
+    min: 0.0,
+    max: 1.0,
+    default_rescale: '0.1,0.85',
+    colormap: 'viridis',
+    description: 'Multi-harmonic seasonal model fitted baseline index value.'
+  },
+  seasonal_amplitude: {
+    id: 'seasonal_amplitude',
+    name: 'Annual Seasonal Amplitude',
+    unit: 'amplitude',
+    min: 0.0,
+    max: 0.5,
+    default_rescale: '0.0,0.4',
+    colormap: 'plasma',
+    description: 'First-order annual Fourier harmonic amplitude C1 = sqrt(A1^2 + B1^2).'
+  },
+  phase_angle: {
+    id: 'phase_angle',
+    name: 'Seasonal Phase Angle (Peak Green-up)',
+    unit: 'degrees',
+    min: 0.0,
+    max: 360.0,
+    default_rescale: '0,360',
+    colormap: 'turbo',
+    description: 'Fourier phase angle corresponding to timing of annual peak greenness.'
+  },
+  theil_sen_slope: {
+    id: 'theil_sen_slope',
+    name: 'Theil-Sen Robust Trend Slope',
+    unit: 'yr^-1',
+    min: -0.1,
+    max: 0.1,
+    default_rescale: '-0.05,0.05',
+    colormap: 'rdylbu',
+    description: 'Median pairwise monotonic slope representing multi-year vegetation greening/browning.'
+  },
+  mad_anomaly_zscore: {
+    id: 'mad_anomaly_zscore',
+    name: 'Climatological MAD Anomaly Z-Score',
+    unit: 'sigma_MAD',
+    min: -4.0,
+    max: 4.0,
+    default_rescale: '-3.0,3.0',
+    colormap: 'rdylbu',
+    description: 'Monthly climatologically normalized anomaly z_seasonal = (x_t - med) / (1.4826 * MAD).'
+  },
+  anomaly_tier: {
+    id: 'anomaly_tier',
+    name: 'Phenological Anomaly Classification Tier',
+    unit: 'tier',
+    min: 0,
+    max: 4,
+    default_rescale: '0,4',
+    colormap: 'turbo',
+    description: 'Classified operational tier from normal (0) to extreme anomaly (4).'
+  }
+});
+
+export const classifyPhenologyAnomalyTier = (z) => {
+  if (z === null || z === undefined) return PHENOLOGY_ANOMALY_TIER_CONFIGS[PhenologyAnomalyTier.NORMAL];
+  const val = Math.abs(Number(z));
+  if (Number.isNaN(val) || !Number.isFinite(val)) return PHENOLOGY_ANOMALY_TIER_CONFIGS[PhenologyAnomalyTier.NORMAL];
+  if (val >= 3.0) return PHENOLOGY_ANOMALY_TIER_CONFIGS[PhenologyAnomalyTier.EXTREME_ANOMALY];
+  if (val >= 2.5) return PHENOLOGY_ANOMALY_TIER_CONFIGS[PhenologyAnomalyTier.SEVERE_ANOMALY];
+  if (val >= 2.0) return PHENOLOGY_ANOMALY_TIER_CONFIGS[PhenologyAnomalyTier.MODERATE_ANOMALY];
+  if (val >= 1.5) return PHENOLOGY_ANOMALY_TIER_CONFIGS[PhenologyAnomalyTier.MILD_DEVIATION];
+  return PHENOLOGY_ANOMALY_TIER_CONFIGS[PhenologyAnomalyTier.NORMAL];
+};
+
+export const classifyPhenologyAnomaly = classifyPhenologyAnomalyTier;
+
+const erfApprox = (x) => {
+  const sign = x >= 0 ? 1 : -1;
+  const absX = Math.abs(x);
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+  const t = 1.0 / (1.0 + p * absX);
+  const y = 1.0 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX));
+  return sign * y;
+};
+
+export const extractMonthAndDayOfYear = (dateStr) => {
+  try {
+    const match = String(dateStr).match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      const year = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10);
+      const day = parseInt(match[3], 10);
+      const dt = new Date(Date.UTC(year, month - 1, day));
+      const start = new Date(Date.UTC(year, 0, 0));
+      const diff = dt - start;
+      const oneDay = 1000 * 60 * 60 * 24;
+      const doy = Math.floor(diff / oneDay);
+      const isLeap = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+      const daysYr = isLeap ? 366.0 : 365.0;
+      const decYr = year + (doy - 1.0) / daysYr;
+      return { month, day_of_year: doy, decimal_year: decYr };
+    }
+    const dt = new Date(dateStr);
+    const year = dt.getUTCFullYear();
+    const month = dt.getUTCMonth() + 1;
+    const start = new Date(Date.UTC(year, 0, 0));
+    const diff = dt - start;
+    const oneDay = 1000 * 60 * 60 * 24;
+    const doy = Math.floor(diff / oneDay);
+    const isLeap = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+    const daysYr = isLeap ? 366.0 : 365.0;
+    const decYr = year + (doy - 1.0) / daysYr;
+    return { month, day_of_year: doy, decimal_year: decYr };
+  } catch {
+    return { month: 1, day_of_year: 1, decimal_year: 2026.0 };
+  }
+};
+
+export const percentile1d = (values = [], p = 50.0) => {
+  const clean = values.filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v))).map(Number);
+  if (clean.length === 0) return 0.0;
+  clean.sort((a, b) => a - b);
+  const n = clean.length;
+  if (n === 1) return clean[0];
+  const pClamped = Math.max(0.0, Math.min(100.0, Number(p)));
+  const k = (n - 1) * (pClamped / 100.0);
+  const f = Math.floor(k);
+  const c = Math.ceil(k);
+  if (f === c) return clean[f];
+  return clean[f] * (c - k) + clean[c] * (k - f);
+};
+
+export const solveLinearSystemGaussian = (A, b) => {
+  const n = b.length;
+  const M = A.map((row, i) => [...row.map(Number), Number(b[i])]);
+
+  for (let i = 0; i < n; i += 1) {
+    let maxRow = i;
+    let maxVal = Math.abs(M[i][i]);
+    for (let k = i + 1; k < n; k += 1) {
+      if (Math.abs(M[k][i]) > maxVal) {
+        maxVal = Math.abs(M[k][i]);
+        maxRow = k;
+      }
+    }
+    if (maxRow !== i) {
+      const temp = M[i];
+      M[i] = M[maxRow];
+      M[maxRow] = temp;
+    }
+
+    let pivot = M[i][i];
+    if (Math.abs(pivot) < 1e-12) {
+      pivot = pivot >= 0 ? 1e-12 : -1e-12;
+    }
+
+    for (let k = i + 1; k < n; k += 1) {
+      const factor = M[k][i] / pivot;
+      for (let j = i; j <= n; j += 1) {
+        M[k][j] -= factor * M[i][j];
+      }
+    }
+  }
+
+  const x = new Array(n).fill(0.0);
+  for (let i = n - 1; i >= 0; i -= 1) {
+    let total = M[i][n];
+    for (let j = i + 1; j < n; j += 1) {
+      total -= M[i][j] * x[j];
+    }
+    let pivot = M[i][i];
+    if (Math.abs(pivot) < 1e-12) {
+      pivot = pivot >= 0 ? 1e-12 : -1e-12;
+    }
+    x[i] = total / pivot;
+  }
+  return x;
+};
+
+export const fitHarmonicFourierRegression = (times = [], values = [], numHarmonics = 2, period = 1.0) => {
+  const K = Math.max(1, Math.min(6, parseInt(numHarmonics, 10) || 2));
+  const T = Number(period) > 0 ? Number(period) : 1.0;
+
+  const cleanPairs = [];
+  for (let idx = 0; idx < Math.min(times.length, values.length); idx += 1) {
+    const t = Number(times[idx]);
+    const v = Number(values[idx]);
+    if (!Number.isNaN(t) && !Number.isNaN(v)) {
+      cleanPairs.push([t, v]);
+    }
+  }
+
+  const n = cleanPairs.length;
+  const pParams = 2 + 2 * K;
+  if (n < pParams) {
+    const avgVal = n > 0 ? cleanPairs.reduce((s, p) => s + p[1], 0) / n : 0.0;
+    const components = [];
+    for (let k = 1; k <= K; k += 1) {
+      components.push({
+        k,
+        a_k: 0.0,
+        b_k: 0.0,
+        amplitude: 0.0,
+        phase_rad: 0.0,
+        phase_deg: 0.0,
+        peak_time_fraction: 0.0
+      });
+    }
+    return {
+      intercept_a0: Number(avgVal.toFixed(4)),
+      linear_slope_a1: 0.0,
+      components,
+      rmse: 0.0,
+      r_squared: n > 0 ? 1.0 : 0.0,
+      fitted_values: new Array(n).fill(Number(avgVal.toFixed(4))),
+      residuals: new Array(n).fill(0.0),
+      formula_string: `y(t) = ${avgVal.toFixed(4)}`
+    };
+  }
+
+  const ts = cleanPairs.map((p) => p[0]);
+  const ys = cleanPairs.map((p) => p[1]);
+
+  const A = Array.from({ length: pParams }, () => new Array(pParams).fill(0.0));
+  const b = new Array(pParams).fill(0.0);
+
+  for (let idx = 0; idx < n; idx += 1) {
+    const t = ts[idx];
+    const y = ys[idx];
+    const row = [1.0, t];
+    for (let k = 1; k <= K; k += 1) {
+      const omega = (2.0 * Math.PI * k) / T;
+      row.push(Math.cos(omega * t));
+      row.push(Math.sin(omega * t));
+    }
+
+    for (let i = 0; i < pParams; i += 1) {
+      b[i] += row[i] * y;
+      for (let j = 0; j < pParams; j += 1) {
+        A[i][j] += row[i] * row[j];
+      }
+    }
+  }
+
+  for (let i = 0; i < pParams; i += 1) {
+    A[i][i] += 1e-8;
+  }
+
+  const beta = solveLinearSystemGaussian(A, b);
+  const a0 = beta[0];
+  const a1 = beta[1];
+
+  const components = [];
+  for (let k = 1; k <= K; k += 1) {
+    const ak = beta[2 + 2 * (k - 1)];
+    const bk = beta[2 + 2 * (k - 1) + 1];
+    const amp = Math.sqrt(ak * ak + bk * bk);
+    const phaseRad = Math.atan2(bk, ak);
+    const phaseDeg = ((phaseRad * 180.0) / Math.PI + 360.0) % 360.0;
+    const omega = (2.0 * Math.PI * k) / T;
+    let tPeak = (phaseRad / omega) % T;
+    if (tPeak < 0) tPeak += T;
+    const peakFraction = (tPeak / T) % 1.0;
+
+    components.push({
+      k,
+      a_k: Number(ak.toFixed(4)),
+      b_k: Number(bk.toFixed(4)),
+      amplitude: Number(amp.toFixed(4)),
+      phase_rad: Number(phaseRad.toFixed(4)),
+      phase_deg: Number(phaseDeg.toFixed(2)),
+      peak_time_fraction: Number(peakFraction.toFixed(4))
+    });
+  }
+
+  const fitted = [];
+  const residuals = [];
+  let ssRes = 0.0;
+  const meanY = ys.reduce((s, y) => s + y, 0) / n;
+  let ssTot = 0.0;
+
+  for (let idx = 0; idx < n; idx += 1) {
+    const t = ts[idx];
+    const y = ys[idx];
+    let yHat = a0 + a1 * t;
+    for (let k = 1; k <= K; k += 1) {
+      const omega = (2.0 * Math.PI * k) / T;
+      const ak = beta[2 + 2 * (k - 1)];
+      const bk = beta[2 + 2 * (k - 1) + 1];
+      yHat += ak * Math.cos(omega * t) + bk * Math.sin(omega * t);
+    }
+    const res = y - yHat;
+    fitted.push(Number(yHat.toFixed(4)));
+    residuals.push(Number(res.toFixed(4)));
+    ssRes += res * res;
+    ssTot += (y - meanY) * (y - meanY);
+  }
+
+  const rmse = Math.sqrt(ssRes / n);
+  let rSquared = ssTot > 1e-12 ? 1.0 - ssRes / ssTot : 1.0;
+  rSquared = Math.max(0.0, Math.min(1.0, rSquared));
+
+  const compStrs = components.map((c) => `${c.amplitude.toFixed(3)}*cos(${c.k}wt - ${c.phase_rad.toFixed(2)})`);
+  const formula = `y(t) = ${a0.toFixed(3)} + ${a1.toFixed(3)}*t + ${compStrs.join(' + ')}`;
+
+  return {
+    intercept_a0: Number(a0.toFixed(4)),
+    linear_slope_a1: Number(a1.toFixed(4)),
+    components,
+    rmse: Number(rmse.toFixed(4)),
+    r_squared: Number(rSquared.toFixed(4)),
+    fitted_values: fitted,
+    residuals,
+    formula_string: formula
+  };
+};
+
+export const evaluateHarmonicModel = (modelResult, t, period = 1.0) => {
+  const a0 = Number(modelResult.intercept_a0 ?? modelResult.interceptA0 ?? 0.0);
+  const a1 = Number(modelResult.linear_slope_a1 ?? modelResult.linearSlopeA1 ?? 0.0);
+  const components = modelResult.components || [];
+  const T = Number(period) > 0 ? Number(period) : 1.0;
+
+  const isArray = Array.isArray(t);
+  const tList = isArray ? t.map(Number) : [Number(t)];
+
+  const results = tList.map((timeVal) => {
+    let yHat = a0 + a1 * timeVal;
+    components.forEach((comp) => {
+      const k = parseInt(comp.k, 10) || 1;
+      const ak = Number(comp.a_k ?? comp.aK ?? 0.0);
+      const bk = Number(comp.b_k ?? comp.bK ?? 0.0);
+      const omega = (2.0 * Math.PI * k) / T;
+      yHat += ak * Math.cos(omega * timeVal) + bk * Math.sin(omega * timeVal);
+    });
+    return Number(yHat.toFixed(4));
+  });
+
+  return isArray ? results : results[0];
+};
+
+export const calculateMannKendallTest = (values = []) => {
+  const cleanVals = values.filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v))).map(Number);
+  const n = cleanVals.length;
+  if (n < 3) {
+    return {
+      mann_kendall_s: 0,
+      kendall_tau: 0.0,
+      variance_s: 0.0,
+      z_score: 0.0,
+      p_value: 1.0,
+      is_significant: false,
+      trend_direction: 'no_trend'
+    };
+  }
+
+  let S = 0;
+  for (let i = 0; i < n - 1; i += 1) {
+    for (let j = i + 1; j < n; j += 1) {
+      const diff = cleanVals[j] - cleanVals[i];
+      if (diff > 1e-9) S += 1;
+      else if (diff < -1e-9) S -= 1;
+    }
+  }
+
+  const mPairs = (n * (n - 1)) / 2.0;
+  const tau = mPairs > 0 ? S / mPairs : 0.0;
+
+  const sortedVals = [...cleanVals].sort((a, b) => a - b);
+  const tieGroups = [];
+  let currLen = 1;
+  for (let i = 1; i < n; i += 1) {
+    if (Math.abs(sortedVals[i] - sortedVals[i - 1]) < 1e-9) {
+      currLen += 1;
+    } else {
+      if (currLen > 1) tieGroups.push(currLen);
+      currLen = 1;
+    }
+  }
+  if (currLen > 1) tieGroups.push(currLen);
+
+  const tiePenalty = tieGroups.reduce((acc, tg) => acc + tg * (tg - 1) * (2 * tg + 5), 0);
+  let varS = (n * (n - 1) * (2 * n + 5) - tiePenalty) / 18.0;
+  if (varS <= 0) varS = 1e-6;
+
+  let z = 0.0;
+  if (S > 0) z = (S - 1) / Math.sqrt(varS);
+  else if (S < 0) z = (S + 1) / Math.sqrt(varS);
+
+  let pVal = 2.0 * (1.0 - 0.5 * (1.0 + erfApprox(Math.abs(z) / Math.sqrt(2.0))));
+  pVal = Math.max(0.0, Math.min(1.0, pVal));
+  const isSig = pVal < 0.05;
+
+  let direction = 'no_trend';
+  if (isSig) direction = S > 0 ? 'increasing' : 'decreasing';
+
+  return {
+    mann_kendall_s: S,
+    kendall_tau: Number(tau.toFixed(4)),
+    variance_s: Number(varS.toFixed(4)),
+    z_score: Number(z.toFixed(4)),
+    p_value: Number(pVal.toFixed(4)),
+    is_significant: isSig,
+    trend_direction: direction
+  };
+};
+
+export const calculateTheilSenSlope = (times = [], values = []) => {
+  const cleanPairs = [];
+  for (let idx = 0; idx < Math.min(times.length, values.length); idx += 1) {
+    const t = Number(times[idx]);
+    const v = Number(values[idx]);
+    if (!Number.isNaN(t) && !Number.isNaN(v)) {
+      cleanPairs.push([t, v]);
+    }
+  }
+  cleanPairs.sort((a, b) => a[0] - b[0]);
+  const n = cleanPairs.length;
+  if (n < 2) {
+    return {
+      slope_per_year: 0.0,
+      intercept: n === 1 ? cleanPairs[0][1] : 0.0,
+      slope_ci_lower: 0.0,
+      slope_ci_upper: 0.0,
+      kendall_tau: 0.0,
+      mann_kendall_s: 0,
+      p_value: 1.0,
+      z_score: 0.0,
+      is_significant: false,
+      trend_direction: 'no_trend'
+    };
+  }
+
+  const ts = cleanPairs.map((p) => p[0]);
+  const ys = cleanPairs.map((p) => p[1]);
+
+  const slopes = [];
+  for (let i = 0; i < n - 1; i += 1) {
+    for (let j = i + 1; j < n; j += 1) {
+      const dt = ts[j] - ts[i];
+      if (Math.abs(dt) > 1e-12) {
+        slopes.push((ys[j] - ys[i]) / dt);
+      }
+    }
+  }
+
+  if (slopes.length === 0) {
+    return {
+      slope_per_year: 0.0,
+      intercept: ys[0],
+      slope_ci_lower: 0.0,
+      slope_ci_upper: 0.0,
+      kendall_tau: 0.0,
+      mann_kendall_s: 0,
+      p_value: 1.0,
+      z_score: 0.0,
+      is_significant: false,
+      trend_direction: 'no_trend'
+    };
+  }
+
+  slopes.sort((a, b) => a - b);
+  const mPairs = slopes.length;
+  const medSlope = mPairs % 2 === 1 ? slopes[Math.floor(mPairs / 2)] : 0.5 * (slopes[mPairs / 2 - 1] + slopes[mPairs / 2]);
+
+  const intercepts = ys.map((y, i) => y - medSlope * ts[i]).sort((a, b) => a - b);
+  const medIntercept = n % 2 === 1 ? intercepts[Math.floor(n / 2)] : 0.5 * (intercepts[n / 2 - 1] + intercepts[n / 2]);
+
+  const varS = (n * (n - 1) * (2 * n + 5)) / 18.0;
+  const cAlpha = 1.95996 * Math.sqrt(varS);
+  const k1 = Math.max(0, Math.floor((mPairs - cAlpha) / 2.0));
+  const k2 = Math.min(mPairs - 1, Math.floor((mPairs + cAlpha) / 2.0));
+
+  const mkRes = calculateMannKendallTest(ys);
+
+  return {
+    slope_per_year: Number(medSlope.toFixed(4)),
+    intercept: Number(medIntercept.toFixed(4)),
+    slope_ci_lower: Number(slopes[k1].toFixed(4)),
+    slope_ci_upper: Number(slopes[k2].toFixed(4)),
+    kendall_tau: mkRes.kendall_tau,
+    mann_kendall_s: mkRes.mann_kendall_s,
+    p_value: mkRes.p_value,
+    z_score: mkRes.z_score,
+    is_significant: mkRes.is_significant,
+    trend_direction: mkRes.trend_direction
+  };
+};
+
+export const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+export const calculateClimatologicalMonthlyMad = (dates = [], values = [], minMadScale = 0.015) => {
+  const monthlyBuckets = Array.from({ length: 13 }, () => []);
+  const validValues = [];
+
+  for (let idx = 0; idx < Math.min(dates.length, values.length); idx += 1) {
+    const d = dates[idx];
+    const v = Number(values[idx]);
+    if (d && !Number.isNaN(v)) {
+      const { month } = extractMonthAndDayOfYear(d);
+      monthlyBuckets[month].push(v);
+      validValues.push(v);
+    }
+  }
+
+  let globalMed = 0.45;
+  let globalMad = 0.05;
+  if (validValues.length > 0) {
+    validValues.sort((a, b) => a - b);
+    const nAll = validValues.length;
+    globalMed = nAll % 2 === 1 ? validValues[Math.floor(nAll / 2)] : 0.5 * (validValues[nAll / 2 - 1] + validValues[nAll / 2]);
+    const devs = validValues.map((x) => Math.abs(x - globalMed)).sort((a, b) => a - b);
+    globalMad = nAll % 2 === 1 ? devs[Math.floor(nAll / 2)] : 0.5 * (devs[nAll / 2 - 1] + devs[nAll / 2]);
+  }
+  const globalScale = Math.max(globalMad, Number(minMadScale)) * 1.4826;
+
+  const records = [];
+  for (let m = 1; m <= 12; m += 1) {
+    const vals = monthlyBuckets[m];
+    const nM = vals.length;
+    let med = globalMed;
+    let madVal = globalMad;
+    let scale = globalScale;
+    let p10 = globalMed - 1.28 * globalScale;
+    let p25 = globalMed - 0.67 * globalScale;
+    let p75 = globalMed + 0.67 * globalScale;
+    let p90 = globalMed + 1.28 * globalScale;
+
+    if (nM > 0) {
+      vals.sort((a, b) => a - b);
+      med = nM % 2 === 1 ? vals[Math.floor(nM / 2)] : 0.5 * (vals[nM / 2 - 1] + vals[nM / 2]);
+      const devs = vals.map((x) => Math.abs(x - med)).sort((a, b) => a - b);
+      madVal = nM % 2 === 1 ? devs[Math.floor(nM / 2)] : 0.5 * (devs[nM / 2 - 1] + devs[nM / 2]);
+      scale = Math.max(madVal, Number(minMadScale)) * 1.4826;
+      p10 = percentile1d(vals, 10.0);
+      p25 = percentile1d(vals, 25.0);
+      p75 = percentile1d(vals, 75.0);
+      p90 = percentile1d(vals, 90.0);
+    }
+
+    records.push({
+      month: m,
+      month_name: MONTH_NAMES[m - 1],
+      median: Number(med.toFixed(4)),
+      mad: Number(madVal.toFixed(4)),
+      scale: Number(scale.toFixed(4)),
+      p10: Number(p10.toFixed(4)),
+      p25: Number(p25.toFixed(4)),
+      p75: Number(p75.toFixed(4)),
+      p90: Number(p90.toFixed(4)),
+      sample_count: nM
+    });
+  }
+
+  return {
+    monthly_records: records,
+    global_median: Number(globalMed.toFixed(4)),
+    global_mad: Number(globalMad.toFixed(4)),
+    global_scale: Number(globalScale.toFixed(4)),
+    total_observations: validValues.length
+  };
+};
+
+export const calculateSeasonalMadAnomalies = (dates = [], values = [], options = {}) => {
+  const minMadScale = Number(options.min_mad_scale ?? options.minMadScale ?? 0.015);
+  const anomalyThreshold = Number(options.anomaly_threshold ?? options.anomalyThreshold ?? 2.5);
+  const monthlyClimatology = options.monthly_climatology || options.monthlyClimatology || calculateClimatologicalMonthlyMad(dates, values, minMadScale);
+
+  const records = monthlyClimatology.monthly_records || [];
+  const climMap = {};
+  records.forEach((r) => { climMap[r.month] = r; });
+
+  const points = [];
+  let anomalyCount = 0;
+  let critCount = 0;
+  let maxZ = 0.0;
+  let worstTier = PhenologyAnomalyTier.NORMAL;
+
+  const tierRank = {
+    [PhenologyAnomalyTier.NORMAL]: 0,
+    [PhenologyAnomalyTier.MILD_DEVIATION]: 1,
+    [PhenologyAnomalyTier.MODERATE_ANOMALY]: 2,
+    [PhenologyAnomalyTier.SEVERE_ANOMALY]: 3,
+    [PhenologyAnomalyTier.EXTREME_ANOMALY]: 4
+  };
+
+  for (let idx = 0; idx < Math.min(dates.length, values.length); idx += 1) {
+    const d = dates[idx];
+    const v = Number(values[idx]);
+    if (!d || Number.isNaN(v)) continue;
+
+    const { month, day_of_year: doy, decimal_year: decYr } = extractMonthAndDayOfYear(d);
+    const climRec = climMap[month] || {
+      median: 0.45,
+      mad: 0.05,
+      scale: 0.074,
+      p10: 0.35,
+      p90: 0.55
+    };
+
+    const med = Number(climRec.median);
+    const scale = Number(climRec.scale);
+    const z = (v - med) / (scale + 1e-6);
+    const absZ = Math.abs(z);
+    if (absZ > maxZ) maxZ = absZ;
+
+    const tierCfg = classifyPhenologyAnomalyTier(z);
+    const tierId = tierCfg.id;
+    const isAnom = absZ >= anomalyThreshold;
+
+    if (isAnom) {
+      anomalyCount += 1;
+      if (absZ >= 3.0) critCount += 1;
+    }
+
+    if ((tierRank[tierId] || 0) > (tierRank[worstTier] || 0)) {
+      worstTier = tierId;
+    }
+
+    points.push({
+      date: String(d),
+      month,
+      day_of_year: doy,
+      decimal_year: Number(decYr.toFixed(4)),
+      observed_value: Number(v.toFixed(4)),
+      seasonal_median: Number(med.toFixed(4)),
+      seasonal_mad: Number(Number(climRec.mad).toFixed(4)),
+      seasonal_scale: Number(scale.toFixed(4)),
+      seasonal_z_score: Number(z.toFixed(4)),
+      anomaly_tier: tierId,
+      is_anomaly: isAnom,
+      p10: Number(Number(climRec.p10).toFixed(4)),
+      p90: Number(Number(climRec.p90).toFixed(4))
+    });
+  }
+
+  return {
+    points,
+    total_observations: points.length,
+    anomaly_count: anomalyCount,
+    critical_anomaly_count: critCount,
+    max_z_score: Number(maxZ.toFixed(4)),
+    worst_anomaly_tier: worstTier
+  };
+};
+
+export const simulatePhenologyDecomposition = (request = {}) => {
+  const simId = request.simulation_id || request.simulationId || `PHEN_${new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 15)}`;
+  const assetId = request.asset_id || request.assetId || 'ASSET-VEG-001';
+  const assetName = request.asset_name || request.assetName || 'Northern Embankment & Catchment Buffer';
+  const idxName = request.index_name || request.indexName || 'ndvi';
+  const centerLat = Number(request.latitude ?? 37.05);
+  const centerLon = Number(request.longitude ?? -120.85);
+  const kHarm = Math.max(1, Math.min(4, parseInt(request.num_harmonics ?? request.numHarmonics, 10) || 2));
+  const trendSlope = Number(request.trend_slope_per_year ?? request.trendSlopePerYear ?? 0.012);
+  const thresh = Number(request.anomaly_threshold ?? request.anomalyThreshold ?? 2.5);
+
+  const dates = [];
+  const vals = [];
+  const timesFrac = [];
+
+  const years = [2024, 2025, 2026];
+  let stepIdx = 0;
+  for (let yIdx = 0; yIdx < years.length; yIdx += 1) {
+    const y = years[yIdx];
+    for (let step = 0; step < 26; step += 1) {
+      const doy = Math.floor(1 + step * (365.0 / 26.0));
+      const isLeap = (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
+      const daysYr = isLeap ? 366.0 : 365.0;
+      const dt = new Date(Date.UTC(y, 0, doy));
+      const dateStr = dt.toISOString().slice(0, 10);
+      const tFrac = (y - 2024) + (doy - 1.0) / daysYr;
+
+      const phase1 = (2.0 * Math.PI * (doy - 196.0)) / 365.25;
+      const phase2 = (4.0 * Math.PI * (doy - 100.0)) / 365.25;
+
+      let val = 0.48 + trendSlope * tFrac + 0.22 * Math.cos(phase1) + 0.04 * Math.cos(phase2);
+      const noise = 0.015 * Math.sin(stepIdx * 1.7);
+      val += noise;
+
+      if (y === 2025 && step === 14) val = 0.38;
+      if (y === 2026 && step === 16) val = 0.34;
+
+      dates.push(dateStr);
+      vals.push(Number(val.toFixed(4)));
+      timesFrac.push(Number(tFrac.toFixed(4)));
+      stepIdx += 1;
+    }
+  }
+
+  const harmonicFit = fitHarmonicFourierRegression(timesFrac, vals, kHarm, 1.0);
+  const theilSen = calculateTheilSenSlope(timesFrac, vals);
+  const climatology = calculateClimatologicalMonthlyMad(dates, vals);
+  const anomalyEval = calculateSeasonalMadAnomalies(dates, vals, { monthly_climatology: climatology, anomaly_threshold: thresh });
+
+  const obsPoints = anomalyEval.points.map((pt, idx) => ({
+    ...pt,
+    harmonic_baseline: harmonicFit.fitted_values[idx],
+    residual: harmonicFit.residuals[idx]
+  }));
+
+  const amp1 = harmonicFit.components[0] ? harmonicFit.components[0].amplitude : 0.0;
+  const phaseDeg = harmonicFit.components[0] ? harmonicFit.components[0].phase_deg : 0.0;
+  const peakDoy = harmonicFit.components[0] ? Math.round(harmonicFit.components[0].peak_time_fraction * 365.25) : 196;
+
+  const summary = {
+    total_observations: obsPoints.length,
+    years_covered: 3.0,
+    mean_index: Number((vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(4)),
+    trend_slope_per_year: theilSen.slope_per_year,
+    trend_direction: theilSen.trend_direction,
+    annual_amplitude: amp1,
+    phase_angle_deg: phaseDeg,
+    peak_greenup_doy: peakDoy,
+    r_squared: harmonicFit.r_squared,
+    rmse: harmonicFit.rmse,
+    anomaly_count: anomalyEval.anomaly_count,
+    critical_anomaly_count: anomalyEval.critical_anomaly_count,
+    worst_anomaly_z: anomalyEval.max_z_score,
+    worst_anomaly_tier: anomalyEval.worst_anomaly_tier
+  };
+
+  const dLat = 0.008;
+  const dLon = 0.008 / Math.cos((centerLat * Math.PI) / 180.0);
+  const polyCoords = [
+    [Number((centerLon - dLon).toFixed(6)), Number((centerLat - dLat).toFixed(6))],
+    [Number((centerLon + dLon).toFixed(6)), Number((centerLat - dLat).toFixed(6))],
+    [Number((centerLon + dLon).toFixed(6)), Number((centerLat + dLat).toFixed(6))],
+    [Number((centerLon - dLon).toFixed(6)), Number((centerLat + dLat).toFixed(6))],
+    [Number((centerLon - dLon).toFixed(6)), Number((centerLat - dLat).toFixed(6))]
+  ];
+
+  const features = [
+    {
+      type: 'Feature',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [polyCoords]
+      },
+      properties: {
+        asset_id: assetId,
+        asset_name: assetName,
+        index_name: idxName,
+        theil_sen_slope: theilSen.slope_per_year,
+        annual_amplitude: amp1,
+        anomaly_count: anomalyEval.anomaly_count,
+        worst_tier: anomalyEval.worst_anomaly_tier
+      }
+    }
+  ];
+
+  const tileTemplate = `/api/v1/tiles/phenology/anomaly/${simId}/{metric}/{z}/{x}/{y}.png`;
+
+  return {
+    simulation_id: simId,
+    asset_id: assetId,
+    asset_name: assetName,
+    index_name: idxName,
+    summary,
+    harmonic_model: harmonicFit,
+    theil_sen_trend: theilSen,
+    monthly_climatology: climatology.monthly_records,
+    observation_points: obsPoints,
+    geojson_collection: {
+      type: 'FeatureCollection',
+      features
+    },
+    tile_url_template: tileTemplate,
+    analyzed_at: new Date().toISOString()
+  };
+};
+
+export const calculatePhenologyDecompositionAnalysis = simulatePhenologyDecomposition;
+
+export const buildPhenologyAnomalyTileUrl = (simId, metric = 'mad_anomaly_zscore', z = 12, x = 2048, y = 1024, basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/phenology/anomaly/${simId}/${metric}/${z}/${x}/${y}.png`;
+};
+
+export const buildPhenologyAnomalyTileUrlTemplate = (simId, metric = 'mad_anomaly_zscore', basePrefix = '/api/v1') => {
+  return `${basePrefix}/tiles/phenology/anomaly/${simId}/${metric}/{z}/{x}/{y}.png`;
+};
+
+// ==============================================================================
+// CYCLE v2.5.23: AUTOMATED STAC HARVESTER, SECURE WEBHOOK ENGINE & ALERT DISPATCHER
+// ==============================================================================
+
+export const STACCollectionName = {
+  SENTINEL_2: 'sentinel-2-l2a',
+  LANDSAT_C2: 'landsat-c2-l2',
+  SENTINEL_1: 'sentinel-1-rtc',
+  COP_DEM: 'cop-dem-glo-30'
+};
+
+export const HarvestScheduleInterval = {
+  HOURLY: 'hourly',
+  SIX_HOURS: '6h',
+  DAILY: 'daily',
+  WEEKLY: 'weekly',
+  CUSTOM_CRON: 'custom_cron'
+};
+
+export const WebhookChannelType = {
+  SLACK: 'slack',
+  MS_TEAMS: 'ms_teams',
+  PAGERDUTY: 'pagerduty',
+  EMAIL_SMTP: 'email_smtp',
+  CUSTOM_WEBHOOK: 'custom_webhook'
+};
+
+export const WebhookDeliveryStatus = {
+  QUEUED: 'queued',
+  DELIVERED: 'delivered',
+  RETRYING: 'retrying',
+  FAILED: 'failed',
+  DEAD_LETTER: 'dead_letter'
+};
+
+export const HarvesterAlertSeverity = {
+  INFO: 'info',
+  WARNING: 'warning',
+  CRITICAL: 'critical',
+  EMERGENCY: 'emergency'
+};
+
+export const PerimeterTriggerCondition = {
+  NEW_SCENE: 'new_scene',
+  ANOMALY_EXCEEDED: 'anomaly_exceeded',
+  CLOUD_COVER_BELOW: 'cloud_cover_below',
+  SEISMIC_INDUCED: 'seismic_induced',
+  PIPING_BREACH: 'piping_breach'
+};
+
+export const HARVEST_SCHEDULE_CONFIGS = {
+  hourly: {
+    id: 'hourly',
+    name: 'Hourly Scan',
+    interval_seconds: 3600,
+    cron: '0 * * * *',
+    description: 'Polls STAC catalog at the top of every hour.'
+  },
+  '6h': {
+    id: '6h',
+    name: '6-Hour Scan',
+    interval_seconds: 21600,
+    cron: '0 */6 * * *',
+    description: 'Polls STAC catalog four times per day.'
+  },
+  daily: {
+    id: 'daily',
+    name: 'Daily Midnight Scan',
+    interval_seconds: 86400,
+    cron: '0 0 * * *',
+    description: 'Polls STAC catalog once per day at 00:00 UTC.'
+  },
+  weekly: {
+    id: 'weekly',
+    name: 'Weekly Digest Scan',
+    interval_seconds: 604800,
+    cron: '0 0 * * 0',
+    description: 'Polls STAC catalog once per week on Sunday 00:00 UTC.'
+  },
+  custom_cron: {
+    id: 'custom_cron',
+    name: 'Custom Cron Schedule',
+    interval_seconds: 0,
+    cron: '*/15 * * * *',
+    description: 'User-defined crontab format execution schedule.'
+  }
+};
+
+export const WEBHOOK_CHANNEL_CONFIGS = {
+  slack: {
+    id: 'slack',
+    name: 'Slack Incoming Webhook',
+    content_type: 'application/json',
+    supports_blocks: true,
+    requires_secret: false,
+    default_color: '#4A154B',
+    description: 'Incoming Webhooks formatted with Slack Block Kit cards.'
+  },
+  ms_teams: {
+    id: 'ms_teams',
+    name: 'Microsoft Teams Connector',
+    content_type: 'application/json',
+    supports_blocks: true,
+    requires_secret: false,
+    default_color: '#6264A7',
+    description: 'Adaptive Cards v1.4 payload dispatched to Teams webhooks.'
+  },
+  pagerduty: {
+    id: 'pagerduty',
+    name: 'PagerDuty Events API v2',
+    content_type: 'application/json',
+    supports_blocks: false,
+    requires_secret: true,
+    default_color: '#06AC38',
+    description: 'Triggers or resolves PagerDuty incidents with routing key.'
+  },
+  email_smtp: {
+    id: 'email_smtp',
+    name: 'Email SMTP Notification',
+    content_type: 'text/html',
+    supports_blocks: false,
+    requires_secret: false,
+    default_color: '#2563EB',
+    description: 'MIME multipart text and HTML alert summary dispatched via SMTP.'
+  },
+  custom_webhook: {
+    id: 'custom_webhook',
+    name: 'Custom HTTPS Webhook (RFC 7946 GeoJSON + HMAC-SHA256)',
+    content_type: 'application/json',
+    supports_blocks: true,
+    requires_secret: true,
+    default_color: '#10B981',
+    description: 'Raw JSON event envelope with X-GIOS-Signature HMAC-SHA256 headers.'
+  }
+};
+
+function _sha256Bytes(data) {
+  if (typeof data === 'string') {
+    const utf8 = [];
+    for (let i = 0; i < data.length; i++) {
+      let charcode = data.charCodeAt(i);
+      if (charcode < 0x80) utf8.push(charcode);
+      else if (charcode < 0x800) {
+        utf8.push(0xc0 | (charcode >> 6), 0x80 | (charcode & 0x3f));
+      } else if (charcode < 0xd800 || charcode >= 0xe000) {
+        utf8.push(0xe0 | (charcode >> 12), 0x80 | ((charcode >> 6) & 0x3f), 0x80 | (charcode & 0x3f));
+      } else {
+        i++;
+        charcode = 0x10000 + (((charcode & 0x3ff) << 10) | (data.charCodeAt(i) & 0x3ff));
+        utf8.push(0xf0 | (charcode >> 18), 0x80 | ((charcode >> 12) & 0x3f), 0x80 | ((charcode >> 6) & 0x3f), 0x80 | (charcode & 0x3f));
+      }
+    }
+    data = utf8;
+  }
+  const K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+  const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const l = data.length;
+  const bitLen = l * 8;
+  const padded = data.slice();
+  padded.push(0x80);
+  while ((padded.length % 64) !== 56) {
+    padded.push(0);
+  }
+  const highBits = Math.floor(bitLen / 0x100000000);
+  const lowBits = bitLen >>> 0;
+  padded.push((highBits >>> 24) & 0xff, (highBits >>> 16) & 0xff, (highBits >>> 8) & 0xff, highBits & 0xff);
+  padded.push((lowBits >>> 24) & 0xff, (lowBits >>> 16) & 0xff, (lowBits >>> 8) & 0xff, lowBits & 0xff);
+
+  const W = new Uint32Array(64);
+  for (let chunk = 0; chunk < padded.length; chunk += 64) {
+    for (let i = 0; i < 16; i++) {
+      W[i] = ((padded[chunk + i * 4] << 24) |
+             (padded[chunk + i * 4 + 1] << 16) |
+             (padded[chunk + i * 4 + 2] << 8) |
+             (padded[chunk + i * 4 + 3])) >>> 0;
+    }
+    for (let i = 16; i < 64; i++) {
+      const s0 = (((W[i - 15] >>> 7) | (W[i - 15] << 25)) ^
+                  ((W[i - 15] >>> 18) | (W[i - 15] << 14)) ^
+                  (W[i - 15] >>> 3)) >>> 0;
+      const s1 = (((W[i - 2] >>> 17) | (W[i - 2] << 15)) ^
+                  ((W[i - 2] >>> 19) | (W[i - 2] << 13)) ^
+                  (W[i - 2] >>> 10)) >>> 0;
+      W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
+    }
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = (((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7))) >>> 0;
+      const ch = ((e & f) ^ ((~e) & g)) >>> 0;
+      const temp1 = (h + S1 + ch + K[i] + W[i]) >>> 0;
+      const S0 = (((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10))) >>> 0;
+      const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+      const temp2 = (S0 + maj) >>> 0;
+      h = g; g = f; f = e; e = (d + temp1) >>> 0;
+      d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
+    }
+    H[0] = (H[0] + a) >>> 0;
+    H[1] = (H[1] + b) >>> 0;
+    H[2] = (H[2] + c) >>> 0;
+    H[3] = (H[3] + d) >>> 0;
+    H[4] = (H[4] + e) >>> 0;
+    H[5] = (H[5] + f) >>> 0;
+    H[6] = (H[6] + g) >>> 0;
+    H[7] = (H[7] + h) >>> 0;
+  }
+  const out = [];
+  for (let i = 0; i < 8; i++) {
+    out.push((H[i] >>> 24) & 0xff);
+    out.push((H[i] >>> 16) & 0xff);
+    out.push((H[i] >>> 8) & 0xff);
+    out.push(H[i] & 0xff);
+  }
+  return out;
+}
+
+function _canonicalJsonStringify(obj) {
+  if (obj === null || typeof obj !== 'object') {
+    return JSON.stringify(obj);
+  }
+  if (Array.isArray(obj)) {
+    return '[' + obj.map(_canonicalJsonStringify).join(',') + ']';
+  }
+  const keys = Object.keys(obj).sort();
+  return '{' + keys.map(k => JSON.stringify(k) + ':' + _canonicalJsonStringify(obj[k])).join(',') + '}';
+}
+
+export const generateHmacSha256Signature = (payload, secretKey) => {
+  let msgStr = '';
+  if (typeof payload === 'object' && payload !== null) {
+    msgStr = _canonicalJsonStringify(payload);
+  } else {
+    msgStr = String(payload);
+  }
+  const keyStr = String(secretKey || '');
+  let keyBytes = [];
+  for (let i = 0; i < keyStr.length; i++) keyBytes.push(keyStr.charCodeAt(i));
+  if (keyBytes.length > 64) {
+    keyBytes = _sha256Bytes(keyBytes);
+  }
+  while (keyBytes.length < 64) keyBytes.push(0);
+  const oKeyPad = keyBytes.map(b => b ^ 0x5c);
+  const iKeyPad = keyBytes.map(b => b ^ 0x36);
+  let msgBytes = [];
+  for (let i = 0; i < msgStr.length; i++) msgBytes.push(msgStr.charCodeAt(i));
+  const inner = _sha256Bytes(iKeyPad.concat(msgBytes));
+  const outer = _sha256Bytes(oKeyPad.concat(inner));
+  return outer.map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
+export const verifyHmacSha256Signature = (payload, secretKey, signature) => {
+  if (!signature || !secretKey) return false;
+  let cleaned = String(signature).trim();
+  if (cleaned.toLowerCase().startsWith('sha256=')) {
+    cleaned = cleaned.substring(7).trim();
+  }
+  const expected = generateHmacSha256Signature(payload, secretKey);
+  if (expected.length !== cleaned.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) {
+    diff |= (expected.charCodeAt(i) ^ cleaned.charCodeAt(i));
+  }
+  return diff === 0;
+};
+
+export const pointInPerimeterPolygon = (pointLon, pointLat, polygonCoords) => {
+  if (!polygonCoords || polygonCoords.length < 3) return false;
+  const eps = 1e-9;
+  for (let i = 0; i < polygonCoords.length; i++) {
+    const [vx, vy] = polygonCoords[i];
+    if (Math.abs(vx - pointLon) < eps && Math.abs(vy - pointLat) < eps) {
+      return true;
+    }
+  }
+  const n = polygonCoords.length;
+  let inside = false;
+  let [p1x, p1y] = polygonCoords[0];
+  for (let i = 1; i <= n; i++) {
+    const [p2x, p2y] = polygonCoords[i % n];
+    const cross = (pointLat - p1y) * (p2x - p1x) - (pointLon - p1x) * (p2y - p1y);
+    if (Math.abs(cross) < eps) {
+      if (pointLon >= Math.min(p1x, p2x) - eps && pointLon <= Math.max(p1x, p2x) + eps &&
+          pointLat >= Math.min(p1y, p2y) - eps && pointLat <= Math.max(p1y, p2y) + eps) {
+        return true;
+      }
+    }
+    if (pointLat > Math.min(p1y, p2y) && pointLat <= Math.max(p1y, p2y)) {
+      if (pointLon <= Math.max(p1x, p2x)) {
+        let xinters = p1x;
+        if (p1y !== p2y) {
+          xinters = (pointLat - p1y) * (p2x - p1x) / (p2y - p1y) + p1x;
+        }
+        if (p1x === p2x || pointLon <= xinters) {
+          inside = !inside;
+        }
+      }
+    }
+    p1x = p2x;
+    p1y = p2y;
+  }
+  return inside;
+};
+
+export const calculateRetryBackoff = (attempt, baseDelay = 1.0, maxDelay = 60.0, jitterFactor = 0.0) => {
+  const attemptClamped = Math.max(0, Math.floor(attempt));
+  const base = Number(baseDelay);
+  const cap = Number(maxDelay);
+  let delay = Math.min(cap, base * Math.pow(2.0, attemptClamped));
+  if (jitterFactor !== 0.0) {
+    delay = Math.max(0.0, Math.min(cap * 1.5, delay * (1.0 + Number(jitterFactor))));
+  }
+  return Number(delay.toFixed(4));
+};
+
+export const formatChannelNotificationPayload = (channelType, envelope, webhookUrl = null) => {
+  const ch = String(channelType || 'custom_webhook').toLowerCase();
+  const eventId = envelope.event_id || 'EVT-STAC-001';
+  const eventType = envelope.event_type || 'stac_harvester.anomaly_detected';
+  const subId = envelope.subscription_id || 'SUB-STAC-001';
+  const severity = String(envelope.severity || 'warning').toLowerCase();
+  const ts = envelope.timestamp || new Date().toISOString();
+  const metrics = envelope.metrics || {};
+  const zScore = Number(metrics.z_score ?? 2.85);
+  const cloudCover = Number(metrics.cloud_cover ?? 4.2);
+  const sig = envelope.hmac_signature || '';
+
+  const colorMap = {
+    info: '#3B82F6',
+    warning: '#F59E0B',
+    critical: '#EF4444',
+    emergency: '#7F1D1D'
+  };
+  const hexColor = colorMap[severity] || '#F59E0B';
+
+  if (ch === 'slack') {
+    return {
+      channel: '#gios-alerts',
+      text: `🚨 GIOS STAC Alert [${severity.toUpperCase()}]: ${eventType} on ${subId}`,
+      attachments: [
+        {
+          color: hexColor,
+          title: `STAC Harvester Anomaly: ${eventType}`,
+          fields: [
+            { title: 'Subscription ID', value: subId, short: true },
+            { title: 'Severity', value: severity.toUpperCase(), short: true },
+            { title: 'Anomaly Z-Score', value: zScore.toFixed(2), short: true },
+            { title: 'Cloud Cover', value: `${cloudCover.toFixed(1)}%`, short: true },
+            { title: 'Timestamp', value: ts, short: false }
+          ],
+          footer: 'GIOS Automated Watchdog',
+          ts: Math.floor(new Date(ts).getTime() / 1000)
+        }
+      ]
+    };
+  } else if (ch === 'ms_teams') {
+    return {
+      type: 'message',
+      attachments: [
+        {
+          contentType: 'application/vnd.microsoft.card.adaptive',
+          content: {
+            $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+            type: 'AdaptiveCard',
+            version: '1.4',
+            body: [
+              {
+                type: 'TextBlock',
+                size: 'Medium',
+                weight: 'Bolder',
+                text: `🚨 GIOS Harvester Alert: ${eventType}`,
+                color: (severity === 'critical' || severity === 'emergency') ? 'Attention' : 'Warning'
+              },
+              {
+                type: 'FactSet',
+                facts: [
+                  { title: 'Subscription ID', value: subId },
+                  { title: 'Event ID', value: eventId },
+                  { title: 'Severity', value: severity.toUpperCase() },
+                  { title: 'Z-Score', value: String(zScore) },
+                  { title: 'Cloud Cover', value: `${cloudCover}%` },
+                  { title: 'Timestamp', value: ts }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    };
+  } else if (ch === 'pagerduty') {
+    const pdSeverity = (severity === 'critical' || severity === 'emergency') ? 'critical' : severity === 'warning' ? 'warning' : 'info';
+    return {
+      routing_key: webhookUrl || 'default-routing-key',
+      event_action: 'trigger',
+      dedup_key: `${subId}:${eventId}`,
+      payload: {
+        summary: `GIOS Harvester [${severity.toUpperCase()}]: ${eventType} on ${subId} (z=${zScore})`,
+        source: 'GIOS Automated Harvester',
+        severity: pdSeverity,
+        timestamp: ts,
+        component: 'stac_harvester',
+        group: 'remote_sensing',
+        custom_details: envelope
+      }
+    };
+  } else if (ch === 'email_smtp') {
+    const target = (webhookUrl && webhookUrl.includes('@')) ? webhookUrl : 'alerts@gios-monitoring.internal';
+    return {
+      subject: `[GIOS ${severity.toUpperCase()}] STAC Harvester: ${eventType} (${subId})`,
+      to: [target],
+      body_text: `GIOS STAC Harvester Alert\nSeverity: ${severity}\nSubscription: ${subId}\nEvent: ${eventId}\nZ-Score: ${zScore}\nTimestamp: ${ts}`,
+      body_html: `<h2>GIOS STAC Harvester Alert</h2><p><strong>Severity:</strong> ${severity}</p><p><strong>Subscription:</strong> ${subId}</p><p><strong>Z-Score:</strong> ${zScore}</p><p><strong>Timestamp:</strong> ${ts}</p>`
+    };
+  } else {
+    return {
+      event_id: eventId,
+      event_type: eventType,
+      timestamp: ts,
+      subscription_id: subId,
+      severity,
+      geojson_feature: envelope.geojson_feature || {},
+      metrics,
+      hmac_signature: sig
+    };
+  }
+};
+
+export const simulateSTACHarvesterCycle = (subscription, candidateScenes = null) => {
+  const subCopy = { ...(subscription || {}) };
+  const subId = subCopy.subscription_id || subCopy.subscriptionId || 'SUB-HARVEST-001';
+  const subName = subCopy.name || 'Automated STAC Perimeter Watchdog';
+  const sched = subCopy.schedule || {};
+  const cloudMax = sched.cloud_cover_max ?? sched.cloudCoverMax ?? 20.0;
+  const zThresh = subCopy.z_score_threshold ?? subCopy.zScoreThreshold ?? 2.5;
+
+  const perimeter = subCopy.perimeter || {};
+  const polyCoords = perimeter.polygon_coordinates || perimeter.polygonCoordinates || [
+    [-120.90, 37.00], [-120.80, 37.00], [-120.80, 37.10], [-120.90, 37.10], [-120.90, 37.00]
+  ];
+
+  const endpoints = subCopy.webhook_endpoints || subCopy.webhookEndpoints || [
+    {
+      endpoint_id: 'EP-01',
+      channel_type: 'custom_webhook',
+      target_url: 'https://api.gios.internal/webhooks/incoming',
+      secret_token: 'gios-super-secret-key-32chars!!',
+      is_active: true,
+      max_retries: 3
+    }
+  ];
+
+  const scenes = candidateScenes || [
+    {
+      scene_id: 'S2A_MSIL2A_20261015T184521_T10SEG',
+      collection: 'sentinel-2-l2a',
+      acquisition_time: '2026-10-15T18:45:21Z',
+      cloud_cover: 4.5,
+      center_lon: -120.85,
+      center_lat: 37.05,
+      z_score: 2.92,
+      mean_ndvi: 0.284
+    },
+    {
+      scene_id: 'LC09_L2SP_042034_20261014_02_T1',
+      collection: 'landsat-c2-l2',
+      acquisition_time: '2026-10-14T18:30:10Z',
+      cloud_cover: 42.0,
+      center_lon: -120.84,
+      center_lat: 37.04,
+      z_score: 3.10,
+      mean_ndvi: 0.260
+    },
+    {
+      scene_id: 'S2B_MSIL2A_20261010T184015_T10SEG',
+      collection: 'sentinel-2-l2a',
+      acquisition_time: '2026-10-10T18:40:15Z',
+      cloud_cover: 1.2,
+      center_lon: -120.86,
+      center_lat: 37.06,
+      z_score: 1.15,
+      mean_ndvi: 0.510
+    }
+  ];
+
+  const evaluatedScenes = [];
+  const dispatchedEvents = [];
+  const deliveryAttempts = [];
+  const dlqItems = [];
+
+  scenes.forEach(scene => {
+    const sId = scene.scene_id || 'SCENE_001';
+    const cc = Number(scene.cloud_cover ?? 0.0);
+    const cLon = Number(scene.center_lon ?? -120.85);
+    const cLat = Number(scene.center_lat ?? 37.05);
+    const zSc = Number(scene.z_score ?? 0.0);
+
+    const inPerimeter = pointInPerimeterPolygon(cLon, cLat, polyCoords);
+    const cloudOk = (cc <= cloudMax);
+    const anomalyOk = (Math.abs(zSc) >= zThresh);
+
+    let status = 'evaluated';
+    if (!inPerimeter) {
+      status = 'outside_perimeter';
+    } else if (!cloudOk) {
+      status = 'cloud_cover_exceeded';
+    } else if (!anomalyOk) {
+      status = 'normal_variation';
+    } else {
+      status = 'anomaly_triggered';
+    }
+
+    evaluatedScenes.push({
+      scene_id: sId,
+      collection: scene.collection || 'sentinel-2-l2a',
+      cloud_cover: cc,
+      in_perimeter: inPerimeter,
+      z_score: zSc,
+      status
+    });
+
+    if (status === 'anomaly_triggered') {
+      const evtId = `EVT-${sId.substring(0, 16)}-${Date.now()}`;
+      const severity = Math.abs(zSc) >= 3.0 ? 'critical' : 'warning';
+
+      const geojsonFeature = {
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [cLon, cLat]
+        },
+        properties: {
+          scene_id: sId,
+          collection: scene.collection || 'sentinel-2-l2a',
+          cloud_cover: cc,
+          z_score: zSc,
+          subscription_id: subId
+        }
+      };
+
+      const firstEp = endpoints[0] || {};
+      const secret = firstEp.secret_token || firstEp.secretToken || 'default-secret-key';
+      const payloadDict = {
+        event_id: evtId,
+        event_type: 'stac_harvester.anomaly_detected',
+        timestamp: new Date().toISOString(),
+        subscription_id: subId,
+        severity,
+        geojson_feature: geojsonFeature,
+        metrics: {
+          z_score: zSc,
+          cloud_cover: cc,
+          mean_ndvi: scene.mean_ndvi ?? 0.3
+        }
+      };
+      const sig = generateHmacSha256Signature(payloadDict, secret);
+      payloadDict.hmac_signature = sig;
+
+      dispatchedEvents.push(payloadDict);
+
+      endpoints.forEach(ep => {
+        const epId = ep.endpoint_id || ep.endpointId || 'EP-01';
+        const chType = ep.channel_type || ep.channelType || 'custom_webhook';
+        if (ep.is_active === false) return;
+
+        deliveryAttempts.push({
+          attempt_id: `ATT-${evtId}-${epId}`,
+          event_id: evtId,
+          endpoint_id: epId,
+          channel_type: chType,
+          status: 'delivered',
+          status_code: 200,
+          attempt_number: 1,
+          dispatched_at: new Date().toISOString(),
+          response_latency_ms: 42.5,
+          error_message: null
+        });
+      });
+    }
+  });
+
+  return {
+    subscription_id: subId,
+    subscription_name: subName,
+    evaluated_scenes_count: evaluatedScenes.length,
+    triggered_anomalies_count: dispatchedEvents.length,
+    dispatches_count: deliveryAttempts.length,
+    dlq_count: dlqItems.length,
+    evaluated_scenes: evaluatedScenes,
+    events: dispatchedEvents,
+    delivery_attempts: deliveryAttempts,
+    dead_letter_queue: dlqItems,
+    executed_at: new Date().toISOString()
+  };
+};
+
+export const calculateSTACHarvesterSimulation = simulateSTACHarvesterCycle;
+
+
+
 
 
 
