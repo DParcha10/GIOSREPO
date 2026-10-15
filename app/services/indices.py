@@ -455,4 +455,206 @@ class IndexComputationService:
             }
             return band_map.get(idx, ["blue", "green", "red", "nir08", "swir16", "swir22", "lwir11", "qa_pixel"])
 
+    @classmethod
+    def evaluate_band_math_raster(
+        cls,
+        ast_or_formula: Union[str, Dict[str, Any]],
+        band_rasters: Dict[str, Any],
+        epsilon: float = 1e-6,
+        max_depth: int = 20
+    ) -> np.ndarray:
+        """Vectorized NumPy AST raster compiler for arbitrary multi-band algebraic formulas.
+
+        Evaluates parsed AST directly against 2D/3D float32 numpy arrays with:
+        - Strict division-by-zero protection (denominator clamped to epsilon with preserved sign)
+        - Safe exponentiation and fractional power guards
+        - Real-domain protection for sqrt and log
+        - Over/underflow protection for exp
+        - Case-insensitive band identifier resolution and canonical alias mapping
+        """
+        from app.models.schemas import (
+            BandMathNodeType,
+            BAND_NAME_ALIASES,
+            parse_band_math_ast,
+            validate_band_math_formula
+        )
+
+        if isinstance(ast_or_formula, str):
+            ast_node = parse_band_math_ast(ast_or_formula, max_depth=max_depth)
+        elif isinstance(ast_or_formula, dict):
+            ast_node = ast_or_formula
+        else:
+            raise ValueError("ast_or_formula must be a formula string or AST dictionary.")
+
+        # Normalize band rasters dictionary to uppercase keys and map aliases
+        norm_bands: Dict[str, np.ndarray] = {}
+        sample_shape: Optional[Tuple[int, ...]] = None
+
+        for k, v in band_rasters.items():
+            arr = np.asarray(v, dtype=np.float32)
+            if sample_shape is None and arr.ndim >= 1:
+                sample_shape = arr.shape
+            upper_k = str(k).upper().strip()
+            norm_bands[upper_k] = arr
+            canonical = BAND_NAME_ALIASES.get(upper_k)
+            if canonical and canonical not in norm_bands:
+                norm_bands[canonical] = arr
+
+        # Bidirectional mapping for band aliases (e.g. RED <-> B04)
+        for alias, canon in BAND_NAME_ALIASES.items():
+            if canon in norm_bands and alias not in norm_bands:
+                norm_bands[alias] = norm_bands[canon]
+            elif alias in norm_bands and canon not in norm_bands:
+                norm_bands[canon] = norm_bands[alias]
+
+        if sample_shape is None:
+            for arr in norm_bands.values():
+                if isinstance(arr, np.ndarray) and arr.ndim >= 1:
+                    sample_shape = arr.shape
+                    break
+            if sample_shape is None:
+                sample_shape = (256, 256)
+
+        def _eval_node(node: Dict[str, Any]) -> np.ndarray:
+            ntype = node.get("type")
+
+            if ntype == BandMathNodeType.CONSTANT.value:
+                val = float(node.get("value", 0.0))
+                return np.float32(val)
+
+            if ntype == BandMathNodeType.VARIABLE.value:
+                raw_vname = str(node.get("raw_name", "")).upper()
+                if raw_vname in norm_bands:
+                    return norm_bands[raw_vname]
+                vname = str(node.get("name", "")).upper()
+                if vname in norm_bands:
+                    return norm_bands[vname]
+                canonical = BAND_NAME_ALIASES.get(vname, vname)
+                if canonical in norm_bands:
+                    return norm_bands[canonical]
+                available = sorted(list(norm_bands.keys()))
+                raise KeyError(f"Missing required band raster for '{node.get('name')}'. Available bands: {available}.")
+
+            if ntype == BandMathNodeType.UNARY_OP.value:
+                op = node.get("op", "-")
+                operand_val = _eval_node(node["operand"])
+                if op == "-":
+                    return -operand_val
+                elif op == "+":
+                    return operand_val
+                raise ValueError(f"Unsupported unary operator '{op}'.")
+
+            if ntype == BandMathNodeType.BINARY_OP.value:
+                op = node.get("op", "+")
+                left_val = _eval_node(node["left"])
+                right_val = _eval_node(node["right"])
+
+                if op == "+":
+                    return left_val + right_val
+                elif op == "-":
+                    return left_val - right_val
+                elif op == "*":
+                    return left_val * right_val
+                elif op == "/":
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        denom = right_val
+                        if isinstance(denom, np.ndarray):
+                            denom_sign = np.where(denom >= 0.0, np.float32(1.0), np.float32(-1.0))
+                            denom_safe = np.where(np.abs(denom) < epsilon, denom_sign * np.float32(epsilon), denom)
+                            return left_val / denom_safe
+                        else:
+                            d_flt = float(denom)
+                            if abs(d_flt) < epsilon:
+                                sign = 1.0 if d_flt >= 0.0 else -1.0
+                                d_flt = sign * epsilon
+                            return left_val / np.float32(d_flt)
+
+                elif op in ("^", "**"):
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        if isinstance(left_val, np.ndarray):
+                            safe_base = np.where(left_val < 0.0, np.abs(left_val), left_val)
+                            return np.power(safe_base, right_val, dtype=np.float32)
+                        else:
+                            base_flt = abs(float(left_val)) if float(left_val) < 0.0 else float(left_val)
+                            return np.power(base_flt, right_val, dtype=np.float32)
+                raise ValueError(f"Unsupported binary operator '{op}'.")
+
+            if ntype == BandMathNodeType.FUNCTION_CALL.value:
+                fname = str(node.get("name", "")).lower()
+                evaluated_args = [_eval_node(a) for a in node.get("args", [])]
+
+                if fname == "sqrt":
+                    with np.errstate(invalid="ignore"):
+                        safe_arg = np.maximum(np.float32(0.0), evaluated_args[0])
+                        return np.sqrt(safe_arg, dtype=np.float32)
+
+                elif fname == "abs":
+                    return np.abs(evaluated_args[0])
+
+                elif fname == "log":
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        safe_arg = np.maximum(np.float32(1e-12), evaluated_args[0])
+                        return np.log(safe_arg, dtype=np.float32)
+
+                elif fname == "exp":
+                    with np.errstate(over="ignore", under="ignore"):
+                        safe_arg = np.clip(evaluated_args[0], np.float32(-50.0), np.float32(50.0))
+                        return np.exp(safe_arg, dtype=np.float32)
+
+                elif fname == "min":
+                    return np.minimum(evaluated_args[0], evaluated_args[1])
+
+                elif fname == "max":
+                    return np.maximum(evaluated_args[0], evaluated_args[1])
+
+                elif fname == "clamp":
+                    val = evaluated_args[0]
+                    low = np.minimum(evaluated_args[1], evaluated_args[2])
+                    high = np.maximum(evaluated_args[1], evaluated_args[2])
+                    return np.clip(val, low, high)
+
+                elif fname == "norm_diff":
+                    a = evaluated_args[0]
+                    b = evaluated_args[1]
+                    denom = a + b
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        if isinstance(denom, np.ndarray):
+                            denom_sign = np.where(denom >= 0.0, np.float32(1.0), np.float32(-1.0))
+                            denom_safe = np.where(np.abs(denom) < epsilon, denom_sign * np.float32(epsilon), denom)
+                            return (a - b) / denom_safe
+                        else:
+                            d_flt = float(denom)
+                            if abs(d_flt) < epsilon:
+                                sign = 1.0 if d_flt >= 0.0 else -1.0
+                                d_flt = sign * epsilon
+                            return (a - b) / np.float32(d_flt)
+
+                raise ValueError(f"Unsupported function '{fname}'.")
+
+            raise ValueError(f"Invalid AST node type '{ntype}'.")
+
+        res = _eval_node(ast_node)
+        if not isinstance(res, np.ndarray):
+            res = np.full(sample_shape, res, dtype=np.float32)
+        elif res.ndim == 0:
+            res = np.full(sample_shape, float(res), dtype=np.float32)
+        elif sample_shape is not None and res.shape != sample_shape:
+            try:
+                res = np.broadcast_to(res, sample_shape).copy()
+            except Exception:
+                pass
+        return res.astype(np.float32)
+
+    @classmethod
+    def compile_ast_to_numpy(
+        cls,
+        ast_node: Dict[str, Any],
+        band_rasters: Dict[str, Any],
+        epsilon: float = 1e-6
+    ) -> np.ndarray:
+        """Alias for evaluate_band_math_raster using parsed AST."""
+        return cls.evaluate_band_math_raster(ast_node, band_rasters, epsilon=epsilon)
+
+
 index_service = IndexComputationService()
+

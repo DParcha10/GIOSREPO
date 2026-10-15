@@ -134,6 +134,29 @@ class TestTileServer(unittest.TestCase):
             img = Image.open(io.BytesIO(tile_bytes))
             self.assertEqual(img.size, (256, 256))
 
+    def test_render_custom_expression_tile(self):
+        """Task T-211: Verify dynamic XYZ custom band math AST raster tile rendering."""
+        t0 = time.time()
+        tile_bytes = tile_service.render_custom_expression_tile(
+            z=12,
+            x=652,
+            y=1582,
+            expr="(B08 - B04) / (B08 + B04)",
+            colormap="rdylgn",
+            rescale="-0.2,0.8"
+        )
+        elapsed_ms = (time.time() - t0) * 1000
+
+        self.assertIsInstance(tile_bytes, bytes)
+        self.assertEqual(tile_bytes[:4], b"\x89PNG")
+        self.assertLess(elapsed_ms, 500.0, f"Custom tile rendering took {elapsed_ms}ms, exceeding 500ms target")
+
+        img = Image.open(io.BytesIO(tile_bytes))
+        self.assertEqual(img.size, (256, 256))
+        self.assertEqual(img.mode, "RGBA")
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

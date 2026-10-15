@@ -646,7 +646,17 @@ from app.models.schemas import (
     build_phenology_anomaly_tile_url,
     build_phenology_anomaly_tile_url_template,
     classify_phenology_anomaly_tier,
-    _extract_month_and_day_of_year
+    _extract_month_and_day_of_year,
+    BandMathValidationRequest,
+    BandMathValidationResponse,
+    BandMathEvaluationRequest,
+    BandMathEvaluationResponse,
+    BandMathPresetsResponse,
+    BandMathPreset,
+    BAND_MATH_PRESETS,
+    validate_band_math_formula,
+    evaluate_band_math_formula,
+    parse_band_math_ast
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -8472,5 +8482,152 @@ def get_phenology_anomaly_tile_metric(
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Phenology-{metric}"}
     )
+
+
+# ==============================================================================
+# AST Custom Band Math Formula Compiler & Evaluation Endpoints (Cycle v2.5.25)
+# ==============================================================================
+
+@router.post("/custom-expression/validate", response_model=BandMathValidationResponse, response_model_by_alias=False)
+@router.post("/custom-expression/validate/", response_model=BandMathValidationResponse, response_model_by_alias=False, include_in_schema=False)
+def validate_custom_expression_formula(payload: BandMathValidationRequest):
+    """Validates band math formula grammar, lexer tokens, AST nodes, and detected spectral band identifiers."""
+    diag = validate_band_math_formula(
+        formula=payload.formula,
+        collection=payload.collection or "sentinel-2-l2a"
+    )
+    return BandMathValidationResponse(**diag)
+
+
+@router.post("/custom-expression/evaluate", response_model=BandMathEvaluationResponse, response_model_by_alias=False)
+@router.post("/custom-expression/evaluate/", response_model=BandMathEvaluationResponse, response_model_by_alias=False, include_in_schema=False)
+def evaluate_custom_expression_formula_route(payload: BandMathEvaluationRequest):
+    """Safely evaluates an algebraic band math expression against scalar band surface reflectance values."""
+    import time
+    t0 = time.time()
+    try:
+        diag = validate_band_math_formula(payload.formula, collection=payload.collection or "sentinel-2-l2a")
+        if not diag["is_valid"]:
+            return BandMathEvaluationResponse(
+                is_valid=False,
+                formula=payload.formula,
+                error_message=diag.get("error_message") or "Invalid band math formula.",
+                ast_depth=diag.get("ast_depth", 0),
+                node_count=diag.get("node_count", 0),
+                execution_time_ms=round((time.time() - t0) * 1000.0, 3)
+            )
+
+        res = evaluate_band_math_formula(
+            formula=payload.formula,
+            band_values=payload.band_values,
+            epsilon=payload.epsilon or 1e-6
+        )
+        exec_ms = round((time.time() - t0) * 1000.0, 3)
+
+        return BandMathEvaluationResponse(
+            is_valid=True,
+            formula=payload.formula,
+            result=float(res),
+            bands_used=diag.get("bands_detected", []),
+            ast_depth=diag.get("ast_depth", 1),
+            node_count=diag.get("node_count", 1),
+            execution_time_ms=exec_ms
+        )
+    except Exception as exc:
+        return BandMathEvaluationResponse(
+            is_valid=False,
+            formula=payload.formula,
+            error_message=str(exc),
+            execution_time_ms=round((time.time() - t0) * 1000.0, 3)
+        )
+
+
+@router.get("/custom-expression/presets", response_model=BandMathPresetsResponse, response_model_by_alias=False)
+@router.get("/custom-expression/presets/", response_model=BandMathPresetsResponse, response_model_by_alias=False, include_in_schema=False)
+def get_custom_expression_presets():
+    """Returns catalog of pre-configured, verified industry-standard and scientific spectral band math presets."""
+    preset_items = []
+    for pid, pdata in BAND_MATH_PRESETS.items():
+        preset_items.append(BandMathPreset(
+            id=pdata["id"],
+            name=pdata["name"],
+            formula=pdata["formula"],
+            bands_required=pdata["bands_required"],
+            description=pdata["description"],
+            category=pdata["category"],
+            default_colormap=pdata["default_colormap"],
+            default_rescale=[float(x) for x in pdata["default_rescale"]],
+            units=pdata["units"]
+        ))
+    return BandMathPresetsResponse(presets=preset_items, total=len(preset_items))
+
+
+# ==============================================================================
+# Dynamic XYZ Custom Band Math Raster Tile Streaming Endpoints
+# ==============================================================================
+
+@tiles_router.get("/custom-expression/{z}/{x}/{y}.png")
+@router.get("/tiles/custom-expression/{z}/{x}/{y}.png", include_in_schema=False)
+def get_custom_expression_tile(
+    z: int,
+    x: int,
+    y: int,
+    expr: str = Query("(B08 - B04) / (B08 + B04)", description="Algebraic band math expression string (e.g. '(B08 - B04) / (B08 + B04)')"),
+    collection: Optional[str] = Query("sentinel-2-l2a", description="Target sensor collection"),
+    item_id: Optional[str] = Query(None, description="STAC scene asset item ID"),
+    colormap: Optional[str] = Query("viridis", description="Display colormap palette"),
+    rescale: Optional[str] = Query(None, description="Contrast stretch bounds min,max"),
+    epsilon: float = Query(1e-6, description="Division-by-zero protection clamp")
+):
+    """Dynamic XYZ tile streaming for arbitrary AST band math expressions."""
+    png_bytes = tile_service.render_custom_expression_tile(
+        z=z,
+        x=x,
+        y=y,
+        expr=expr,
+        collection=collection,
+        item_id=item_id,
+        colormap=colormap,
+        rescale=rescale,
+        epsilon=epsilon
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-AST-BandMath-v2.5"}
+    )
+
+
+@tiles_router.get("/{collection}/{item_id}/custom-expression/{z}/{x}/{y}.png")
+@router.get("/tiles/{collection}/{item_id}/custom-expression/{z}/{x}/{y}.png", include_in_schema=False)
+def get_collection_custom_expression_tile(
+    collection: str,
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    expr: str = Query("(B08 - B04) / (B08 + B04)", description="Algebraic band math expression string"),
+    colormap: Optional[str] = Query("viridis", description="Display colormap palette"),
+    rescale: Optional[str] = Query(None, description="Contrast stretch bounds min,max"),
+    epsilon: float = Query(1e-6, description="Division-by-zero protection clamp")
+):
+    """Dynamic XYZ tile streaming for scene-specific custom AST band math expressions."""
+    png_bytes = tile_service.render_custom_expression_tile(
+        z=z,
+        x=x,
+        y=y,
+        expr=expr,
+        collection=collection,
+        item_id=item_id,
+        colormap=colormap,
+        rescale=rescale,
+        epsilon=epsilon
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-AST-{collection}-v2.5"}
+    )
+
 
 

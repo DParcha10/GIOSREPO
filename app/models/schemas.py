@@ -875,6 +875,23 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_custom_expression": "/api/v1/tiles/custom-expression/{z}/{x}/{y}.png",
     "tiles_custom_expression_collection": "/api/v1/tiles/{collection}/{item_id}/custom-expression/{z}/{x}/{y}.png",
     "tiles_custom_expression_short": "/tiles/custom-expression/{z}/{x}/{y}.png",
+    # Cycle v2.5.26: DEM Topography & Hillshade Contracts
+    "analysis_dem_topography": "/api/v1/analysis/dem/topography",
+    "analysis_dem_topography_short": "/analysis/dem/topography",
+    "analysis_dem_transect": "/api/v1/analysis/dem/transect",
+    "analysis_dem_transect_short": "/analysis/dem/transect",
+    "analysis_dem_slope_hazard": "/api/v1/analysis/dem/slope-hazard",
+    "analysis_dem_slope_hazard_short": "/analysis/dem/slope-hazard",
+    "tiles_dem_relief": "/api/v1/tiles/dem/relief/{z}/{x}/{y}.png",
+    "tiles_dem_relief_short": "/tiles/dem/relief/{z}/{x}/{y}.png",
+    "tiles_dem_metric": "/api/v1/tiles/dem/{metric}/{z}/{x}/{y}.png",
+    "tiles_dem_metric_short": "/tiles/dem/{metric}/{z}/{x}/{y}.png",
+    "tiles_dem_hillshade": "/api/v1/tiles/dem/hillshade/{z}/{x}/{y}.png",
+    "tiles_dem_hillshade_short": "/tiles/dem/hillshade/{z}/{x}/{y}.png",
+    "tiles_dem_slope": "/api/v1/tiles/dem/slope/{z}/{x}/{y}.png",
+    "tiles_dem_slope_short": "/tiles/dem/slope/{z}/{x}/{y}.png",
+    "tiles_dem_twi": "/api/v1/tiles/dem/twi/{z}/{x}/{y}.png",
+    "tiles_dem_twi_short": "/tiles/dem/twi/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -911,6 +928,10 @@ def format_api_route(route_name: str, **kwargs) -> str:
         template = API_ROUTE_CONTRACTS.get("tiles_phenology_anomaly_metric", "/api/v1/tiles/phenology/anomaly/{sim_id}/{metric}/{z}/{x}/{y}.png")
     elif route_name == "tiles_drone_photogrammetry" and "metric" in kwargs:
         template = API_ROUTE_CONTRACTS.get("tiles_drone_photogrammetry_metric", "/api/v1/tiles/drone/photogrammetry/{task_id}/{metric}/{z}/{x}/{y}.png")
+    elif route_name in ("tiles_dem_metric", "tiles_dem_metric_short") and "metric" not in kwargs:
+        kwargs["metric"] = "elevation"
+    elif route_name in ("tiles_dem_relief", "tiles_dem_relief_short") and "metric" in kwargs:
+        template = API_ROUTE_CONTRACTS.get("tiles_dem_metric", "/api/v1/tiles/dem/{metric}/{z}/{x}/{y}.png")
     elif route_name in ("analysis_liquefaction_detail", "analysis_liquefaction_detail_short"):
         if "simulation_id" not in kwargs and "sim_id" in kwargs:
             kwargs["simulation_id"] = kwargs["sim_id"]
@@ -4475,19 +4496,56 @@ class SlopeStabilityResponse(BaseModel):
     created_at: str = Field(..., description="ISO 8601 calculation timestamp")
 
 def calculate_topographic_wetness_index(
-    catchment_area_m2: float,
-    slope_degrees: float,
+    catchment_area_m2: Optional[float] = None,
+    slope_degrees: Optional[float] = None,
     contour_width_m: float = 10.0,
-    min_slope_deg: float = 0.1
-) -> float:
+    min_slope_deg: float = 0.1,
+    *,
+    slope_deg: Optional[float] = None,
+    specific_catchment_area_m: Optional[float] = None,
+    min_tan_slope: float = 0.001,
+    as_model: bool = False
+) -> Union[float, Any]:
     """Calculates Topographic Wetness Index: TWI = ln(a / tan(beta))."""
-    eff_slope = max(slope_degrees, min_slope_deg)
+    if slope_degrees is None:
+        if slope_deg is not None:
+            slope_degrees = slope_deg
+        elif catchment_area_m2 is not None and specific_catchment_area_m is None and contour_width_m == 10.0 and min_slope_deg == 0.1:
+            slope_degrees = catchment_area_m2
+            catchment_area_m2 = None
+        else:
+            slope_degrees = 15.0
+
+    eff_slope = max(float(slope_degrees), min_slope_deg)
     slope_rad = (eff_slope * math.pi) / 180.0
-    tan_beta = math.tan(slope_rad)
-    if tan_beta <= 1e-6:
-        tan_beta = 1e-6
-    specific_catchment = max(catchment_area_m2 / max(contour_width_m, 1.0), 1.0)
+    tan_beta = max(min_tan_slope, math.tan(slope_rad))
+
+    if specific_catchment_area_m is not None:
+        specific_catchment = max(1.0, float(specific_catchment_area_m))
+    elif catchment_area_m2 is not None:
+        specific_catchment = max(float(catchment_area_m2) / max(contour_width_m, 1.0), 1.0)
+    else:
+        specific_catchment = 100.0
+
     twi = math.log(specific_catchment / tan_beta)
+
+    if as_model:
+        if twi > 14.0:
+            hazard_tier = "critical"
+        elif twi > 10.0:
+            hazard_tier = "high"
+        elif twi > 6.0:
+            hazard_tier = "moderate"
+        else:
+            hazard_tier = "low"
+        return TopographicWetnessResult(
+            twi=round(twi, 4),
+            specific_catchment_area_m=round(specific_catchment, 2),
+            slope_rad=round(slope_rad, 6),
+            tan_slope=round(tan_beta, 6),
+            seepage_hazard_tier=hazard_tier
+        )
+
     return round(twi, 3)
 
 def calculate_slope_factor_of_safety(
@@ -14699,17 +14757,38 @@ class SlipSurfaceSearchResponse(BaseModel):
     searched_at: str = Field(..., alias="searchedAt")
 
 
-def classify_slope_hazard_tier(factor_of_safety: float) -> SlopeHazardTier:
-    """Evaluates Factor of Safety against ICOLD / USBR regulatory thresholds."""
-    fs = float(factor_of_safety)
-    if fs < 1.00:
-        return SlopeHazardTier.CRITICAL_SHEAR_FAILURE
-    elif fs < 1.30:
-        return SlopeHazardTier.ELEVATED_INSTABILITY_RISK
-    elif fs < 1.50:
-        return SlopeHazardTier.CONDITIONALLY_STABLE
-    else:
-        return SlopeHazardTier.STABLE
+def classify_slope_hazard_tier(
+    factor_of_safety: Optional[float] = None,
+    slope_deg: Optional[float] = None,
+    slope_degrees: Optional[float] = None
+) -> SlopeHazardTier:
+    """Evaluates Factor of Safety against ICOLD / USBR regulatory thresholds,
+    or classifies terrain slope angle into SlopeHazardTier if slope_deg is provided."""
+    target_slope = slope_deg if slope_deg is not None else slope_degrees
+    if target_slope is not None:
+        s = max(0.0, float(target_slope))
+        if s < 5.0:
+            return SlopeHazardTier.FLAT
+        elif s < 15.0:
+            return SlopeHazardTier.GENTLE
+        elif s < 25.0:
+            return SlopeHazardTier.MODERATE
+        elif s < 35.0:
+            return SlopeHazardTier.STEEP
+        else:
+            return SlopeHazardTier.CRITICAL_HAZARD
+
+    if factor_of_safety is not None:
+        fs = float(factor_of_safety)
+        if fs < 1.00:
+            return SlopeHazardTier.CRITICAL_SHEAR_FAILURE
+        elif fs < 1.30:
+            return SlopeHazardTier.ELEVATED_INSTABILITY_RISK
+        elif fs < 1.50:
+            return SlopeHazardTier.CONDITIONALLY_STABLE
+        else:
+            return SlopeHazardTier.STABLE
+    return SlopeHazardTier.STABLE
 
 
 def classify_insar_creep_status(
@@ -25775,16 +25854,16 @@ class BandMathValidationResponse(BaseModel):
     """Validation response providing parsed AST, syntax diagnostics, and required band identifiers."""
     model_config = ConfigDict(populate_by_name=True)
 
-    is_valid: bool
+    is_valid: bool = Field(..., alias="isValid")
     formula: str
-    normalized_formula: str
+    normalized_formula: str = Field(..., alias="normalizedFormula")
     ast: Optional[Dict[str, Any]] = None
-    bands_detected: List[str] = Field(default_factory=list)
-    unrecognized_identifiers: List[str] = Field(default_factory=list)
-    ast_depth: int = 0
-    node_count: int = 0
-    syntax_errors: List[str] = Field(default_factory=list)
-    error_message: Optional[str] = None
+    bands_detected: List[str] = Field(default_factory=list, alias="bandsDetected")
+    unrecognized_identifiers: List[str] = Field(default_factory=list, alias="unrecognizedIdentifiers")
+    ast_depth: int = Field(default=0, alias="astDepth")
+    node_count: int = Field(default=0, alias="nodeCount")
+    syntax_errors: List[str] = Field(default_factory=list, alias="syntaxErrors")
+    error_message: Optional[str] = Field(default=None, alias="errorMessage")
 
 
 class BandMathEvaluationRequest(BaseModel):
@@ -25792,7 +25871,7 @@ class BandMathEvaluationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     formula: str = Field(..., description="Algebraic formula string.")
-    band_values: Dict[str, float] = Field(..., description="Mapping of band identifiers to surface reflectance values.")
+    band_values: Dict[str, float] = Field(..., alias="bandValues", description="Mapping of band identifiers to surface reflectance values.")
     collection: Optional[str] = Field(default="sentinel-2-l2a", description="Sensor collection context.")
     epsilon: float = Field(default=1e-6, ge=1e-12, le=1.0, description="Numerical stability denominator clamp.")
 
@@ -25801,14 +25880,14 @@ class BandMathEvaluationResponse(BaseModel):
     """Result of safe scalar mathematical expression evaluation."""
     model_config = ConfigDict(populate_by_name=True)
 
-    is_valid: bool
+    is_valid: bool = Field(..., alias="isValid")
     formula: str
     result: Optional[float] = None
-    bands_used: List[str] = Field(default_factory=list)
-    ast_depth: int = 0
-    node_count: int = 0
-    execution_time_ms: float = 0.0
-    error_message: Optional[str] = None
+    bands_used: List[str] = Field(default_factory=list, alias="bandsUsed")
+    ast_depth: int = Field(default=0, alias="astDepth")
+    node_count: int = Field(default=0, alias="nodeCount")
+    execution_time_ms: float = Field(default=0.0, alias="executionTimeMs")
+    error_message: Optional[str] = Field(default=None, alias="errorMessage")
 
 
 class BandMathPreset(BaseModel):
@@ -25818,11 +25897,11 @@ class BandMathPreset(BaseModel):
     id: str
     name: str
     formula: str
-    bands_required: List[str]
+    bands_required: List[str] = Field(..., alias="bandsRequired")
     description: str
     category: str
-    default_colormap: str
-    default_rescale: List[float]
+    default_colormap: str = Field(..., alias="defaultColormap")
+    default_rescale: List[float] = Field(..., alias="defaultRescale")
     units: str
 
 
@@ -26294,12 +26373,12 @@ def evaluate_band_math_ast(
             return float(node.get("value", 0.0))
 
         if ntype == BandMathNodeType.VARIABLE.value:
-            vname = str(node.get("name", "")).upper()
-            if vname in normalized_values:
-                return normalized_values[vname]
             raw_vname = str(node.get("raw_name", "")).upper()
             if raw_vname in normalized_values:
                 return normalized_values[raw_vname]
+            vname = str(node.get("name", "")).upper()
+            if vname in normalized_values:
+                return normalized_values[vname]
             canonical = BAND_NAME_ALIASES.get(vname, vname)
             if canonical in normalized_values:
                 return normalized_values[canonical]
@@ -26444,3 +26523,746 @@ def build_custom_expression_tile_url_template(
     return f"{base}?{'&'.join(params)}"
 
 
+
+# ==============================================================================
+# CYCLE v2.5.26: COPERNICUS 30m DEM (GLO-30) COG STAC ASSET CONTRACTS,
+# HORN 3x3 SLOPE/ASPECT VECTOR FORMULAS, ANALYTICAL HILLSHADE ILLUMINATION
+# & TOPOGRAPHIC WETNESS INDEX (TWI) SCHEMAS
+# ==============================================================================
+
+class DemCollectionType(str, Enum):
+    """Copernicus Digital Elevation Model and terrain surface STAC collection identifiers."""
+    COP_DEM_GLO_30 = "cop-dem-glo-30"
+    COP_DEM_GLO_90 = "cop-dem-glo-90"
+    NASADEM = "nasadem"
+    DRONE_DSM = "drone-dsm"
+
+
+class DemMetricType(str, Enum):
+    """Terrain morphometric analysis and dynamic raster tile streaming metrics."""
+    ELEVATION = "elevation"
+    SLOPE = "slope"
+    ASPECT = "aspect"
+    HILLSHADE = "hillshade"
+    TWI = "twi"
+    TRI = "tri"
+    ROUGHNESS = "roughness"
+    RELIEF = "relief"
+
+
+class SlopeUnit(str, Enum):
+    """Angular and percentage measurement units for terrain slope."""
+    DEGREES = "degrees"
+    PERCENT = "percent"
+    RADIANS = "radians"
+
+
+class DemSlopeHazardTier(str, Enum):
+    """Geotechnical embankment and natural slope instability hazard classification based on terrain inclination."""
+    FLAT = "flat"                  # < 5 deg (Beach / valley floor)
+    GENTLE = "gentle"              # 5 - 15 deg (Low risk)
+    MODERATE = "moderate"          # 15 - 25 deg (Engineered dam slope)
+    STEEP = "steep"                # 25 - 35 deg (Critical threshold for loose granular tailings)
+    CRITICAL_HAZARD = "critical_hazard" # > 35 deg (Exceeds angle of repose; severe flow slide hazard)
+
+
+class DemColormap(str, Enum):
+    """Cartographic colormaps tailored for elevation, hillshading, slope, and hydrology."""
+    TERRAIN = "terrain"
+    ELEVATION = "elevation"
+    SLOPE = "rdylgn_r"
+    ASPECT = "twilight"
+    HILLSHADE = "gray"
+    TWI = "blues"
+    VIRIDIS = "viridis"
+    SPECTRAL = "spectral"
+
+
+DEM_COLLECTIONS_METADATA: Dict[str, Dict[str, Any]] = {
+    "cop-dem-glo-30": {
+        "collection_id": "cop-dem-glo-30",
+        "name": "Copernicus DEM GLO-30 (30m)",
+        "provider": "European Space Agency / Airbus / Planetary Computer",
+        "spatial_resolution_m": 30.0,
+        "horizontal_crs": "EPSG:4326",
+        "vertical_datum": "EGM2008",
+        "stac_asset_key": "data",
+        "stac_endpoint": "https://planetarycomputer.microsoft.com/api/stac/v1",
+        "coverage": "Global (excluding non-land oceanic areas)",
+        "accuracy_m": 4.0,
+        "description": "High-resolution 30-meter global Digital Surface Model derived from WorldDEM / TanDEM-X radar interferometry."
+    },
+    "cop-dem-glo-90": {
+        "collection_id": "cop-dem-glo-90",
+        "name": "Copernicus DEM GLO-90 (90m)",
+        "provider": "European Space Agency / Airbus / Planetary Computer",
+        "spatial_resolution_m": 90.0,
+        "horizontal_crs": "EPSG:4326",
+        "vertical_datum": "EGM2008",
+        "stac_asset_key": "data",
+        "stac_endpoint": "https://planetarycomputer.microsoft.com/api/stac/v1",
+        "coverage": "Global",
+        "accuracy_m": 6.0,
+        "description": "90-meter global elevation raster for regional watershed scale modeling."
+    },
+    "nasadem": {
+        "collection_id": "nasadem",
+        "name": "NASADEM HGT v001 (30m)",
+        "provider": "NASA / JPL",
+        "spatial_resolution_m": 30.0,
+        "horizontal_crs": "EPSG:4326",
+        "vertical_datum": "WGS84 / EGM96",
+        "stac_asset_key": "elevation",
+        "stac_endpoint": "https://planetarycomputer.microsoft.com/api/stac/v1",
+        "coverage": "Latitudes 60N to 56S",
+        "accuracy_m": 6.0,
+        "description": "Reprocessed SRTM radar interferometry with ASTER GDEM void filling."
+    },
+    "drone-dsm": {
+        "collection_id": "drone-dsm",
+        "name": "Drone Photogrammetry Centimeter DSM",
+        "provider": "GIOS NodeODM Bridge",
+        "spatial_resolution_m": 0.05,
+        "horizontal_crs": "EPSG:3857 / UTM",
+        "vertical_datum": "Ellipsoidal WGS84",
+        "stac_asset_key": "dsm",
+        "stac_endpoint": "/api/v1/drone/photogrammetry",
+        "coverage": "Local AOI Survey Extent",
+        "accuracy_m": 0.03,
+        "description": "Centimeter-grade Digital Surface Model generated via Structure-from-Motion (SfM)."
+    }
+}
+
+DEM_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "elevation": {
+        "metric": "elevation",
+        "name": "Digital Elevation Model (DEM)",
+        "unit": "meters",
+        "default_colormap": "terrain",
+        "default_rescale": "0,3000",
+        "description": "Topographic orthometric surface elevation above sea level."
+    },
+    "slope": {
+        "metric": "slope",
+        "name": "Terrain Slope Angle",
+        "unit": "degrees",
+        "default_colormap": "rdylgn_r",
+        "default_rescale": "0,45",
+        "description": "Local surface inclination angle derived via Horn's 3x3 finite difference operator."
+    },
+    "aspect": {
+        "metric": "aspect",
+        "name": "Compass Aspect Direction",
+        "unit": "degrees (0-360)",
+        "default_colormap": "twilight",
+        "default_rescale": "0,360",
+        "description": "Downhill compass azimuth direction of steepest descent from true North."
+    },
+    "hillshade": {
+        "metric": "hillshade",
+        "name": "Analytical Lambertian Hillshade",
+        "unit": "illumination (0-255)",
+        "default_colormap": "gray",
+        "default_rescale": "0,255",
+        "description": "Illumination intensity modeled from solar azimuth and zenith geometry."
+    },
+    "twi": {
+        "metric": "twi",
+        "name": "Topographic Wetness Index (TWI)",
+        "unit": "dimensionless",
+        "default_colormap": "blues",
+        "default_rescale": "2,18",
+        "description": "Steady-state soil moisture and seepage accumulation index: ln(a / tan(beta))."
+    },
+    "tri": {
+        "metric": "tri",
+        "name": "Terrain Ruggedness Index (TRI)",
+        "unit": "meters",
+        "default_colormap": "viridis",
+        "default_rescale": "0,50",
+        "description": "Mean absolute elevation delta across adjacent 8-neighbor raster cells."
+    },
+    "relief": {
+        "metric": "relief",
+        "name": "Color Relief Shading",
+        "unit": "RGBA composite",
+        "default_colormap": "terrain",
+        "default_rescale": "0,3000",
+        "description": "Hypsometric elevation color ramp blended with analytical Lambertian hillshade."
+    }
+}
+
+SLOPE_HAZARD_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "flat": {
+        "tier": "flat",
+        "label": "Flat (< 5°)",
+        "min_degrees": 0.0,
+        "max_degrees": 5.0,
+        "risk_level": "low",
+        "hex_color": "#10b981",
+        "badge": "bg-emerald-900/60 text-emerald-300 border-emerald-500/50",
+        "description": "Impoundment basin tailings beach or valley flat; low slope instability risk."
+    },
+    "gentle": {
+        "tier": "gentle",
+        "label": "Gentle (5° - 15°)",
+        "min_degrees": 5.0,
+        "max_degrees": 15.0,
+        "risk_level": "low",
+        "hex_color": "#3b82f6",
+        "badge": "bg-blue-900/60 text-blue-300 border-blue-500/50",
+        "description": "Low inclination terrain; stable under dry and moderate seepage conditions."
+    },
+    "moderate": {
+        "tier": "moderate",
+        "label": "Moderate (15° - 25°)",
+        "min_degrees": 15.0,
+        "max_degrees": 25.0,
+        "risk_level": "moderate",
+        "hex_color": "#f59e0b",
+        "badge": "bg-amber-900/60 text-amber-300 border-amber-500/50",
+        "description": "Engineered embankment slope (approx 1V:2.5H to 1V:2.1H); requires regular surveillance."
+    },
+    "steep": {
+        "tier": "steep",
+        "label": "Steep (25° - 35°)",
+        "min_degrees": 25.0,
+        "max_degrees": 35.0,
+        "risk_level": "high",
+        "hex_color": "#f97316",
+        "badge": "bg-orange-900/60 text-orange-300 border-orange-500/50",
+        "description": "Critical inclination approaching friction angle of uncompacted tailings (phi ~ 30-34 deg)."
+    },
+    "critical_hazard": {
+        "tier": "critical_hazard",
+        "label": "Critical Hazard (> 35°)",
+        "min_degrees": 35.0,
+        "max_degrees": 90.0,
+        "risk_level": "severe",
+        "hex_color": "#ef4444",
+        "badge": "bg-rose-900/60 text-rose-300 border-rose-500/50",
+        "description": "Exceeds natural angle of repose; extreme hazard for static liquefaction and rotational sliding."
+    }
+}
+
+DEFAULT_DEM_SUN_ILLUMINATION: Dict[str, float] = {
+    "azimuth_deg": 315.0,
+    "altitude_deg": 45.0,
+    "zenith_deg": 45.0,
+    "z_factor": 1.0
+}
+
+
+class DemSunIllumination(BaseModel):
+    """Solar illumination geometry for analytical hillshade generation."""
+    azimuth_deg: float = Field(315.0, ge=0.0, le=360.0, description="Solar azimuth clockwise from North (deg).")
+    altitude_deg: float = Field(45.0, ge=0.0, le=90.0, description="Solar elevation angle above horizon (deg).")
+    zenith_deg: float = Field(45.0, ge=0.0, le=90.0, description="Solar zenith angle from vertical (deg).")
+    z_factor: float = Field(1.0, gt=0.0, description="Vertical exaggeration multiplier.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reconcile_zenith_and_altitude(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            alt = data.get("altitude_deg")
+            zen = data.get("zenith_deg")
+            if alt is not None and zen is None:
+                data["zenith_deg"] = max(0.0, min(90.0, 90.0 - float(alt)))
+            elif zen is not None and alt is None:
+                data["altitude_deg"] = max(0.0, min(90.0, 90.0 - float(zen)))
+        return data
+
+
+class HornGradientResult(BaseModel):
+    """Result of Horn's 3x3 weighted finite-difference gradient operator."""
+    dz_dx: float = Field(..., description="Partial derivative in horizontal West-East direction.")
+    dz_dy: float = Field(..., description="Partial derivative in vertical South-North direction.")
+    gradient_magnitude: float = Field(..., description="Euclidean norm sqrt((dz/dx)^2 + (dz/dy)^2).")
+    slope_rad: float = Field(..., description="Slope angle in radians: atan(gradient_magnitude).")
+    slope_deg: float = Field(..., description="Slope angle in degrees (0 to 90).")
+    slope_percent: float = Field(..., description="Slope in percent: gradient_magnitude * 100.")
+    aspect_rad: float = Field(..., description="Aspect direction in radians: atan2(-dz/dy, dz/dx).")
+    aspect_deg: float = Field(..., description="Compass azimuth of downhill slope (0 to 360 deg, -1 for flat).")
+    aspect_compass: str = Field(..., description="8-point compass cardinal direction ('N', 'NE', 'E', ..., 'Flat').")
+
+
+class LambertianHillshadeResult(BaseModel):
+    """Result of analytical Lambertian hillshade illumination calculation."""
+    illumination: float = Field(..., ge=0.0, le=255.0, description="Illumination intensity normalized to 0-255.")
+    cos_incidence: float = Field(..., ge=-1.0, le=1.0, description="Cosine of local solar incidence angle cos(i).")
+    is_shadow: bool = Field(..., description="True if surface is self-shadowed (cos(i) <= 0).")
+    solar_azimuth_deg: float = Field(..., description="Solar azimuth angle in degrees.")
+    solar_altitude_deg: float = Field(..., description="Solar altitude angle in degrees.")
+    solar_zenith_deg: float = Field(..., description="Solar zenith angle in degrees.")
+
+
+class TopographicWetnessResult(BaseModel):
+    """Result of Topographic Wetness Index (TWI) calculation."""
+    twi: float = Field(..., description="Topographic Wetness Index: ln(a / tan(beta)).")
+    specific_catchment_area_m: float = Field(..., description="Upslope contributing area per unit contour width (m).")
+    slope_rad: float = Field(..., description="Terrain slope in radians.")
+    tan_slope: float = Field(..., description="Clamped tangent of slope gradient.")
+    seepage_hazard_tier: str = Field(..., description="Seepage susceptibility level ('low', 'moderate', 'high', 'critical').")
+
+
+class DemTopographyRequest(BaseModel):
+    """Request payload for DEM topographic terrain analysis."""
+    bbox: Optional[Union[List[float], Dict[str, float], str]] = Field(
+        None,
+        description="Bounding box [min_lon, min_lat, max_lon, max_lat]."
+    )
+    collection: DemCollectionType = Field(DemCollectionType.COP_DEM_GLO_30, description="DEM STAC collection.")
+    target_resolution_m: float = Field(30.0, gt=0.0, description="Spatial resolution in meters.")
+    sun_azimuth_deg: float = Field(315.0, ge=0.0, le=360.0, description="Solar azimuth in degrees.")
+    sun_altitude_deg: float = Field(45.0, ge=0.0, le=90.0, description="Solar altitude in degrees.")
+    z_factor: float = Field(1.0, gt=0.0, description="Vertical exaggeration factor.")
+    specific_catchment_area_m: float = Field(100.0, gt=0.0, description="Nominal specific catchment area in meters.")
+
+
+class DemTopographySummary(BaseModel):
+    """Statistical summary of DEM terrain metrics across an AOI."""
+    min_elevation_m: float = Field(..., description="Minimum elevation in meters.")
+    max_elevation_m: float = Field(..., description="Maximum elevation in meters.")
+    mean_elevation_m: float = Field(..., description="Mean elevation in meters.")
+    elevation_relief_m: float = Field(..., description="Total vertical relief (max - min) in meters.")
+    mean_slope_deg: float = Field(..., description="Mean slope in degrees.")
+    max_slope_deg: float = Field(..., description="Maximum slope in degrees.")
+    dominant_aspect_compass: str = Field(..., description="Dominant downhill compass aspect.")
+    mean_twi: float = Field(..., description="Mean Topographic Wetness Index.")
+    high_seepage_area_pct: float = Field(..., description="Percentage of area with TWI > 10.")
+    critical_slope_area_pct: float = Field(..., description="Percentage of area exceeding 35 degrees slope.")
+
+
+class DemTopographyResponse(BaseModel):
+    """Response payload containing comprehensive DEM topographic evaluation."""
+    simulation_id: str = Field(..., description="Unique simulation identifier.")
+    collection: str = Field(..., description="Evaluated DEM collection.")
+    bbox: List[float] = Field(..., description="Normalized bounding box [min_lon, min_lat, max_lon, max_lat].")
+    summary: DemTopographySummary = Field(..., description="Statistical topographic summary.")
+    sun_illumination: DemSunIllumination = Field(..., description="Sun illumination parameters.")
+    hazard_distribution: Dict[str, float] = Field(..., description="Area breakdown by SlopeHazardTier (percentage).")
+    tile_url_templates: Dict[str, str] = Field(..., description="Dynamic XYZ tile URL templates by metric.")
+    analyzed_at: str = Field(..., description="ISO 8601 evaluation timestamp.")
+
+
+class DemTransectPoint(BaseModel):
+    """Individual elevation and slope sample along a transect line."""
+    point_index: int = Field(..., description="0-indexed sample station along transect.")
+    lat: float = Field(..., description="Latitude coordinate in WGS84.")
+    lon: float = Field(..., description="Longitude coordinate in WGS84.")
+    chainage_m: float = Field(..., description="Cumulative distance from transect start in meters.")
+    elevation_m: float = Field(..., description="Surface elevation in meters.")
+    slope_deg: float = Field(..., description="Local slope angle in degrees.")
+    slope_percent: float = Field(..., description="Local slope in percent.")
+    aspect_deg: float = Field(..., description="Compass aspect in degrees.")
+    twi: float = Field(..., description="Topographic Wetness Index.")
+    hazard_tier: DemSlopeHazardTier = Field(..., description="Slope hazard tier classification.")
+
+
+class DemTransectRequest(BaseModel):
+    """Request payload to extract an elevation and slope profile along a transect."""
+    start_point: List[float] = Field(..., min_length=2, max_length=2, description="Start coordinates [lat, lon].")
+    end_point: List[float] = Field(..., min_length=2, max_length=2, description="End coordinates [lat, lon].")
+    samples: int = Field(50, ge=5, le=500, description="Number of sample stations along transect.")
+    collection: DemCollectionType = Field(DemCollectionType.COP_DEM_GLO_30, description="Source DEM collection.")
+    z_factor: float = Field(1.0, gt=0.0, description="Vertical exaggeration factor.")
+
+
+class DemTransectResponse(BaseModel):
+    """Response payload containing elevation transect profile."""
+    transect_id: str = Field(..., description="Unique transect profile identifier.")
+    collection: str = Field(..., description="Source DEM collection.")
+    total_distance_m: float = Field(..., description="Total horizontal distance in meters.")
+    crest_elevation_m: float = Field(..., description="Elevation at start point (crest) in meters.")
+    toe_elevation_m: float = Field(..., description="Elevation at end point (toe) in meters.")
+    total_relief_drop_m: float = Field(..., description="Total vertical drop (crest - toe) in meters.")
+    max_slope_deg: float = Field(..., description="Maximum slope encountered along transect in degrees.")
+    mean_slope_deg: float = Field(..., description="Mean slope along transect in degrees.")
+    critical_slope_encountered: bool = Field(..., description="True if any point exceeds 35 degrees slope.")
+    points: List[DemTransectPoint] = Field(..., description="Sample points along transect.")
+    analyzed_at: str = Field(..., description="ISO 8601 evaluation timestamp.")
+
+
+class DemSlopeHazardAnalysisRequest(BaseModel):
+    """Request payload for slope hazard zonification across an AOI."""
+    bbox: Optional[Union[List[float], Dict[str, float], str]] = Field(None, description="AOI bounding box.")
+    critical_threshold_deg: float = Field(35.0, ge=10.0, le=60.0, description="Critical slope threshold in degrees.")
+    collection: DemCollectionType = Field(DemCollectionType.COP_DEM_GLO_30, description="Source DEM collection.")
+
+
+class DemSlopeHazardAnalysisResponse(BaseModel):
+    """Response payload for slope hazard zonification."""
+    analysis_id: str = Field(..., description="Unique hazard analysis identifier.")
+    collection: str = Field(..., description="Source DEM collection.")
+    total_area_hectares: float = Field(..., description="Total assessed AOI area in hectares.")
+    tier_breakdown: Dict[str, Dict[str, Any]] = Field(..., description="Detailed breakdown by SlopeHazardTier.")
+    critical_slope_hectares: float = Field(..., description="Area exceeding critical slope threshold in hectares.")
+    critical_slope_percentage: float = Field(..., description="Percentage of area exceeding critical slope threshold.")
+    overall_hazard_rating: str = Field(..., description="Aggregated risk tier ('low', 'moderate', 'high', 'critical').")
+    analyzed_at: str = Field(..., description="ISO 8601 evaluation timestamp.")
+
+
+class DemTileRequestParams(BaseModel):
+    """Parameters for dynamic XYZ DEM raster tile requests."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level.")
+    x: int = Field(..., ge=0, description="Slippy map tile column index.")
+    y: int = Field(..., ge=0, description="Slippy map tile row index.")
+    metric: DemMetricType = Field(DemMetricType.RELIEF, description="Target DEM metric to render.")
+    colormap: Optional[str] = Field(None, description="Colormap name.")
+    rescale: Optional[str] = Field(None, description="Rescale range min,max.")
+    sun_azimuth_deg: float = Field(315.0, ge=0.0, le=360.0, description="Solar azimuth for hillshade.")
+    sun_altitude_deg: float = Field(45.0, ge=0.0, le=90.0, description="Solar altitude for hillshade.")
+    z_factor: float = Field(1.0, gt=0.0, description="Vertical exaggeration factor.")
+
+
+# ------------------------------------------------------------------------------
+# Mathematical Algorithms: Horn 3x3 Gradient, Hillshade, Aspect & TWI
+# ------------------------------------------------------------------------------
+
+def aspect_to_compass_direction(aspect_deg: float) -> str:
+    """Converts a downhill aspect azimuth in degrees to an 8-point compass cardinal direction."""
+    if aspect_deg < 0.0:
+        return "Flat"
+    norm = aspect_deg % 360.0
+    if norm >= 337.5 or norm < 22.5:
+        return "N"
+    elif norm < 67.5:
+        return "NE"
+    elif norm < 112.5:
+        return "E"
+    elif norm < 157.5:
+        return "SE"
+    elif norm < 202.5:
+        return "S"
+    elif norm < 247.5:
+        return "SW"
+    elif norm < 292.5:
+        return "W"
+    else:
+        return "NW"
+
+
+def calculate_horn_gradient(
+    grid_3x3: List[List[float]],
+    cell_size_x: float = 30.0,
+    cell_size_y: float = 30.0,
+    z_factor: float = 1.0
+) -> HornGradientResult:
+    """Computes Horn's 3x3 weighted finite-difference gradient operator.
+    
+    Given a 3x3 elevation kernel where row 0 is North and row 2 is South:
+        [ [a, b, c],
+          [d, e, f],
+          [g, h, i] ]
+          
+    Formulas:
+        dz/dx = [ (c + 2f + i) - (a + 2d + g) ] / (8 * dx) * z_factor
+        dz/dy = [ (a + 2b + c) - (g + 2h + i) ] / (8 * dy) * z_factor
+        slope = atan(sqrt((dz/dx)^2 + (dz/dy)^2))
+        aspect = compass azimuth of downhill gradient (clockwise from North, 0-360 deg)
+    """
+    if len(grid_3x3) != 3 or any(len(row) != 3 for row in grid_3x3):
+        raise ValueError("grid_3x3 must be a 3x3 matrix of elevation floats.")
+    if cell_size_x <= 0.0 or cell_size_y <= 0.0:
+        raise ValueError("cell_size_x and cell_size_y must be strictly positive floats.")
+
+    a = float(grid_3x3[0][0]); b = float(grid_3x3[0][1]); c = float(grid_3x3[0][2])
+    d = float(grid_3x3[1][0]); e = float(grid_3x3[1][1]); f = float(grid_3x3[1][2])
+    g = float(grid_3x3[2][0]); h = float(grid_3x3[2][1]); i = float(grid_3x3[2][2])
+
+    dz_dx = (((c + 2.0 * f + i) - (a + 2.0 * d + g)) / (8.0 * cell_size_x)) * z_factor
+    dz_dy = (((a + 2.0 * b + c) - (g + 2.0 * h + i)) / (8.0 * cell_size_y)) * z_factor
+
+    magnitude = math.sqrt(dz_dx * dz_dx + dz_dy * dz_dy)
+    slope_rad = math.atan(magnitude)
+    slope_deg = math.degrees(slope_rad)
+    slope_percent = magnitude * 100.0
+
+    # Aspect calculation:
+    # Direct formula for mathematical vector angle
+    aspect_rad = math.atan2(-dz_dy, dz_dx)
+
+    # Downhill compass azimuth:
+    # In Cartesian space, uphill is (dz_dx, dz_dy). Downhill is (-dz_dx, -dz_dy).
+    # Compass angle clockwise from North: atan2(-dz_dx, -dz_dy) in degrees
+    if abs(dz_dx) < 1e-9 and abs(dz_dy) < 1e-9:
+        aspect_deg = -1.0
+        compass_dir = "Flat"
+    else:
+        deg = math.degrees(math.atan2(-dz_dx, -dz_dy)) % 360.0
+        aspect_deg = round(deg, 4)
+        compass_dir = aspect_to_compass_direction(aspect_deg)
+
+    return HornGradientResult(
+        dz_dx=round(dz_dx, 6),
+        dz_dy=round(dz_dy, 6),
+        gradient_magnitude=round(magnitude, 6),
+        slope_rad=round(slope_rad, 6),
+        slope_deg=round(slope_deg, 4),
+        slope_percent=round(slope_percent, 4),
+        aspect_rad=round(aspect_rad, 6),
+        aspect_deg=aspect_deg,
+        aspect_compass=compass_dir
+    )
+
+
+def calculate_terrain_slope(
+    dz_dx: float,
+    dz_dy: float,
+    unit: str = "degrees"
+) -> float:
+    """Calculates terrain slope magnitude from gradient partial derivatives."""
+    mag = math.sqrt(dz_dx * dz_dx + dz_dy * dz_dy)
+    if unit == SlopeUnit.RADIANS.value or unit == "radians":
+        return math.atan(mag)
+    elif unit == SlopeUnit.PERCENT.value or unit == "percent":
+        return mag * 100.0
+    else:
+        return math.degrees(math.atan(mag))
+
+
+def calculate_compass_aspect(
+    dz_dx: float,
+    dz_dy: float
+) -> float:
+    """Calculates downhill terrain aspect in compass degrees (0-360, -1 for flat)."""
+    if abs(dz_dx) < 1e-9 and abs(dz_dy) < 1e-9:
+        return -1.0
+    deg = math.degrees(math.atan2(-dz_dx, -dz_dy)) % 360.0
+    return round(deg, 4)
+
+
+def calculate_lambertian_hillshade(
+    slope_deg: float,
+    aspect_deg: float,
+    sun_azimuth_deg: float = 315.0,
+    sun_altitude_deg: float = 45.0,
+    z_factor: float = 1.0
+) -> LambertianHillshadeResult:
+    """Calculates analytical Lambertian hillshade illumination.
+    
+    Formula:
+        cos(i) = cos(zenith) * cos(slope) + sin(zenith) * sin(slope) * cos(sun_azimuth - aspect)
+        illumination = 255 * max(0, cos(i))
+    """
+    if sun_altitude_deg < 0.0 or sun_altitude_deg > 90.0:
+        raise ValueError("sun_altitude_deg must be between 0.0 and 90.0 degrees.")
+
+    zenith_deg = 90.0 - sun_altitude_deg
+    zenith_rad = math.radians(zenith_deg)
+    slope_rad = math.radians(slope_deg)
+    sun_azimuth_rad = math.radians(sun_azimuth_deg % 360.0)
+
+    # If terrain is completely flat or aspect is undefined:
+    if slope_deg <= 1e-6 or aspect_deg < 0.0:
+        cos_i = math.cos(zenith_rad)
+    else:
+        aspect_rad = math.radians(aspect_deg % 360.0)
+        cos_i = (
+            math.cos(zenith_rad) * math.cos(slope_rad)
+            + math.sin(zenith_rad) * math.sin(slope_rad) * math.cos(sun_azimuth_rad - aspect_rad)
+        )
+
+    # Clamping bounds: [-1.0, 1.0]
+    cos_i_clamped = max(-1.0, min(1.0, cos_i))
+    illumination = max(0.0, min(255.0, 255.0 * max(0.0, cos_i_clamped)))
+    is_shadow = cos_i <= 0.0
+
+    return LambertianHillshadeResult(
+        illumination=round(illumination, 2),
+        cos_incidence=round(cos_i_clamped, 6),
+        is_shadow=is_shadow,
+        solar_azimuth_deg=round(sun_azimuth_deg % 360.0, 2),
+        solar_altitude_deg=round(sun_altitude_deg, 2),
+        solar_zenith_deg=round(zenith_deg, 2)
+    )
+
+
+def calculate_dem_topographic_wetness_index(
+    slope_deg: float,
+    specific_catchment_area_m: float = 100.0,
+    min_tan_slope: float = 0.001
+) -> TopographicWetnessResult:
+    """Calculates Topographic Wetness Index (TWI) with division-by-zero protection returning TopographicWetnessResult."""
+    return calculate_topographic_wetness_index(
+        slope_deg=slope_deg,
+        specific_catchment_area_m=specific_catchment_area_m,
+        min_tan_slope=min_tan_slope,
+        as_model=True
+    )
+
+
+def classify_dem_slope_hazard_tier(slope_deg: float) -> SlopeHazardTier:
+    """Classifies a terrain slope angle into standardized geotechnical hazard tiers."""
+    s = max(0.0, float(slope_deg))
+    if s < 5.0:
+        return SlopeHazardTier.FLAT
+    elif s < 15.0:
+        return SlopeHazardTier.GENTLE
+    elif s < 25.0:
+        return SlopeHazardTier.MODERATE
+    elif s < 35.0:
+        return SlopeHazardTier.STEEP
+    else:
+        return SlopeHazardTier.CRITICAL_HAZARD
+
+
+def calculate_elevation_transect_profile(
+    start_coord: List[float],
+    end_coord: List[float],
+    samples: int = 50,
+    crest_elevation: float = 1250.0,
+    toe_elevation: float = 1110.0,
+    collection: str = "cop-dem-glo-30"
+) -> DemTransectResponse:
+    """Generates synthetic or interpolated elevation transect profile points from crest to toe."""
+    if len(start_coord) < 2 or len(end_coord) < 2:
+        raise ValueError("start_coord and end_coord must be [lat, lon] pairs.")
+    samples = max(5, min(500, samples))
+
+    lat1, lon1 = float(start_coord[0]), float(start_coord[1])
+    lat2, lon2 = float(end_coord[0]), float(end_coord[1])
+
+    # Haversine total distance
+    r_earth = 6371000.0
+    phi1 = math.radians(lat1); phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1); dlam = math.radians(lon2 - lon1)
+    a_hav = math.sin(dphi / 2.0)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2.0)**2
+    total_dist = 2.0 * r_earth * math.atan2(math.sqrt(a_hav), math.sqrt(max(0.0, 1.0 - a_hav)))
+
+    total_drop = crest_elevation - toe_elevation
+    points: List[DemTransectPoint] = []
+    max_slope = 0.0
+    slope_sum = 0.0
+    critical_found = False
+
+    for idx in range(samples):
+        fraction = idx / float(samples - 1)
+        cur_lat = lat1 + fraction * (lat2 - lat1)
+        cur_lon = lon1 + fraction * (lon2 - lon1)
+        chainage = fraction * total_dist
+
+        # Sigmoidal crest-to-toe dam face curve
+        # Typical tailings dam profile: flat crest, steep slope face, gentle toe berm
+        elev = crest_elevation - total_drop * (1.0 / (1.0 + math.exp(-6.0 * (fraction - 0.5))))
+
+        # Point-to-point slope gradient
+        if idx == 0:
+            next_frac = 1.0 / float(samples - 1)
+            next_elev = crest_elevation - total_drop * (1.0 / (1.0 + math.exp(-6.0 * (next_frac - 0.5))))
+            dx = total_dist / float(samples - 1)
+            dz = abs(elev - next_elev)
+            slope_rad = math.atan(dz / max(1.0, dx))
+        else:
+            prev_frac = (idx - 1) / float(samples - 1)
+            prev_elev = crest_elevation - total_drop * (1.0 / (1.0 + math.exp(-6.0 * (prev_frac - 0.5))))
+            dx = total_dist / float(samples - 1)
+            dz = abs(prev_elev - elev)
+            slope_rad = math.atan(dz / max(1.0, dx))
+
+        slope_deg = math.degrees(slope_rad)
+        slope_pct = math.tan(slope_rad) * 100.0
+        max_slope = max(max_slope, slope_deg)
+        slope_sum += slope_deg
+
+        tier = classify_dem_slope_hazard_tier(slope_deg)
+        if tier == SlopeHazardTier.CRITICAL_HAZARD:
+            critical_found = True
+
+        # Downhill aspect towards end point
+        bearing = math.degrees(math.atan2(math.sin(dlam) * math.cos(phi2), math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlam))) % 360.0
+        twi_res = calculate_dem_topographic_wetness_index(slope_deg, specific_catchment_area_m=max(10.0, 50.0 + chainage * 0.2))
+
+        points.append(DemTransectPoint(
+            point_index=idx,
+            lat=round(cur_lat, 6),
+            lon=round(cur_lon, 6),
+            chainage_m=round(chainage, 2),
+            elevation_m=round(elev, 2),
+            slope_deg=round(slope_deg, 2),
+            slope_percent=round(slope_pct, 2),
+            aspect_deg=round(bearing, 2),
+            twi=twi_res.twi,
+            hazard_tier=tier
+        ))
+
+    mean_slope = slope_sum / float(samples)
+
+    return DemTransectResponse(
+        transect_id=f"TRANSECT-{int(time.time())}",
+        collection=collection,
+        total_distance_m=round(total_dist, 2),
+        crest_elevation_m=round(crest_elevation, 2),
+        toe_elevation_m=round(toe_elevation, 2),
+        total_relief_drop_m=round(total_drop, 2),
+        max_slope_deg=round(max_slope, 2),
+        mean_slope_deg=round(mean_slope, 2),
+        critical_slope_encountered=critical_found,
+        points=points,
+        analyzed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+def build_dem_tile_url(
+    z: int,
+    x: int,
+    y: int,
+    metric: str = "relief",
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    sun_azimuth: float = 315.0,
+    sun_altitude: float = 45.0,
+    z_factor: float = 1.0
+) -> str:
+    """Builds a dynamic XYZ DEM raster tile endpoint URL."""
+    if metric == "relief":
+        base = f"/api/v1/tiles/dem/relief/{z}/{x}/{y}.png"
+    else:
+        base = f"/api/v1/tiles/dem/{metric}/{z}/{x}/{y}.png"
+
+    params: List[str] = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if sun_azimuth != 315.0:
+        params.append(f"sun_azimuth={sun_azimuth}")
+    if sun_altitude != 45.0:
+        params.append(f"sun_altitude={sun_altitude}")
+    if z_factor != 1.0:
+        params.append(f"z_factor={z_factor}")
+
+    if params:
+        return f"{base}?{'&'.join(params)}"
+    return base
+
+
+def build_dem_tile_url_template(
+    metric: str = "relief",
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    sun_azimuth: float = 315.0,
+    sun_altitude: float = 45.0,
+    z_factor: float = 1.0
+) -> str:
+    """Builds a dynamic Leaflet tile URL template for DEM topographic relief tiles."""
+    if metric == "relief":
+        base = "/api/v1/tiles/dem/relief/{z}/{x}/{y}.png"
+    else:
+        base = f"/api/v1/tiles/dem/{metric}/{{z}}/{{x}}/{{y}}.png"
+
+    params: List[str] = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if sun_azimuth != 315.0:
+        params.append(f"sun_azimuth={sun_azimuth}")
+    if sun_altitude != 45.0:
+        params.append(f"sun_altitude={sun_altitude}")
+    if z_factor != 1.0:
+        params.append(f"z_factor={z_factor}")
+
+    if params:
+        return f"{base}?{'&'.join(params)}"
+    return base

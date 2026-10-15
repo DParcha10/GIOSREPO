@@ -14,7 +14,7 @@ import {
   Wrench, ShieldAlert, MapPin, Grid, GitCompare, Gauge, Waves,
   Thermometer, Sun, Sprout, Wind,
   Move, Trees, Cloud, HardDrive, ArrowUpRight, TrendingUp, CloudSnow,
-  Cpu, Bell, BellRing, CloudRain, Zap, Clock, RotateCcw
+  Cpu, Bell, BellRing, CloudRain, Zap, Clock, RotateCcw, Camera, Calculator
 } from 'lucide-react';
 import useAuthStore from '../store/authStore';
 import { useNavigate, Link } from 'react-router-dom';
@@ -39,6 +39,8 @@ import giosApi, {
   formatGsdDisplay,
   buildTileUrl,
   buildDroneTileUrl,
+  getDronePhotogrammetryTileUrlTemplate,
+  getCustomExpressionTileUrlTemplate,
   buildWildfireTileUrl,
   calculateTerrainAnalysis,
   calculateSarAnalysis,
@@ -224,6 +226,8 @@ import InSARVelocityModal from '../components/InSARVelocityModal';
 import DamageProxyModal from '../components/DamageProxyModal';
 import PhenologyStudioModal from '../components/PhenologyStudioModal';
 import WebhookManagerModal from '../components/WebhookManagerModal';
+import DronePhotogrammetryModal from '../components/DronePhotogrammetryModal';
+import BandMathStudioModal from '../components/BandMathStudioModal';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -418,6 +422,8 @@ function MapInteractions({
   onAddTransectVertex,
   droppingDefectPin,
   onDropDefectPin,
+  pinningGcpPin,
+  onPinGcp,
   curtainActive,
   curtainPos,
   onZoomChange
@@ -450,7 +456,9 @@ function MapInteractions({
 
   useMapEvents({
     click: (e) => {
-      if (droppingDefectPin) {
+      if (pinningGcpPin) {
+        onPinGcp([e.latlng.lat, e.latlng.lng]);
+      } else if (droppingDefectPin) {
         onDropDefectPin([e.latlng.lat, e.latlng.lng]);
       } else if (drawingPolygon) {
         onAddPolygonVertex([e.latlng.lat, e.latlng.lng]);
@@ -1293,6 +1301,25 @@ export default function MapExplorer() {
   const [webhookSubscription, setWebhookSubscription] = useState(null);
   const [webhookSimulation, setWebhookSimulation] = useState(null);
   const [webhookOpacity, setWebhookOpacity] = useState(0.85);
+
+  // T-204 & T-206: Drone Photogrammetry Mission Studio & Centimeter TileLayer States (Cycle v2.5.24)
+  const [dronePhotogrammetryModalOpen, setDronePhotogrammetryModalOpen] = useState(false);
+  const [showDronePhotogrammetryLayer, setShowDronePhotogrammetryLayer] = useState(false);
+  const [dronePhotogrammetryTaskId, setDronePhotogrammetryTaskId] = useState('ODM-BENCHMARK-001');
+  const [dronePhotogrammetryMetric, setDronePhotogrammetryMetric] = useState('orthophoto');
+  const [dronePhotogrammetryOpacity, setDronePhotogrammetryOpacity] = useState(0.90);
+  const [dronePhotogrammetryMission, setDronePhotogrammetryMission] = useState(null);
+  const [pinningGcpPin, setPinningGcpPin] = useState(false);
+  const [pinnedGcpCoord, setPinnedGcpCoord] = useState(null);
+
+  // T-210 & T-212: Custom Spectral Formula & Band Math Studio States (Cycle v2.5.25)
+  const [bandMathModalOpen, setBandMathModalOpen] = useState(false);
+  const [showBandMathLayer, setShowBandMathLayer] = useState(false);
+  const [customBandFormula, setCustomBandFormula] = useState('(B08 - B04) / (B08 + B04)');
+  const [customBandFormulaName, setCustomBandFormulaName] = useState('Normalized Difference Vegetation Index (NDVI)');
+  const [customBandColormap, setCustomBandColormap] = useState('rdylgn');
+  const [customBandRescale, setCustomBandRescale] = useState('-0.2,0.8');
+  const [customBandOpacity, setCustomBandOpacity] = useState(0.85);
 
   // T-168/T-170: Wave Arrival Playback Timer Ticker
   useEffect(() => {
@@ -4342,6 +4369,12 @@ export default function MapExplorer() {
                 setDefectModalOpen(true);
                 setDroppingDefectPin(false);
               }}
+              pinningGcpPin={pinningGcpPin}
+              onPinGcp={(coords) => {
+                setPinnedGcpCoord(coords);
+                setPinningGcpPin(false);
+                setDronePhotogrammetryModalOpen(true);
+              }}
               curtainActive={curtainActive}
               curtainPos={curtainPos}
               onZoomChange={setCurrentZoom}
@@ -4477,6 +4510,35 @@ export default function MapExplorer() {
                   />
                 )}
               </>
+            )}
+
+            {/* T-204/T-206: Decoupled NodeODM Drone Photogrammetry Centimeter COG Tile Layer (Cycle v2.5.24) */}
+            {showDronePhotogrammetryLayer && dronePhotogrammetryTaskId && !curtainActive && (
+              <TileLayer 
+                key={`photogrammetry-live-${dronePhotogrammetryTaskId}-${dronePhotogrammetryMetric}-${dronePhotogrammetryOpacity}`}
+                url={getDronePhotogrammetryTileUrlTemplate(dronePhotogrammetryTaskId, dronePhotogrammetryMetric)}
+                opacity={dronePhotogrammetryOpacity}
+                maxNativeZoom={22}
+                maxZoom={24}
+                minZoom={12}
+                keepBuffer={4}
+              />
+            )}
+
+            {/* T-210/T-212: Custom Spectral Formula Dynamic AST Tile Layer (Cycle v2.5.25) */}
+            {showBandMathLayer && customBandFormula && !curtainActive && (
+              <TileLayer 
+                key={`custom-bandmath-live-${customBandFormula}-${customBandColormap}-${customBandRescale}-${customBandOpacity}`}
+                url={getCustomExpressionTileUrlTemplate(customBandFormula, {
+                  colormap: customBandColormap,
+                  rescale: customBandRescale
+                })}
+                opacity={customBandOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={450}
+              />
             )}
 
             {/* T-57/T-58: Multi-Temporal Quality Composite Tile Layer */}
@@ -6011,6 +6073,76 @@ export default function MapExplorer() {
                       <div>Signature: <span className="text-gray-400 text-[9px] truncate max-w-[120px] block">{evt.hmac_signature?.substring(0, 20)}...</span></div>
                       <div className="text-[9px] text-gray-400 border-t border-gray-800 pt-1">
                         Dispatched to {webhookSubscription?.webhook_endpoints?.length || 0} channels with RFC 7946 GeoJSON container.
+                      </div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
+            {/* T-204/T-206: Drone Photogrammetry Survey Coverage Footprint Polygon (Cycle v2.5.24) */}
+            {showDronePhotogrammetryLayer && dronePhotogrammetryMission?.footprint && (
+              <Polygon
+                key={`photogrammetry-footprint-${dronePhotogrammetryTaskId}-${dronePhotogrammetryOpacity}`}
+                positions={dronePhotogrammetryMission.footprint}
+                pathOptions={{
+                  color: '#06b6d4',
+                  weight: 2,
+                  dashArray: '5, 5',
+                  fillColor: '#06b6d4',
+                  fillOpacity: 0.12 * dronePhotogrammetryOpacity
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="font-bold text-cyan-400">
+                      {dronePhotogrammetryMission.projectName || 'Drone Survey Footprint'}
+                    </div>
+                    <div>Task: <strong className="text-white">{dronePhotogrammetryTaskId}</strong></div>
+                    <div>Metric: <strong className="text-emerald-400">{dronePhotogrammetryMetric.toUpperCase()}</strong></div>
+                    <div>GSD: <strong className="text-cyan-300">{dronePhotogrammetryMission.gsdCm || 2.5} cm/px</strong></div>
+                    <div className="text-[10px] text-gray-400">
+                      Decoupled NodeODM bundle adjustment with sub-pixel GCP georeferencing
+                    </div>
+                  </div>
+                </Popup>
+              </Polygon>
+            )}
+
+            {/* T-204/T-206: Drone Photogrammetry Ground Control Points (GCP) Markers on Map */}
+            {showDronePhotogrammetryLayer && dronePhotogrammetryMission?.gcps?.map((gcp, gIdx) => {
+              const lat = gcp.lat ?? (dronePhotogrammetryMission.center ? dronePhotogrammetryMission.center[0] : 37.0582);
+              const lon = gcp.lng ?? (dronePhotogrammetryMission.center ? dronePhotogrammetryMission.center[1] : -121.0744);
+              const isCheck = Boolean(gcp.is_check_point);
+              return (
+                <CircleMarker
+                  key={`photogrammetry-gcp-${gcp.gcp_id || gIdx}`}
+                  center={[lat, lon]}
+                  radius={isCheck ? 7 : 8}
+                  pathOptions={{
+                    color: isCheck ? '#f59e0b' : '#06b6d4',
+                    fillColor: isCheck ? '#fbbf24' : '#22d3ee',
+                    fillOpacity: 0.9,
+                    weight: 2
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold flex items-center justify-between text-white">
+                        <span className={isCheck ? 'text-amber-400' : 'text-cyan-400'}>{gcp.gcp_id}</span>
+                        <span className="text-[9px] uppercase px-1 rounded bg-zinc-800 text-slate-300">
+                          {isCheck ? 'Check Point' : 'Control Point'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-300">{gcp.name}</div>
+                      <div className="text-[10px] text-slate-400">
+                        Pixel: [{gcp.pixel_x?.toFixed(1)}, {gcp.pixel_y?.toFixed(1)}] px
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        UTM: {gcp.world_x?.toFixed(1)} E, {gcp.world_y?.toFixed(1)} N
+                      </div>
+                      <div className="text-[10px] text-emerald-400">
+                        Elev: {gcp.elevation_z?.toFixed(2)} m
                       </div>
                     </div>
                   </Popup>
@@ -8319,6 +8451,159 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-204/T-206: Interactive GCP Map Pinning Indicator Banner (Cycle v2.5.24) */}
+          {pinningGcpPin && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000] glass-panel px-5 py-3 rounded-xl border-cyan-400/80 shadow-2xl bg-black/95 backdrop-blur-md flex items-center gap-4 text-cyan-200 font-mono text-xs animate-pulse">
+              <Crosshair className="w-5 h-5 text-cyan-400 animate-spin" />
+              <div>
+                <span className="font-bold text-white block">Interactive GCP Pinning Active</span>
+                <span className="text-[11px] text-cyan-300">Click anywhere on the map to pin Ground Control Point coordinate</span>
+              </div>
+              <button
+                onClick={() => {
+                  setPinningGcpPin(false);
+                  setDronePhotogrammetryModalOpen(true);
+                }}
+                className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-slate-300 rounded text-[11px] font-bold"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* T-204/T-206: Floating Drone Photogrammetry HUD Controller Card (Cycle v2.5.24) */}
+          {showDronePhotogrammetryLayer && dronePhotogrammetryMission && (
+            <div className="absolute top-20 left-4 z-[938] glass-panel p-3.5 rounded-xl border-cyan-500/40 shadow-2xl bg-black/90 backdrop-blur-md flex flex-col gap-2.5 w-[460px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-400">
+                    <Camera className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-white block truncate max-w-[240px]">
+                      {dronePhotogrammetryMission.projectName || 'Drone Photogrammetry Mission'}
+                    </span>
+                    <span className="text-[10px] text-gray-400 block font-mono">
+                      {dronePhotogrammetryTaskId} • GSD: {dronePhotogrammetryMission.gsdCm || 2.5} cm/px (Zoom 20–22)
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setDronePhotogrammetryModalOpen(true)}
+                    className="px-2 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowDronePhotogrammetryLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metric Selector Pills */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[10px] font-mono">
+                {['orthophoto', 'dsm', 'dtm', 'chm', 'slope', 'reprojection_error', 'point_density'].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setDronePhotogrammetryMetric(m)}
+                    className={`px-2 py-1 rounded border whitespace-nowrap transition-all ${
+                      dronePhotogrammetryMetric === m
+                        ? 'bg-cyan-500 text-black font-extrabold border-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.5)]'
+                        : 'bg-zinc-900 text-slate-300 border-zinc-700 hover:bg-zinc-800'
+                    }`}
+                  >
+                    {m.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+
+              {/* Opacity Slider */}
+              <div className="flex items-center justify-between gap-3 text-xs font-mono pt-1">
+                <span className="text-gray-400 text-[10px] flex items-center gap-1">
+                  <Sliders className="w-3 h-3 text-cyan-400" />
+                  Opacity
+                </span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={dronePhotogrammetryOpacity}
+                  onChange={(e) => setDronePhotogrammetryOpacity(parseFloat(e.target.value))}
+                  className="w-36 accent-cyan-400 cursor-pointer"
+                />
+                <span className="text-cyan-300 text-[10px] font-bold w-10 text-right">
+                  {Math.round(dronePhotogrammetryOpacity * 100)}%
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* T-210/T-212: Floating Custom Band Math HUD Controller Card (Cycle v2.5.25) */}
+          {showBandMathLayer && (
+            <div className="absolute top-20 left-4 z-[937] glass-panel p-3.5 rounded-xl border-indigo-500/40 shadow-2xl bg-black/90 backdrop-blur-md flex flex-col gap-2.5 w-[420px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-indigo-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[210px]">
+                    {customBandFormulaName}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setBandMathModalOpen(true)}
+                    className="px-2 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Edit Formula
+                  </button>
+                  <button
+                    onClick={() => setShowBandMathLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Custom Band Math Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-2 bg-zinc-950 border border-zinc-800 rounded font-mono text-[11px] text-indigo-300 break-all">
+                {customBandFormula}
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300">
+                <div className="flex items-center gap-2">
+                  <span className="text-zinc-500 uppercase">Colormap:</span>
+                  <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-indigo-300 uppercase font-bold text-[10px]">
+                    {customBandColormap}
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Range:</span>
+                  <span className="text-zinc-300 font-mono text-[10px]">[{customBandRescale}]</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <span className="text-zinc-500 text-[10px] uppercase">Opacity:</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={customBandOpacity}
+                  onChange={(e) => setCustomBandOpacity(parseFloat(e.target.value))}
+                  className="w-40 accent-indigo-500 cursor-pointer"
+                />
+                <span className="text-indigo-400 font-bold text-[11px]">
+                  {Math.round(customBandOpacity * 100)}%
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -9160,6 +9445,30 @@ export default function MapExplorer() {
               >
                 <BellRing className="w-3.5 h-3.5 text-cyan-400" />
                 <span>STAC Alerts (v2.5.23)</span>
+              </button>
+
+              {/* T-204/T-206 Drone Photogrammetry Studio Shortcut (Cycle v2.5.24) */}
+              <button
+                onClick={() => setDronePhotogrammetryModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  dronePhotogrammetryModalOpen || showDronePhotogrammetryLayer ? 'bg-cyan-600 text-white font-extrabold shadow-[0_0_12px_rgba(6,182,212,0.6)]' : ''
+                }`}
+                title="Decoupled NodeODM Drone Photogrammetry Mission Studio, Multi-Image Dropzone, Interactive GCP Pinning & Centimeter COG Tiling (Cycle v2.5.24)"
+              >
+                <Camera className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Drone Photogrammetry (v2.5.24)</span>
+              </button>
+
+              {/* T-210/T-212 Custom Band Math Studio Shortcut (Cycle v2.5.25) */}
+              <button
+                onClick={() => setBandMathModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-indigo-300 hover:text-white hover:bg-indigo-500/20 border border-indigo-500/30 ${
+                  bandMathModalOpen || showBandMathLayer ? 'bg-indigo-600 text-white font-extrabold shadow-[0_0_12px_rgba(99,102,241,0.6)]' : ''
+                }`}
+                title="Interactive Custom Spectral Formula Studio, AST Equation Editor, Live Preview & Custom Math TileLayer (Cycle v2.5.25)"
+              >
+                <Calculator className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Band Math (v2.5.25)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -20958,6 +21267,47 @@ export default function MapExplorer() {
               zoom: 13
             });
           }
+        }}
+      />
+
+      {/* T-204/T-206: Drone Photogrammetry Mission Studio Modal (Cycle v2.5.24) */}
+      <DronePhotogrammetryModal
+        isOpen={dronePhotogrammetryModalOpen}
+        onClose={() => setDronePhotogrammetryModalOpen(false)}
+        onApplyTileLayer={(payload) => {
+          setDronePhotogrammetryTaskId(payload.taskId);
+          setDronePhotogrammetryMetric(payload.metric || 'orthophoto');
+          setDronePhotogrammetryMission(payload);
+          setShowDronePhotogrammetryLayer(true);
+          if (payload.center) {
+            setCustomFlyTarget({
+              lat: payload.center[0],
+              lng: payload.center[1],
+              zoom: 17
+            });
+          }
+        }}
+        onStartGcpPinning={() => {
+          setPinningGcpPin(true);
+          setDronePhotogrammetryModalOpen(false);
+        }}
+        pinnedCoordinates={pinnedGcpCoord}
+      />
+
+      {/* T-210/T-212: Custom Spectral Formula & Band Math Studio Modal (Cycle v2.5.25) */}
+      <BandMathStudioModal
+        isOpen={bandMathModalOpen}
+        onClose={() => setBandMathModalOpen(false)}
+        initialFormula={customBandFormula}
+        initialFormulaName={customBandFormulaName}
+        initialColormap={customBandColormap}
+        initialRescale={customBandRescale}
+        onApplyTileLayer={(payload) => {
+          setCustomBandFormula(payload.formula);
+          setCustomBandFormulaName(payload.formulaName || 'Custom Spectral Formula');
+          setCustomBandColormap(payload.colormap || 'rdylgn');
+          setCustomBandRescale(payload.rescale || '-0.2,0.8');
+          setShowBandMathLayer(true);
         }}
       />
 

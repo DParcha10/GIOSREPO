@@ -912,7 +912,28 @@ from app.models.schemas import (
     parse_odm_gcp_file,
     build_drone_photogrammetry_tile_url,
     build_drone_photogrammetry_tile_url_template,
-    simulate_nodeodm_task_progression
+    simulate_nodeodm_task_progression,
+    BandMathTokenType,
+    BandMathNodeType,
+    BandMathToken,
+    BandMathASTNode,
+    BandMathValidationRequest,
+    BandMathValidationResponse,
+    BandMathEvaluationRequest,
+    BandMathEvaluationResponse,
+    BandMathPreset,
+    BandMathPresetsResponse,
+    BandMathTileRequestParams,
+    BAND_NAME_ALIASES,
+    VALID_BAND_MATH_FUNCTIONS,
+    BAND_MATH_PRESETS,
+    tokenize_band_math,
+    parse_band_math_ast,
+    validate_band_math_formula,
+    evaluate_band_math_ast,
+    evaluate_band_math_formula,
+    build_custom_expression_tile_url,
+    build_custom_expression_tile_url_template
 )
 from app.config import settings
 
@@ -10529,6 +10550,318 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         gcps_with_disabled[2]["is_enabled"] = False
         with self.assertRaises(ValueError):
             solve_gcp_affine_transform(gcps_with_disabled)
+
+    # =========================================================================
+    # CYCLE v2.5.25: AST BAND MATH GRAMMAR, TOKENIZER, AST NODES & CONTRACTS
+    # =========================================================================
+
+    def test_band_math_enums_constants_and_aliases(self):
+        """Verify token types, AST node types, aliases, and math function registries."""
+        # 1. Token types
+        self.assertEqual(BandMathTokenType.NUMBER.value, "number")
+        self.assertEqual(BandMathTokenType.IDENTIFIER.value, "identifier")
+        self.assertEqual(BandMathTokenType.OPERATOR.value, "operator")
+        self.assertEqual(BandMathTokenType.LPAREN.value, "lparen")
+        self.assertEqual(BandMathTokenType.RPAREN.value, "rparen")
+        self.assertEqual(BandMathTokenType.COMMA.value, "comma")
+
+        # 2. AST node types
+        self.assertEqual(BandMathNodeType.CONSTANT.value, "constant")
+        self.assertEqual(BandMathNodeType.VARIABLE.value, "variable")
+        self.assertEqual(BandMathNodeType.UNARY_OP.value, "unary_op")
+        self.assertEqual(BandMathNodeType.BINARY_OP.value, "binary_op")
+        self.assertEqual(BandMathNodeType.FUNCTION_CALL.value, "function_call")
+
+        # 3. Band aliases mapping
+        self.assertEqual(BAND_NAME_ALIASES["NIR"], "B08")
+        self.assertEqual(BAND_NAME_ALIASES["RED"], "B04")
+        self.assertEqual(BAND_NAME_ALIASES["GREEN"], "B03")
+        self.assertEqual(BAND_NAME_ALIASES["BLUE"], "B02")
+        self.assertEqual(BAND_NAME_ALIASES["SWIR1"], "B11")
+        self.assertEqual(BAND_NAME_ALIASES["SWIR2"], "B12")
+        self.assertEqual(BAND_NAME_ALIASES["REDEDGE1"], "B05")
+        self.assertEqual(BAND_NAME_ALIASES["COASTAL"], "B01")
+
+        # 4. Math function specifications
+        self.assertIn("sqrt", VALID_BAND_MATH_FUNCTIONS)
+        self.assertIn("norm_diff", VALID_BAND_MATH_FUNCTIONS)
+        self.assertIn("clamp", VALID_BAND_MATH_FUNCTIONS)
+        self.assertEqual(VALID_BAND_MATH_FUNCTIONS["clamp"]["min_args"], 3)
+        self.assertEqual(VALID_BAND_MATH_FUNCTIONS["sqrt"]["min_args"], 1)
+
+    def test_band_math_tokenizer_lexical_analysis_and_security(self):
+        """Verify safe lexical tokenization, numeric formats, and code injection resistance."""
+        # 1. Standard NDVI formula tokenization
+        tokens = tokenize_band_math("(B08 - B04) / (B08 + B04)")
+        self.assertEqual(len(tokens), 11)
+        self.assertEqual(tokens[0]["type"], "lparen")
+        self.assertEqual(tokens[1]["type"], "identifier")
+        self.assertEqual(tokens[1]["value"], "B08")
+        self.assertEqual(tokens[2]["type"], "operator")
+        self.assertEqual(tokens[2]["value"], "-")
+        self.assertEqual(tokens[3]["value"], "B04")
+        self.assertEqual(tokens[5]["value"], "/")
+
+        # 2. Numeric formats: integer, decimal, scientific notation
+        tok_num = tokenize_band_math("1.5 * B08 + 1e-6")
+        self.assertEqual(tok_num[0]["type"], "number")
+        self.assertEqual(tok_num[0]["value"], "1.5")
+        self.assertEqual(tok_num[4]["type"], "number")
+        self.assertEqual(tok_num[4]["value"], "1e-6")
+
+        # 3. Double-asterisk power operator normalization to '^'
+        tok_pow = tokenize_band_math("B08 ** 2")
+        self.assertEqual(tok_pow[1]["type"], "operator")
+        self.assertEqual(tok_pow[1]["value"], "^")
+
+        # 4. Security violation rejection: semicolons, quotes, backticks
+        with self.assertRaises(ValueError) as ctx:
+            tokenize_band_math("B08; import os; os.system('ls')")
+        self.assertIn("Security violation", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            tokenize_band_math("eval('B08 + 1')")
+        self.assertIn("Security violation", str(ctx.exception))
+
+        # 5. Double underscores rejection
+        with self.assertRaises(ValueError) as ctx:
+            tokenize_band_math("B08.__class__.__mro__")
+        self.assertIn("Double underscores", str(ctx.exception))
+
+        # 6. Length and empty guards
+        with self.assertRaises(ValueError):
+            tokenize_band_math("")
+        with self.assertRaises(ValueError):
+            tokenize_band_math("   ")
+        with self.assertRaises(ValueError):
+            tokenize_band_math("B08 + " * 150)  # > 500 chars
+
+    def test_band_math_ast_parser_precedence_and_associativity(self):
+        """Verify PEMDAS mathematical order of operations, function parsing, and recursion guard."""
+        # 1. PEMDAS: Multiplication before addition (2 + 3 * 4 == 14)
+        ast_pemdas = parse_band_math_ast("2 + 3 * 4")
+        self.assertEqual(ast_pemdas["type"], "binary_op")
+        self.assertEqual(ast_pemdas["op"], "+")
+        self.assertEqual(ast_pemdas["left"]["value"], 2.0)
+        self.assertEqual(ast_pemdas["right"]["type"], "binary_op")
+        self.assertEqual(ast_pemdas["right"]["op"], "*")
+
+        # 2. Parentheses override: (2 + 3) * 4 == 20
+        ast_parens = parse_band_math_ast("(2 + 3) * 4")
+        self.assertEqual(ast_parens["op"], "*")
+        self.assertEqual(ast_parens["left"]["op"], "+")
+
+        # 3. Power right-associativity: 2 ^ 3 ^ 2 == 2 ^ 9 == 512
+        ast_power = parse_band_math_ast("2 ^ 3 ^ 2")
+        self.assertEqual(ast_power["op"], "^")
+        self.assertEqual(ast_power["left"]["value"], 2.0)
+        self.assertEqual(ast_power["right"]["op"], "^")
+
+        # 4. Function call AST
+        ast_func = parse_band_math_ast("sqrt(B08) + clamp(B04, 0.0, 1.0)")
+        self.assertEqual(ast_func["type"], "binary_op")
+        self.assertEqual(ast_func["left"]["type"], "function_call")
+        self.assertEqual(ast_func["left"]["name"], "sqrt")
+        self.assertEqual(ast_func["right"]["type"], "function_call")
+        self.assertEqual(ast_func["right"]["name"], "clamp")
+        self.assertEqual(len(ast_func["right"]["args"]), 3)
+
+        # 5. Unary operators and constant folding
+        ast_unary = parse_band_math_ast("-B04")
+        self.assertEqual(ast_unary["type"], "unary_op")
+        self.assertEqual(ast_unary["op"], "-")
+
+        ast_folded = parse_band_math_ast("-0.5")
+        self.assertEqual(ast_folded["type"], "constant")
+        self.assertEqual(ast_folded["value"], -0.5)
+
+        # 6. Recursion depth limit guard (> 20 levels raises ValueError)
+        deep_expr = "(" * 25 + "B08" + ")" * 25
+        with self.assertRaises(ValueError) as ctx:
+            parse_band_math_ast(deep_expr, max_depth=20)
+        self.assertIn("recursion depth limit exceeded", str(ctx.exception))
+
+    def test_band_math_safe_evaluator_and_epsilon_clamping(self):
+        """Verify mathematical formula evaluation, division-by-zero clamping, and function calls."""
+        # 1. Standard NDVI evaluation
+        values = {"B08": 0.50, "B04": 0.10}
+        ndvi = evaluate_band_math_formula("(B08 - B04) / (B08 + B04)", values)
+        expected_ndvi = (0.50 - 0.10) / (0.50 + 0.10)
+        self.assertAlmostEqual(ndvi, expected_ndvi, places=6)
+
+        # 2. Band alias transparent resolution (NIR -> B08, RED -> B04)
+        ndvi_alias = evaluate_band_math_formula("(NIR - RED) / (NIR + RED)", values)
+        self.assertAlmostEqual(ndvi_alias, expected_ndvi, places=6)
+
+        # 3. Soil Adjusted Vegetation Index (SAVI)
+        savi = evaluate_band_math_formula("1.5 * (B08 - B04) / (B08 + B04 + 0.5)", values)
+        expected_savi = 1.5 * (0.50 - 0.10) / (0.50 + 0.10 + 0.5)
+        self.assertAlmostEqual(savi, expected_savi, places=6)
+
+        # 4. Division-by-zero protection via epsilon clamping
+        zero_div = evaluate_band_math_formula("1.0 / (B08 - B08)", values, epsilon=1e-6)
+        self.assertEqual(zero_div, 1.0 / 1e-6)
+        self.assertTrue(math.isfinite(zero_div))
+
+        # 5. Functions: sqrt, abs, log, clamp, norm_diff
+        self.assertAlmostEqual(evaluate_band_math_formula("sqrt(0.16)", {}), 0.4, places=6)
+        self.assertAlmostEqual(evaluate_band_math_formula("abs(-5.25)", {}), 5.25, places=6)
+        self.assertAlmostEqual(evaluate_band_math_formula("clamp(1.5, 0.0, 1.0)", {}), 1.0, places=6)
+        self.assertAlmostEqual(evaluate_band_math_formula("clamp(-0.5, 0.0, 1.0)", {}), 0.0, places=6)
+        self.assertAlmostEqual(evaluate_band_math_formula("norm_diff(0.5, 0.1)", {}), (0.5 - 0.1) / (0.5 + 0.1), places=6)
+
+        # 6. Missing variable raises KeyError
+        with self.assertRaises(KeyError):
+            evaluate_band_math_formula("(B08 - B12) / (B08 + B12)", {"B08": 0.5})
+
+    def test_band_math_formula_validation_and_diagnostics(self):
+        """Verify formula diagnostic reporting, variable detection, and error categorization."""
+        # 1. Valid NDVI formula
+        val_valid = validate_band_math_formula("(B08 - B04) / (B08 + B04)")
+        self.assertTrue(val_valid["is_valid"])
+        self.assertIn("B04", val_valid["bands_detected"])
+        self.assertIn("B08", val_valid["bands_detected"])
+        self.assertEqual(len(val_valid["unrecognized_identifiers"]), 0)
+        self.assertGreater(val_valid["ast_depth"], 1)
+        self.assertGreater(val_valid["node_count"], 4)
+        self.assertIsNone(val_valid["error_message"])
+
+        # 2. Formula with unrecognized identifier
+        val_unknown = validate_band_math_formula("(B08 - FAKE_BAND_XYZ) / (B08 + FAKE_BAND_XYZ)")
+        self.assertFalse(val_unknown["is_valid"])
+        self.assertIn("FAKE_BAND_XYZ", val_unknown["unrecognized_identifiers"])
+        self.assertIsNotNone(val_unknown["error_message"])
+
+        # 3. Syntax error diagnostic (unclosed parenthesis)
+        val_syntax = validate_band_math_formula("(B08 - B04 / (B08 + B04)")
+        self.assertFalse(val_syntax["is_valid"])
+        self.assertGreater(len(val_syntax["syntax_errors"]), 0)
+
+    def test_band_math_presets_catalog(self):
+        """Verify all 12 pre-configured spectral index presets parse and evaluate cleanly."""
+        self.assertEqual(len(BAND_MATH_PRESETS), 12)
+        sample_values = {
+            "B01": 0.05,
+            "B02": 0.08,
+            "B03": 0.12,
+            "B04": 0.10,
+            "B05": 0.22,
+            "B06": 0.35,
+            "B07": 0.45,
+            "B08": 0.50,
+            "B8A": 0.48,
+            "B09": 0.15,
+            "B11": 0.25,
+            "B12": 0.18
+        }
+
+        for preset_id, preset in BAND_MATH_PRESETS.items():
+            self.assertIn("id", preset)
+            self.assertIn("name", preset)
+            self.assertIn("formula", preset)
+            self.assertIn("bands_required", preset)
+            self.assertIn("default_colormap", preset)
+            self.assertIn("default_rescale", preset)
+
+            # Validate grammar
+            val = validate_band_math_formula(preset["formula"])
+            self.assertTrue(val["is_valid"], f"Preset '{preset_id}' formula failed validation: {val['error_message']}")
+
+            # Verify all required bands are detected
+            for req in preset["bands_required"]:
+                self.assertIn(req, val["bands_detected"])
+
+            # Evaluate with sample values
+            result = evaluate_band_math_formula(preset["formula"], sample_values)
+            self.assertTrue(math.isfinite(result), f"Preset '{preset_id}' evaluated to non-finite value: {result}")
+
+    def test_band_math_pydantic_models_and_serialization(self):
+        """Verify Pydantic schema validation, serialization, and request/response structures."""
+        # 1. Validation request & response
+        req_val = BandMathValidationRequest(formula="(B08 - B04) / (B08 + B04)", collection="sentinel-2-l2a")
+        res_val = BandMathValidationResponse.model_validate(validate_band_math_formula(req_val.formula))
+        self.assertTrue(res_val.is_valid)
+        self.assertEqual(len(res_val.bands_detected), 2)
+
+        # 2. Evaluation request & response
+        req_eval = BandMathEvaluationRequest(
+            formula="(B08 - B04) / (B08 + B04)",
+            band_values={"B08": 0.50, "B04": 0.10},
+            epsilon=1e-6
+        )
+        val = evaluate_band_math_formula(req_eval.formula, req_eval.band_values, epsilon=req_eval.epsilon)
+        res_eval = BandMathEvaluationResponse(
+            is_valid=True,
+            formula=req_eval.formula,
+            result=val,
+            bands_used=["B04", "B08"],
+            ast_depth=3,
+            node_count=5,
+            execution_time_ms=0.85
+        )
+        self.assertAlmostEqual(res_eval.result, 0.666667, places=5)
+
+        # 3. Presets response
+        presets_list = [BandMathPreset.model_validate(p) for p in BAND_MATH_PRESETS.values()]
+        catalog = BandMathPresetsResponse(presets=presets_list, total=len(presets_list))
+        self.assertEqual(catalog.total, 12)
+
+        # 4. Tile parameters
+        tile_params = BandMathTileRequestParams(
+            expr="(B08 - B04) / (B08 + B04)",
+            collection="sentinel-2-l2a",
+            colormap="rdylgn",
+            rescale="-0.2,0.8"
+        )
+        self.assertEqual(tile_params.colormap, "rdylgn")
+
+    def test_band_math_canonical_route_contracts_and_tile_urls(self):
+        """Verify canonical route contracts, parameter aliasing, and tile URL builders."""
+        # 1. API Route contracts
+        route_val = format_api_route("analysis_custom_expression_validate")
+        self.assertEqual(route_val, "/api/v1/analysis/custom-expression/validate")
+
+        route_eval = format_api_route("analysis_custom_expression_evaluate")
+        self.assertEqual(route_eval, "/api/v1/analysis/custom-expression/evaluate")
+
+        route_presets = format_api_route("analysis_custom_expression_presets")
+        self.assertEqual(route_presets, "/api/v1/analysis/custom-expression/presets")
+
+        route_tile = format_api_route("tiles_custom_expression", z=14, x=2048, y=4096)
+        self.assertEqual(route_tile, "/api/v1/tiles/custom-expression/14/2048/4096.png")
+
+        route_coll_tile = format_api_route(
+            "tiles_custom_expression_collection",
+            collection="sentinel-2-l2a",
+            item_id="S2A_MSIL2A_20261015",
+            z=12,
+            x=1024,
+            y=2048
+        )
+        self.assertEqual(route_coll_tile, "/api/v1/tiles/sentinel-2-l2a/S2A_MSIL2A_20261015/custom-expression/12/1024/2048.png")
+
+        # 2. Tile URL builders
+        tile_url = build_custom_expression_tile_url(
+            z=12,
+            x=100,
+            y=200,
+            expr="(B08 - B04) / (B08 + B04)",
+            colormap="rdylgn",
+            rescale="-0.2,0.8"
+        )
+        self.assertIn("/api/v1/tiles/custom-expression/12/100/200.png?expr=", tile_url)
+        self.assertIn("colormap=rdylgn", tile_url)
+        self.assertIn("rescale=-0.2,0.8", tile_url)
+
+        # 3. Tile URL template for Leaflet
+        template_url = build_custom_expression_tile_url_template(
+            expr="(B08 - B04) / (B08 + B04)",
+            collection="sentinel-2-l2a",
+            item_id="S2A_SCENE_01",
+            colormap="viridis"
+        )
+        self.assertIn("/api/v1/tiles/sentinel-2-l2a/S2A_SCENE_01/custom-expression/{z}/{x}/{y}.png?expr=", template_url)
+        self.assertIn("colormap=viridis", template_url)
 
 if __name__ == "__main__":
     unittest.main()

@@ -3383,8 +3383,106 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(res_drone_tile.status_code, 200)
         self.assertTrue(res_drone_tile.content.startswith(b"\x89PNG"))
 
+    def test_custom_expression_and_band_math_ast_tiling_api(self):
+        """Test Cycle v2.5.25: AST Band Math Compiler, Multi-Band Math Evaluator & Dynamic XYZ Custom Expression Tile Service."""
+        # 1. Formula Validation Endpoint (Versioned and Unversioned)
+        val_req = {"formula": "(B08 - B04) / (B08 + B04)", "collection": "sentinel-2-l2a"}
+        res_val = self.client.post("/api/v1/analysis/custom-expression/validate", json=val_req)
+        self.assertEqual(res_val.status_code, 200)
+        data_val = res_val.json()
+        self.assertTrue(data_val["is_valid"])
+        self.assertIn("B08", data_val["bands_detected"])
+        self.assertIn("B04", data_val["bands_detected"])
+        self.assertGreater(data_val["ast_depth"], 0)
+
+        res_val_alias = self.client.post("/analysis/custom-expression/validate", json=val_req)
+        self.assertEqual(res_val_alias.status_code, 200)
+        self.assertTrue(res_val_alias.json()["is_valid"])
+
+        # 1b. Validation of Complex Formula (EVI)
+        evi_req = {"formula": "2.5 * (B08 - B04) / (B08 + 6.0 * B04 - 7.5 * B02 + 1.0)"}
+        res_evi = self.client.post("/api/v1/analysis/custom-expression/validate", json=evi_req)
+        self.assertEqual(res_evi.status_code, 200)
+        self.assertTrue(res_evi.json()["is_valid"])
+        self.assertEqual(len(res_evi.json()["bands_detected"]), 3)
+
+        # 1c. Validation of Syntax Error / Invalid Formula
+        bad_req = {"formula": "(B08 - B04"}  # Unclosed paren
+        res_bad = self.client.post("/api/v1/analysis/custom-expression/validate", json=bad_req)
+        self.assertEqual(res_bad.status_code, 200)
+        self.assertFalse(res_bad.json()["is_valid"])
+        self.assertIsNotNone(res_bad.json()["error_message"])
+
+        # 2. Formula Evaluation Endpoint (Versioned, Unversioned, snake_case and camelCase)
+        eval_req_snake = {
+            "formula": "(B08 - B04) / (B08 + B04)",
+            "band_values": {"B08": 0.60, "B04": 0.20},
+            "epsilon": 1e-6
+        }
+        res_eval = self.client.post("/api/v1/analysis/custom-expression/evaluate", json=eval_req_snake)
+        self.assertEqual(res_eval.status_code, 200)
+        data_eval = res_eval.json()
+        self.assertTrue(data_eval["is_valid"])
+        self.assertAlmostEqual(data_eval["result"], 0.50, places=4)
+        self.assertGreater(data_eval["execution_time_ms"], 0.0)
+
+        eval_req_camel = {
+            "formula": "(B08 - B04) / (B08 + B04)",
+            "bandValues": {"B08": 0.60, "B04": 0.20}
+        }
+        res_eval_camel = self.client.post("/analysis/custom-expression/evaluate", json=eval_req_camel)
+        self.assertEqual(res_eval_camel.status_code, 200)
+        self.assertAlmostEqual(res_eval_camel.json()["result"], 0.50, places=4)
+
+        # 2b. Division-by-Zero Numerical Safety
+        div_zero_req = {
+            "formula": "1.0 / B04",
+            "band_values": {"B04": 0.0},
+            "epsilon": 1e-6
+        }
+        res_div_zero = self.client.post("/api/v1/analysis/custom-expression/evaluate", json=div_zero_req)
+        self.assertEqual(res_div_zero.status_code, 200)
+        self.assertTrue(res_div_zero.json()["is_valid"])
+        self.assertAlmostEqual(res_div_zero.json()["result"], 1000000.0, places=1)
+
+        # 3. Presets Catalog Endpoint
+        res_presets = self.client.get("/api/v1/analysis/custom-expression/presets")
+        self.assertEqual(res_presets.status_code, 200)
+        data_presets = res_presets.json()
+        self.assertGreaterEqual(data_presets["total"], 10)
+        self.assertIsInstance(data_presets["presets"], list)
+        preset_ids = [p["id"] for p in data_presets["presets"]]
+        self.assertIn("ndvi", preset_ids)
+        self.assertIn("mndwi", preset_ids)
+        self.assertIn("evi", preset_ids)
+
+        res_presets_alias = self.client.get("/analysis/custom-expression/presets")
+        self.assertEqual(res_presets_alias.status_code, 200)
+        self.assertEqual(res_presets_alias.json()["total"], data_presets["total"])
+
+        # 4. Dynamic Custom Expression XYZ Tile Streaming (Versioned & Unversioned)
+        tile_url = "/api/v1/tiles/custom-expression/12/100/100.png?expr=(B08-B04)/(B08%2BB04)&colormap=rdylgn&rescale=-0.2,0.8"
+        res_tile = self.client.get(tile_url)
+        self.assertEqual(res_tile.status_code, 200)
+        self.assertEqual(res_tile.headers["content-type"], "image/png")
+        self.assertTrue(res_tile.content.startswith(b"\x89PNG"))
+
+        tile_alias_url = "/tiles/custom-expression/12/100/100.png?expr=(B08-B04)/(B08%2BB04)"
+        res_tile_alias = self.client.get(tile_alias_url)
+        self.assertEqual(res_tile_alias.status_code, 200)
+        self.assertTrue(res_tile_alias.content.startswith(b"\x89PNG"))
+
+        # 5. Scene-specific Dynamic Custom Expression Tile Streaming
+        scene_tile_url = "/api/v1/tiles/sentinel-2-l2a/S2A_MSIL2A_20261015/custom-expression/12/100/100.png?expr=(B08-B11)/(B08%2BB11)&colormap=spectral"
+        res_scene_tile = self.client.get(scene_tile_url)
+        self.assertEqual(res_scene_tile.status_code, 200)
+        self.assertEqual(res_scene_tile.headers["content-type"], "image/png")
+        self.assertTrue(res_scene_tile.content.startswith(b"\x89PNG"))
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

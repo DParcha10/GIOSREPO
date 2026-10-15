@@ -2202,6 +2202,314 @@ class TestScientificRigor(unittest.TestCase):
         t_tpl = build_drone_photogrammetry_tile_url_template("ODM-BENCHMARK-001", metric="dsm")
         self.assertEqual(t_tpl, "/api/v1/tiles/drone/photogrammetry/ODM-BENCHMARK-001/dsm/{z}/{x}/{y}.png")
 
+    def test_task_t214_band_math_ast_scientific_rigor_and_safety_invariants(self):
+        """Task T-214: Scientific Rigor & Mathematical Verification for Band Math AST Engine (Cycle v2.5.25).
+        
+        Verifies:
+        1. PEMDAS/BODMAS algebraic precedence and associativity.
+        2. Denominator epsilon zero-guard (epsilon = 10^-6) in scalar and vectorized raster.
+        3. Strict lexical and grammar code injection resistance (zero eval() / zero exec()).
+        4. Biophysical formula equivalence against published ground-truth indices.
+        5. Band aliases, case-insensitivity, and raw_vname priority.
+        6. Dynamic custom expression tile server RGBA PNG invariants.
+        7. Advanced math functions and numerical domain bounds (sqrt, log, exp, clamp, min, max).
+        """
+        import io
+        from PIL import Image
+        from app.models.schemas import (
+            BAND_MATH_PRESETS,
+            validate_band_math_formula,
+            evaluate_band_math_formula
+        )
+        from app.services.tile_service import tile_service
+
+        # -------------------------------------------------------------
+        # 1. PEMDAS / BODMAS Algebraic Precedence & Associativity
+        # -------------------------------------------------------------
+        vals = {"B04": 0.10, "B08": 0.40, "B02": 0.05, "B11": 0.20}
+
+        # Addition vs Multiplication: B04 + B08 * 2 == 0.10 + 0.80 = 0.90
+        res1 = evaluate_band_math_formula("B04 + B08 * 2", vals)
+        self.assertAlmostEqual(res1, 0.90, places=5)
+
+        # Parentheses override: (B04 + B08) * 2 == 0.50 * 2 = 1.00
+        res1_paren = evaluate_band_math_formula("(B04 + B08) * 2", vals)
+        self.assertAlmostEqual(res1_paren, 1.00, places=5)
+
+        # Subtraction vs Division: B08 - B04 / 2 == 0.40 - 0.05 = 0.35
+        res2 = evaluate_band_math_formula("B08 - B04 / 2", vals)
+        self.assertAlmostEqual(res2, 0.35, places=5)
+
+        res2_paren = evaluate_band_math_formula("(B08 - B04) / 2", vals)
+        self.assertAlmostEqual(res2_paren, 0.15, places=5)
+
+        # Multiplication vs Exponentiation: B04 * 2 ^ 3 == 0.10 * 8 = 0.80
+        res3 = evaluate_band_math_formula("B04 * 2 ^ 3", vals)
+        self.assertAlmostEqual(res3, 0.80, places=5)
+
+        res3_paren = evaluate_band_math_formula("(B04 * 2) ^ 3", vals)
+        self.assertAlmostEqual(res3_paren, 0.008, places=5)
+
+        # Exponentiation Right-Associativity: 2 ^ 3 ^ 2 == 2 ^ (3 ^ 2) == 2 ^ 9 = 512
+        res4 = evaluate_band_math_formula("2 ^ 3 ^ 2", {})
+        self.assertAlmostEqual(res4, 512.0, places=4)
+
+        # Double asterisk '**' power operator parity
+        res4_star = evaluate_band_math_formula("2 ** 3 ** 2", {})
+        self.assertAlmostEqual(res4_star, 512.0, places=4)
+
+        # Unary Signs and Precedence
+        res5_unary = evaluate_band_math_formula("-B04 + B08", vals)
+        self.assertAlmostEqual(res5_unary, 0.30, places=5)
+
+        res5_unary_paren = evaluate_band_math_formula("-(B04 + B08)", vals)
+        self.assertAlmostEqual(res5_unary_paren, -0.50, places=5)
+
+        res5_neg_exp = evaluate_band_math_formula("2 ^ -2", {})
+        self.assertAlmostEqual(res5_neg_exp, 0.25, places=5)
+
+        # -------------------------------------------------------------
+        # 2. Division-by-Zero Numerical Safety & Epsilon Clamping
+        # -------------------------------------------------------------
+        # Exact zero denominator: 1.0 / 0.0 with eps=1e-6 -> 1.0 / 1e-6 = 1e6
+        res_zero = evaluate_band_math_formula("1.0 / 0.0", {}, epsilon=1e-6)
+        self.assertAlmostEqual(res_zero, 1e6, delta=1.0)
+        self.assertTrue(math.isfinite(res_zero))
+
+        # Negative near-zero denominator: 1.0 / -1e-9 -> clamps to -1e-6 -> -1e6
+        res_neg_zero = evaluate_band_math_formula("1.0 / -1e-9", {}, epsilon=1e-6)
+        self.assertAlmostEqual(res_neg_zero, -1e6, delta=1.0)
+        self.assertTrue(math.isfinite(res_neg_zero))
+
+        # Normalized difference with identical band values: norm_diff(0.3, -0.3) -> denom=0.0
+        res_nd = evaluate_band_math_formula("norm_diff(0.3, -0.3)", {}, epsilon=1e-6)
+        self.assertTrue(math.isfinite(res_nd))
+        self.assertAlmostEqual(res_nd, 0.6 / 1e-6, delta=10.0)
+
+        # Vectorized raster division by zero test
+        shape = (10, 10)
+        zero_denom = np.zeros(shape, dtype=np.float32)
+        numer = np.full(shape, 2.5, dtype=np.float32)
+        band_rasters = {"NUM": numer, "DEN": zero_denom}
+
+        raster_res = index_service.evaluate_band_math_raster("NUM / DEN", band_rasters, epsilon=1e-6)
+        self.assertEqual(raster_res.shape, shape)
+        self.assertTrue(np.all(np.isfinite(raster_res)), "Vectorized division by zero must produce 100% finite floats")
+        self.assertTrue(np.allclose(raster_res, 2.5 / 1e-6, atol=1.0))
+
+        # Mixed raster with zero and non-zero denominators
+        mixed_denom = np.array([[0.0, 2.0], [-1e-9, 4.0]], dtype=np.float32)
+        mixed_numer = np.array([[1.0, 4.0], [-2.0, 8.0]], dtype=np.float32)
+        raster_mixed = index_service.evaluate_band_math_raster("NUM / DEN", {"NUM": mixed_numer, "DEN": mixed_denom}, epsilon=1e-6)
+        self.assertTrue(np.all(np.isfinite(raster_mixed)))
+        self.assertAlmostEqual(float(raster_mixed[0, 1]), 2.0, places=4)
+        self.assertAlmostEqual(float(raster_mixed[1, 1]), 2.0, places=4)
+        self.assertAlmostEqual(float(raster_mixed[0, 0]), 1e6, delta=1.0)
+        self.assertAlmostEqual(float(raster_mixed[1, 0]), 2e6, delta=1.0)
+
+        # -------------------------------------------------------------
+        # 3. Arbitrary Code Injection & Adversarial Grammar Resistance
+        # -------------------------------------------------------------
+        adversarial_inputs = [
+            "__import__('os').system('dir')",
+            "import sys",
+            "eval('1+1')",
+            "exec('x=1')",
+            "globals()",
+            "locals()",
+            "open('/etc/passwd')",
+            "os.system('calc')",
+            "B08; rm -rf /",
+            "B08 && echo hacked",
+            "B08 | B04",
+            "B08 [0]",
+            "{'a': 1}",
+            "B08 > 0.5",
+            "B08 == B04",
+            "system('whoami')"
+        ]
+
+        for bad in adversarial_inputs:
+            diag = validate_band_math_formula(bad)
+            self.assertFalse(diag["is_valid"], f"Adversarial input '{bad}' must NOT pass validation")
+            self.assertIsNotNone(diag["error_message"])
+
+            with self.assertRaises((ValueError, KeyError)):
+                evaluate_band_math_formula(bad, {"B08": 0.5, "B04": 0.1})
+
+        # Recursion depth explosion attack: 22 levels of nested parentheses (limit = 20)
+        deep_expr = "(" * 22 + "B08" + ")" * 22
+        diag_deep = validate_band_math_formula(deep_expr, max_depth=20)
+        self.assertFalse(diag_deep["is_valid"])
+        self.assertIn("recursion depth limit exceeded", diag_deep["error_message"].lower())
+
+        # Length overflow (> 500 chars)
+        long_formula = "B08 + " * 100 + "B04"
+        diag_long = validate_band_math_formula(long_formula)
+        self.assertFalse(diag_long["is_valid"])
+        self.assertIn("exceeds maximum permitted length", diag_long["error_message"].lower())
+
+        # Empty or whitespace formulas
+        for empty in ["", "   ", "\t\n"]:
+            diag_empty = validate_band_math_formula(empty)
+            self.assertFalse(diag_empty["is_valid"])
+
+        # -------------------------------------------------------------
+        # 4. Biophysical Formula Equivalence Against Ground Truth
+        # -------------------------------------------------------------
+        canopy_values = {
+            "B01": 0.04,  # Coastal aerosol
+            "B02": 0.05,  # Blue
+            "B03": 0.08,  # Green
+            "B04": 0.04,  # Red (chlorophyll absorption)
+            "B05": 0.15,  # RedEdge 1
+            "B06": 0.30,  # RedEdge 2
+            "B07": 0.42,  # RedEdge 3
+            "B08": 0.55,  # NIR (leaf cellular scattering)
+            "B8A": 0.56,  # Narrow NIR
+            "B09": 0.12,  # Water vapor
+            "B11": 0.20,  # SWIR 1
+            "B12": 0.10   # SWIR 2
+        }
+
+        # 1. NDVI (Normalized Difference Vegetation Index) - Rouse et al. (1974)
+        expected_ndvi = (0.55 - 0.04) / (0.55 + 0.04)  # 0.51 / 0.59 = 0.864407
+        ast_ndvi = evaluate_band_math_formula("(B08 - B04) / (B08 + B04)", canopy_values)
+        ast_ndvi_func = evaluate_band_math_formula("norm_diff(B08, B04)", canopy_values)
+        self.assertAlmostEqual(ast_ndvi, expected_ndvi, places=5)
+        self.assertAlmostEqual(ast_ndvi_func, expected_ndvi, places=5)
+
+        # 2. NDMI (Normalized Difference Moisture Index) - Gao (1996)
+        expected_ndmi = (0.55 - 0.20) / (0.55 + 0.20)  # 0.35 / 0.75 = 0.466667
+        ast_ndmi = evaluate_band_math_formula("(B08 - B11) / (B08 + B11)", canopy_values)
+        self.assertAlmostEqual(ast_ndmi, expected_ndmi, places=5)
+
+        # 3. MNDWI (Modified Normalized Difference Water Index) - Xu (2006)
+        expected_mndwi = (0.08 - 0.20) / (0.08 + 0.20)  # -0.12 / 0.28 = -0.428571
+        ast_mndwi = evaluate_band_math_formula("(B03 - B11) / (B03 + B11)", canopy_values)
+        self.assertAlmostEqual(ast_mndwi, expected_mndwi, places=5)
+
+        # 4. SAVI (Soil Adjusted Vegetation Index, L=0.5) - Huete (1988)
+        expected_savi = ((0.55 - 0.04) / (0.55 + 0.04 + 0.50)) * 1.50  # (0.51 / 1.09) * 1.5 = 0.701835
+        ast_savi = evaluate_band_math_formula("((B08 - B04) / (B08 + B04 + 0.5)) * 1.5", canopy_values)
+        self.assertAlmostEqual(ast_savi, expected_savi, places=5)
+
+        # 5. EVI (Enhanced Vegetation Index) - Huete et al. (2002)
+        denom_evi = 0.55 + 6.0 * 0.04 - 7.5 * 0.05 + 1.0  # 1.415
+        expected_evi = 2.5 * (0.51 / denom_evi)  # 0.901060
+        ast_evi = evaluate_band_math_formula("2.5 * ((B08 - B04) / (B08 + 6.0 * B04 - 7.5 * B02 + 1.0))", canopy_values)
+        self.assertAlmostEqual(ast_evi, expected_evi, places=5)
+
+        # 6. MSAVI2 (Modified Second SAVI) - Qi et al. (1994)
+        t1 = 2.0 * 0.55 + 1.0  # 2.1
+        inside_sqrt = (t1 ** 2) - 8.0 * (0.55 - 0.04)  # 4.41 - 4.08 = 0.33
+        expected_msavi2 = (t1 - math.sqrt(inside_sqrt)) / 2.0  # 0.762772
+        ast_msavi2 = evaluate_band_math_formula("(2.0 * B08 + 1.0 - sqrt((2.0 * B08 + 1.0) ^ 2 - 8.0 * (B08 - B04))) / 2.0", canopy_values)
+        self.assertAlmostEqual(ast_msavi2, expected_msavi2, places=5)
+
+        # 7. Check all 12 presets in BAND_MATH_PRESETS for mathematical consistency
+        raster_dict = {k: np.full((16, 16), v, dtype=np.float32) for k, v in canopy_values.items()}
+
+        for pid, pdata in BAND_MATH_PRESETS.items():
+            formula = pdata["formula"]
+            scalar_res = evaluate_band_math_formula(formula, canopy_values)
+            self.assertTrue(math.isfinite(scalar_res), f"Preset {pid} scalar returned non-finite {scalar_res}")
+
+            raster_res = index_service.evaluate_band_math_raster(formula, raster_dict)
+            self.assertEqual(raster_res.shape, (16, 16))
+            self.assertTrue(np.all(np.isfinite(raster_res)), f"Preset {pid} raster returned non-finite values")
+
+            mean_raster_val = float(np.mean(raster_res))
+            self.assertAlmostEqual(scalar_res, mean_raster_val, places=4, msg=f"Preset {pid} scalar vs raster mismatch")
+
+        # -------------------------------------------------------------
+        # 5. Band Aliases, Case-Insensitivity & raw_vname Priority
+        # -------------------------------------------------------------
+        vals_aliases = {
+            "nir": 0.60,
+            "red": 0.10,
+            "GREEN": 0.15,
+            "blue": 0.05,
+            "swir1": 0.25,
+            "drone_red": 0.12,
+            "DRONE_NIR": 0.58
+        }
+
+        # Case-insensitive alias evaluation: (NIR - RED) / (NIR + RED)
+        res_alias = evaluate_band_math_formula("(nir - red) / (nir + red)", vals_aliases)
+        expected = (0.60 - 0.10) / (0.60 + 0.10)  # 0.714286
+        self.assertAlmostEqual(res_alias, expected, places=5)
+
+        # Canonical mapping: B08 mapped to NIR, B04 mapped to RED
+        res_canonical = evaluate_band_math_formula("(B08 - B04) / (B08 + B04)", vals_aliases)
+        self.assertAlmostEqual(res_canonical, expected, places=5)
+
+        # Drone band evaluation with raw_vname priority
+        res_drone = evaluate_band_math_formula("(drone_nir - drone_red) / (drone_nir + drone_red)", vals_aliases)
+        expected_drone = (0.58 - 0.12) / (0.58 + 0.12)
+        self.assertAlmostEqual(res_drone, expected_drone, places=5)
+
+        # -------------------------------------------------------------
+        # 6. Dynamic Custom Expression Tile Server RGBA PNG Invariants
+        # -------------------------------------------------------------
+        colormaps = ["rdylgn", "viridis", "spectral", "blues", "turbo"]
+        for cmap in colormaps:
+            tile_bytes = tile_service.render_custom_expression_tile(
+                z=13,
+                x=2048,
+                y=4096,
+                expr="(B08 - B04) / (B08 + B04)",
+                colormap=cmap,
+                rescale="-0.2,0.8"
+            )
+            self.assertIsInstance(tile_bytes, bytes)
+            self.assertGreater(len(tile_bytes), 500)
+            self.assertTrue(tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+            img = Image.open(io.BytesIO(tile_bytes))
+            self.assertEqual(img.size, (256, 256))
+            self.assertEqual(img.mode, "RGBA")
+
+        # -------------------------------------------------------------
+        # 7. Advanced Math Functions & Numerical Domain Bounds
+        # -------------------------------------------------------------
+        # sqrt of negative number -> clamped to 0.0
+        res_sqrt_neg = evaluate_band_math_formula("sqrt(-4.0)", {})
+        self.assertEqual(res_sqrt_neg, 0.0)
+
+        # Vectorized sqrt of negative
+        raster_sqrt_neg = index_service.evaluate_band_math_raster("sqrt(X)", {"X": np.array([-9.0, 0.0, 16.0], dtype=np.float32)})
+        self.assertTrue(np.allclose(raster_sqrt_neg, [0.0, 0.0, 4.0]))
+
+        # log of non-positive -> clamped to log(1e-12)
+        res_log_zero = evaluate_band_math_formula("log(0.0)", {})
+        self.assertAlmostEqual(res_log_zero, math.log(1e-12), places=4)
+
+        # exp extreme bounds [-50, 50]
+        res_exp_high = evaluate_band_math_formula("exp(100.0)", {})
+        self.assertAlmostEqual(res_exp_high, math.exp(50.0), places=1)
+        self.assertTrue(math.isfinite(res_exp_high))
+
+        res_exp_low = evaluate_band_math_formula("exp(-100.0)", {})
+        self.assertAlmostEqual(res_exp_low, math.exp(-50.0), places=10)
+
+        # clamp(val, low, high)
+        res_clamp_mid = evaluate_band_math_formula("clamp(0.5, 0.0, 1.0)", {})
+        self.assertEqual(res_clamp_mid, 0.5)
+
+        res_clamp_high = evaluate_band_math_formula("clamp(1.5, 0.0, 1.0)", {})
+        self.assertEqual(res_clamp_high, 1.0)
+
+        res_clamp_low = evaluate_band_math_formula("clamp(-0.5, 0.0, 1.0)", {})
+        self.assertEqual(res_clamp_low, 0.0)
+
+        # min and max
+        res_min = evaluate_band_math_formula("min(0.2, 0.8)", {})
+        self.assertEqual(res_min, 0.2)
+
+        res_max = evaluate_band_math_formula("max(0.2, 0.8)", {})
+        self.assertEqual(res_max, 0.8)
+
 if __name__ == "__main__":
     unittest.main()
 
