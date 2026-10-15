@@ -2980,6 +2980,409 @@ class TestGIOSApi(unittest.TestCase):
             self.assertGreater(len(res_tile.content), 100)
             self.assertEqual(res_tile.content[:4], b"\x89PNG")
 
+    def test_phenology_harmonic_decomposition_and_mad_anomaly_api(self):
+        """Test Cycle v2.5.22: Multi-Temporal Phenology, Harmonic Fourier Decomposition, Climatological MAD Anomaly & Dynamic XYZ Tile Streaming."""
+        # 1. Harmonic Fourier Regression Analytical Endpoint & Aliases
+        harmonic_payload = {
+            "assetId": "SAN-LUIS-RESERVOIR-AOI",
+            "indexName": "NDVI",
+            "dates": ["2026-01-15", "2026-03-15", "2026-05-15", "2026-07-15", "2026-09-15", "2026-11-15"],
+            "values": [0.25, 0.45, 0.72, 0.65, 0.35, 0.22],
+            "numHarmonics": 2,
+            "periodYears": 1.0
+        }
+        res_h1 = self.client.post("/api/v1/analysis/phenology/harmonic-decomposition", json=harmonic_payload)
+        self.assertEqual(res_h1.status_code, 200)
+        h_data = res_h1.json()
+        self.assertEqual(h_data["asset_id"], "SAN-LUIS-RESERVOIR-AOI")
+        self.assertEqual(h_data["index_name"], "NDVI")
+        self.assertIn("model_result", h_data)
+        self.assertIn("intercept_a0", h_data["model_result"])
+        self.assertIn("linear_slope_a1", h_data["model_result"])
+        self.assertIn("components", h_data["model_result"])
+        self.assertIn("r_squared", h_data["model_result"])
+        self.assertIn("rmse", h_data["model_result"])
+        self.assertIn("formula_string", h_data["model_result"])
+
+        res_h2 = self.client.post("/api/v1/analysis/phenology/harmonic", json=harmonic_payload)
+        self.assertEqual(res_h2.status_code, 200)
+        res_h3 = self.client.post("/api/v1/phenology/harmonic-decomposition", json=harmonic_payload)
+        self.assertEqual(res_h3.status_code, 200)
+        res_h4 = self.client.post("/api/v1/phenology/harmonic", json=harmonic_payload)
+        self.assertEqual(res_h4.status_code, 200)
+
+        # 2. Climatological MAD Anomaly Timeseries Endpoint & Aliases
+        mad_payload = {
+            "assetId": "SAN-LUIS-RESERVOIR-AOI",
+            "indexName": "NDVI",
+            "dates": ["2025-01-15", "2025-06-15", "2026-01-15", "2026-06-15", "2026-07-15"],
+            "values": [0.25, 0.70, 0.26, 0.68, 0.30],
+            "anomalyThreshold": 2.0,
+            "minMadScale": 0.02
+        }
+        res_mad1 = self.client.post("/api/v1/analysis/phenology/climatological-mad-anomaly", json=mad_payload)
+        self.assertEqual(res_mad1.status_code, 200)
+        mad_data = res_mad1.json()
+        self.assertEqual(mad_data["asset_id"], "SAN-LUIS-RESERVOIR-AOI")
+        self.assertEqual(len(mad_data["monthly_climatology"]), 12)
+        self.assertIn("theil_sen_trend", mad_data)
+        self.assertIn("points", mad_data)
+        self.assertEqual(len(mad_data["points"]), 5)
+        self.assertIn("seasonal_z_score", mad_data["points"][-1])
+        self.assertIn("anomaly_tier", mad_data["points"][-1])
+
+        res_mad2 = self.client.post("/api/v1/analysis/phenology/mad-anomaly", json=mad_payload)
+        self.assertEqual(res_mad2.status_code, 200)
+        res_mad3 = self.client.post("/api/v1/phenology/climatological-mad-anomaly", json=mad_payload)
+        self.assertEqual(res_mad3.status_code, 200)
+        res_mad4 = self.client.post("/api/v1/phenology/mad-anomaly", json=mad_payload)
+        self.assertEqual(res_mad4.status_code, 200)
+
+        # 3. Full-Scene Phenology Decomposition Simulation Endpoint & Aliases
+        sim_payload = {
+            "simulationId": "SIM_TEST_PHENO_API_01",
+            "aoiId": "AOI_SAN_LUIS",
+            "assetName": "San Luis Reservoir Watershed",
+            "collection": "sentinel-2-l2a",
+            "indexName": "NDVI",
+            "numHarmonics": 2,
+            "anomalyThreshold": 2.0
+        }
+        res_sim1 = self.client.post("/api/v1/analysis/phenology/decomposition", json=sim_payload)
+        self.assertEqual(res_sim1.status_code, 200)
+        sim_data = res_sim1.json()
+        self.assertEqual(sim_data["simulation_id"], "SIM_TEST_PHENO_API_01")
+        self.assertEqual(sim_data["asset_name"], "San Luis Reservoir Watershed")
+        self.assertIn("geojson_collection", sim_data)
+        self.assertIn("tile_url_template", sim_data)
+        self.assertIn("summary", sim_data)
+        self.assertIn("harmonic_model", sim_data)
+
+        res_sim2 = self.client.post("/api/v1/analysis/phenology/simulation", json=sim_payload)
+        self.assertEqual(res_sim2.status_code, 200)
+        res_sim3 = self.client.post("/api/v1/phenology/decomposition", json=sim_payload)
+        self.assertEqual(res_sim3.status_code, 200)
+        res_sim4 = self.client.post("/api/v1/phenology/simulation", json=sim_payload)
+        self.assertEqual(res_sim4.status_code, 200)
+
+        # 4. GET Detail Endpoint & Aliases
+        sim_id = "SIM_TEST_PHENO_API_01"
+        res_get1 = self.client.get(f"/api/v1/analysis/phenology/climatological-mad-anomaly/{sim_id}")
+        self.assertEqual(res_get1.status_code, 200)
+        self.assertEqual(res_get1.json()["simulation_id"], sim_id)
+        res_get2 = self.client.get(f"/api/v1/analysis/phenology/decomposition/{sim_id}")
+        self.assertEqual(res_get2.status_code, 200)
+        res_get3 = self.client.get(f"/api/v1/analysis/phenology/{sim_id}")
+        self.assertEqual(res_get3.status_code, 200)
+        res_get4 = self.client.get(f"/api/v1/phenology/climatological-mad-anomaly/{sim_id}")
+        self.assertEqual(res_get4.status_code, 200)
+        res_get5 = self.client.get(f"/api/v1/phenology/decomposition/{sim_id}")
+        self.assertEqual(res_get5.status_code, 200)
+        res_get6 = self.client.get(f"/api/v1/phenology/{sim_id}")
+        self.assertEqual(res_get6.status_code, 200)
+
+        # 5. Dynamic XYZ Phenology Anomaly Tile Streaming across all 6 raster metrics
+        tile_urls = [
+            f"/api/v1/tiles/phenology/anomaly/{sim_id}/12/1042/1628.png",
+            f"/api/v1/tiles/phenology/anomaly/{sim_id}/mad_anomaly_zscore/12/1042/1628.png",
+            f"/api/v1/tiles/phenology/anomaly/{sim_id}/baseline_ndvi/12/1042/1628.png",
+            f"/api/v1/tiles/phenology/anomaly/{sim_id}/seasonal_amplitude/12/1042/1628.png",
+            f"/api/v1/tiles/phenology/anomaly/{sim_id}/phase_angle/12/1042/1628.png",
+            f"/api/v1/tiles/phenology/anomaly/{sim_id}/theil_sen_slope/12/1042/1628.png",
+            f"/api/v1/tiles/phenology/anomaly/{sim_id}/anomaly_tier/12/1042/1628.png",
+            f"/api/v1/analysis/tiles/phenology/anomaly/{sim_id}/12/1042/1628.png",
+            f"/api/v1/phenology/tiles/{sim_id}/12/1042/1628.png"
+        ]
+        for url in tile_urls:
+            res_tile = self.client.get(url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed Phenology tile endpoint: {url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertGreater(len(res_tile.content), 100)
+            self.assertEqual(res_tile.content[:4], b"\x89PNG")
+
+    def test_stac_harvester_and_webhook_operations_api(self):
+        """Test Cycle v2.5.23: Automated STAC Ingestion Watchdog, HMAC Webhooks & In-Memory Dead-Letter Queue."""
+        # 1. List Subscriptions Endpoint & Aliases (versioned and unversioned)
+        res_subs1 = self.client.get("/api/v1/operations/harvester/subscriptions")
+        self.assertEqual(res_subs1.status_code, 200)
+        data_subs1 = res_subs1.json()
+        self.assertIn("subscriptions", data_subs1)
+        self.assertGreaterEqual(len(data_subs1["subscriptions"]), 1)
+        self.assertEqual(data_subs1["subscriptions"][0]["subscriptionId"], "SUB-STAC-001")
+
+        res_subs2 = self.client.get("/operations/harvester/subscriptions")
+        self.assertEqual(res_subs2.status_code, 200)
+
+        # 2. Register New Harvester Subscription
+        new_sub_payload = {
+            "name": "Central Valley Aqueduct Monitor",
+            "description": "Continuous Sentinel-2 & Landsat anomaly watchdog for subsidence and seepage",
+            "schedule": {
+                "interval": "daily",
+                "cloudCoverMax": 15.0,
+                "collections": ["sentinel-2-l2a", "landsat-c2-l2"],
+                "lookbackHours": 36
+            },
+            "perimeter": {
+                "fenceId": "FENCE-CV-01",
+                "name": "Central Valley Siphon Buffer",
+                "polygonCoordinates": [
+                    [-120.95, 36.90], [-120.70, 36.90], [-120.70, 37.25], [-120.95, 37.25], [-120.95, 36.90]
+                ],
+                "assetId": "AQUEDUCT-CV-01"
+            },
+            "webhookEndpoints": [
+                {
+                    "endpointId": "EP-AUTO-01",
+                    "channelType": "custom_webhook",
+                    "targetUrl": "https://api.gios.internal/webhooks/ops",
+                    "secretToken": "ops-secure-token-2026",
+                    "isActive": True,
+                    "maxRetries": 3
+                }
+            ],
+            "triggerConditions": ["anomaly_exceeded"],
+            "zScoreThreshold": 2.6,
+            "isEnabled": True
+        }
+        res_create_sub = self.client.post("/api/v1/operations/harvester/subscriptions", json=new_sub_payload)
+        self.assertEqual(res_create_sub.status_code, 200)
+        created_sub_data = res_create_sub.json()
+        self.assertEqual(created_sub_data["status"], "active")
+        self.assertIn("subscription", created_sub_data)
+        created_sub_id = created_sub_data["subscription"]["subscriptionId"]
+        self.assertEqual(created_sub_data["subscription"]["name"], "Central Valley Aqueduct Monitor")
+
+        # 3. GET Subscription Detail & 404 Check
+        res_get_sub = self.client.get(f"/api/v1/operations/harvester/subscriptions/{created_sub_id}")
+        self.assertEqual(res_get_sub.status_code, 200)
+        self.assertEqual(res_get_sub.json()["subscription"]["subscriptionId"], created_sub_id)
+
+        res_get_sub_short = self.client.get(f"/operations/harvester/subscriptions/{created_sub_id}")
+        self.assertEqual(res_get_sub_short.status_code, 200)
+
+        res_get_sub_404 = self.client.get("/api/v1/operations/harvester/subscriptions/SUB-NONEXISTENT-999")
+        self.assertEqual(res_get_sub_404.status_code, 404)
+
+        # 4. Trigger Harvester Execution
+        trigger_payload = {
+            "subscriptionId": created_sub_id,
+            "forceAllScenes": False,
+            "dryRun": True
+        }
+        res_trig1 = self.client.post("/api/v1/operations/harvester/trigger", json=trigger_payload)
+        self.assertEqual(res_trig1.status_code, 200)
+        trig_data = res_trig1.json()
+        self.assertEqual(trig_data["subscriptionId"], created_sub_id)
+        self.assertGreaterEqual(trig_data["evaluatedScenesCount"], 1)
+        self.assertIn("evaluatedScenes", trig_data)
+        self.assertIn("events", trig_data)
+        self.assertIn("deliveryAttempts", trig_data)
+
+        res_trig2 = self.client.post("/operations/harvester/trigger", json=trigger_payload)
+        self.assertEqual(res_trig2.status_code, 200)
+
+        # 5. List Webhook Endpoints & Aliases
+        res_eps1 = self.client.get("/api/v1/operations/webhooks")
+        self.assertEqual(res_eps1.status_code, 200)
+        self.assertIn("endpoints", res_eps1.json())
+        self.assertGreaterEqual(len(res_eps1.json()["endpoints"]), 2)
+
+        res_eps2 = self.client.get("/operations/webhooks")
+        self.assertEqual(res_eps2.status_code, 200)
+
+        # 6. Create Webhook Endpoint
+        ep_create_payload = {
+            "endpointId": "EP-DISPATCH-TEST-01",
+            "channelType": "slack",
+            "targetUrl": "https://hooks.slack.com/services/T999/B888/X777",
+            "secretToken": "slack-secret-key-2026",
+            "isActive": True,
+            "maxRetries": 2
+        }
+        res_create_ep = self.client.post("/api/v1/operations/webhooks", json=ep_create_payload)
+        self.assertEqual(res_create_ep.status_code, 200)
+        self.assertEqual(res_create_ep.json()["endpointId"], "EP-DISPATCH-TEST-01")
+
+        # 7. GET Webhook Endpoint Detail & 404 Check
+        res_get_ep = self.client.get("/api/v1/operations/webhooks/EP-DISPATCH-TEST-01")
+        self.assertEqual(res_get_ep.status_code, 200)
+        self.assertEqual(res_get_ep.json()["channelType"], "slack")
+
+        res_get_ep_404 = self.client.get("/api/v1/operations/webhooks/EP-NONEXISTENT-999")
+        self.assertEqual(res_get_ep_404.status_code, 404)
+
+        # 8. Test Webhook Dispatch & Verification
+        test_dispatch_payload = {
+            "endpointId": "EP-DISPATCH-TEST-01",
+            "testSeverity": "critical",
+            "customMessage": "Simulated Dam Crest Anomaly Dispatch"
+        }
+        res_test_ep = self.client.post("/api/v1/operations/webhooks/EP-DISPATCH-TEST-01/test", json=test_dispatch_payload)
+        self.assertEqual(res_test_ep.status_code, 200)
+        test_res_data = res_test_ep.json()
+        self.assertEqual(test_res_data["endpointId"], "EP-DISPATCH-TEST-01")
+        self.assertEqual(test_res_data["deliveryStatus"], "delivered")
+        self.assertGreater(test_res_data["latencyMs"], 0.0)
+        self.assertIn("dispatchedPayload", test_res_data)
+
+        # 9. DLQ List, Retry & Clear Endpoints
+        res_dlq = self.client.get("/api/v1/operations/dlq")
+        self.assertEqual(res_dlq.status_code, 200)
+        self.assertIn("dead_letter_items", res_dlq.json())
+
+        res_dlq_short = self.client.get("/operations/dlq")
+        self.assertEqual(res_dlq_short.status_code, 200)
+
+        res_dlq_retry = self.client.post("/api/v1/operations/dlq/retry", json={"retryAll": True})
+        self.assertEqual(res_dlq_retry.status_code, 200)
+        self.assertIn("replayedCount", res_dlq_retry.json())
+
+        res_dlq_clear = self.client.delete("/api/v1/operations/dlq")
+        self.assertEqual(res_dlq_clear.status_code, 200)
+        self.assertEqual(res_dlq_clear.json()["status"], "cleared")
+
+        # 10. Harvester Events List
+        res_harv_events = self.client.get("/api/v1/events/harvester/events")
+        self.assertEqual(res_harv_events.status_code, 200)
+        self.assertIsInstance(res_harv_events.json(), list)
+
+        # 11. Delete Registered Endpoints & Subscriptions (Cleanup)
+        res_del_ep = self.client.delete("/api/v1/operations/webhooks/EP-DISPATCH-TEST-01")
+        self.assertEqual(res_del_ep.status_code, 200)
+        self.assertEqual(res_del_ep.json()["status"], "deleted")
+
+        res_del_sub = self.client.delete(f"/api/v1/operations/harvester/subscriptions/{created_sub_id}")
+        self.assertEqual(res_del_sub.status_code, 200)
+        self.assertEqual(res_del_sub.json()["status"], "deleted")
+
+    def test_nodeodm_drone_photogrammetry_and_cog_tiling_api(self):
+        """Test Cycle v2.5.24: Headless NodeODM Dispatcher, Multi-Image Packager, Affine Solver & Dynamic Centimeter COG Tiling Service."""
+        # 1. List Photogrammetry Tasks (Versioned and Unversioned aliases)
+        res_list = self.client.get("/api/v1/drone/photogrammetry/tasks")
+        self.assertEqual(res_list.status_code, 200)
+        tasks = res_list.json()
+        self.assertIsInstance(tasks, list)
+        self.assertGreaterEqual(len(tasks), 1)
+
+        res_list_alias = self.client.get("/drone/photogrammetry/tasks")
+        self.assertEqual(res_list_alias.status_code, 200)
+        self.assertIsInstance(res_list_alias.json(), list)
+
+        # 2. Get Task Detail by ID
+        res_detail = self.client.get("/api/v1/drone/photogrammetry/tasks/ODM-BENCHMARK-001")
+        self.assertEqual(res_detail.status_code, 200)
+        data_detail = res_detail.json()
+        self.assertEqual(data_detail["taskId"], "ODM-BENCHMARK-001")
+        self.assertEqual(data_detail["status"], "completed")
+        self.assertIn("affineGeotransform", data_detail)
+        self.assertIn("artifacts", data_detail)
+        self.assertIn("tileUrlTemplate", data_detail)
+
+        res_detail_alias = self.client.get("/drone/photogrammetry/tasks/ODM-BENCHMARK-001")
+        self.assertEqual(res_detail_alias.status_code, 200)
+
+        # 3. Create New Photogrammetry Task
+        create_payload = {
+            "taskId": "ODM-INTEGRATION-001",
+            "projectName": "Hydraulic Spillway High-Res Photogrammetry",
+            "imageCount": 140,
+            "targetGsdCm": 2.0,
+            "cameraModel": "DJI_FC6310R",
+            "gcps": [
+                {"gcpId": "GCP-101", "pixelX": 500.0, "pixelY": 500.0, "worldX": 674100.0, "worldY": 4102300.0, "elevationZ": 125.0, "isEnabled": True},
+                {"gcpId": "GCP-102", "pixelX": 4500.0, "pixelY": 550.0, "worldX": 674200.0, "worldY": 4102305.0, "elevationZ": 125.4, "isEnabled": True},
+                {"gcpId": "GCP-103", "pixelX": 600.0, "pixelY": 3500.0, "worldX": 674105.0, "worldY": 4102220.0, "elevationZ": 92.0, "isEnabled": True}
+            ]
+        }
+        res_create = self.client.post("/api/v1/drone/photogrammetry/tasks", json=create_payload)
+        self.assertEqual(res_create.status_code, 200)
+        data_create = res_create.json()
+        self.assertEqual(data_create["taskId"], "ODM-INTEGRATION-001")
+        self.assertEqual(data_create["status"], "running")
+        self.assertIn("affineGeotransform", data_create)
+
+        # 4. Cancel Task
+        res_cancel = self.client.post("/api/v1/drone/photogrammetry/tasks/ODM-INTEGRATION-001/cancel")
+        self.assertEqual(res_cancel.status_code, 200)
+        self.assertEqual(res_cancel.json()["status"], "cancelled")
+
+        # 5. Restart Task
+        res_restart = self.client.post("/api/v1/drone/photogrammetry/tasks/ODM-INTEGRATION-001/restart")
+        self.assertEqual(res_restart.status_code, 200)
+        self.assertEqual(res_restart.json()["status"], "running")
+
+        # 6. Update Ground Control Points & Georeferencing
+        gcp_update_payload = {
+            "gcps": [
+                {"gcpId": "GCP-101", "pixelX": 500.0, "pixelY": 500.0, "worldX": 674100.0, "worldY": 4102300.0, "elevationZ": 125.0, "isEnabled": True},
+                {"gcpId": "GCP-102", "pixelX": 4500.0, "pixelY": 550.0, "worldX": 674200.0, "worldY": 4102305.0, "elevationZ": 125.4, "isEnabled": True},
+                {"gcpId": "GCP-103", "pixelX": 600.0, "pixelY": 3500.0, "worldX": 674105.0, "worldY": 4102220.0, "elevationZ": 92.0, "isEnabled": True},
+                {"gcpId": "CP-104", "pixelX": 2500.0, "pixelY": 2000.0, "worldX": 674152.0, "worldY": 4102260.0, "elevationZ": 108.5, "isCheckPoint": True, "isEnabled": True}
+            ],
+            "recalculateGeoreferencing": True
+        }
+        res_gcp = self.client.post("/api/v1/drone/photogrammetry/tasks/ODM-INTEGRATION-001/gcp", json=gcp_update_payload)
+        self.assertEqual(res_gcp.status_code, 200)
+        data_gcp = res_gcp.json()
+        self.assertEqual(data_gcp["totalGcps"], 4)
+        self.assertEqual(data_gcp["checkPoints"], 1)
+        self.assertIn("affineGeotransform", data_gcp)
+
+        # 7. Calculate Autonomous Drone Flight Plan
+        flight_plan_req = {
+            "targetGsdCm": 2.5,
+            "cameraModel": "DJI_FC6310R",
+            "forwardOverlapPercent": 80.0,
+            "sideOverlapPercent": 70.0,
+            "surveyAreaHa": 25.0,
+            "flightSpeedMs": 7.0
+        }
+        res_plan = self.client.post("/api/v1/drone/photogrammetry/flight-plan", json=flight_plan_req)
+        self.assertEqual(res_plan.status_code, 200)
+        data_plan = res_plan.json()
+        self.assertIn("plan", data_plan)
+        plan = data_plan["plan"]
+        self.assertGreater(plan["flightAltitudeM"], 0.0)
+        self.assertGreater(plan["estimatedPhotoCount"], 0)
+        self.assertGreater(plan["flightLineSpacingM"], 0.0)
+        self.assertGreater(plan["estimatedFlightTimeMinutes"], 0.0)
+
+        # 8. Solve GCP 2D Affine Transformation Matrix
+        affine_req = {
+            "gcps": [
+                {"gcpId": "GCP-01", "pixelX": 500.0, "pixelY": 450.0, "worldX": 674100.0, "worldY": 4102300.0, "isEnabled": True},
+                {"gcpId": "GCP-02", "pixelX": 4800.0, "pixelY": 520.0, "worldX": 674207.5, "worldY": 4102302.0, "isEnabled": True},
+                {"gcpId": "GCP-03", "pixelX": 600.0, "pixelY": 3200.0, "worldX": 674102.5, "worldY": 4102231.2, "isEnabled": True}
+            ]
+        }
+        res_affine = self.client.post("/api/v1/drone/photogrammetry/solve-affine", json=affine_req)
+        self.assertEqual(res_affine.status_code, 200)
+        data_affine = res_affine.json()
+        self.assertTrue(data_affine["success"])
+        affine_matrix = data_affine["affineGeotransform"]["affineMatrix"]
+        self.assertEqual(len(affine_matrix), 6)
+        self.assertIn("rmsePixel", data_affine["affineGeotransform"])
+
+        # 9. Dynamic Centimeter COG Tile Streaming across all 7 metrics
+        metrics = ["orthophoto", "dsm", "dtm", "chm", "slope", "reprojection_error", "point_density"]
+        for metric in metrics:
+            tile_url = f"/api/v1/tiles/drone/photogrammetry/ODM-BENCHMARK-001/{metric}/18/100/100.png"
+            res_tile = self.client.get(tile_url)
+            self.assertEqual(res_tile.status_code, 200)
+            self.assertEqual(res_tile.headers["content-type"], "image/png")
+            self.assertTrue(res_tile.content.startswith(b"\x89PNG"))
+
+        # Default orthophoto tile endpoint
+        res_def_tile = self.client.get("/api/v1/tiles/drone/photogrammetry/ODM-BENCHMARK-001/18/100/100.png")
+        self.assertEqual(res_def_tile.status_code, 200)
+        self.assertTrue(res_def_tile.content.startswith(b"\x89PNG"))
+
+        # Drone router alias for tiles
+        res_drone_tile = self.client.get("/drone/tiles/photogrammetry/ODM-BENCHMARK-001/18/100/100.png")
+        self.assertEqual(res_drone_tile.status_code, 200)
+        self.assertTrue(res_drone_tile.content.startswith(b"\x89PNG"))
+
 if __name__ == "__main__":
     unittest.main()
 

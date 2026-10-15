@@ -1043,7 +1043,32 @@ export const API_ENDPOINTS = {
   OPERATIONS_DLQ: '/api/v1/operations/dlq',
   OPERATIONS_DLQ_SHORT: '/operations/dlq',
   OPERATIONS_DLQ_RETRY: '/api/v1/operations/dlq/retry',
-  OPERATIONS_DLQ_RETRY_SHORT: '/operations/dlq/retry'
+  OPERATIONS_DLQ_RETRY_SHORT: '/operations/dlq/retry',
+  DRONE_PHOTOGRAMMETRY_TASKS: '/api/v1/drone/photogrammetry/tasks',
+  DRONE_PHOTOGRAMMETRY_TASKS_SHORT: '/drone/photogrammetry/tasks',
+  DRONE_PHOTOGRAMMETRY_TASK_DETAIL: (taskId) => `/api/v1/drone/photogrammetry/tasks/${taskId}`,
+  DRONE_PHOTOGRAMMETRY_TASK_DETAIL_SHORT: (taskId) => `/drone/photogrammetry/tasks/${taskId}`,
+  DRONE_PHOTOGRAMMETRY_TASK_CANCEL: (taskId) => `/api/v1/drone/photogrammetry/tasks/${taskId}/cancel`,
+  DRONE_PHOTOGRAMMETRY_TASK_CANCEL_SHORT: (taskId) => `/drone/photogrammetry/tasks/${taskId}/cancel`,
+  DRONE_PHOTOGRAMMETRY_TASK_RESTART: (taskId) => `/api/v1/drone/photogrammetry/tasks/${taskId}/restart`,
+  DRONE_PHOTOGRAMMETRY_TASK_RESTART_SHORT: (taskId) => `/drone/photogrammetry/tasks/${taskId}/restart`,
+  DRONE_PHOTOGRAMMETRY_TASK_GCP: (taskId) => `/api/v1/drone/photogrammetry/tasks/${taskId}/gcp`,
+  DRONE_PHOTOGRAMMETRY_TASK_GCP_SHORT: (taskId) => `/drone/photogrammetry/tasks/${taskId}/gcp`,
+  DRONE_PHOTOGRAMMETRY_FLIGHT_PLAN: '/api/v1/drone/photogrammetry/flight-plan',
+  DRONE_PHOTOGRAMMETRY_FLIGHT_PLAN_SHORT: '/drone/photogrammetry/flight-plan',
+  DRONE_PHOTOGRAMMETRY_SOLVE_AFFINE: '/api/v1/drone/photogrammetry/solve-affine',
+  DRONE_PHOTOGRAMMETRY_SOLVE_AFFINE_SHORT: '/drone/photogrammetry/solve-affine',
+  TILES_DRONE_PHOTOGRAMMETRY: (taskId, z, x, y) => `/api/v1/tiles/drone/photogrammetry/${taskId}/${z}/${x}/${y}.png`,
+  TILES_DRONE_PHOTOGRAMMETRY_METRIC: (taskId, metric, z, x, y) => `/api/v1/tiles/drone/photogrammetry/${taskId}/${metric}/${z}/${x}/${y}.png`,
+  ANALYSIS_CUSTOM_EXPRESSION_VALIDATE: '/api/v1/analysis/custom-expression/validate',
+  ANALYSIS_CUSTOM_EXPRESSION_VALIDATE_SHORT: '/analysis/custom-expression/validate',
+  ANALYSIS_CUSTOM_EXPRESSION_EVALUATE: '/api/v1/analysis/custom-expression/evaluate',
+  ANALYSIS_CUSTOM_EXPRESSION_EVALUATE_SHORT: '/analysis/custom-expression/evaluate',
+  ANALYSIS_CUSTOM_EXPRESSION_PRESETS: '/api/v1/analysis/custom-expression/presets',
+  ANALYSIS_CUSTOM_EXPRESSION_PRESETS_SHORT: '/analysis/custom-expression/presets',
+  TILES_CUSTOM_EXPRESSION: (z, x, y) => `/api/v1/tiles/custom-expression/${z}/${x}/${y}.png`,
+  TILES_CUSTOM_EXPRESSION_COLLECTION: (collection, itemId, z, x, y) => `/api/v1/tiles/${collection}/${itemId}/custom-expression/${z}/${x}/${y}.png`,
+  TILES_CUSTOM_EXPRESSION_SHORT: (z, x, y) => `/tiles/custom-expression/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1293,6 +1318,24 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'OPERATIONS_HARVESTER_DETAIL':
       case 'OPERATIONS_HARVESTER_DETAIL_SHORT':
         return endpoint(params.subscriptionId || params.subscription_id || params.id || 'SUB-STAC-001');
+      case 'DRONE_PHOTOGRAMMETRY_TASK_DETAIL':
+      case 'DRONE_PHOTOGRAMMETRY_TASK_DETAIL_SHORT':
+      case 'DRONE_PHOTOGRAMMETRY_TASK_CANCEL':
+      case 'DRONE_PHOTOGRAMMETRY_TASK_CANCEL_SHORT':
+      case 'DRONE_PHOTOGRAMMETRY_TASK_RESTART':
+      case 'DRONE_PHOTOGRAMMETRY_TASK_RESTART_SHORT':
+      case 'DRONE_PHOTOGRAMMETRY_TASK_GCP':
+      case 'DRONE_PHOTOGRAMMETRY_TASK_GCP_SHORT':
+        return endpoint(params.taskId || params.task_id || params.id || 'ODM-TASK-001');
+      case 'TILES_DRONE_PHOTOGRAMMETRY':
+        return endpoint(params.taskId || params.task_id || params.id || 'ODM-TASK-001', params.z, params.x, params.y);
+      case 'TILES_DRONE_PHOTOGRAMMETRY_METRIC':
+        return endpoint(params.taskId || params.task_id || params.id || 'ODM-TASK-001', params.metric || 'orthophoto', params.z, params.x, params.y);
+      case 'TILES_CUSTOM_EXPRESSION':
+      case 'TILES_CUSTOM_EXPRESSION_SHORT':
+        return endpoint(params.z, params.x, params.y);
+      case 'TILES_CUSTOM_EXPRESSION_COLLECTION':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.itemId || params.item_id || 'S2_SCENE', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -16328,7 +16371,16 @@ function _canonicalJsonStringify(obj) {
 export const generateHmacSha256Signature = (payload, secretKey) => {
   let msgStr = '';
   if (typeof payload === 'object' && payload !== null) {
-    msgStr = _canonicalJsonStringify(payload);
+    let cleanObj = payload;
+    if (!Array.isArray(payload)) {
+      cleanObj = {};
+      for (const k of Object.keys(payload)) {
+        if (k !== 'hmac_signature' && k !== 'hmacSignature' && k !== 'signature') {
+          cleanObj[k] = payload[k];
+        }
+      }
+    }
+    msgStr = _canonicalJsonStringify(cleanObj);
   } else {
     msgStr = String(payload);
   }
@@ -16693,6 +16745,1522 @@ export const simulateSTACHarvesterCycle = (subscription, candidateScenes = null)
 };
 
 export const calculateSTACHarvesterSimulation = simulateSTACHarvesterCycle;
+
+
+// ============================================================================
+// CYCLE v2.5.24: DECOUPLED DRONE PHOTOGRAMMETRY BRIDGE, NODEODM REST TASK SCHEMAS,
+// GROUND CONTROL POINTS (GCP) GEOREFERENCING & PYRAMIDAL COG TILE CONTRACTS
+// ============================================================================
+
+export const NODEODM_LIFECYCLE_STATUSES = {
+  QUEUED: 'queued',
+  RUNNING: 'running',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled'
+};
+
+export const DRONE_PHOTOGRAMMETRY_TASK_STATUSES = NODEODM_LIFECYCLE_STATUSES;
+
+export const NODEODM_PIPELINE_STAGES = {
+  QUEUED: 'queued',
+  DATASET_INITIALIZATION: 'dataset_initialization',
+  FEATURE_EXTRACTION_MATCHING: 'feature_extraction_matching',
+  STRUCTURE_FROM_MOTION: 'structure_from_motion',
+  MVS_DENSE_POINT_CLOUD: 'mvs_dense_point_cloud',
+  DEM_CSF_SURFACE_EXTRACTION: 'dem_csf_surface_extraction',
+  ORTHOPHOTO_MOSAICING: 'orthophoto_mosaicing',
+  COG_PYRAMIDAL_TILES: 'cog_pyramidal_tiles',
+  COMPLETED: 'completed',
+  FAILED: 'failed'
+};
+
+export const DRONE_PHOTOGRAMMETRY_TILE_METRICS = {
+  ORTHOPHOTO: 'orthophoto',
+  DSM: 'dsm',
+  DTM: 'dtm',
+  CHM: 'chm',
+  SLOPE: 'slope',
+  REPROJECTION_ERROR: 'reprojection_error',
+  POINT_DENSITY: 'point_density'
+};
+
+export const PHOTOGRAMMETRY_FEATURE_QUALITIES = {
+  ULTRA: 'ultra',
+  HIGH: 'high',
+  MEDIUM: 'medium',
+  LOW: 'low'
+};
+
+export const RADIOMETRIC_CALIBRATION_MODES = {
+  NONE: 'none',
+  CAMERA: 'camera',
+  CAMERA_SUN: 'camera+sun'
+};
+
+export const NODEODM_PIPELINE_STAGE_METADATA = {
+  queued: {
+    id: 'queued',
+    label: 'Queued in Worker Pool',
+    progress_range: [0.0, 5.0],
+    description: 'Task staged in NodeODM queue awaiting headless worker assignment.',
+    badge_color: '#94a3b8'
+  },
+  dataset_initialization: {
+    id: 'dataset_initialization',
+    label: 'Dataset & EXIF Initialization',
+    progress_range: [5.0, 15.0],
+    description: 'Validating image integrity, EXIF metadata, GPS geotags, and optical camera intrinsics.',
+    badge_color: '#38bdf8'
+  },
+  feature_extraction_matching: {
+    id: 'feature_extraction_matching',
+    label: 'Feature Extraction & Matching',
+    progress_range: [15.0, 30.0],
+    description: 'SIFT feature detection, keypoint descriptor extraction, and FLANN epipolar matching.',
+    badge_color: '#818cf8'
+  },
+  structure_from_motion: {
+    id: 'structure_from_motion',
+    label: 'Structure from Motion (SfM)',
+    progress_range: [30.0, 50.0],
+    description: 'Incremental bundle adjustment optimization, sparse 3D point cloud, and GCP georeferencing.',
+    badge_color: '#6366f1'
+  },
+  mvs_dense_point_cloud: {
+    id: 'mvs_dense_point_cloud',
+    label: 'Dense Point Cloud (MVS)',
+    progress_range: [50.0, 70.0],
+    description: 'OpenMVS patch-match multi-view stereo densification and dense 3D point cloud generation.',
+    badge_color: '#a855f7'
+  },
+  dem_csf_surface_extraction: {
+    id: 'dem_csf_surface_extraction',
+    label: 'DEM & CSF Ground Filtering',
+    progress_range: [70.0, 85.0],
+    description: 'Cloth Simulation Filtering (CSF) bare-earth separation, DSM and DTM 2.5D rasterization.',
+    badge_color: '#ec4899'
+  },
+  orthophoto_mosaicing: {
+    id: 'orthophoto_mosaicing',
+    label: 'True Orthomosaic Generation',
+    progress_range: [85.0, 95.0],
+    description: 'Multiresolution seamline graph-cut optimization, color balancing, and orthorectification.',
+    badge_color: '#14b8a6'
+  },
+  cog_pyramidal_tiles: {
+    id: 'cog_pyramidal_tiles',
+    label: 'Cloud-Optimized GeoTIFF Pyramids',
+    progress_range: [95.0, 100.0],
+    description: 'Generating internal pyramidal tile overviews (Zoom 20-22) and registering STAC catalog.',
+    badge_color: '#22c55e'
+  },
+  completed: {
+    id: 'completed',
+    label: 'Reconstruction Completed',
+    progress_range: [100.0, 100.0],
+    description: 'All deliverables rendered, COG pyramidal overviews indexed, and tile server online.',
+    badge_color: '#10b981'
+  },
+  failed: {
+    id: 'failed',
+    label: 'Reconstruction Failed',
+    progress_range: [0.0, 0.0],
+    description: 'Photogrammetry pipeline aborted due to unrecoverable exception or insufficient inliers.',
+    badge_color: '#ef4444'
+  }
+};
+
+export const DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS = {
+  orthophoto: {
+    id: 'orthophoto',
+    name: 'True RGB Orthomosaic',
+    units: 'RGB (0-255)',
+    default_colormap: null,
+    default_rescale: '0,255',
+    min_zoom: 14,
+    max_zoom: 22,
+    description: 'Centimeter-resolution RGB visual orthomosaic'
+  },
+  dsm: {
+    id: 'dsm',
+    name: 'Digital Surface Model',
+    units: 'meters',
+    default_colormap: 'terrain',
+    default_rescale: 'auto',
+    min_zoom: 14,
+    max_zoom: 22,
+    description: 'Elevation of canopy, structures, and surface features'
+  },
+  dtm: {
+    id: 'dtm',
+    name: 'Digital Terrain Model',
+    units: 'meters',
+    default_colormap: 'viridis',
+    default_rescale: 'auto',
+    min_zoom: 14,
+    max_zoom: 22,
+    description: 'Bare-earth ground elevation derived via Cloth Simulation Filtering'
+  },
+  chm: {
+    id: 'chm',
+    name: 'Canopy & Structure Height Model',
+    units: 'meters',
+    default_colormap: 'plasma',
+    default_rescale: '0.0,25.0',
+    min_zoom: 14,
+    max_zoom: 22,
+    description: 'Relative height above bare earth (DSM - DTM)'
+  },
+  slope: {
+    id: 'slope',
+    name: 'Topographic Slope Gradient',
+    units: 'degrees',
+    default_colormap: 'magma',
+    default_rescale: '0.0,60.0',
+    min_zoom: 14,
+    max_zoom: 22,
+    description: 'Surface inclination in degrees (0 - 90)'
+  },
+  reprojection_error: {
+    id: 'reprojection_error',
+    name: 'Reprojection Error Heatmap',
+    units: 'pixels',
+    default_colormap: 'turbo',
+    default_rescale: '0.0,2.5',
+    min_zoom: 14,
+    max_zoom: 22,
+    description: 'Bundle adjustment spatial reprojection error in pixels'
+  },
+  point_density: {
+    id: 'point_density',
+    name: '3D Point Cloud Density',
+    units: 'points/m²',
+    default_colormap: 'inferno',
+    default_rescale: '10.0,400.0',
+    min_zoom: 14,
+    max_zoom: 22,
+    description: 'Spatial point density across reconstructed surface'
+  }
+};
+
+export const DRONE_CAMERA_PRESETS = {
+  DJI_FC6310R: {
+    camera_id: 'DJI_FC6310R',
+    camera_model: 'DJI FC6310R (Phantom 4 Pro)',
+    sensor_width_mm: 13.2,
+    sensor_height_mm: 8.8,
+    image_width_px: 5472,
+    image_height_px: 3648,
+    focal_length_mm: 8.8,
+    focal_length_px: 3648.0,
+    principal_point_x_px: 2736.0,
+    principal_point_y_px: 1824.0,
+    k1: -0.0125,
+    k2: 0.0082,
+    k3: -0.0021,
+    p1: 0.0001,
+    p2: -0.0001
+  },
+  DJI_M3E: {
+    camera_id: 'DJI_M3E',
+    camera_model: 'DJI Mavic 3 Enterprise',
+    sensor_width_mm: 17.3,
+    sensor_height_mm: 13.0,
+    image_width_px: 5280,
+    image_height_px: 3956,
+    focal_length_mm: 12.29,
+    focal_length_px: 3751.0,
+    principal_point_x_px: 2640.0,
+    principal_point_y_px: 1978.0,
+    k1: -0.0084,
+    k2: 0.0045,
+    k3: -0.0010,
+    p1: 0.0002,
+    p2: 0.0001
+  },
+  DJI_P1_35: {
+    camera_id: 'DJI_P1_35',
+    camera_model: 'DJI Zenmuse P1 (35mm DL)',
+    sensor_width_mm: 35.9,
+    sensor_height_mm: 24.0,
+    image_width_px: 8192,
+    image_height_px: 5460,
+    focal_length_mm: 35.0,
+    focal_length_px: 7984.0,
+    principal_point_x_px: 4096.0,
+    principal_point_y_px: 2730.0,
+    k1: -0.0018,
+    k2: 0.0009,
+    k3: -0.0002,
+    p1: 0.00005,
+    p2: -0.00005
+  }
+};
+
+/**
+ * Computes 6-parameter 2D affine geotransform matrix and residuals from Ground Control Points.
+ * 
+ * @param {Array<Object>} gcps - List of GCP objects
+ * @returns {Object} Affine matrix coefficients, GSD, rotation, and residuals
+ */
+export const solveGcpAffineTransform = (gcps = []) => {
+  const validPts = [];
+  (gcps || []).forEach((p, idx) => {
+    if (p && p.is_enabled !== false && p.isEnabled !== false) {
+      validPts.push({
+        gcp_id: p.gcp_id || p.gcpId || `GCP-${idx + 1}`,
+        pixel_x: Number(p.pixel_x ?? p.pixelX ?? 0.0),
+        pixel_y: Number(p.pixel_y ?? p.pixelY ?? 0.0),
+        world_x: Number(p.world_x ?? p.worldX ?? 0.0),
+        world_y: Number(p.world_y ?? p.worldY ?? 0.0),
+        elevation_z: Number(p.elevation_z ?? p.elevationZ ?? 0.0),
+        is_check_point: Boolean(p.is_check_point ?? p.isCheckPoint ?? false)
+      });
+    }
+  });
+
+  if (validPts.length < 3) {
+    throw new Error(`At least 3 enabled GCPs are required to solve 2D affine geotransform; received ${validPts.length}.`);
+  }
+
+  const sum1 = Number(validPts.length);
+  let sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0, sumYY = 0.0;
+  let sumXw = 0.0, sumXXw = 0.0, sumYXw = 0.0;
+  let sumYw = 0.0, sumXYw = 0.0, sumYYw = 0.0;
+
+  validPts.forEach(p => {
+    const px = p.pixel_x;
+    const py = p.pixel_y;
+    const wx = p.world_x;
+    const wy = p.world_y;
+
+    sumX += px;
+    sumY += py;
+    sumXX += px * px;
+    sumXY += px * py;
+    sumYY += py * py;
+
+    sumXw += wx;
+    sumXXw += px * wx;
+    sumYXw += py * wx;
+
+    sumYw += wy;
+    sumXYw += px * wy;
+    sumYYw += py * wy;
+  });
+
+  const det = sum1 * (sumXX * sumYY - sumXY * sumXY) - sumX * (sumX * sumYY - sumY * sumXY) + sumY * (sumX * sumXY - sumY * sumXX);
+  if (Math.abs(det) < 1e-12) {
+    throw new Error('Degenerate or collinear GCP coordinate geometry: normal matrix determinant is zero.');
+  }
+
+  const inv00 = (sumXX * sumYY - sumXY * sumXY) / det;
+  const inv01 = (sumY * sumXY - sumX * sumYY) / det;
+  const inv02 = (sumX * sumXY - sumY * sumXX) / det;
+  const inv10 = inv01;
+  const inv11 = (sum1 * sumYY - sumY * sumY) / det;
+  const inv12 = (sumX * sumY - sum1 * sumXY) / det;
+  const inv20 = inv02;
+  const inv21 = inv12;
+  const inv22 = (sum1 * sumXX - sumX * sumX) / det;
+
+  const a = inv00 * sumXw + inv01 * sumXXw + inv02 * sumYXw;
+  const b = inv10 * sumXw + inv11 * sumXXw + inv12 * sumYXw;
+  const c = inv20 * sumXw + inv21 * sumXXw + inv22 * sumYXw;
+
+  const d = inv00 * sumYw + inv01 * sumXYw + inv02 * sumYYw;
+  const e = inv10 * sumYw + inv11 * sumXYw + inv12 * sumYYw;
+  const f = inv20 * sumYw + inv21 * sumXYw + inv22 * sumYYw;
+
+  const gsdXCm = Math.sqrt(b * b + e * e) * 100.0;
+  const gsdYCm = Math.sqrt(c * c + f * f) * 100.0;
+  const meanGsdCm = (gsdXCm + gsdYCm) / 2.0;
+  const rotationDeg = Math.atan2(e, b) * (180.0 / Math.PI);
+
+  const detInv = b * f - c * e;
+  const residuals = [];
+  let sqErrXy = 0.0;
+  let sqErrPx = 0.0;
+
+  validPts.forEach(p => {
+    const predXw = a + b * p.pixel_x + c * p.pixel_y;
+    const predYw = d + e * p.pixel_x + f * p.pixel_y;
+    const resXm = predXw - p.world_x;
+    const resYm = predYw - p.world_y;
+    const resXyM = Math.sqrt(resXm * resXm + resYm * resYm);
+    sqErrXy += resXyM * resXyM;
+
+    let resXp = 0.0, resYp = 0.0, resPx = 0.0;
+    if (Math.abs(detInv) > 1e-12) {
+      const predXp = (f * (p.world_x - a) - c * (p.world_y - d)) / detInv;
+      const predYp = (-e * (p.world_x - a) + b * (p.world_y - d)) / detInv;
+      resXp = predXp - p.pixel_x;
+      resYp = predYp - p.pixel_y;
+      resPx = Math.sqrt(resXp * resXp + resYp * resYp);
+    }
+    sqErrPx += resPx * resPx;
+
+    residuals.push({
+      gcp_id: p.gcp_id,
+      residual_world_x_m: Number(resXm.toFixed(4)),
+      residual_world_y_m: Number(resYm.toFixed(4)),
+      residual_world_xy_m: Number(resXyM.toFixed(4)),
+      residual_pixel_x: Number(resXp.toFixed(2)),
+      residual_pixel_y: Number(resYp.toFixed(2)),
+      residual_pixel: Number(resPx.toFixed(2)),
+      is_check_point: p.is_check_point
+    });
+  });
+
+  const n = Number(validPts.length);
+  const rmseXyM = Math.sqrt(sqErrXy / n);
+  const rmsePixel = Math.sqrt(sqErrPx / n);
+
+  return {
+    affine_matrix: [Number(a.toFixed(6)), Number(b.toFixed(8)), Number(c.toFixed(8)), Number(d.toFixed(6)), Number(e.toFixed(8)), Number(f.toFixed(8))],
+    gsd_x_cm: Number(gsdXCm.toFixed(3)),
+    gsd_y_cm: Number(gsdYCm.toFixed(3)),
+    mean_gsd_cm: Number(meanGsdCm.toFixed(3)),
+    rotation_deg: Number(rotationDeg.toFixed(4)),
+    rmse_xy_m: Number(rmseXyM.toFixed(4)),
+    rmse_pixel: Number(rmsePixel.toFixed(3)),
+    points_used: validPts.length,
+    residuals
+  };
+};
+
+/**
+ * Calculates photogrammetric drone survey flight altitude, ground footprint, and trigger spacing.
+ * 
+ * @param {Object} params - Flight parameters
+ * @returns {Object} Flight plan and camera model
+ */
+export const calculateDroneFlightPlan = (params = {}) => {
+  const targetGsd = Number(params.target_gsd_cm ?? params.targetGsdCm ?? 2.5);
+  const camModel = params.camera_model || params.cameraModel || 'DJI_FC6310R';
+  const preset = DRONE_CAMERA_PRESETS[camModel] || DRONE_CAMERA_PRESETS.DJI_FC6310R;
+
+  const sensorW = Number(params.sensor_width_mm || params.sensorWidthMm || preset.sensor_width_mm);
+  const sensorH = Number(params.sensor_height_mm || params.sensorHeightMm || preset.sensor_height_mm);
+  const imgW = Number(params.image_width_px || params.imageWidthPx || preset.image_width_px);
+  const imgH = Number(params.image_height_px || params.imageHeightPx || preset.image_height_px);
+  const focalLen = Number(params.focal_length_mm || params.focalLengthMm || preset.focal_length_mm);
+
+  const fwdOverlap = Number(params.forward_overlap_percent ?? params.forwardOverlapPercent ?? 80.0);
+  const sideOverlap = Number(params.side_overlap_percent ?? params.sideOverlapPercent ?? 70.0);
+  const surveyArea = Number(params.survey_area_ha ?? params.surveyAreaHa ?? 25.0);
+  const flightSpeed = Number(params.flight_speed_ms ?? params.flightSpeedMs ?? 10.0);
+
+  const pxSizeMm = sensorW / Number(imgW);
+  const flightAltM = (targetGsd / 100.0) * (focalLen / pxSizeMm);
+  const footprintWM = (targetGsd / 100.0) * Number(imgW);
+  const footprintHM = (targetGsd / 100.0) * Number(imgH);
+
+  const fwdSpacingM = footprintHM * (1.0 - fwdOverlap / 100.0);
+  const sideSpacingM = footprintWM * (1.0 - sideOverlap / 100.0);
+  const triggerSec = fwdSpacingM / Math.max(0.1, flightSpeed);
+  const shutterSec = (0.5 * (targetGsd / 100.0)) / Math.max(0.1, flightSpeed);
+
+  const areaM2 = surveyArea * 10000.0;
+  const effArea = Math.max(1.0, fwdSpacingM * sideSpacingM);
+  const photoCount = Math.ceil(1.15 * areaM2 / effArea);
+  const flightDistM = Number(photoCount) * fwdSpacingM;
+  const flightTimeMin = (flightDistM / Math.max(0.1, flightSpeed)) / 60.0;
+
+  const cameraObj = {
+    camera_id: preset.camera_id || 'CUSTOM',
+    camera_model: preset.camera_model || camModel,
+    sensor_width_mm: sensorW,
+    sensor_height_mm: sensorH,
+    image_width_px: imgW,
+    image_height_px: imgH,
+    focal_length_mm: focalLen,
+    focal_length_px: Number((focalLen / pxSizeMm).toFixed(1)),
+    principal_point_x_px: Number((imgW / 2.0).toFixed(1)),
+    principal_point_y_px: Number((imgH / 2.0).toFixed(1)),
+    k1: preset.k1 || 0.0,
+    k2: preset.k2 || 0.0,
+    k3: preset.k3 || 0.0,
+    p1: preset.p1 || 0.0,
+    p2: preset.p2 || 0.0
+  };
+
+  const planObj = {
+    target_gsd_cm: Number(targetGsd.toFixed(2)),
+    flight_altitude_m: Number(flightAltM.toFixed(2)),
+    ground_footprint_width_m: Number(footprintWM.toFixed(2)),
+    ground_footprint_height_m: Number(footprintHM.toFixed(2)),
+    forward_photo_spacing_m: Number(fwdSpacingM.toFixed(2)),
+    flight_line_spacing_m: Number(sideSpacingM.toFixed(2)),
+    trigger_interval_seconds: Number(triggerSec.toFixed(2)),
+    estimated_photo_count: photoCount,
+    estimated_flight_time_minutes: Number(flightTimeMin.toFixed(1)),
+    min_shutter_speed_seconds: Number(shutterSec.toFixed(5))
+  };
+
+  return {
+    plan: planObj,
+    camera_used: cameraObj
+  };
+};
+
+/**
+ * Formats a list of Ground Control Points into standard OpenDroneMap GCP format text.
+ * 
+ * @param {Array<Object>} gcps - List of GCP objects
+ * @param {number} [epsgCode=32610] - UTM EPSG spatial reference code
+ * @param {string} [imageName='drone_frame.jpg'] - Default image name
+ * @returns {string} Formatted ODM GCP text
+ */
+export const formatOdmGcpFile = (gcps = [], epsgCode = 32610, imageName = 'drone_frame.jpg') => {
+  const lines = [`+proj=utm +zone=${epsgCode % 100} +datum=WGS84 +units=m`];
+  (gcps || []).forEach(p => {
+    if (p && p.is_enabled !== false && p.isEnabled !== false) {
+      const wx = p.world_x ?? p.worldX ?? 0.0;
+      const wy = p.world_y ?? p.worldY ?? 0.0;
+      const wz = p.elevation_z ?? p.elevationZ ?? 0.0;
+      const px = p.pixel_x ?? p.pixelX ?? 0.0;
+      const py = p.pixel_y ?? p.pixelY ?? 0.0;
+      const gid = p.gcp_id || p.gcpId || 'GCP';
+      const img = p.image_name || imageName;
+      lines.push(`${wx} ${wy} ${wz} ${px} ${py} ${img} ${gid}`);
+    }
+  });
+  return lines.join('\n');
+};
+
+/**
+ * Parses standard OpenDroneMap GCP text file format into Ground Control Point dictionaries.
+ * 
+ * @param {string} gcpText - Raw multi-line ODM GCP file content
+ * @returns {Array<Object>} Parsed GCP objects
+ */
+export const parseOdmGcpFile = (gcpText = '') => {
+  const lines = (gcpText || '').trim().split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+  if (lines.length < 2) return [];
+  const pts = [];
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(/\s+/);
+    if (parts.length >= 5) {
+      pts.push({
+        world_x: parseFloat(parts[0]),
+        world_y: parseFloat(parts[1]),
+        elevation_z: parseFloat(parts[2]),
+        pixel_x: parseFloat(parts[3]),
+        pixel_y: parseFloat(parts[4]),
+        image_name: parts.length > 5 ? parts[5] : 'drone_frame.jpg',
+        gcp_id: parts.length > 6 ? parts[6] : `GCP-${pts.length + 1}`,
+        is_enabled: true,
+        is_check_point: false
+      });
+    }
+  }
+  return pts;
+};
+
+/**
+ * Builds direct XYZ tile streaming URL for a drone photogrammetry task.
+ */
+export const buildDronePhotogrammetryTileUrl = (taskId, z, x, y, options = {}) => {
+  const basePrefix = options.basePrefix || '/api/v1';
+  const metric = options.metric;
+  let base = `${basePrefix}/tiles/drone/photogrammetry/${taskId}`;
+  if (metric && metric !== 'orthophoto') {
+    base += `/${metric}`;
+  }
+  let url = `${base}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (options.rescale) params.push(`rescale=${options.rescale}`);
+  if (options.colormap) params.push(`colormap=${options.colormap}`);
+  if (params.length > 0) url += `?${params.join('&')}`;
+  return url;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for a drone photogrammetry task.
+ */
+export const buildDronePhotogrammetryTileUrlTemplate = (taskId, metric = null) => {
+  let base = `/api/v1/tiles/drone/photogrammetry/${taskId}`;
+  if (metric && metric !== 'orthophoto') {
+    base += `/${metric}`;
+  }
+  return `${base}/{z}/{x}/{y}.png`;
+};
+
+/**
+ * Generates synthetic real-time telemetry for a decoupled NodeODM drone photogrammetry task.
+ */
+export const simulateNodeODMTaskProgression = (
+  taskId = 'ODM_TASK_20261015_001',
+  stage = 'mvs_dense_point_cloud',
+  elapsedSeconds = 180.0,
+  imageCount = 120,
+  targetGsdCm = 2.5
+) => {
+  const sVal = (stage || 'queued').toLowerCase();
+  const meta = NODEODM_PIPELINE_STAGE_METADATA[sVal] || NODEODM_PIPELINE_STAGE_METADATA.queued;
+  const [pMin, pMax] = meta.progress_range;
+
+  let progress = 0.0;
+  let status = NODEODM_LIFECYCLE_STATUSES.RUNNING;
+  if (sVal === 'completed') {
+    progress = 100.0;
+    status = NODEODM_LIFECYCLE_STATUSES.COMPLETED;
+  } else if (sVal === 'failed') {
+    progress = 0.0;
+    status = NODEODM_LIFECYCLE_STATUSES.FAILED;
+  } else {
+    progress = Number((pMin + (pMax - pMin) * 0.70).toFixed(1));
+    status = NODEODM_LIFECYCLE_STATUSES.RUNNING;
+  }
+
+  const totalEstSec = Math.max(60.0, Number(imageCount) * 4.0);
+  const remSec = (sVal === 'completed' || sVal === 'failed') ? 0.0 : Math.max(0.0, Number((totalEstSec * (1.0 - progress / 100.0)).toFixed(1)));
+
+  let ptsFactor = 0.0;
+  if (sVal === 'structure_from_motion') {
+    ptsFactor = 0.15;
+  } else if (sVal === 'mvs_dense_point_cloud' || sVal === 'dem_csf_surface_extraction') {
+    ptsFactor = 0.85;
+  } else if (sVal === 'orthophoto_mosaicing' || sVal === 'cog_pyramidal_tiles' || sVal === 'completed') {
+    ptsFactor = 1.00;
+  }
+
+  const reconstructedPts = Math.floor(Number(imageCount) * 18500 * ptsFactor);
+  const reprojectionRmse = (sVal === 'orthophoto_mosaicing' || sVal === 'cog_pyramidal_tiles' || sVal === 'completed') ? 0.38 : 0.52;
+  const achievedGsd = Number((Number(targetGsdCm) * (sVal !== 'failed' ? 1.01 : 1.0)).toFixed(2));
+
+  let artifacts = null;
+  if (sVal === 'cog_pyramidal_tiles' || sVal === 'completed') {
+    artifacts = {
+      orthophoto_cog_url: `/static/drone_outputs/${taskId}/orthophoto.tif`,
+      dtm_cog_url: `/static/drone_outputs/${taskId}/dtm.tif`,
+      dsm_cog_url: `/static/drone_outputs/${taskId}/dsm.tif`,
+      point_cloud_laz_url: `/static/drone_outputs/${taskId}/point_cloud.laz`,
+      quality_report_pdf_url: `/static/drone_outputs/${taskId}/odm_report.pdf`
+    };
+  }
+
+  const gcps = [
+    { gcp_id: 'GCP-01', name: 'Crest Station A', pixel_x: 500.0, pixel_y: 450.0, world_x: 674100.0, world_y: 4102300.0, elevation_z: 132.5, is_check_point: false, is_enabled: true },
+    { gcp_id: 'GCP-02', name: 'Crest Station B', pixel_x: 4800.0, pixel_y: 520.0, world_x: 674207.5, world_y: 4102302.0, elevation_z: 132.8, is_check_point: false, is_enabled: true },
+    { gcp_id: 'GCP-03', name: 'Downstream Toe Target', pixel_x: 600.0, pixel_y: 3200.0, world_x: 674102.5, world_y: 4102231.2, elevation_z: 88.4, is_check_point: false, is_enabled: true },
+    { gcp_id: 'GCP-04', name: 'Spillway Basin Check Point', pixel_x: 4700.0, pixel_y: 3150.0, world_x: 674205.0, world_y: 4102232.5, elevation_z: 89.1, is_check_point: true, is_enabled: true }
+  ];
+  const affineResult = solveGcpAffineTransform(gcps);
+
+  return {
+    task_id: taskId,
+    project_name: 'Tailings Embankment Drone Survey',
+    status,
+    stage: sVal,
+    stage_label: meta.label,
+    progress_percent: progress,
+    elapsed_seconds: Number(Number(elapsedSeconds).toFixed(1)),
+    estimated_remaining_seconds: remSec,
+    image_count: Number(imageCount),
+    reconstructed_points: reconstructedPts,
+    achieved_gsd_cm: achievedGsd,
+    rmse_reprojection_px: reprojectionRmse,
+    affine_geotransform: affineResult,
+    gcps,
+    camera: DRONE_CAMERA_PRESETS.DJI_FC6310R,
+    artifacts,
+    tile_url_template: `/api/v1/tiles/drone/photogrammetry/${taskId}/{z}/{x}/{y}.png`,
+    error_message: sVal === 'failed' ? 'Feature matching aborted: insufficient inlier tie points.' : null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+};
+
+// ============================================================================
+// CYCLE v2.5.25: ABSTRACT SYNTAX TREE (AST) BAND MATH GRAMMAR, SAFE TOKENIZER/LEXER,
+// ALGEBRAIC EXPRESSION AST NODES & FORMULA SCHEMA VALIDATION CONTRACTS
+// ============================================================================
+
+export const BAND_MATH_TOKEN_TYPES = {
+  NUMBER: 'number',
+  IDENTIFIER: 'identifier',
+  OPERATOR: 'operator',
+  LPAREN: 'lparen',
+  RPAREN: 'rparen',
+  COMMA: 'comma'
+};
+
+export const BAND_MATH_NODE_TYPES = {
+  CONSTANT: 'constant',
+  VARIABLE: 'variable',
+  UNARY_OP: 'unary_op',
+  BINARY_OP: 'binary_op',
+  FUNCTION_CALL: 'function_call'
+};
+
+export const BAND_NAME_ALIASES = {
+  COASTAL: 'B01',
+  BLUE: 'B02',
+  GREEN: 'B03',
+  RED: 'B04',
+  REDEDGE1: 'B05',
+  RE1: 'B05',
+  REDEDGE2: 'B06',
+  RE2: 'B06',
+  REDEDGE3: 'B07',
+  RE3: 'B07',
+  NIR: 'B08',
+  NARROW_NIR: 'B8A',
+  WATER_VAPOR: 'B09',
+  VAPOR: 'B09',
+  CIRRUS: 'B10',
+  SWIR1: 'B11',
+  SWIR2: 'B12',
+  LANDSAT_BLUE: 'B2',
+  LANDSAT_GREEN: 'B3',
+  LANDSAT_RED: 'B4',
+  LANDSAT_NIR: 'B5',
+  LANDSAT_SWIR1: 'B6',
+  LANDSAT_SWIR2: 'B7',
+  THERMAL: 'B10',
+  DRONE_RED: 'R',
+  DRONE_GREEN: 'G',
+  DRONE_BLUE: 'B',
+  DRONE_NIR: 'NIR',
+  DRONE_RE: 'RE'
+};
+
+export const VALID_BAND_MATH_FUNCTIONS = {
+  sqrt: {
+    name: 'sqrt',
+    min_args: 1,
+    max_args: 1,
+    description: 'Square root with safe non-negative lower bound clamping (max(0, x)).'
+  },
+  abs: {
+    name: 'abs',
+    min_args: 1,
+    max_args: 1,
+    description: 'Absolute value.'
+  },
+  log: {
+    name: 'log',
+    min_args: 1,
+    max_args: 1,
+    description: 'Natural logarithm with 1e-12 epsilon clamping (log(max(1e-12, x))).'
+  },
+  exp: {
+    name: 'exp',
+    min_args: 1,
+    max_args: 1,
+    description: 'Exponential with overflow protection clamping to [-50.0, 50.0].'
+  },
+  min: {
+    name: 'min',
+    min_args: 2,
+    max_args: 2,
+    description: 'Minimum of two sub-expressions: min(a, b).'
+  },
+  max: {
+    name: 'max',
+    min_args: 2,
+    max_args: 2,
+    description: 'Maximum of two sub-expressions: max(a, b).'
+  },
+  clamp: {
+    name: 'clamp',
+    min_args: 3,
+    max_args: 3,
+    description: 'Clamp expression between low and high bounds: clamp(x, low, high).'
+  },
+  norm_diff: {
+    name: 'norm_diff',
+    min_args: 2,
+    max_args: 2,
+    description: 'Normalized difference ratio: (a - b) / (a + b + epsilon).'
+  }
+};
+
+export const BAND_MATH_PRESETS = {
+  ndvi: {
+    id: 'ndvi',
+    name: 'Normalized Difference Vegetation Index',
+    formula: '(B08 - B04) / (B08 + B04)',
+    bands_required: ['B08', 'B04'],
+    description: 'Evaluates photosynthetic canopy vigor and green biomass absorption.',
+    category: 'vegetation',
+    default_colormap: 'rdylgn',
+    default_rescale: [-0.2, 0.8],
+    units: 'NDVI ratio (-1 to +1)'
+  },
+  ndmi: {
+    id: 'ndmi',
+    name: 'Normalized Difference Moisture Index',
+    formula: '(B08 - B11) / (B08 + B11)',
+    bands_required: ['B08', 'B11'],
+    description: 'Detects canopy liquid water content and tailings impoundment saturation.',
+    category: 'water_moisture',
+    default_colormap: 'spectral',
+    default_rescale: [-0.4, 0.6],
+    units: 'NDMI ratio (-1 to +1)'
+  },
+  mndwi: {
+    id: 'mndwi',
+    name: 'Modified Normalized Difference Water Index',
+    formula: '(B03 - B11) / (B03 + B11)',
+    bands_required: ['B03', 'B11'],
+    description: 'Suppresses built-up and soil noise to isolate open water impoundments.',
+    category: 'water_moisture',
+    default_colormap: 'blues',
+    default_rescale: [-0.5, 0.5],
+    units: 'MNDWI ratio (-1 to +1)'
+  },
+  ndci: {
+    id: 'ndci',
+    name: 'Normalized Difference Chlorophyll Index',
+    formula: '(B05 - B04) / (B05 + B04)',
+    bands_required: ['B05', 'B04'],
+    description: 'Quantifies chlorophyll-a concentration in turbid waters and algal blooms.',
+    category: 'vegetation',
+    default_colormap: 'viridis',
+    default_rescale: [-0.1, 0.5],
+    units: 'NDCI ratio (-1 to +1)'
+  },
+  nbr: {
+    id: 'nbr',
+    name: 'Normalized Burn Ratio',
+    formula: '(B08 - B12) / (B08 + B12)',
+    bands_required: ['B08', 'B12'],
+    description: 'Assesses wildfire burn scars and bare charcoal ash exposure.',
+    category: 'burn_geology',
+    default_colormap: 'rdylbu',
+    default_rescale: [-0.5, 0.8],
+    units: 'NBR ratio (-1 to +1)'
+  },
+  savi: {
+    id: 'savi',
+    name: 'Soil-Adjusted Vegetation Index (L=0.5)',
+    formula: '1.5 * (B08 - B04) / (B08 + B04 + 0.5)',
+    bands_required: ['B08', 'B04'],
+    description: 'Minimizes soil brightness influences in sparse arid vegetation zones.',
+    category: 'vegetation',
+    default_colormap: 'rdylgn',
+    default_rescale: [-0.1, 0.9],
+    units: 'SAVI ratio (-1 to +1)'
+  },
+  evi: {
+    id: 'evi',
+    name: 'Enhanced Vegetation Index',
+    formula: '2.5 * (B08 - B04) / (B08 + 6.0 * B04 - 7.5 * B02 + 1.0)',
+    bands_required: ['B08', 'B04', 'B02'],
+    description: 'High-sensitivity canopy index decoupled from atmospheric haze and background soil.',
+    category: 'vegetation',
+    default_colormap: 'rdylgn',
+    default_rescale: [0.0, 1.0],
+    units: 'EVI ratio (0 to +1)'
+  },
+  bsi: {
+    id: 'bsi',
+    name: 'Bare Soil Index',
+    formula: '((B11 + B04) - (B08 + B02)) / ((B11 + B04) + (B08 + B02))',
+    bands_required: ['B11', 'B04', 'B08', 'B02'],
+    description: 'Differentiates bare exposed soil, mine excavation pits, and fallow terrain.',
+    category: 'burn_geology',
+    default_colormap: 'turbo',
+    default_rescale: [-0.5, 0.5],
+    units: 'BSI ratio (-1 to +1)'
+  },
+  ndre: {
+    id: 'ndre',
+    name: 'Normalized Difference Red Edge',
+    formula: '(B08 - B05) / (B08 + B05)',
+    bands_required: ['B08', 'B05'],
+    description: 'Detects subtle chlorosis and chlorophyll transitions in dense crop canopies.',
+    category: 'vegetation',
+    default_colormap: 'viridis',
+    default_rescale: [-0.2, 0.7],
+    units: 'NDRE ratio (-1 to +1)'
+  },
+  msavi2: {
+    id: 'msavi2',
+    name: 'Modified Soil-Adjusted Vegetation Index 2',
+    formula: '(2.0 * B08 + 1.0 - sqrt((2.0 * B08 + 1.0)^2 - 8.0 * (B08 - B04))) / 2.0',
+    bands_required: ['B08', 'B04'],
+    description: 'Inductive soil adjustment parameter eliminating manual soil line fitting.',
+    category: 'vegetation',
+    default_colormap: 'rdylgn',
+    default_rescale: [0.0, 1.0],
+    units: 'MSAVI2 ratio (0 to +1)'
+  },
+  ferric_iron: {
+    id: 'ferric_iron',
+    name: 'Ferric Iron Oxide Ratio',
+    formula: 'B04 / B02',
+    bands_required: ['B04', 'B02'],
+    description: 'Detects hematite, goethite, and jarosite weathering in mine waste rock.',
+    category: 'minerals',
+    default_colormap: 'plasma',
+    default_rescale: [0.5, 3.0],
+    units: 'Band ratio'
+  },
+  clay_minerals: {
+    id: 'clay_minerals',
+    name: 'Clay and Alunite Minerals Ratio',
+    formula: 'B11 / B12',
+    bands_required: ['B11', 'B12'],
+    description: 'Highlights hydroxyl-bearing minerals, kaolinite, and illite hydrothermal alteration.',
+    category: 'minerals',
+    default_colormap: 'magma',
+    default_rescale: [0.5, 2.5],
+    units: 'Band ratio'
+  }
+};
+
+/**
+ * Safely tokenizes a band math formula into numbers, identifiers, operators, and parens.
+ * 
+ * @param {string} formula - Mathematical formula string
+ * @returns {Array<Object>} List of lexical tokens
+ */
+export const tokenizeBandMath = (formula) => {
+  if (!formula || typeof formula !== 'string') {
+    throw new Error('Formula must be a non-empty string.');
+  }
+
+  if (formula.length > 500) {
+    throw new Error('Formula exceeds maximum permitted length of 500 characters.');
+  }
+
+  if (formula.includes('__')) {
+    throw new Error("Security violation: Double underscores '__' are forbidden in band math expressions.");
+  }
+
+  const forbiddenPattern = /['";`[\]{}$\\?!=<>@#%&|~]/;
+  const match = forbiddenPattern.exec(formula);
+  if (match) {
+    throw new Error(`Security violation: Illegal character '${match[0]}' is forbidden in band math formulas.`);
+  }
+
+  const tokens = [];
+  let i = 0;
+  const n = formula.length;
+
+  while (i < n) {
+    const c = formula[i];
+
+    if (/\s/.test(c)) {
+      i++;
+      continue;
+    }
+
+    if (/[0-9]/.test(c) || (c === '.' && i + 1 < n && /[0-9]/.test(formula[i + 1]))) {
+      const start = i;
+      while (i < n && (/[0-9]/.test(formula[i]) || formula[i] === '.')) {
+        i++;
+      }
+      if (i < n && (formula[i] === 'e' || formula[i] === 'E')) {
+        i++;
+        if (i < n && (formula[i] === '+' || formula[i] === '-')) {
+          i++;
+        }
+        while (i < n && /[0-9]/.test(formula[i])) {
+          i++;
+        }
+      }
+      tokens.push({
+        type: BAND_MATH_TOKEN_TYPES.NUMBER,
+        value: formula.slice(start, i),
+        start,
+        end: i
+      });
+      continue;
+    }
+
+    if (/[a-zA-Z_]/.test(c)) {
+      const start = i;
+      while (i < n && /[a-zA-Z0-9_]/.test(formula[i])) {
+        i++;
+      }
+      tokens.push({
+        type: BAND_MATH_TOKEN_TYPES.IDENTIFIER,
+        value: formula.slice(start, i),
+        start,
+        end: i
+      });
+      continue;
+    }
+
+    if (c === '*' && i + 1 < n && formula[i + 1] === '*') {
+      tokens.push({
+        type: BAND_MATH_TOKEN_TYPES.OPERATOR,
+        value: '^',
+        start: i,
+        end: i + 2
+      });
+      i += 2;
+      continue;
+    }
+
+    if (['+', '-', '*', '/', '^'].includes(c)) {
+      tokens.push({
+        type: BAND_MATH_TOKEN_TYPES.OPERATOR,
+        value: c,
+        start: i,
+        end: i + 1
+      });
+      i++;
+      continue;
+    }
+
+    if (c === '(') {
+      tokens.push({
+        type: BAND_MATH_TOKEN_TYPES.LPAREN,
+        value: '(',
+        start: i,
+        end: i + 1
+      });
+      i++;
+      continue;
+    }
+
+    if (c === ')') {
+      tokens.push({
+        type: BAND_MATH_TOKEN_TYPES.RPAREN,
+        value: ')',
+        start: i,
+        end: i + 1
+      });
+      i++;
+      continue;
+    }
+
+    if (c === ',') {
+      tokens.push({
+        type: BAND_MATH_TOKEN_TYPES.COMMA,
+        value: ',',
+        start: i,
+        end: i + 1
+      });
+      i++;
+      continue;
+    }
+
+    throw new Error(`Unrecognized character '${c}' at position ${i}.`);
+  }
+
+  if (tokens.length === 0) {
+    throw new Error('Formula contains no valid mathematical tokens.');
+  }
+
+  if (tokens.length > 100) {
+    throw new Error('Formula exceeds maximum token count of 100 tokens.');
+  }
+
+  return tokens;
+};
+
+class JSBandMathParser {
+  constructor(tokens, maxDepth = 20) {
+    this.tokens = tokens;
+    this.pos = 0;
+    this.maxDepth = maxDepth;
+  }
+
+  parse() {
+    const node = this.expr(1);
+    if (this.pos < this.tokens.length) {
+      const tok = this.tokens[this.pos];
+      throw new Error(`Unexpected token '${tok.value}' at position ${tok.start || this.pos}.`);
+    }
+    return node;
+  }
+
+  checkDepth(depth) {
+    if (depth > this.maxDepth) {
+      throw new Error(`AST parser recursion depth limit exceeded (depth ${depth} > max ${this.maxDepth}).`);
+    }
+  }
+
+  expr(depth = 1) {
+    this.checkDepth(depth);
+    let node = this.term(depth + 1);
+    while (this.pos < this.tokens.length && ['+', '-'].includes(this.tokens[this.pos].value)) {
+      const op = this.tokens[this.pos].value;
+      this.pos++;
+      const right = this.term(depth + 1);
+      const combinedVars = Array.from(new Set([...(node.variables || []), ...(right.variables || [])])).sort();
+      node = {
+        type: BAND_MATH_NODE_TYPES.BINARY_OP,
+        op,
+        left: node,
+        right,
+        depth: Math.max(node.depth || 1, right.depth || 1) + 1,
+        node_count: (node.node_count || 1) + (right.node_count || 1) + 1,
+        variables: combinedVars
+      };
+    }
+    return node;
+  }
+
+  term(depth = 1) {
+    this.checkDepth(depth);
+    let node = this.power(depth + 1);
+    while (this.pos < this.tokens.length && ['*', '/'].includes(this.tokens[this.pos].value)) {
+      const op = this.tokens[this.pos].value;
+      this.pos++;
+      const right = this.power(depth + 1);
+      const combinedVars = Array.from(new Set([...(node.variables || []), ...(right.variables || [])])).sort();
+      node = {
+        type: BAND_MATH_NODE_TYPES.BINARY_OP,
+        op,
+        left: node,
+        right,
+        depth: Math.max(node.depth || 1, right.depth || 1) + 1,
+        node_count: (node.node_count || 1) + (right.node_count || 1) + 1,
+        variables: combinedVars
+      };
+    }
+    return node;
+  }
+
+  power(depth = 1) {
+    this.checkDepth(depth);
+    let node = this.unary(depth + 1);
+    if (this.pos < this.tokens.length && this.tokens[this.pos].value === '^') {
+      const op = '^';
+      this.pos++;
+      const right = this.power(depth + 1);
+      const combinedVars = Array.from(new Set([...(node.variables || []), ...(right.variables || [])])).sort();
+      node = {
+        type: BAND_MATH_NODE_TYPES.BINARY_OP,
+        op,
+        left: node,
+        right,
+        depth: Math.max(node.depth || 1, right.depth || 1) + 1,
+        node_count: (node.node_count || 1) + (right.node_count || 1) + 1,
+        variables: combinedVars
+      };
+    }
+    return node;
+  }
+
+  unary(depth = 1) {
+    this.checkDepth(depth);
+    if (this.pos < this.tokens.length && ['+', '-'].includes(this.tokens[this.pos].value)) {
+      const op = this.tokens[this.pos].value;
+      this.pos++;
+      const operand = this.unary(depth + 1);
+      if (operand.type === BAND_MATH_NODE_TYPES.CONSTANT) {
+        const val = op === '+' ? Number(operand.value) : -Number(operand.value);
+        return {
+          type: BAND_MATH_NODE_TYPES.CONSTANT,
+          value: val,
+          depth: 1,
+          node_count: 1,
+          variables: []
+        };
+      }
+      return {
+        type: BAND_MATH_NODE_TYPES.UNARY_OP,
+        op,
+        operand,
+        depth: (operand.depth || 1) + 1,
+        node_count: (operand.node_count || 1) + 1,
+        variables: operand.variables || []
+      };
+    }
+    return this.primary(depth);
+  }
+
+  primary(depth = 1) {
+    this.checkDepth(depth);
+    if (this.pos >= this.tokens.length) {
+      throw new Error('Unexpected end of formula while parsing expression.');
+    }
+
+    const tok = this.tokens[this.pos];
+
+    if (tok.type === BAND_MATH_TOKEN_TYPES.NUMBER) {
+      this.pos++;
+      return {
+        type: BAND_MATH_NODE_TYPES.CONSTANT,
+        value: parseFloat(tok.value),
+        depth: 1,
+        node_count: 1,
+        variables: []
+      };
+    }
+
+    if (tok.type === BAND_MATH_TOKEN_TYPES.IDENTIFIER) {
+      const ident = tok.value;
+      this.pos++;
+
+      if (this.pos < this.tokens.length && this.tokens[this.pos].value === '(') {
+        const fname = ident.toLowerCase();
+        if (!VALID_BAND_MATH_FUNCTIONS[fname]) {
+          const supported = Object.keys(VALID_BAND_MATH_FUNCTIONS).sort().join(', ');
+          throw new Error(`Unsupported math function '${fname}'. Supported functions: ${supported}.`);
+        }
+        this.pos++; // Consume '('
+        const args = [];
+        if (this.pos < this.tokens.length && this.tokens[this.pos].value !== ')') {
+          args.push(this.expr(depth + 1));
+          while (this.pos < this.tokens.length && this.tokens[this.pos].value === ',') {
+            this.pos++;
+            args.push(this.expr(depth + 1));
+          }
+        }
+        if (this.pos >= this.tokens.length || this.tokens[this.pos].value !== ')') {
+          throw new Error(`Unclosed parenthesis in function call '${fname}'.`);
+        }
+        this.pos++; // Consume ')'
+
+        const fMeta = VALID_BAND_MATH_FUNCTIONS[fname];
+        if (args.length < fMeta.min_args || args.length > fMeta.max_args) {
+          throw new Error(`Function '${fname}' requires ${fMeta.min_args}-${fMeta.max_args} arguments, got ${args.length}.`);
+        }
+
+        const vUsed = [];
+        let maxD = 1;
+        let nCount = 1;
+        for (const a of args) {
+          vUsed.push(...(a.variables || []));
+          maxD = Math.max(maxD, a.depth || 1);
+          nCount += (a.node_count || 1);
+        }
+
+        return {
+          type: BAND_MATH_NODE_TYPES.FUNCTION_CALL,
+          name: fname,
+          args,
+          depth: maxD + 1,
+          node_count: nCount,
+          variables: Array.from(new Set(vUsed)).sort()
+        };
+      } else {
+        const upper = ident.toUpperCase();
+        const canonical = BAND_NAME_ALIASES[upper] || upper;
+        return {
+          type: BAND_MATH_NODE_TYPES.VARIABLE,
+          name: canonical,
+          raw_name: ident,
+          depth: 1,
+          node_count: 1,
+          variables: [canonical]
+        };
+      }
+    }
+
+    if (tok.value === '(') {
+      this.pos++; // Consume '('
+      const node = this.expr(depth + 1);
+      if (this.pos >= this.tokens.length || this.tokens[this.pos].value !== ')') {
+        throw new Error('Unclosed parenthesis in expression.');
+      }
+      this.pos++; // Consume ')'
+      return node;
+    }
+
+    throw new Error(`Unexpected token '${tok.value}' at position ${tok.start || this.pos}.`);
+  }
+}
+
+/**
+ * Parses an algebraic formula string into an Abstract Syntax Tree (AST).
+ * 
+ * @param {string} formula - Formula string
+ * @param {number} [maxDepth=20] - Maximum recursion depth allowed
+ * @returns {Object} AST root node
+ */
+export const parseBandMathAst = (formula, maxDepth = 20) => {
+  const tokens = tokenizeBandMath(formula);
+  const parser = new JSBandMathParser(tokens, maxDepth);
+  return parser.parse();
+};
+
+const formatAstToNormalizedString = (node) => {
+  if (!node) return '';
+  if (node.type === BAND_MATH_NODE_TYPES.CONSTANT) {
+    const v = node.value;
+    return Number.isInteger(v) ? String(v) : String(v);
+  }
+  if (node.type === BAND_MATH_NODE_TYPES.VARIABLE) {
+    return node.name || 'B01';
+  }
+  if (node.type === BAND_MATH_NODE_TYPES.UNARY_OP) {
+    return `${node.op || '-'}${formatAstToNormalizedString(node.operand)}`;
+  }
+  if (node.type === BAND_MATH_NODE_TYPES.BINARY_OP) {
+    return `(${formatAstToNormalizedString(node.left)} ${node.op || '+'} ${formatAstToNormalizedString(node.right)})`;
+  }
+  if (node.type === BAND_MATH_NODE_TYPES.FUNCTION_CALL) {
+    const argsStr = (node.args || []).map(formatAstToNormalizedString).join(', ');
+    return `${node.name || 'sqrt'}(${argsStr})`;
+  }
+  return '';
+};
+
+/**
+ * Validates formula grammar, parses AST, detects variables, and verifies band identifiers.
+ * 
+ * @param {string} formula - Formula string
+ * @param {Array<string>|null} [validBands=null] - Allowed band names
+ * @param {string} [collection='sentinel-2-l2a'] - Satellite context
+ * @param {number} [maxDepth=20] - Max recursion depth
+ * @returns {Object} Validation report
+ */
+export const validateBandMathFormula = (
+  formula,
+  validBands = null,
+  collection = 'sentinel-2-l2a',
+  maxDepth = 20
+) => {
+  const syntaxErrors = [];
+  let bandsDetected = [];
+  const unrecognized = [];
+  let ast = null;
+  let normalizedFormula = '';
+  let astDepth = 0;
+  let nodeCount = 0;
+
+  try {
+    ast = parseBandMathAst(formula, maxDepth);
+    bandsDetected = ast.variables || [];
+    astDepth = ast.depth || 1;
+    nodeCount = ast.node_count || 1;
+    normalizedFormula = formatAstToNormalizedString(ast);
+
+    const s2Bands = new Set(['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B09', 'B11', 'B12']);
+    const landsatBands = new Set(['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10', 'B11']);
+    const droneBands = new Set(['R', 'G', 'B', 'NIR', 'RE']);
+
+    let targetSet = new Set();
+    if (validBands) {
+      targetSet = new Set(validBands.map((b) => b.toUpperCase()));
+    } else if (collection && (collection.includes('landsat') || collection === 'landsat-c2-l2')) {
+      targetSet = landsatBands;
+    } else if (collection && collection.toLowerCase().includes('drone')) {
+      targetSet = new Set([...droneBands, ...s2Bands]);
+    } else {
+      targetSet = new Set([...s2Bands, ...landsatBands, ...droneBands]);
+    }
+
+    for (const b of bandsDetected) {
+      const u = b.toUpperCase();
+      if (!targetSet.has(u) && !BAND_NAME_ALIASES[u]) {
+        unrecognized.push(b);
+      }
+    }
+  } catch (err) {
+    syntaxErrors.push(err.message || String(err));
+  }
+
+  const isValid = syntaxErrors.length === 0 && unrecognized.length === 0 && ast !== null;
+
+  return {
+    is_valid: isValid,
+    formula,
+    normalized_formula: normalizedFormula || formula,
+    ast,
+    bands_detected: bandsDetected,
+    unrecognized_identifiers: unrecognized,
+    ast_depth: astDepth,
+    node_count: nodeCount,
+    syntax_errors: syntaxErrors,
+    error_message: syntaxErrors.length > 0 ? syntaxErrors.join('; ') : (
+      unrecognized.length > 0 ? `Unrecognized band identifiers: ${unrecognized.join(', ')}` : null
+    )
+  };
+};
+
+/**
+ * Safely evaluates an Abstract Syntax Tree (AST) against scalar band values.
+ * 
+ * @param {Object} astNode - AST root node
+ * @param {Record<string, number>} bandValues - Band reflectance mapping
+ * @param {number} [epsilon=1e-6] - Denominator stability clamp
+ * @returns {number} Evaluated mathematical result
+ */
+export const evaluateBandMathAst = (astNode, bandValues, epsilon = 1e-6) => {
+  if (!astNode || typeof astNode !== 'object') {
+    throw new Error('astNode must be an object.');
+  }
+
+  const normalizedValues = {};
+  for (const [k, v] of Object.entries(bandValues || {})) {
+    normalizedValues[k.toUpperCase()] = Number(v);
+  }
+  for (const [alias, canonical] of Object.entries(BAND_NAME_ALIASES)) {
+    if (normalizedValues[canonical] !== undefined && normalizedValues[alias] === undefined) {
+      normalizedValues[alias] = normalizedValues[canonical];
+    } else if (normalizedValues[alias] !== undefined && normalizedValues[canonical] === undefined) {
+      normalizedValues[canonical] = normalizedValues[alias];
+    }
+  }
+
+  const evalInternal = (node) => {
+    if (!node) return 0.0;
+    const ntype = node.type;
+
+    if (ntype === BAND_MATH_NODE_TYPES.CONSTANT) {
+      return Number(node.value || 0.0);
+    }
+
+    if (ntype === BAND_MATH_NODE_TYPES.VARIABLE) {
+      const vname = String(node.name || '').toUpperCase();
+      if (normalizedValues[vname] !== undefined) {
+        return normalizedValues[vname];
+      }
+      const raw = String(node.raw_name || '').toUpperCase();
+      if (normalizedValues[raw] !== undefined) {
+        return normalizedValues[raw];
+      }
+      const canonical = BAND_NAME_ALIASES[vname] || vname;
+      if (normalizedValues[canonical] !== undefined) {
+        return normalizedValues[canonical];
+      }
+      const available = Object.keys(normalizedValues).sort().join(', ');
+      throw new Error(`Missing required band value for '${node.name}'. Available: ${available}.`);
+    }
+
+    if (ntype === BAND_MATH_NODE_TYPES.UNARY_OP) {
+      const op = node.op || '-';
+      const val = evalInternal(node.operand);
+      if (op === '-') return -val;
+      if (op === '+') return val;
+      throw new Error(`Unknown unary operator '${op}'.`);
+    }
+
+    if (ntype === BAND_MATH_NODE_TYPES.BINARY_OP) {
+      const op = node.op || '+';
+      const leftVal = evalInternal(node.left);
+      const rightVal = evalInternal(node.right);
+
+      if (op === '+') return leftVal + rightVal;
+      if (op === '-') return leftVal - rightVal;
+      if (op === '*') return leftVal * rightVal;
+      if (op === '/') {
+        let denom = rightVal;
+        if (Math.abs(denom) < epsilon) {
+          const sign = denom >= 0 ? 1.0 : -1.0;
+          denom = sign * epsilon;
+        }
+        return leftVal / denom;
+      }
+      if (op === '^' || op === '**') {
+        if (leftVal < 0 && !Number.isInteger(rightVal)) {
+          return Math.pow(Math.abs(leftVal), rightVal);
+        }
+        if (leftVal === 0 && rightVal < 0) {
+          const safeDenom = Math.pow(epsilon, Math.abs(rightVal));
+          return 1.0 / safeDenom;
+        }
+        return Math.pow(leftVal, rightVal);
+      }
+      throw new Error(`Unknown binary operator '${op}'.`);
+    }
+
+    if (ntype === BAND_MATH_NODE_TYPES.FUNCTION_CALL) {
+      const fname = String(node.name || '').toLowerCase();
+      const args = (node.args || []).map(evalInternal);
+
+      if (fname === 'sqrt') return Math.sqrt(Math.max(0, args[0]));
+      if (fname === 'abs') return Math.abs(args[0]);
+      if (fname === 'log') return Math.log(Math.max(1e-12, args[0]));
+      if (fname === 'exp') {
+        const clamped = Math.min(Math.max(args[0], -50), 50);
+        return Math.exp(clamped);
+      }
+      if (fname === 'min') return Math.min(args[0], args[1]);
+      if (fname === 'max') return Math.max(args[0], args[1]);
+      if (fname === 'clamp') {
+        const val = args[0];
+        const low = Math.min(args[1], args[2]);
+        const high = Math.max(args[1], args[2]);
+        return Math.min(Math.max(val, low), high);
+      }
+      if (fname === 'norm_diff') {
+        const a = args[0];
+        const b = args[1];
+        let denom = a + b;
+        if (Math.abs(denom) < epsilon) {
+          const sign = denom >= 0 ? 1.0 : -1.0;
+          denom = sign * epsilon;
+        }
+        return (a - b) / denom;
+      }
+      throw new Error(`Unknown function '${fname}'.`);
+    }
+
+    throw new Error(`Invalid AST node type '${ntype}'.`);
+  };
+
+  return evalInternal(astNode);
+};
+
+/**
+ * Parses and safely evaluates a band math formula string with variable bindings.
+ * 
+ * @param {string} formula - Formula string
+ * @param {Record<string, number>} bandValues - Band reflectance mapping
+ * @param {number} [epsilon=1e-6] - Denominator stability clamp
+ * @param {number} [maxDepth=20] - Max recursion depth
+ * @returns {number} Evaluated result
+ */
+export const evaluateBandMathFormula = (formula, bandValues, epsilon = 1e-6, maxDepth = 20) => {
+  const ast = parseBandMathAst(formula, maxDepth);
+  return evaluateBandMathAst(ast, bandValues, epsilon);
+};
+
+/**
+ * Builds a dynamic XYZ custom expression raster tile endpoint URL.
+ * 
+ * @param {number} z - Zoom level
+ * @param {number} x - Tile column
+ * @param {number} y - Tile row
+ * @param {string} expr - Custom formula expression
+ * @param {Object} [options={}] - Optional collection, itemId, colormap, rescale, epsilon
+ * @returns {string} Tile URL
+ */
+export const buildCustomExpressionTileUrl = (z, x, y, expr, options = {}) => {
+  const { collection, itemId, item_id, colormap = 'viridis', rescale = '-1.0,1.0', epsilon = 1e-6 } = options;
+  const targetItemId = itemId || item_id;
+  const encodedExpr = encodeURIComponent(expr);
+  let url = '';
+  if (collection && targetItemId) {
+    url = `/api/v1/tiles/${collection}/${targetItemId}/custom-expression/${z}/${x}/${y}.png`;
+  } else {
+    url = `/api/v1/tiles/custom-expression/${z}/${x}/${y}.png`;
+  }
+  const params = [`expr=${encodedExpr}`];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  if (epsilon !== 1e-6) params.push(`epsilon=${epsilon}`);
+  return `${url}?${params.join('&')}`;
+};
+
+/**
+ * Builds a dynamic Leaflet tile URL template for a custom band math expression.
+ * 
+ * @param {string} expr - Custom formula expression
+ * @param {Object} [options={}] - Optional collection, itemId, colormap, rescale
+ * @returns {string} Tile URL template
+ */
+export const buildCustomExpressionTileUrlTemplate = (expr, options = {}) => {
+  const { collection, itemId, item_id, colormap = 'viridis', rescale = '-1.0,1.0' } = options;
+  const targetItemId = itemId || item_id;
+  const encodedExpr = encodeURIComponent(expr);
+  let base = '';
+  if (collection && targetItemId) {
+    base = `/api/v1/tiles/${collection}/${targetItemId}/custom-expression/{z}/{x}/{y}.png`;
+  } else {
+    base = `/api/v1/tiles/custom-expression/{z}/{x}/{y}.png`;
+  }
+  const params = [`expr=${encodedExpr}`];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  return `${base}?${params.join('&')}`;
+};
+
+
 
 
 

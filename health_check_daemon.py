@@ -708,6 +708,9 @@ def acquire_daemon_lock() -> bool:
     return True
 
 def main():
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("Usage: python health_check_daemon.py [--once] [--interval=SECONDS] [--daemon]")
+        return
     single_pass = "--once" in sys.argv or "--single-pass" in sys.argv
     daemon_mode = "--daemon" in sys.argv or not single_pass
     interval = 60

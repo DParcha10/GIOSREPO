@@ -47,7 +47,19 @@ from app.models.schemas import (
     calculate_odm_stage_progress,
     CSFPointFilterRequest,
     CSFPointFilterResponse,
-    calculate_cloth_simulation_filter
+    calculate_cloth_simulation_filter,
+    DronePhotogrammetryTaskCreateRequest,
+    DronePhotogrammetryTaskStatusResponse,
+    DronePhotogrammetryCancelResponse,
+    DronePhotogrammetryGCPUpdateRequest,
+    DronePhotogrammetryGCPUpdateResponse,
+    DroneFlightPlanRequest,
+    DroneFlightPlanResponse,
+    DronePhotogrammetryAffineSolveRequest,
+    DronePhotogrammetryAffineSolveResponse,
+    NodeODMLifecycleStatus,
+    NodeODMPipelineStage,
+    DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS
 )
 
 router = APIRouter(prefix="/drone", tags=["Drone Fleet"])
@@ -569,5 +581,123 @@ async def get_drone_csf_tile(
         headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-DroneCSF-v2.5"}
     )
 
+# ============================================================================
+# CYCLE v2.5.24: DECOUPLED NODEODM DRONE PHOTOGRAMMETRY & GCP GEOREFERENCING
+# ============================================================================
 
+@router.get("/photogrammetry/tasks", response_model=List[DronePhotogrammetryTaskStatusResponse])
+async def list_drone_photogrammetry_tasks():
+    """Lists all registered drone photogrammetry tasks."""
+    tasks = drone_service.list_photogrammetry_tasks()
+    return [DronePhotogrammetryTaskStatusResponse.model_validate(t) for t in tasks]
+
+
+@router.post("/photogrammetry/tasks", response_model=DronePhotogrammetryTaskStatusResponse)
+async def create_drone_photogrammetry_task(req: DronePhotogrammetryTaskCreateRequest):
+    """Dispatches a new asynchronous drone photogrammetry reconstruction mission."""
+    task = drone_service.create_photogrammetry_task(req)
+    return DronePhotogrammetryTaskStatusResponse.model_validate(task)
+
+
+@router.get("/photogrammetry/tasks/{task_id}", response_model=DronePhotogrammetryTaskStatusResponse)
+async def get_drone_photogrammetry_task_status(task_id: str):
+    """Retrieves real-time execution status and product deliverables for a photogrammetry mission."""
+    task = drone_service.get_photogrammetry_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Photogrammetry task '{task_id}' not found.")
+    return DronePhotogrammetryTaskStatusResponse.model_validate(task)
+
+
+@router.post("/photogrammetry/tasks/{task_id}/cancel", response_model=DronePhotogrammetryCancelResponse)
+async def cancel_drone_photogrammetry_task(task_id: str):
+    """Aborts an active or queued drone photogrammetry mission."""
+    res = drone_service.cancel_photogrammetry_task(task_id)
+    return DronePhotogrammetryCancelResponse.model_validate(res)
+
+
+@router.post("/photogrammetry/tasks/{task_id}/restart", response_model=DronePhotogrammetryTaskStatusResponse)
+async def restart_drone_photogrammetry_task(task_id: str):
+    """Restarts a failed or cancelled photogrammetry task."""
+    task = drone_service.restart_photogrammetry_task(task_id)
+    return DronePhotogrammetryTaskStatusResponse.model_validate(task)
+
+
+@router.post("/photogrammetry/tasks/{task_id}/gcp", response_model=DronePhotogrammetryGCPUpdateResponse)
+async def update_drone_photogrammetry_gcps(task_id: str, req: DronePhotogrammetryGCPUpdateRequest):
+    """Updates Ground Control Points and recalculates georeferencing for a photogrammetry mission."""
+    res = drone_service.update_photogrammetry_gcps(task_id, req)
+    return DronePhotogrammetryGCPUpdateResponse.model_validate(res)
+
+
+@router.post("/photogrammetry/flight-plan", response_model=DroneFlightPlanResponse)
+async def calculate_drone_flight_plan_endpoint(req: DroneFlightPlanRequest):
+    """Calculates optimal flight altitude, ground footprint, photo spacing, and blur-free shutter speed."""
+    res = drone_service.calculate_flight_plan(req)
+    return DroneFlightPlanResponse.model_validate(res)
+
+
+@router.post("/photogrammetry/solve-affine", response_model=DronePhotogrammetryAffineSolveResponse)
+async def solve_drone_photogrammetry_affine(req: DronePhotogrammetryAffineSolveRequest):
+    """Computes 6-parameter least-squares 2D affine geotransform and spatial RMSE from Ground Control Points."""
+    res = drone_service.solve_gcp_affine(req)
+    return DronePhotogrammetryAffineSolveResponse.model_validate(res)
+
+
+@router.get("/tiles/photogrammetry/{task_id}/{z}/{x}/{y}.png")
+@router.get("/photogrammetry/tasks/{task_id}/tiles/{z}/{x}/{y}.png")
+@router.get("/photogrammetry/{task_id}/tiles/{z}/{x}/{y}.png")
+async def get_drone_photogrammetry_tile_router_alias(
+    task_id: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for drone photogrammetry orthophoto mosaic."""
+    from app.services.tile_service import tile_service
+    png_bytes = tile_service.render_drone_photogrammetry_tile(
+        task_id=task_id,
+        z=z,
+        x=x,
+        y=y,
+        metric="orthophoto",
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Photogrammetry-Orthophoto"}
+    )
+
+
+@router.get("/tiles/photogrammetry/{task_id}/{metric}/{z}/{x}/{y}.png")
+@router.get("/photogrammetry/tasks/{task_id}/tiles/{metric}/{z}/{x}/{y}.png")
+@router.get("/photogrammetry/{task_id}/tiles/{metric}/{z}/{x}/{y}.png")
+async def get_drone_photogrammetry_tile_metric_router_alias(
+    task_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for drone photogrammetry multimodal raster metric."""
+    from app.services.tile_service import tile_service
+    png_bytes = tile_service.render_drone_photogrammetry_tile(
+        task_id=task_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Photogrammetry-{metric}"}
+    )
 

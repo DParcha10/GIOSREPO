@@ -6348,6 +6348,40 @@ def get_analysis_drone_odm_tile(
     return get_drone_odm_tile_alias(z=z, x=x, y=y, task_id=task_id)
 
 
+# ----------------------------------------------------------------------------
+# CYCLE v2.5.24: DYNAMIC CENTIMETER DRONE PHOTOGRAMMETRY COG TILE STREAMING
+# ----------------------------------------------------------------------------
+
+@tiles_router.get("/drone/photogrammetry/{task_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/drone/photogrammetry/{task_id}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/drone/photogrammetry/{task_id}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/drone/photogrammetry/{task_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_drone_photogrammetry_tile_endpoint(
+    task_id: str,
+    z: int,
+    x: int,
+    y: int,
+    metric: Optional[str] = "orthophoto",
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for centimeter drone photogrammetry and COG raster products."""
+    png_bytes = tile_service.render_drone_photogrammetry_tile(
+        task_id=task_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric or "orthophoto",
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Photogrammetry-{metric or 'orthophoto'}"}
+    )
+
+
 # ============================================================================
 # T-127: 2D SHALLOW WATER DAM-BREAK HYDRODYNAMICS & EVACUATION CORRIDORS
 # ============================================================================

@@ -117,6 +117,10 @@ DEFAULT_INDEX_RANGES = {
     "rpc_alignment": (0.0, 3.0),
     "quality_mosaic": (0.0, 1.0),
     "drone_odm": (0.0, 255.0),
+    "drone_photogrammetry": (0.0, 255.0),
+    "orthophoto": (0.0, 255.0),
+    "reprojection_error": (0.0, 2.5),
+    "point_density": (10.0, 400.0),
     "dam_break": (0.0, 30.0),
     "hazard_product": (0.0, 30.0),
     "flood_depth": (0.0, 15.0),
@@ -636,9 +640,23 @@ class TileService:
             elif col_clean in {"quality_mosaic", "mosaic_quality", "quality"} or idx_clean in {"quality_mosaic", "max_ndvi", "clearest_pixel"}:
                 # Multi-temporal greenest/clearest pixel composite
                 val = np.clip(0.65 + base_variation * 0.30 - (np.sin(xx * 25.0) ** 2 * np.cos(yy * 25.0) ** 2) * 0.1, 0.0, 1.0)
-            elif col_clean in {"drone_odm", "odm_task", "odm_tasks", "drone"} or idx_clean in {"drone_odm", "odm", "orthophoto_mosaic"}:
-                # NodeODM reconstructed drone orthophoto mosaic
-                val = np.clip(128.0 + base_variation * 110.0 + np.sin(xx * 50.0) * 15.0, 0.0, 255.0)
+            elif col_clean in {"drone_photogrammetry", "photogrammetry", "drone_odm", "odm_task", "odm_tasks", "drone"} or idx_clean in {"drone_photogrammetry", "photogrammetry", "drone_odm", "odm", "orthophoto", "orthophoto_mosaic"}:
+                # Drone photogrammetry multimodal raster synthesis
+                if idx_clean in {"dsm", "surface"}:
+                    val = np.clip(120.0 + 35.0 * np.sin(xx * 30.0) * np.cos(yy * 30.0) + base_variation * 15.0, 50.0, 300.0)
+                elif idx_clean in {"dtm", "terrain", "bare_earth"}:
+                    val = np.clip(114.0 + 32.0 * np.sin(xx * 30.0) * np.cos(yy * 30.0) + base_variation * 8.0, 45.0, 280.0)
+                elif idx_clean in {"chm", "canopy", "height"}:
+                    val = np.clip(6.0 + base_variation * 10.0 + (grid_c > 0.65).astype(np.float32) * 5.0, 0.0, 25.0)
+                elif idx_clean in {"slope", "gradient"}:
+                    val = np.clip(18.0 + base_variation * 24.0 + np.abs(np.cos(xx * 40.0)) * 12.0, 0.0, 60.0)
+                elif idx_clean in {"reprojection_error", "reprojection", "residual"}:
+                    val = np.clip(0.35 + base_variation * 0.85 + np.sin(xx * 20.0) ** 2 * 0.4, 0.05, 2.5)
+                elif idx_clean in {"point_density", "density"}:
+                    val = np.clip(160.0 + base_variation * 180.0 + np.cos(yy * 25.0) * 40.0, 15.0, 395.0)
+                else:
+                    # Visual RGB / true color / orthophoto mosaic
+                    val = np.clip(128.0 + base_variation * 110.0 + np.sin(xx * 50.0) * 15.0, 0.0, 255.0)
             elif col_clean in {"dam_break", "dam-break", "dam_breach_hydrodynamic"} or idx_clean in {"dam_break", "hazard_product", "flood_depth", "dam_depth", "flow_velocity", "dam_velocity", "arrival_time", "depth", "velocity"}:
                 # 2D shallow water dam-break hydrodynamic flow field
                 u_d = (xx - min_lon) / (max_lon - min_lon + 1e-6)
@@ -1486,7 +1504,7 @@ class TileService:
                 rgba[:, :, 3] = 245
             elif col_clean in {"quality_mosaic", "mosaic_quality"} or idx_clean in {"quality_mosaic"}:
                 rgba[:, :, 3] = 255
-            elif col_clean in {"drone_odm", "odm_task"} or idx_clean in {"drone_odm"}:
+            elif col_clean in {"drone_photogrammetry", "photogrammetry", "drone_odm", "odm_task"} or idx_clean in {"drone_photogrammetry", "photogrammetry", "drone_odm", "orthophoto", "reprojection_error", "point_density"}:
                 rgba[:, :, 3] = 255
             elif col_clean in {"dam_break", "dam-break", "dam_breach_hydrodynamic"} or idx_clean in {"dam_break", "hazard_product", "flood_depth", "dam_depth", "flow_velocity", "dam_velocity", "arrival_time", "depth", "velocity"}:
                 flood_extent = val > 0.05
@@ -2455,6 +2473,38 @@ class TileService:
             index="drone_odm",
             colormap=colormap or "viridis",
             rescale=rescale or "0.0,255.0"
+        )
+
+    def render_drone_photogrammetry_tile(
+        self,
+        task_id: str,
+        z: int = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "orthophoto",
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA tile for centimeter drone photogrammetry and COG raster products."""
+        metric_clean = (metric or "orthophoto").lower().replace("-", "_")
+        from app.models.schemas import DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS
+        cfg = DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS.get(metric_clean, {})
+        default_cmap = cfg.get("default_colormap") or ("viridis" if metric_clean != "orthophoto" else None)
+        default_rescale = cfg.get("default_rescale") or "0.0,255.0"
+
+        chosen_cmap = colormap or default_cmap
+        chosen_rescale = rescale or (default_rescale if default_rescale != "auto" else "0.0,255.0")
+
+        return self.render_tile(
+            collection="drone_photogrammetry",
+            item_id=task_id or "ODM-BENCHMARK-001",
+            z=z,
+            x=x,
+            y=y,
+            index=metric_clean,
+            colormap=chosen_cmap,
+            rescale=chosen_rescale
         )
 
     def render_dam_break_tile(

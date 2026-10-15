@@ -4,7 +4,7 @@ import math
 import io
 import json
 import logging
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Dict, Any, Tuple, Optional, List, Union
 import numpy as np
 from PIL import Image
 import rasterio
@@ -13,6 +13,7 @@ from rasterio.windows import from_bounds
 import pyproj
 from shapely.geometry import box
 from app.config import settings
+from datetime import datetime, timezone
 from app.models.schemas import (
     BoundingBox,
     DroneStatus,
@@ -21,7 +22,32 @@ from app.models.schemas import (
     calculate_haversine_distance,
     calculate_initial_bearing,
     calculate_polygon_centroid,
-    generate_boustrophedon_waypoints
+    generate_boustrophedon_waypoints,
+    NodeODMLifecycleStatus,
+    NodeODMPipelineStage,
+    NODEODM_PIPELINE_STAGE_METADATA,
+    DRONE_CAMERA_PRESETS,
+    DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS,
+    GroundControlPoint,
+    CameraCalibrationParams,
+    GCPAffineTransformResult,
+    DroneFlightPlan,
+    NodeODMTaskOptions,
+    DronePhotogrammetryArtifacts,
+    DronePhotogrammetryTaskCreateRequest,
+    DronePhotogrammetryTaskStatusResponse,
+    DronePhotogrammetryCancelResponse,
+    DronePhotogrammetryGCPUpdateRequest,
+    DronePhotogrammetryGCPUpdateResponse,
+    DroneFlightPlanRequest,
+    DroneFlightPlanResponse,
+    DronePhotogrammetryAffineSolveRequest,
+    DronePhotogrammetryAffineSolveResponse,
+    solve_gcp_affine_transform,
+    calculate_drone_flight_plan,
+    simulate_nodeodm_task_progression,
+    build_drone_photogrammetry_tile_url,
+    build_drone_photogrammetry_tile_url_template
 )
 
 logger = logging.getLogger(__name__)
@@ -29,6 +55,7 @@ logger = logging.getLogger(__name__)
 ORTHOS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "drone_orthos")
 MISSIONS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "drone_missions.json")
 ORTHOS_META_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "drone_orthos_meta.json")
+ODM_TASKS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "drone_odm_tasks.json")
 
 os.makedirs(ORTHOS_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(MISSIONS_FILE), exist_ok=True)
@@ -37,6 +64,7 @@ class DroneService:
     def __init__(self):
         self._load_missions()
         self._load_orthos()
+        self._load_photogrammetry_tasks()
 
     def _load_missions(self):
         self.active_missions = {}
@@ -472,5 +500,225 @@ class DroneService:
             gnss_uncertainty_m=gnss_uncertainty_m,
             attitude_uncertainty_deg=attitude_uncertainty_deg
         )
+
+    # ------------------------------------------------------------------------
+    # NodeODM Photogrammetry and GCP Georeferencing Task Management (Cycle v2.5.24)
+    # ------------------------------------------------------------------------
+
+    def _load_photogrammetry_tasks(self):
+        self.photogrammetry_tasks: Dict[str, Dict[str, Any]] = {}
+        if os.path.exists(ODM_TASKS_FILE):
+            try:
+                with open(ODM_TASKS_FILE, "r", encoding="utf-8") as f:
+                    self.photogrammetry_tasks = json.load(f)
+            except Exception as e:
+                logger.error("Error loading photogrammetry tasks: %s", e)
+        if "ODM-BENCHMARK-001" not in self.photogrammetry_tasks:
+            self._seed_default_photogrammetry_tasks()
+
+    def _save_photogrammetry_tasks(self):
+        try:
+            os.makedirs(os.path.dirname(ODM_TASKS_FILE), exist_ok=True)
+            with open(ODM_TASKS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.photogrammetry_tasks, f, indent=2)
+        except Exception as e:
+            logger.error("Error saving photogrammetry tasks: %s", e)
+
+    def _seed_default_photogrammetry_tasks(self):
+        benchmark_task = simulate_nodeodm_task_progression(
+            task_id="ODM-BENCHMARK-001",
+            stage="completed",
+            image_count=120
+        )
+        benchmark_task["project_name"] = "San Luis Dam Crest High-Resolution Photogrammetry Survey"
+
+        running_task = simulate_nodeodm_task_progression(
+            task_id="ODM-TAILINGS-2026",
+            stage="orthophoto_mosaicing",
+            elapsed_seconds=320.0,
+            image_count=150
+        )
+        running_task["project_name"] = "Tailings Dam Upstream Embankment Survey"
+
+        self.photogrammetry_tasks["ODM-BENCHMARK-001"] = benchmark_task
+        self.photogrammetry_tasks["ODM-TAILINGS-2026"] = running_task
+        self._save_photogrammetry_tasks()
+
+    @staticmethod
+    def _normalize_task_record(t: Dict[str, Any]) -> Dict[str, Any]:
+        norm = dict(t)
+        if "stage" not in norm and "current_stage" in norm:
+            norm["stage"] = norm["current_stage"]
+        if "achieved_gsd_cm" not in norm and "gsd_achieved_cm" in norm:
+            norm["achieved_gsd_cm"] = norm["gsd_achieved_cm"]
+        if "achieved_gsd_cm" not in norm and "target_gsd_cm" in norm:
+            norm["achieved_gsd_cm"] = norm["target_gsd_cm"]
+        if "achieved_gsd_cm" not in norm and "gsd_target_cm" in norm:
+            norm["achieved_gsd_cm"] = norm["gsd_target_cm"]
+        if "stage" not in norm:
+            norm["stage"] = "dataset_upload"
+        if "stage_label" not in norm:
+            norm["stage_label"] = "Dataset and EXIF Ingestion"
+        if "tile_url_template" not in norm:
+            t_id = norm.get("task_id", "ODM-TASK")
+            norm["tile_url_template"] = f"/api/v1/tiles/drone/photogrammetry/{t_id}/{{z}}/{{x}}/{{y}}.png"
+        return norm
+
+    def list_photogrammetry_tasks(self) -> List[Dict[str, Any]]:
+        """Lists all registered drone photogrammetry tasks."""
+        if not self.photogrammetry_tasks:
+            self._seed_default_photogrammetry_tasks()
+        return [self._normalize_task_record(t) for t in self.photogrammetry_tasks.values()]
+
+    def get_photogrammetry_task(self, task_id: str) -> Dict[str, Any]:
+        """Retrieves real-time status and product deliverables for a photogrammetry mission."""
+        task = self.photogrammetry_tasks.get(task_id)
+        if task:
+            return self._normalize_task_record(task)
+        sim = simulate_nodeodm_task_progression(task_id=task_id)
+        norm = self._normalize_task_record(sim)
+        self.photogrammetry_tasks[task_id] = norm
+        self._save_photogrammetry_tasks()
+        return norm
+
+    def create_photogrammetry_task(
+        self,
+        req: Union[DronePhotogrammetryTaskCreateRequest, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Dispatches a new asynchronous drone photogrammetry mission."""
+        req_obj = DronePhotogrammetryTaskCreateRequest.model_validate(req) if isinstance(req, dict) else req
+        task_id = req_obj.task_id or f"ODM-TASK-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{len(self.photogrammetry_tasks) + 1:03d}"
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        camera_dict = req_obj.camera.model_dump() if req_obj.camera else DRONE_CAMERA_PRESETS.get("DJI_FC6310R")
+        gcps_list = [g.model_dump() if hasattr(g, "model_dump") else dict(g) for g in req_obj.gcps]
+        affine_res = None
+        enabled_gcps = [g for g in gcps_list if g.get("is_enabled", True)]
+        if len(enabled_gcps) >= 3:
+            try:
+                affine_res = solve_gcp_affine_transform(gcps_list)
+            except Exception as e:
+                logger.warning("GCP affine solution failed during task creation: %s", e)
+
+        target_gsd = req_obj.target_gsd_cm or 2.5
+        image_cnt = req_obj.image_count or 120
+        est_rem = max(60.0, float(image_cnt) * 3.5)
+
+        task_record = {
+            "task_id": task_id,
+            "project_name": req_obj.project_name,
+            "status": NodeODMLifecycleStatus.RUNNING.value,
+            "stage": NodeODMPipelineStage.DATASET_INITIALIZATION.value,
+            "stage_label": "Dataset & EXIF Initialization",
+            "progress_percent": 12.5,
+            "elapsed_seconds": 15.0,
+            "estimated_remaining_seconds": est_rem,
+            "image_count": image_cnt,
+            "reconstructed_points": 0,
+            "achieved_gsd_cm": round(float(target_gsd) * 1.01, 2),
+            "rmse_reprojection_px": 0.38,
+            "affine_geotransform": affine_res,
+            "gcps": gcps_list,
+            "camera": camera_dict,
+            "artifacts": {
+                "orthophoto_cog_url": f"/static/drone_outputs/{task_id}/orthophoto.tif",
+                "dtm_cog_url": f"/static/drone_outputs/{task_id}/dtm.tif",
+                "dsm_cog_url": f"/static/drone_outputs/{task_id}/dsm.tif",
+                "point_cloud_laz_url": f"/static/drone_outputs/{task_id}/point_cloud.laz",
+                "quality_report_pdf_url": f"/static/drone_outputs/{task_id}/odm_report.pdf"
+            },
+            "tile_url_template": f"/api/v1/tiles/drone/photogrammetry/{task_id}/{{z}}/{{x}}/{{y}}.png",
+            "error_message": None,
+            "created_at": now_iso,
+            "updated_at": now_iso
+        }
+        self.photogrammetry_tasks[task_id] = task_record
+        self._save_photogrammetry_tasks()
+        return task_record
+
+    def cancel_photogrammetry_task(self, task_id: str) -> Dict[str, Any]:
+        """Aborts an active or queued drone photogrammetry mission."""
+        if task_id in self.photogrammetry_tasks:
+            self.photogrammetry_tasks[task_id]["status"] = NodeODMLifecycleStatus.CANCELLED.value
+            self.photogrammetry_tasks[task_id]["error_message"] = "Drone photogrammetry task aborted by user request."
+            self.photogrammetry_tasks[task_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._save_photogrammetry_tasks()
+        return {
+            "task_id": task_id,
+            "status": "cancelled",
+            "message": "Drone photogrammetry task aborted."
+        }
+
+    def restart_photogrammetry_task(self, task_id: str) -> Dict[str, Any]:
+        """Restarts a failed or cancelled photogrammetry task."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if task_id in self.photogrammetry_tasks:
+            t = self.photogrammetry_tasks[task_id]
+            t["status"] = NodeODMLifecycleStatus.RUNNING.value
+            t["stage"] = NodeODMPipelineStage.DATASET_INITIALIZATION.value
+            t["stage_label"] = "Dataset & EXIF Initialization"
+            t["progress_percent"] = 5.0
+            t["elapsed_seconds"] = 0.0
+            t["error_message"] = None
+            t["updated_at"] = now_iso
+            self._save_photogrammetry_tasks()
+            return t
+        sim = simulate_nodeodm_task_progression(task_id=task_id, stage=NodeODMPipelineStage.DATASET_INITIALIZATION)
+        self.photogrammetry_tasks[task_id] = sim
+        self._save_photogrammetry_tasks()
+        return sim
+
+    def update_photogrammetry_gcps(
+        self,
+        task_id: str,
+        req: Union[DronePhotogrammetryGCPUpdateRequest, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Updates Ground Control Points and recalculates georeferencing for a photogrammetry mission."""
+        req_obj = DronePhotogrammetryGCPUpdateRequest.model_validate(req) if isinstance(req, dict) else req
+        gcps_list = [g.model_dump() if hasattr(g, "model_dump") else dict(g) for g in req_obj.gcps]
+
+        affine_res = None
+        enabled_count = len([g for g in gcps_list if g.get("is_enabled", True)])
+        check_count = len([g for g in gcps_list if g.get("is_check_point", False)])
+
+        if req_obj.recalculate_georeferencing and enabled_count >= 3:
+            affine_res = solve_gcp_affine_transform(gcps_list)
+
+        if task_id in self.photogrammetry_tasks:
+            self.photogrammetry_tasks[task_id]["gcps"] = gcps_list
+            if affine_res:
+                self.photogrammetry_tasks[task_id]["affine_geotransform"] = affine_res
+            self.photogrammetry_tasks[task_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._save_photogrammetry_tasks()
+
+        return {
+            "task_id": task_id,
+            "total_gcps": len(gcps_list),
+            "enabled_gcps": enabled_count,
+            "check_points": check_count,
+            "affine_geotransform": affine_res,
+            "message": "GCP network updated successfully."
+        }
+
+    def solve_gcp_affine(
+        self,
+        req: Union[DronePhotogrammetryAffineSolveRequest, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Computes 6-parameter least-squares 2D affine geotransform and spatial RMSE from Ground Control Points."""
+        req_obj = DronePhotogrammetryAffineSolveRequest.model_validate(req) if isinstance(req, dict) else req
+        affine_res = solve_gcp_affine_transform(req_obj.gcps)
+        return {
+            "success": True,
+            "affine_geotransform": affine_res,
+            "message": "Affine geotransform resolved successfully."
+        }
+
+    def calculate_flight_plan(
+        self,
+        req: Union[DroneFlightPlanRequest, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Calculates optimal flight altitude, ground footprint, photo spacing, and blur-free shutter speed."""
+        req_obj = DroneFlightPlanRequest.model_validate(req) if isinstance(req, dict) else req
+        return calculate_drone_flight_plan(req_obj.model_dump())
 
 drone_service = DroneService()

@@ -14,7 +14,7 @@ import {
   Wrench, ShieldAlert, MapPin, Grid, GitCompare, Gauge, Waves,
   Thermometer, Sun, Sprout, Wind,
   Move, Trees, Cloud, HardDrive, ArrowUpRight, TrendingUp, CloudSnow,
-  Cpu, Bell, CloudRain, Zap, Clock, RotateCcw
+  Cpu, Bell, BellRing, CloudRain, Zap, Clock, RotateCcw
 } from 'lucide-react';
 import useAuthStore from '../store/authStore';
 import { useNavigate, Link } from 'react-router-dom';
@@ -223,6 +223,7 @@ import InternalErosionModal from '../components/InternalErosionModal';
 import InSARVelocityModal from '../components/InSARVelocityModal';
 import DamageProxyModal from '../components/DamageProxyModal';
 import PhenologyStudioModal from '../components/PhenologyStudioModal';
+import WebhookManagerModal from '../components/WebhookManagerModal';
 import { 
   DEFAULT_MAP_CONFIG,
   COREGISTRATION_RESAMPLING_KERNELS,
@@ -1285,6 +1286,13 @@ export default function MapExplorer() {
   const [phenologySimulation, setPhenologySimulation] = useState(null);
   const [phenologyTileMetric, setPhenologyTileMetric] = useState('mad_anomaly_zscore');
   const [phenologyOpacity, setPhenologyOpacity] = useState(0.85);
+
+  // T-198 & T-200: STAC Ingestion Watchdog & Webhook Alerting States (Cycle v2.5.23)
+  const [webhookModalOpen, setWebhookModalOpen] = useState(false);
+  const [showWebhookLayer, setShowWebhookLayer] = useState(false);
+  const [webhookSubscription, setWebhookSubscription] = useState(null);
+  const [webhookSimulation, setWebhookSimulation] = useState(null);
+  const [webhookOpacity, setWebhookOpacity] = useState(0.85);
 
   // T-168/T-170: Wave Arrival Playback Timer Ticker
   useEffect(() => {
@@ -5927,6 +5935,89 @@ export default function MapExplorer() {
               return null;
             })}
 
+            {/* T-198/T-200: Automated STAC Harvester Perimeter Geo-Fence Polygon & Anomaly Alerts (Cycle v2.5.23) */}
+            {showWebhookLayer && webhookSubscription?.perimeter?.polygon_coordinates && (
+              <Polygon
+                key={`webhook-perimeter-${webhookSubscription.subscription_id || 'sub'}-${webhookOpacity}`}
+                positions={webhookSubscription.perimeter.polygon_coordinates.map((coord) => [coord[1], coord[0]])}
+                pathOptions={{
+                  color: '#06b6d4',
+                  weight: 2.5,
+                  dashArray: '6, 6',
+                  fillColor: '#06b6d4',
+                  fillOpacity: 0.15 * webhookOpacity
+                }}
+              >
+                <Popup className="custom-popup">
+                  <div className="p-1 space-y-1 font-mono text-xs">
+                    <div className="font-bold flex items-center justify-between text-cyan-400">
+                      <span>{webhookSubscription.name || 'Perimeter Geo-Fence'}</span>
+                      <span className="text-[9px] px-1 bg-cyan-950 text-cyan-300 rounded font-bold uppercase">
+                        {webhookSubscription.schedule?.interval || 'HOURLY'}
+                      </span>
+                    </div>
+                    <div>Asset ID: <strong className="text-white">{webhookSubscription.asset_id || 'ASSET-01'}</strong></div>
+                    <div>Cutoff: <strong className="text-amber-400">|z| ≥ {webhookSubscription.z_score_threshold ?? 2.50}σ</strong></div>
+                    <div>Collections: <span className="text-gray-300">{webhookSubscription.schedule?.collections?.join(', ') || 'sentinel-2-l2a'}</span></div>
+                    <div>Active Channels: <span className="text-emerald-400 font-bold">{webhookSubscription.webhook_endpoints?.length || 0} Webhooks</span></div>
+                    <div className="text-[10px] text-gray-400 border-t border-gray-800 pt-1">
+                      Automated STAC harvester perimeter filter. Candidate scenes intersecting boundary trigger signed HMAC-SHA256 alerts.
+                    </div>
+                    <button
+                      onClick={() => setWebhookModalOpen(true)}
+                      className="w-full mt-1 px-2 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-200 rounded text-[10px] font-bold uppercase transition-all"
+                    >
+                      Open Harvester Studio
+                    </button>
+                  </div>
+                </Popup>
+              </Polygon>
+            )}
+
+            {/* Real-Time Anomaly Alert Radar Markers */}
+            {showWebhookLayer && webhookSimulation?.events?.map((evt, eIdx) => {
+              const coords = evt.geojson_feature?.geometry?.coordinates;
+              if (!coords || coords.length < 2) return null;
+              const lat = coords[1];
+              const lon = coords[0];
+              const isCritical = evt.severity === 'critical' || evt.severity === 'emergency';
+              const markerColor = isCritical ? '#ef4444' : '#f59e0b';
+              const fillColor = isCritical ? '#dc2626' : '#d97706';
+              return (
+                <CircleMarker
+                  key={`webhook-alert-${evt.event_id || eIdx}`}
+                  center={[lat, lon]}
+                  radius={8}
+                  pathOptions={{
+                    color: markerColor,
+                    fillColor: fillColor,
+                    fillOpacity: 0.85 * webhookOpacity,
+                    weight: 2
+                  }}
+                >
+                  <Popup className="custom-popup">
+                    <div className="p-1 space-y-1 font-mono text-xs">
+                      <div className="font-bold flex items-center justify-between" style={{ color: markerColor }}>
+                        <span className="uppercase flex items-center gap-1">
+                          {evt.severity || 'WARNING'} ANOMALY
+                        </span>
+                        <span className="text-[9px] px-1 bg-slate-900 rounded font-bold text-gray-300 font-mono">
+                          +{Number(evt.metrics?.z_score ?? 2.85).toFixed(2)}σ
+                        </span>
+                      </div>
+                      <div>Event ID: <strong className="text-white text-[10px]">{evt.event_id}</strong></div>
+                      <div>Scene: <span className="text-cyan-300 text-[10px]">{evt.geojson_feature?.properties?.scene_id || 'SCENE'}</span></div>
+                      <div>Cloud Cover: <strong className="text-emerald-400">{evt.metrics?.cloud_cover ?? 4.2}%</strong></div>
+                      <div>Signature: <span className="text-gray-400 text-[9px] truncate max-w-[120px] block">{evt.hmac_signature?.substring(0, 20)}...</span></div>
+                      <div className="text-[9px] text-gray-400 border-t border-gray-800 pt-1">
+                        Dispatched to {webhookSubscription?.webhook_endpoints?.length || 0} channels with RFC 7946 GeoJSON container.
+                      </div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
             {/* T-114/T-116: Automated Sub-Pixel Tie-Point Pins */}
             {(showRpcTiePointsLayer || showRpcLayer) && rpcTiePointPins.map((tp, idx) => {
               const baseLat = 37.0585;
@@ -8155,6 +8246,79 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-198/T-200: Floating STAC Harvester HUD Controller Card (Cycle v2.5.23) */}
+          {showWebhookLayer && webhookSubscription && (
+            <div className="absolute top-20 left-4 z-[939] glass-panel p-3.5 rounded-xl border-cyan-500/40 shadow-2xl bg-black/90 backdrop-blur-md flex flex-col gap-2.5 w-[460px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-400">
+                    <BellRing className="w-4 h-4 animate-pulse" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-white block truncate max-w-[240px]">
+                      {webhookSubscription.name || 'STAC Harvester Watchdog'}
+                    </span>
+                    <span className="text-[10px] text-gray-400 block font-mono">
+                      {webhookSubscription.subscription_id} • {webhookSubscription.schedule?.interval?.toUpperCase() || 'HOURLY'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setWebhookModalOpen(true)}
+                    className="px-2 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Open Studio
+                  </button>
+                  <button
+                    onClick={() => setShowWebhookLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Overlay"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Telemetry Chips */}
+              <div className="grid grid-cols-4 gap-2 text-[10px] font-mono">
+                <div className="bg-slate-900/80 p-2 rounded border border-gray-800">
+                  <span className="text-gray-400 block">Cutoff</span>
+                  <span className="font-bold text-amber-300">|z| ≥ {webhookSubscription.z_score_threshold ?? 2.50}σ</span>
+                </div>
+                <div className="bg-slate-900/80 p-2 rounded border border-gray-800">
+                  <span className="text-gray-400 block">Cloud Cap</span>
+                  <span className="font-bold text-emerald-300">≤ {webhookSubscription.schedule?.cloud_cover_max ?? 20}%</span>
+                </div>
+                <div className="bg-slate-900/80 p-2 rounded border border-gray-800">
+                  <span className="text-gray-400 block">Webhooks</span>
+                  <span className="font-bold text-cyan-300">{webhookSubscription.webhook_endpoints?.length || 0} Active</span>
+                </div>
+                <div className="bg-slate-900/80 p-2 rounded border border-gray-800">
+                  <span className="text-gray-400 block">Alerts</span>
+                  <span className="font-bold text-red-400">{webhookSimulation?.events?.length || 0} Triggered</span>
+                </div>
+              </div>
+
+              {/* Opacity Slider */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 pt-1">
+                <span>Perimeter Opacity:</span>
+                <div className="flex items-center gap-2 w-48">
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.05"
+                    value={webhookOpacity}
+                    onChange={(e) => setWebhookOpacity(parseFloat(e.target.value))}
+                    className="w-full accent-cyan-500 cursor-pointer"
+                  />
+                  <span className="text-cyan-300 font-bold">{Math.round(webhookOpacity * 100)}%</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -8984,6 +9148,18 @@ export default function MapExplorer() {
               >
                 <Sprout className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Phenology (v2.5.22)</span>
+              </button>
+
+              {/* T-198/T-200 Automated STAC Harvester & Webhook Dispatcher Studio Shortcut (Cycle v2.5.23) */}
+              <button
+                onClick={() => setWebhookModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  webhookModalOpen || showWebhookLayer ? 'bg-cyan-600 text-white font-extrabold shadow-[0_0_12px_rgba(6,182,212,0.6)]' : ''
+                }`}
+                title="Automated STAC Ingestion Watchdog, Perimeter Geo-Fencing, Real-Time Webhook Engine & DLQ Replay Console (Cycle v2.5.23)"
+              >
+                <BellRing className="w-3.5 h-3.5 text-cyan-400" />
+                <span>STAC Alerts (v2.5.23)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -20760,6 +20936,25 @@ export default function MapExplorer() {
             setCustomFlyTarget({
               lat: opts.coordinates[1],
               lng: opts.coordinates[0],
+              zoom: 13
+            });
+          }
+        }}
+      />
+
+      {/* T-198/T-200: STAC Harvester & Webhook Dispatcher Studio Modal (Cycle v2.5.23) */}
+      <WebhookManagerModal
+        isOpen={webhookModalOpen}
+        onClose={() => setWebhookModalOpen(false)}
+        activeSubscription={webhookSubscription}
+        onApplyToMap={(sub, sim) => {
+          setWebhookSubscription(sub);
+          setWebhookSimulation(sim);
+          setShowWebhookLayer(true);
+          if (sub?.coordinates) {
+            setCustomFlyTarget({
+              lat: sub.coordinates[1],
+              lng: sub.coordinates[0],
               zoom: 13
             });
           }

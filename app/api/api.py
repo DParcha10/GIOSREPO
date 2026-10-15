@@ -25,6 +25,7 @@ api_router.include_router(wildfire.router)
 api_router.include_router(operations.annotations_router)
 api_router.include_router(operations.work_orders_router)
 api_router.include_router(operations.subscriptions_router)
+api_router.include_router(operations.operations_router)
 api_router.include_router(byoc.router)
 
 

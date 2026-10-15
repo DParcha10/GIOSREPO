@@ -14,6 +14,7 @@ import re
 import hashlib
 import hmac
 import json
+import urllib.parse
 from enum import Enum
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Union, Sequence
@@ -849,6 +850,31 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "operations_dlq_short": "/operations/dlq",
     "operations_dlq_retry": "/api/v1/operations/dlq/retry",
     "operations_dlq_retry_short": "/operations/dlq/retry",
+    "drone_photogrammetry_tasks": "/api/v1/drone/photogrammetry/tasks",
+    "drone_photogrammetry_tasks_short": "/drone/photogrammetry/tasks",
+    "drone_photogrammetry_task_detail": "/api/v1/drone/photogrammetry/tasks/{task_id}",
+    "drone_photogrammetry_task_detail_short": "/drone/photogrammetry/tasks/{task_id}",
+    "drone_photogrammetry_task_cancel": "/api/v1/drone/photogrammetry/tasks/{task_id}/cancel",
+    "drone_photogrammetry_task_cancel_short": "/drone/photogrammetry/tasks/{task_id}/cancel",
+    "drone_photogrammetry_task_restart": "/api/v1/drone/photogrammetry/tasks/{task_id}/restart",
+    "drone_photogrammetry_task_restart_short": "/drone/photogrammetry/tasks/{task_id}/restart",
+    "drone_photogrammetry_task_gcp": "/api/v1/drone/photogrammetry/tasks/{task_id}/gcp",
+    "drone_photogrammetry_task_gcp_short": "/drone/photogrammetry/tasks/{task_id}/gcp",
+    "drone_photogrammetry_flight_plan": "/api/v1/drone/photogrammetry/flight-plan",
+    "drone_photogrammetry_flight_plan_short": "/drone/photogrammetry/flight-plan",
+    "drone_photogrammetry_solve_affine": "/api/v1/drone/photogrammetry/solve-affine",
+    "drone_photogrammetry_solve_affine_short": "/drone/photogrammetry/solve-affine",
+    "tiles_drone_photogrammetry": "/api/v1/tiles/drone/photogrammetry/{task_id}/{z}/{x}/{y}.png",
+    "tiles_drone_photogrammetry_metric": "/api/v1/tiles/drone/photogrammetry/{task_id}/{metric}/{z}/{x}/{y}.png",
+    "analysis_custom_expression_validate": "/api/v1/analysis/custom-expression/validate",
+    "analysis_custom_expression_validate_short": "/analysis/custom-expression/validate",
+    "analysis_custom_expression_evaluate": "/api/v1/analysis/custom-expression/evaluate",
+    "analysis_custom_expression_evaluate_short": "/analysis/custom-expression/evaluate",
+    "analysis_custom_expression_presets": "/api/v1/analysis/custom-expression/presets",
+    "analysis_custom_expression_presets_short": "/analysis/custom-expression/presets",
+    "tiles_custom_expression": "/api/v1/tiles/custom-expression/{z}/{x}/{y}.png",
+    "tiles_custom_expression_collection": "/api/v1/tiles/{collection}/{item_id}/custom-expression/{z}/{x}/{y}.png",
+    "tiles_custom_expression_short": "/tiles/custom-expression/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -883,6 +909,8 @@ def format_api_route(route_name: str, **kwargs) -> str:
         template = API_ROUTE_CONTRACTS.get("tiles_damage_proxy_metric", "/api/v1/tiles/geotechnical/dpm/{sim_id}/{metric}/{z}/{x}/{y}.png")
     elif route_name == "tiles_phenology_anomaly" and "metric" in kwargs:
         template = API_ROUTE_CONTRACTS.get("tiles_phenology_anomaly_metric", "/api/v1/tiles/phenology/anomaly/{sim_id}/{metric}/{z}/{x}/{y}.png")
+    elif route_name == "tiles_drone_photogrammetry" and "metric" in kwargs:
+        template = API_ROUTE_CONTRACTS.get("tiles_drone_photogrammetry_metric", "/api/v1/tiles/drone/photogrammetry/{task_id}/{metric}/{z}/{x}/{y}.png")
     elif route_name in ("analysis_liquefaction_detail", "analysis_liquefaction_detail_short"):
         if "simulation_id" not in kwargs and "sim_id" in kwargs:
             kwargs["simulation_id"] = kwargs["sim_id"]
@@ -935,6 +963,18 @@ def format_api_route(route_name: str, **kwargs) -> str:
             kwargs["subscription_id"] = kwargs["sub_id"]
         elif "id" not in kwargs and "subscription_id" in kwargs:
             kwargs["id"] = kwargs["subscription_id"]
+    elif route_name in (
+        "drone_photogrammetry_task_detail", "drone_photogrammetry_task_detail_short",
+        "drone_photogrammetry_task_cancel", "drone_photogrammetry_task_cancel_short",
+        "drone_photogrammetry_task_restart", "drone_photogrammetry_task_restart_short",
+        "drone_photogrammetry_task_gcp", "drone_photogrammetry_task_gcp_short",
+        "tiles_drone_photogrammetry", "tiles_drone_photogrammetry_metric"
+    ):
+        if "task_id" not in kwargs:
+            for alt in ("id", "taskId", "ortho_id", "orthoId"):
+                if alt in kwargs:
+                    kwargs["task_id"] = kwargs[alt]
+                    break
     elif route_name in ("analysis_vs30_proxy", "analysis_vs30_proxy_short"):
         if "lat" not in kwargs and "latitude" in kwargs:
             kwargs["lat"] = kwargs["latitude"]
@@ -943,14 +983,42 @@ def format_api_route(route_name: str, **kwargs) -> str:
                 kwargs["lon"] = kwargs["longitude"]
             elif "lng" in kwargs:
                 kwargs["lon"] = kwargs["lng"]
+    elif route_name == "tiles_custom_expression_collection":
+        if "item_id" not in kwargs:
+            for alt in ("itemId", "id", "scene_id", "sceneId"):
+                if alt in kwargs:
+                    kwargs["item_id"] = kwargs[alt]
+                    break
+        if "collection" not in kwargs:
+            kwargs["collection"] = "sentinel-2-l2a"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
     """Standardized WGS84 geographic bounding box [min_lon, min_lat, max_lon, max_lat]."""
+    model_config = ConfigDict(populate_by_name=True)
+
     min_lon: float = Field(..., description="Westernmost longitude in WGS84 degrees")
     min_lat: float = Field(..., description="Southernmost latitude in WGS84 degrees")
     max_lon: float = Field(..., description="Easternmost longitude in WGS84 degrees")
     max_lat: float = Field(..., description="Northernmost latitude in WGS84 degrees")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_longitude_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "min_lng" in data and "min_lon" not in data:
+                data["min_lon"] = data["min_lng"]
+            elif "minLng" in data and "min_lon" not in data:
+                data["min_lon"] = data["minLng"]
+            if "max_lng" in data and "max_lon" not in data:
+                data["max_lon"] = data["max_lng"]
+            elif "maxLng" in data and "max_lon" not in data:
+                data["max_lon"] = data["maxLng"]
+            if "minLat" in data and "min_lat" not in data:
+                data["min_lat"] = data["minLat"]
+            if "maxLat" in data and "max_lat" not in data:
+                data["max_lat"] = data["maxLat"]
+        return data
 
     def to_tuple(self) -> Tuple[float, float, float, float]:
         """Convert to standard (min_lon, min_lat, max_lon, max_lat) tuple."""
@@ -23995,9 +24063,12 @@ def generate_hmac_sha256_signature(payload: Union[str, bytes, dict], secret_key:
     """Generate RFC 2104 compliant HMAC-SHA256 hexadecimal digest for webhook verification.
     
     If payload is a dictionary, it is serialized to canonical sorted UTF-8 JSON.
+    Automatically excludes signature fields ('hmac_signature', 'hmacSignature', 'signature')
+    to allow symmetric signing and verification of complete envelopes.
     """
     if isinstance(payload, dict):
-        data_bytes = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        filtered = {k: v for k, v in payload.items() if k not in ("hmac_signature", "hmacSignature", "signature")}
+        data_bytes = json.dumps(filtered, sort_keys=True, separators=(',', ':')).encode('utf-8')
     elif isinstance(payload, str):
         data_bytes = payload.encode('utf-8')
     elif isinstance(payload, bytes):
@@ -24579,3 +24650,1797 @@ class DeadLetterQueueRetryResponse(BaseModel):
     failed_count: int = Field(..., alias="failedCount")
     remaining_dlq_count: int = Field(..., alias="remainingDlqCount")
     replayed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="replayedAt")
+
+
+# ==============================================================================
+# CYCLE v2.5.24: DECOUPLED DRONE PHOTOGRAMMETRY BRIDGE, NODEODM REST TASK SCHEMAS,
+# GROUND CONTROL POINTS (GCP) GEOREFERENCING & PYRAMIDAL COG TILE CONTRACTS
+# ==============================================================================
+
+class NodeODMLifecycleStatus(str, Enum):
+    """Lifecycle state of an asynchronous decoupled NodeODM drone photogrammetry task."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    CANCELED = "cancelled"
+    RESTARTING = "restarting"
+
+# Alias for backwards and domain compatibility
+DronePhotogrammetryTaskStatus = NodeODMLifecycleStatus
+
+
+class NodeODMPipelineStage(str, Enum):
+    """Granular algorithmic pipeline sub-stages of the OpenDroneMap / OpenSfM workflow."""
+    QUEUED = "queued"
+    DATASET_INITIALIZATION = "dataset_initialization"
+    FEATURE_EXTRACTION_MATCHING = "feature_extraction_matching"
+    STRUCTURE_FROM_MOTION = "structure_from_motion"
+    MVS_DENSE_POINT_CLOUD = "mvs_dense_point_cloud"
+    DEM_CSF_SURFACE_EXTRACTION = "dem_csf_surface_extraction"
+    ORTHOPHOTO_MOSAICING = "orthophoto_mosaicing"
+    COG_PYRAMIDAL_TILES = "cog_pyramidal_tiles"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class DronePhotogrammetryTileMetric(str, Enum):
+    """Available dynamic raster layers for centimeter-resolution drone COG tile streaming."""
+    ORTHOPHOTO = "orthophoto"
+    DSM = "dsm"
+    DTM = "dtm"
+    CHM = "chm"
+    SLOPE = "slope"
+    REPROJECTION_ERROR = "reprojection_error"
+    POINT_DENSITY = "point_density"
+
+
+class PhotogrammetryFeatureQuality(str, Enum):
+    """Keypoint extraction and feature matching density levels for OpenSfM."""
+    ULTRA = "ultra"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class RadiometricCalibrationMode(str, Enum):
+    """Radiometric sensor calibration mode for multi-spectral / RGB drone imagery."""
+    NONE = "none"
+    CAMERA = "camera"
+    CAMERA_SUN = "camera+sun"
+
+
+NODEODM_PIPELINE_STAGE_METADATA: Dict[str, Dict[str, Any]] = {
+    "queued": {
+        "id": "queued",
+        "label": "Queued in Worker Pool",
+        "progress_range": [0.0, 5.0],
+        "description": "Task staged in NodeODM queue awaiting headless worker assignment.",
+        "badge_color": "#94a3b8"
+    },
+    "dataset_initialization": {
+        "id": "dataset_initialization",
+        "label": "Dataset & EXIF Initialization",
+        "progress_range": [5.0, 15.0],
+        "description": "Validating image integrity, EXIF metadata, GPS geotags, and optical camera intrinsics.",
+        "badge_color": "#38bdf8"
+    },
+    "feature_extraction_matching": {
+        "id": "feature_extraction_matching",
+        "label": "Feature Extraction & Matching",
+        "progress_range": [15.0, 30.0],
+        "description": "SIFT feature detection, keypoint descriptor extraction, and FLANN epipolar matching.",
+        "badge_color": "#818cf8"
+    },
+    "structure_from_motion": {
+        "id": "structure_from_motion",
+        "label": "Structure from Motion (SfM)",
+        "progress_range": [30.0, 50.0],
+        "description": "Incremental bundle adjustment optimization, sparse 3D point cloud, and GCP georeferencing.",
+        "badge_color": "#6366f1"
+    },
+    "mvs_dense_point_cloud": {
+        "id": "mvs_dense_point_cloud",
+        "label": "Dense Point Cloud (MVS)",
+        "progress_range": [50.0, 70.0],
+        "description": "OpenMVS patch-match multi-view stereo densification and dense 3D point cloud generation.",
+        "badge_color": "#a855f7"
+    },
+    "dem_csf_surface_extraction": {
+        "id": "dem_csf_surface_extraction",
+        "label": "DEM & CSF Ground Filtering",
+        "progress_range": [70.0, 85.0],
+        "description": "Cloth Simulation Filtering (CSF) bare-earth separation, DSM and DTM 2.5D rasterization.",
+        "badge_color": "#ec4899"
+    },
+    "orthophoto_mosaicing": {
+        "id": "orthophoto_mosaicing",
+        "label": "True Orthomosaic Generation",
+        "progress_range": [85.0, 95.0],
+        "description": "Multiresolution seamline graph-cut optimization, color balancing, and orthorectification.",
+        "badge_color": "#14b8a6"
+    },
+    "cog_pyramidal_tiles": {
+        "id": "cog_pyramidal_tiles",
+        "label": "Cloud-Optimized GeoTIFF Pyramids",
+        "progress_range": [95.0, 100.0],
+        "description": "Generating internal pyramidal tile overviews (Zoom 20-22) and registering STAC catalog.",
+        "badge_color": "#22c55e"
+    },
+    "completed": {
+        "id": "completed",
+        "label": "Reconstruction Completed",
+        "progress_range": [100.0, 100.0],
+        "description": "All deliverables rendered, COG pyramidal overviews indexed, and tile server online.",
+        "badge_color": "#10b981"
+    },
+    "failed": {
+        "id": "failed",
+        "label": "Reconstruction Failed",
+        "progress_range": [0.0, 0.0],
+        "description": "Photogrammetry pipeline aborted due to unrecoverable exception or insufficient inliers.",
+        "badge_color": "#ef4444"
+    }
+}
+
+
+DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "orthophoto": {
+        "id": "orthophoto",
+        "name": "True RGB Orthomosaic",
+        "units": "RGB (0-255)",
+        "default_colormap": None,
+        "default_rescale": "0,255",
+        "min_zoom": 14,
+        "max_zoom": 22,
+        "description": "Centimeter-resolution RGB visual orthomosaic"
+    },
+    "dsm": {
+        "id": "dsm",
+        "name": "Digital Surface Model",
+        "units": "meters",
+        "default_colormap": "terrain",
+        "default_rescale": "auto",
+        "min_zoom": 14,
+        "max_zoom": 22,
+        "description": "Elevation of canopy, structures, and surface features"
+    },
+    "dtm": {
+        "id": "dtm",
+        "name": "Digital Terrain Model",
+        "units": "meters",
+        "default_colormap": "viridis",
+        "default_rescale": "auto",
+        "min_zoom": 14,
+        "max_zoom": 22,
+        "description": "Bare-earth ground elevation derived via Cloth Simulation Filtering"
+    },
+    "chm": {
+        "id": "chm",
+        "name": "Canopy & Structure Height Model",
+        "units": "meters",
+        "default_colormap": "plasma",
+        "default_rescale": "0.0,25.0",
+        "min_zoom": 14,
+        "max_zoom": 22,
+        "description": "Relative height above bare earth (DSM - DTM)"
+    },
+    "slope": {
+        "id": "slope",
+        "name": "Topographic Slope Gradient",
+        "units": "degrees",
+        "default_colormap": "magma",
+        "default_rescale": "0.0,60.0",
+        "min_zoom": 14,
+        "max_zoom": 22,
+        "description": "Surface inclination in degrees (0 - 90)"
+    },
+    "reprojection_error": {
+        "id": "reprojection_error",
+        "name": "Reprojection Error Heatmap",
+        "units": "pixels",
+        "default_colormap": "turbo",
+        "default_rescale": "0.0,2.5",
+        "min_zoom": 14,
+        "max_zoom": 22,
+        "description": "Bundle adjustment spatial reprojection error in pixels"
+    },
+    "point_density": {
+        "id": "point_density",
+        "name": "3D Point Cloud Density",
+        "units": "points/m²",
+        "default_colormap": "inferno",
+        "default_rescale": "10.0,400.0",
+        "min_zoom": 14,
+        "max_zoom": 22,
+        "description": "Spatial point density across reconstructed surface"
+    }
+}
+
+
+DRONE_CAMERA_PRESETS: Dict[str, Dict[str, Any]] = {
+    "DJI_FC6310R": {
+        "camera_id": "DJI_FC6310R",
+        "camera_model": "DJI FC6310R (Phantom 4 Pro)",
+        "sensor_width_mm": 13.2,
+        "sensor_height_mm": 8.8,
+        "image_width_px": 5472,
+        "image_height_px": 3648,
+        "focal_length_mm": 8.8,
+        "focal_length_px": 3648.0,
+        "principal_point_x_px": 2736.0,
+        "principal_point_y_px": 1824.0,
+        "k1": -0.0125,
+        "k2": 0.0082,
+        "k3": -0.0021,
+        "p1": 0.0001,
+        "p2": -0.0001
+    },
+    "DJI_M3E": {
+        "camera_id": "DJI_M3E",
+        "camera_model": "DJI Mavic 3 Enterprise",
+        "sensor_width_mm": 17.3,
+        "sensor_height_mm": 13.0,
+        "image_width_px": 5280,
+        "image_height_px": 3956,
+        "focal_length_mm": 12.29,
+        "focal_length_px": 3751.0,
+        "principal_point_x_px": 2640.0,
+        "principal_point_y_px": 1978.0,
+        "k1": -0.0084,
+        "k2": 0.0045,
+        "k3": -0.0010,
+        "p1": 0.0002,
+        "p2": 0.0001
+    },
+    "DJI_P1_35": {
+        "camera_id": "DJI_P1_35",
+        "camera_model": "DJI Zenmuse P1 (35mm DL)",
+        "sensor_width_mm": 35.9,
+        "sensor_height_mm": 24.0,
+        "image_width_px": 8192,
+        "image_height_px": 5460,
+        "focal_length_mm": 35.0,
+        "focal_length_px": 7984.0,
+        "principal_point_x_px": 4096.0,
+        "principal_point_y_px": 2730.0,
+        "k1": -0.0018,
+        "k2": 0.0009,
+        "k3": -0.0002,
+        "p1": 0.00005,
+        "p2": -0.00005
+    }
+}
+
+
+class GroundControlPoint(BaseModel):
+    """Ground Control Point (GCP) or Check Point (CP) georeferencing target."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    gcp_id: str = Field(..., alias="gcpId", description="Unique target identifier (e.g. GCP-01)")
+    name: str = Field(default="GCP Target", description="Human-readable surveyor label")
+    pixel_x: float = Field(..., alias="pixelX", ge=0.0, description="Image coordinate X in pixels")
+    pixel_y: float = Field(..., alias="pixelY", ge=0.0, description="Image coordinate Y in pixels")
+    world_x: float = Field(..., alias="worldX", description="World coordinate X (UTM Easting or WGS84 Lon)")
+    world_y: float = Field(..., alias="worldY", description="World coordinate Y (UTM Northing or WGS84 Lat)")
+    elevation_z: float = Field(default=0.0, alias="elevationZ", description="Orthometric elevation or ellipsoidal height in meters")
+    is_check_point: bool = Field(default=False, alias="isCheckPoint", description="True if point is reserved for independent accuracy validation")
+    is_enabled: bool = Field(default=True, alias="isEnabled", description="Whether target is actively utilized in georeferencing inversion")
+    image_name: str = Field(default="drone_frame.jpg", alias="imageName", description="Image filename where target pixel coordinates were identified")
+    horizontal_accuracy_m: float = Field(default=0.02, alias="horizontalAccuracyM", description="GNSS horizontal accuracy tolerance in meters")
+    vertical_accuracy_m: float = Field(default=0.03, alias="verticalAccuracyM", description="GNSS vertical accuracy tolerance in meters")
+    residual_pixel_x: Optional[float] = Field(default=None, alias="residualPixelX", description="Inverted reprojection residual X in pixels")
+    residual_pixel_y: Optional[float] = Field(default=None, alias="residualPixelY", description="Inverted reprojection residual Y in pixels")
+    residual_world_xy_m: Optional[float] = Field(default=None, alias="residualWorldXyM", description="Horizontal spatial position residual in meters")
+    residual_world_z_m: Optional[float] = Field(default=None, alias="residualWorldZM", description="Vertical elevation residual in meters")
+
+
+class CameraCalibrationParams(BaseModel):
+    """Calibrated optical sensor intrinsics and radial/tangential distortion coefficients."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    camera_id: str = Field(default="DJI_FC6310R", alias="cameraId")
+    camera_model: str = Field(default="DJI FC6310R (Phantom 4 Pro)", alias="cameraModel")
+    sensor_width_mm: float = Field(default=13.2, alias="sensorWidthMm", ge=1.0)
+    sensor_height_mm: float = Field(default=8.8, alias="sensorHeightMm", ge=1.0)
+    image_width_px: int = Field(default=5472, alias="imageWidthPx", ge=100)
+    image_height_px: int = Field(default=3648, alias="imageHeightPx", ge=100)
+    focal_length_mm: float = Field(default=8.8, alias="focalLengthMm", ge=1.0)
+    focal_length_px: Optional[float] = Field(default=None, alias="focalLengthPx")
+    principal_point_x_px: Optional[float] = Field(default=None, alias="principalPointXPx")
+    principal_point_y_px: Optional[float] = Field(default=None, alias="principalPointYPx")
+    k1: float = Field(default=0.0, description="1st radial distortion coefficient")
+    k2: float = Field(default=0.0, description="2nd radial distortion coefficient")
+    k3: float = Field(default=0.0, description="3rd radial distortion coefficient")
+    p1: float = Field(default=0.0, description="1st tangential distortion coefficient")
+    p2: float = Field(default=0.0, description="2nd tangential distortion coefficient")
+
+
+class GCPAffineTransformResult(BaseModel):
+    """Results of least-squares 2D affine geotransform solving image pixels to world coordinates."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    affine_matrix: List[float] = Field(..., alias="affineMatrix", description="6 coefficients [a, b, c, d, e, f]")
+    gsd_x_cm: float = Field(..., alias="gsdXCm", description="Ground Sampling Distance in X dimension in cm/pixel")
+    gsd_y_cm: float = Field(..., alias="gsdYCm", description="Ground Sampling Distance in Y dimension in cm/pixel")
+    mean_gsd_cm: float = Field(..., alias="meanGsdCm", description="Mean spatial resolution in cm/pixel")
+    rotation_deg: float = Field(..., alias="rotationDeg", description="Grid rotation in degrees")
+    rmse_xy_m: float = Field(..., alias="rmseXyM", description="Horizontal spatial position RMSE in meters")
+    rmse_pixel: float = Field(..., alias="rmsePixel", description="Image reprojection RMSE in pixels")
+    points_used: int = Field(..., alias="pointsUsed", description="Number of valid enabled GCPs utilized in solution")
+    residuals: List[Dict[str, Any]] = Field(default_factory=list, description="Per-point residual error vectors")
+
+
+class DroneFlightPlan(BaseModel):
+    """Calculated photogrammetry UAV flight plan and GSD optimization."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    target_gsd_cm: float = Field(..., alias="targetGsdCm")
+    flight_altitude_m: float = Field(..., alias="flightAltitudeM")
+    ground_footprint_width_m: float = Field(..., alias="groundFootprintWidthM")
+    ground_footprint_height_m: float = Field(..., alias="groundFootprintHeightM")
+    forward_photo_spacing_m: float = Field(..., alias="forwardPhotoSpacingM")
+    flight_line_spacing_m: float = Field(..., alias="flightLineSpacingM")
+    trigger_interval_seconds: float = Field(..., alias="triggerIntervalSeconds")
+    estimated_photo_count: int = Field(..., alias="estimatedPhotoCount")
+    estimated_flight_time_minutes: float = Field(..., alias="estimatedFlightTimeMinutes")
+    min_shutter_speed_seconds: float = Field(..., alias="minShutterSpeedSeconds")
+
+
+class NodeODMTaskOptions(BaseModel):
+    """Configurable algorithmic parameters passed to headless NodeODM worker."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    dsm: bool = Field(default=True, description="Generate Digital Surface Model")
+    dtm: bool = Field(default=True, description="Generate bare-earth Digital Terrain Model")
+    orthophoto_resolution_cm: float = Field(default=2.5, alias="orthophotoResolutionCm", ge=0.5, le=50.0)
+    dem_resolution_cm: float = Field(default=5.0, alias="demResolutionCm", ge=1.0, le=100.0)
+    feature_quality: str = Field(default="high", alias="featureQuality")
+    fast_orthophoto: bool = Field(default=False, alias="fastOrthophoto", description="Fast orthophoto generation directly from SfM")
+    matcher_neighbors: int = Field(default=8, alias="matcherNeighbors", ge=2, le=32)
+    min_num_features: int = Field(default=8000, alias="minNumFeatures", ge=1000, le=50000)
+    use_gpu: bool = Field(default=True, alias="useGpu", description="Enable CUDA GPU dense matching acceleration")
+    radiometric_calibration: str = Field(default="camera+sun", alias="radiometricCalibration")
+    mesh_octree_depth: int = Field(default=10, alias="meshOctreeDepth", ge=6, le=14)
+    gcp_epsg: Optional[int] = Field(default=32610, alias="gcpEpsg")
+    webhook_callback_url: Optional[str] = Field(default=None, alias="webhookCallbackUrl")
+
+
+class DronePhotogrammetryArtifacts(BaseModel):
+    """Deliverable asset URLs generated by the photogrammetry pipeline."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    orthophoto_cog_url: Optional[str] = Field(default=None, alias="orthophotoCogUrl")
+    dtm_cog_url: Optional[str] = Field(default=None, alias="dtmCogUrl")
+    dsm_cog_url: Optional[str] = Field(default=None, alias="dsmCogUrl")
+    point_cloud_laz_url: Optional[str] = Field(default=None, alias="pointCloudLazUrl")
+    quality_report_pdf_url: Optional[str] = Field(default=None, alias="qualityReportPdfUrl")
+
+
+class DronePhotogrammetryTaskCreateRequest(BaseModel):
+    """Request payload to dispatch an asynchronous drone photogrammetry mission."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: Optional[str] = Field(default=None, alias="taskId")
+    project_name: str = Field(default="Tailings Embankment Drone Survey", alias="projectName")
+    image_count: int = Field(default=120, alias="imageCount", ge=3, le=5000)
+    camera: Optional[CameraCalibrationParams] = Field(default=None)
+    options: Optional[NodeODMTaskOptions] = Field(default_factory=NodeODMTaskOptions)
+    gcps: List[GroundControlPoint] = Field(default_factory=list)
+    flight_altitude_m: Optional[float] = Field(default=100.0, alias="flightAltitudeM")
+    target_gsd_cm: Optional[float] = Field(default=2.5, alias="targetGsdCm")
+
+
+class DronePhotogrammetryTaskStatusResponse(BaseModel):
+    """Detailed real-time execution status and product deliverables for a drone mission."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(..., alias="taskId")
+    project_name: str = Field(..., alias="projectName")
+    status: NodeODMLifecycleStatus = Field(...)
+    stage: NodeODMPipelineStage = Field(...)
+    stage_label: str = Field(..., alias="stageLabel")
+    progress_percent: float = Field(..., alias="progressPercent", ge=0.0, le=100.0)
+    elapsed_seconds: float = Field(default=0.0, alias="elapsedSeconds")
+    estimated_remaining_seconds: float = Field(default=0.0, alias="estimatedRemainingSeconds")
+    image_count: int = Field(..., alias="imageCount")
+    reconstructed_points: int = Field(default=0, alias="reconstructedPoints")
+    achieved_gsd_cm: float = Field(..., alias="achievedGsdCm")
+    rmse_reprojection_px: float = Field(default=0.0, alias="rmseReprojectionPx")
+    affine_geotransform: Optional[GCPAffineTransformResult] = Field(default=None, alias="affineGeotransform")
+    gcps: List[GroundControlPoint] = Field(default_factory=list)
+    camera: Optional[CameraCalibrationParams] = Field(default=None)
+    artifacts: Optional[DronePhotogrammetryArtifacts] = Field(default=None)
+    tile_url_template: str = Field(..., alias="tileUrlTemplate")
+    error_message: Optional[str] = Field(default=None, alias="errorMessage")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="createdAt")
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), alias="updatedAt")
+
+
+class DronePhotogrammetryGCPUpdateRequest(BaseModel):
+    """Request payload to update Ground Control Points for an existing task."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    gcps: List[GroundControlPoint] = Field(...)
+    recalculate_georeferencing: bool = Field(default=True, alias="recalculateGeoreferencing")
+
+
+class DronePhotogrammetryGCPUpdateResponse(BaseModel):
+    """Response acknowledging GCP network update and georeferencing recalculation."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(..., alias="taskId")
+    total_gcps: int = Field(..., alias="totalGcps")
+    enabled_gcps: int = Field(..., alias="enabledGcps")
+    check_points: int = Field(..., alias="checkPoints")
+    affine_geotransform: Optional[GCPAffineTransformResult] = Field(default=None, alias="affineGeotransform")
+    message: str = Field(default="GCP network updated successfully.")
+
+
+class DronePhotogrammetryCancelResponse(BaseModel):
+    """Response confirming cancellation of an asynchronous photogrammetry worker."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(..., alias="taskId")
+    status: str = Field(default="cancelled")
+    message: str = Field(default="Drone photogrammetry task aborted.")
+
+
+class DronePhotogrammetryAffineSolveRequest(BaseModel):
+    """Request payload to compute least-squares affine geotransform from GCP network."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    gcps: List[GroundControlPoint] = Field(...)
+
+
+class DronePhotogrammetryAffineSolveResponse(BaseModel):
+    """Response payload containing computed 6-parameter affine matrix and residuals."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    success: bool = Field(default=True)
+    affine_geotransform: GCPAffineTransformResult = Field(..., alias="affineGeotransform")
+    message: str = Field(default="Affine geotransform resolved successfully.")
+
+
+class DroneFlightPlanRequest(BaseModel):
+    """Request payload to calculate optimal photogrammetry flight altitude, overlap, and photo spacing."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    target_gsd_cm: float = Field(default=2.5, alias="targetGsdCm", ge=0.5, le=50.0)
+    camera_model: Optional[str] = Field(default="DJI_FC6310R", alias="cameraModel")
+    sensor_width_mm: Optional[float] = Field(default=None, alias="sensorWidthMm")
+    sensor_height_mm: Optional[float] = Field(default=None, alias="sensorHeightMm")
+    image_width_px: Optional[int] = Field(default=None, alias="imageWidthPx")
+    image_height_px: Optional[int] = Field(default=None, alias="imageHeightPx")
+    focal_length_mm: Optional[float] = Field(default=None, alias="focalLengthMm")
+    forward_overlap_percent: float = Field(default=80.0, alias="forwardOverlapPercent", ge=40.0, le=95.0)
+    side_overlap_percent: float = Field(default=70.0, alias="sideOverlapPercent", ge=30.0, le=90.0)
+    survey_area_ha: float = Field(default=25.0, alias="surveyAreaHa", ge=0.1, le=5000.0)
+    flight_speed_ms: float = Field(default=10.0, alias="flightSpeedMs", ge=1.0, le=30.0)
+
+
+class DroneFlightPlanResponse(BaseModel):
+    """Response detailing calculated flight plan and sensor parameters."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    plan: DroneFlightPlan = Field(...)
+    camera_used: CameraCalibrationParams = Field(..., alias="cameraUsed")
+
+
+# -----------------------------------------------------------------------------
+# Mathematical Solvers & Photogrammetry Utilities
+# -----------------------------------------------------------------------------
+
+def solve_gcp_affine_transform(
+    gcps: List[Union[Dict[str, Any], GroundControlPoint]]
+) -> Dict[str, Any]:
+    """Computes 6-parameter 2D affine geotransform matrix and residuals from Ground Control Points.
+    
+    Solves least-squares normal equations:
+        X_world = a + b * X_pixel + c * Y_pixel
+        Y_world = d + e * X_pixel + f * Y_pixel
+    
+    Calculates spatial Ground Sampling Distance (GSD), rotation, and spatial/pixel RMSE.
+    """
+    valid_pts = []
+    for p in gcps:
+        pt = p.model_dump() if hasattr(p, "model_dump") else (p.dict() if hasattr(p, "dict") else dict(p))
+        if pt.get("is_enabled", True):
+            valid_pts.append({
+                "gcp_id": pt.get("gcp_id") or pt.get("gcpId") or f"GCP-{len(valid_pts)+1}",
+                "pixel_x": float(pt.get("pixel_x") if "pixel_x" in pt else pt.get("pixelX", 0.0)),
+                "pixel_y": float(pt.get("pixel_y") if "pixel_y" in pt else pt.get("pixelY", 0.0)),
+                "world_x": float(pt.get("world_x") if "world_x" in pt else pt.get("worldX", 0.0)),
+                "world_y": float(pt.get("world_y") if "world_y" in pt else pt.get("worldY", 0.0)),
+                "elevation_z": float(pt.get("elevation_z") if "elevation_z" in pt else pt.get("elevationZ", 0.0)),
+                "is_check_point": bool(pt.get("is_check_point") if "is_check_point" in pt else pt.get("isCheckPoint", False))
+            })
+
+    if len(valid_pts) < 3:
+        raise ValueError(f"At least 3 enabled GCPs are required to solve 2D affine geotransform; received {len(valid_pts)}.")
+
+    sum_1 = float(len(valid_pts))
+    sum_x = sum(p["pixel_x"] for p in valid_pts)
+    sum_y = sum(p["pixel_y"] for p in valid_pts)
+    sum_xx = sum(p["pixel_x"] ** 2 for p in valid_pts)
+    sum_xy = sum(p["pixel_x"] * p["pixel_y"] for p in valid_pts)
+    sum_yy = sum(p["pixel_y"] ** 2 for p in valid_pts)
+
+    det = sum_1 * (sum_xx * sum_yy - sum_xy * sum_xy) - sum_x * (sum_x * sum_yy - sum_y * sum_xy) + sum_y * (sum_x * sum_xy - sum_y * sum_xx)
+    if abs(det) < 1e-12:
+        raise ValueError("Degenerate or collinear GCP coordinate geometry: normal matrix determinant is zero.")
+
+    inv00 = (sum_xx * sum_yy - sum_xy * sum_xy) / det
+    inv01 = (sum_y * sum_xy - sum_x * sum_yy) / det
+    inv02 = (sum_x * sum_xy - sum_y * sum_xx) / det
+    inv10 = inv01
+    inv11 = (sum_1 * sum_yy - sum_y * sum_y) / det
+    inv12 = (sum_x * sum_y - sum_1 * sum_xy) / det
+    inv20 = inv02
+    inv21 = inv12
+    inv22 = (sum_1 * sum_xx - sum_x * sum_x) / det
+
+    sum_xw = sum(p["world_x"] for p in valid_pts)
+    sum_x_xw = sum(p["pixel_x"] * p["world_x"] for p in valid_pts)
+    sum_y_xw = sum(p["pixel_y"] * p["world_x"] for p in valid_pts)
+
+    a = inv00 * sum_xw + inv01 * sum_x_xw + inv02 * sum_y_xw
+    b = inv10 * sum_xw + inv11 * sum_x_xw + inv12 * sum_y_xw
+    c = inv20 * sum_xw + inv21 * sum_x_xw + inv22 * sum_y_xw
+
+    sum_yw = sum(p["world_y"] for p in valid_pts)
+    sum_x_yw = sum(p["pixel_x"] * p["world_y"] for p in valid_pts)
+    sum_y_yw = sum(p["pixel_y"] * p["world_y"] for p in valid_pts)
+
+    d = inv00 * sum_yw + inv01 * sum_x_yw + inv02 * sum_y_yw
+    e = inv10 * sum_yw + inv11 * sum_x_yw + inv12 * sum_y_yw
+    f = inv20 * sum_yw + inv21 * sum_x_yw + inv22 * sum_y_yw
+
+    gsd_x_cm = math.sqrt(b * b + e * e) * 100.0
+    gsd_y_cm = math.sqrt(c * c + f * f) * 100.0
+    mean_gsd_cm = (gsd_x_cm + gsd_y_cm) / 2.0
+    rotation_deg = math.degrees(math.atan2(e, b))
+
+    det_inv = b * f - c * e
+
+    residuals = []
+    sq_err_xy = 0.0
+    sq_err_px = 0.0
+
+    for p in valid_pts:
+        pred_xw = a + b * p["pixel_x"] + c * p["pixel_y"]
+        pred_yw = d + e * p["pixel_x"] + f * p["pixel_y"]
+        res_x_m = pred_xw - p["world_x"]
+        res_y_m = pred_yw - p["world_y"]
+        res_xy_m = math.sqrt(res_x_m * res_x_m + res_y_m * res_y_m)
+        sq_err_xy += res_xy_m * res_xy_m
+
+        if abs(det_inv) > 1e-12:
+            pred_xp = (f * (p["world_x"] - a) - c * (p["world_y"] - d)) / det_inv
+            pred_yp = (-e * (p["world_x"] - a) + b * (p["world_y"] - d)) / det_inv
+            res_xp = pred_xp - p["pixel_x"]
+            res_yp = pred_yp - p["pixel_y"]
+            res_px = math.sqrt(res_xp * res_xp + res_yp * res_yp)
+        else:
+            res_xp, res_yp, res_px = 0.0, 0.0, 0.0
+        sq_err_px += res_px * res_px
+
+        residuals.append({
+            "gcp_id": p["gcp_id"],
+            "residual_world_x_m": round(res_x_m, 4),
+            "residual_world_y_m": round(res_y_m, 4),
+            "residual_world_xy_m": round(res_xy_m, 4),
+            "residual_pixel_x": round(res_xp, 2),
+            "residual_pixel_y": round(res_yp, 2),
+            "residual_pixel": round(res_px, 2),
+            "is_check_point": p["is_check_point"]
+        })
+
+    n = float(len(valid_pts))
+    rmse_xy_m = math.sqrt(sq_err_xy / n)
+    rmse_pixel = math.sqrt(sq_err_px / n)
+
+    return {
+        "affine_matrix": [round(a, 6), round(b, 8), round(c, 8), round(d, 6), round(e, 8), round(f, 8)],
+        "gsd_x_cm": round(gsd_x_cm, 3),
+        "gsd_y_cm": round(gsd_y_cm, 3),
+        "mean_gsd_cm": round(mean_gsd_cm, 3),
+        "rotation_deg": round(rotation_deg, 4),
+        "rmse_xy_m": round(rmse_xy_m, 4),
+        "rmse_pixel": round(rmse_pixel, 3),
+        "points_used": len(valid_pts),
+        "residuals": residuals
+    }
+
+
+def calculate_drone_flight_plan(
+    params: Union[Dict[str, Any], DroneFlightPlanRequest]
+) -> Dict[str, Any]:
+    """Calculates photogrammetric drone survey flight altitude, ground footprint, and trigger spacing."""
+    p_data = params.model_dump() if hasattr(params, "model_dump") else (params.dict() if hasattr(params, "dict") else dict(params))
+
+    target_gsd = float(p_data.get("target_gsd_cm") if "target_gsd_cm" in p_data else p_data.get("targetGsdCm", 2.5))
+    cam_model = p_data.get("camera_model") or p_data.get("cameraModel") or "DJI_FC6310R"
+    preset = DRONE_CAMERA_PRESETS.get(cam_model, DRONE_CAMERA_PRESETS["DJI_FC6310R"])
+
+    sensor_w = float(p_data.get("sensor_width_mm") or p_data.get("sensorWidthMm") or preset["sensor_width_mm"])
+    sensor_h = float(p_data.get("sensor_height_mm") or p_data.get("sensorHeightMm") or preset["sensor_height_mm"])
+    img_w = int(p_data.get("image_width_px") or p_data.get("imageWidthPx") or preset["image_width_px"])
+    img_h = int(p_data.get("image_height_px") or p_data.get("imageHeightPx") or preset["image_height_px"])
+    focal_len = float(p_data.get("focal_length_mm") or p_data.get("focalLengthMm") or preset["focal_length_mm"])
+
+    fwd_overlap = float(p_data.get("forward_overlap_percent") if "forward_overlap_percent" in p_data else p_data.get("forwardOverlapPercent", 80.0))
+    side_overlap = float(p_data.get("side_overlap_percent") if "side_overlap_percent" in p_data else p_data.get("sideOverlapPercent", 70.0))
+    survey_area = float(p_data.get("survey_area_ha") if "survey_area_ha" in p_data else p_data.get("surveyAreaHa", 25.0))
+    flight_speed = float(p_data.get("flight_speed_ms") if "flight_speed_ms" in p_data else p_data.get("flightSpeedMs", 10.0))
+
+    px_size_mm = sensor_w / float(img_w)
+    flight_alt_m = (target_gsd / 100.0) * (focal_len / px_size_mm)
+    footprint_w_m = (target_gsd / 100.0) * float(img_w)
+    footprint_h_m = (target_gsd / 100.0) * float(img_h)
+
+    fwd_spacing_m = footprint_h_m * (1.0 - fwd_overlap / 100.0)
+    side_spacing_m = footprint_w_m * (1.0 - side_overlap / 100.0)
+    trigger_sec = fwd_spacing_m / max(0.1, flight_speed)
+    shutter_sec = (0.5 * (target_gsd / 100.0)) / max(0.1, flight_speed)
+
+    area_m2 = survey_area * 10000.0
+    eff_area = max(1.0, fwd_spacing_m * side_spacing_m)
+    photo_count = int(math.ceil(1.15 * area_m2 / eff_area))
+    flight_dist_m = float(photo_count) * fwd_spacing_m
+    flight_time_min = (flight_dist_m / max(0.1, flight_speed)) / 60.0
+
+    camera_obj = {
+        "camera_id": preset.get("camera_id", "CUSTOM"),
+        "camera_model": preset.get("camera_model", cam_model),
+        "sensor_width_mm": sensor_w,
+        "sensor_height_mm": sensor_h,
+        "image_width_px": img_w,
+        "image_height_px": img_h,
+        "focal_length_mm": focal_len,
+        "focal_length_px": round(focal_len / px_size_mm, 1),
+        "principal_point_x_px": round(img_w / 2.0, 1),
+        "principal_point_y_px": round(img_h / 2.0, 1),
+        "k1": preset.get("k1", 0.0),
+        "k2": preset.get("k2", 0.0),
+        "k3": preset.get("k3", 0.0),
+        "p1": preset.get("p1", 0.0),
+        "p2": preset.get("p2", 0.0)
+    }
+
+    plan_obj = {
+        "target_gsd_cm": round(target_gsd, 2),
+        "flight_altitude_m": round(flight_alt_m, 2),
+        "ground_footprint_width_m": round(footprint_w_m, 2),
+        "ground_footprint_height_m": round(footprint_h_m, 2),
+        "forward_photo_spacing_m": round(fwd_spacing_m, 2),
+        "flight_line_spacing_m": round(side_spacing_m, 2),
+        "trigger_interval_seconds": round(trigger_sec, 2),
+        "estimated_photo_count": photo_count,
+        "estimated_flight_time_minutes": round(flight_time_min, 1),
+        "min_shutter_speed_seconds": round(shutter_sec, 5)
+    }
+
+    return {
+        "plan": plan_obj,
+        "camera_used": camera_obj
+    }
+
+
+def format_odm_gcp_file(
+    gcps: List[Union[Dict[str, Any], GroundControlPoint]],
+    epsg_code: int = 32610,
+    image_name: str = "drone_frame.jpg"
+) -> str:
+    """Formats a list of Ground Control Points into standard OpenDroneMap GCP format text."""
+    lines = [f"+proj=utm +zone={epsg_code % 100} +datum=WGS84 +units=m"]
+    for p in gcps:
+        pt = p.model_dump() if hasattr(p, "model_dump") else (p.dict() if hasattr(p, "dict") else dict(p))
+        if not pt.get("is_enabled", True):
+            continue
+        wx = pt.get("world_x") if "world_x" in pt else pt.get("worldX", 0.0)
+        wy = pt.get("world_y") if "world_y" in pt else pt.get("worldY", 0.0)
+        wz = pt.get("elevation_z") if "elevation_z" in pt else pt.get("elevationZ", 0.0)
+        px = pt.get("pixel_x") if "pixel_x" in pt else pt.get("pixelX", 0.0)
+        py = pt.get("pixel_y") if "pixel_y" in pt else pt.get("pixelY", 0.0)
+        gid = pt.get("gcp_id") or pt.get("gcpId") or "GCP"
+        img = pt.get("image_name", image_name)
+        lines.append(f"{wx} {wy} {wz} {px} {py} {img} {gid}")
+    return "\n".join(lines)
+
+
+def parse_odm_gcp_file(gcp_text: str) -> List[Dict[str, Any]]:
+    """Parses standard OpenDroneMap GCP text file format into Ground Control Point dictionaries."""
+    lines = [l.strip() for l in gcp_text.strip().splitlines() if l.strip() and not l.strip().startswith("#")]
+    if not lines:
+        return []
+    # Line 0 is SRS header
+    pts = []
+    for l in lines[1:]:
+        parts = l.split()
+        if len(parts) >= 5:
+            pts.append({
+                "world_x": float(parts[0]),
+                "world_y": float(parts[1]),
+                "elevation_z": float(parts[2]),
+                "pixel_x": float(parts[3]),
+                "pixel_y": float(parts[4]),
+                "image_name": parts[5] if len(parts) > 5 else "drone_frame.jpg",
+                "gcp_id": parts[6] if len(parts) > 6 else f"GCP-{len(pts)+1}",
+                "is_enabled": True,
+                "is_check_point": False
+            })
+    return pts
+
+
+def build_drone_photogrammetry_tile_url(
+    task_id: str,
+    z: int,
+    x: int,
+    y: int,
+    metric: Optional[str] = None,
+    rescale: Optional[str] = None,
+    colormap: Optional[str] = None
+) -> str:
+    """Builds a direct XYZ tile streaming URL for a specific drone photogrammetry task."""
+    base = f"/api/v1/tiles/drone/photogrammetry/{task_id}"
+    if metric and metric != "orthophoto":
+        base += f"/{metric}"
+    url = f"{base}/{z}/{x}/{y}.png"
+    params = []
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+
+def build_drone_photogrammetry_tile_url_template(
+    task_id: str,
+    metric: Optional[str] = None
+) -> str:
+    """Builds a dynamic Leaflet tile URL template for a specific drone photogrammetry task."""
+    base = f"/api/v1/tiles/drone/photogrammetry/{task_id}"
+    if metric and metric != "orthophoto":
+        base += f"/{metric}"
+    return f"{base}/{{z}}/{{x}}/{{y}}.png"
+
+
+def simulate_nodeodm_task_progression(
+    task_id: str = "ODM_TASK_20261015_001",
+    stage: Union[str, NodeODMPipelineStage] = "mvs_dense_point_cloud",
+    elapsed_seconds: float = 180.0,
+    image_count: int = 120,
+    target_gsd_cm: float = 2.5
+) -> Dict[str, Any]:
+    """Generates synthetic real-time telemetry for a decoupled NodeODM drone photogrammetry task."""
+    s_val = stage.value if isinstance(stage, NodeODMPipelineStage) else str(stage).lower()
+    meta = NODEODM_PIPELINE_STAGE_METADATA.get(s_val, NODEODM_PIPELINE_STAGE_METADATA["queued"])
+    p_min, p_max = meta["progress_range"]
+
+    if s_val == "completed":
+        progress = 100.0
+        status = NodeODMLifecycleStatus.COMPLETED
+    elif s_val == "failed":
+        progress = 0.0
+        status = NodeODMLifecycleStatus.FAILED
+    else:
+        progress = round(p_min + (p_max - p_min) * 0.70, 1)
+        status = NodeODMLifecycleStatus.RUNNING
+
+    total_est_seconds = max(60.0, float(image_count) * 4.0)
+    rem_seconds = 0.0 if s_val in ("completed", "failed") else max(0.0, round(total_est_seconds * (1.0 - progress / 100.0), 1))
+
+    pts_factor = 0.0
+    if s_val in ("structure_from_motion",):
+        pts_factor = 0.15
+    elif s_val in ("mvs_dense_point_cloud", "dem_csf_surface_extraction"):
+        pts_factor = 0.85
+    elif s_val in ("orthophoto_mosaicing", "cog_pyramidal_tiles", "completed"):
+        pts_factor = 1.00
+
+    reconstructed_pts = int(image_count * 18500 * pts_factor)
+    reprojection_rmse = 0.38 if s_val in ("orthophoto_mosaicing", "cog_pyramidal_tiles", "completed") else 0.52
+    achieved_gsd = round(float(target_gsd_cm) * (1.01 if s_val != "failed" else 1.0), 2)
+
+    artifacts = None
+    if s_val in ("cog_pyramidal_tiles", "completed"):
+        artifacts = {
+            "orthophoto_cog_url": f"/static/drone_outputs/{task_id}/orthophoto.tif",
+            "dtm_cog_url": f"/static/drone_outputs/{task_id}/dtm.tif",
+            "dsm_cog_url": f"/static/drone_outputs/{task_id}/dsm.tif",
+            "point_cloud_laz_url": f"/static/drone_outputs/{task_id}/point_cloud.laz",
+            "quality_report_pdf_url": f"/static/drone_outputs/{task_id}/odm_report.pdf"
+        }
+
+    # Synthetic sample GCP network with affine geotransform
+    gcps = [
+        {"gcp_id": "GCP-01", "name": "Crest Station A", "pixel_x": 500.0, "pixel_y": 450.0, "world_x": 674100.0, "world_y": 4102300.0, "elevation_z": 132.5, "is_check_point": False, "is_enabled": True},
+        {"gcp_id": "GCP-02", "name": "Crest Station B", "pixel_x": 4800.0, "pixel_y": 520.0, "world_x": 674207.5, "world_y": 4102302.0, "elevation_z": 132.8, "is_check_point": False, "is_enabled": True},
+        {"gcp_id": "GCP-03", "name": "Downstream Toe Target", "pixel_x": 600.0, "pixel_y": 3200.0, "world_x": 674102.5, "world_y": 4102231.2, "elevation_z": 88.4, "is_check_point": False, "is_enabled": True},
+        {"gcp_id": "GCP-04", "name": "Spillway Basin Check Point", "pixel_x": 4700.0, "pixel_y": 3150.0, "world_x": 674205.0, "world_y": 4102232.5, "elevation_z": 89.1, "is_check_point": True, "is_enabled": True}
+    ]
+    affine_result = solve_gcp_affine_transform(gcps)
+
+    return {
+        "task_id": task_id,
+        "project_name": "Tailings Embankment Drone Survey",
+        "status": status.value,
+        "stage": s_val,
+        "stage_label": meta["label"],
+        "progress_percent": progress,
+        "elapsed_seconds": round(float(elapsed_seconds), 1),
+        "estimated_remaining_seconds": rem_seconds,
+        "image_count": int(image_count),
+        "reconstructed_points": reconstructed_pts,
+        "achieved_gsd_cm": achieved_gsd,
+        "rmse_reprojection_px": reprojection_rmse,
+        "affine_geotransform": affine_result,
+        "gcps": gcps,
+        "camera": DRONE_CAMERA_PRESETS["DJI_FC6310R"],
+        "artifacts": artifacts,
+        "tile_url_template": f"/api/v1/tiles/drone/photogrammetry/{task_id}/{{z}}/{{x}}/{{y}}.png",
+        "error_message": "Feature matching aborted: insufficient inlier tie points." if s_val == "failed" else None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+# ==============================================================================
+# CYCLE v2.5.25: ABSTRACT SYNTAX TREE (AST) BAND MATH GRAMMAR, SAFE TOKENIZER/LEXER,
+# ALGEBRAIC EXPRESSION AST NODES & FORMULA SCHEMA VALIDATION CONTRACTS
+# ==============================================================================
+
+class BandMathTokenType(str, Enum):
+    """Lexical token types recognized by the safe algebraic band math lexer."""
+    NUMBER = "number"
+    IDENTIFIER = "identifier"
+    OPERATOR = "operator"
+    LPAREN = "lparen"
+    RPAREN = "rparen"
+    COMMA = "comma"
+
+
+class BandMathNodeType(str, Enum):
+    """Abstract Syntax Tree (AST) node classification for mathematical expressions."""
+    CONSTANT = "constant"
+    VARIABLE = "variable"
+    UNARY_OP = "unary_op"
+    BINARY_OP = "binary_op"
+    FUNCTION_CALL = "function_call"
+
+
+BAND_NAME_ALIASES: Dict[str, str] = {
+    # Sentinel-2 & Multispectral standard band aliases
+    "COASTAL": "B01",
+    "BLUE": "B02",
+    "GREEN": "B03",
+    "RED": "B04",
+    "REDEDGE1": "B05",
+    "RE1": "B05",
+    "REDEDGE2": "B06",
+    "RE2": "B06",
+    "REDEDGE3": "B07",
+    "RE3": "B07",
+    "NIR": "B08",
+    "NARROW_NIR": "B8A",
+    "WATER_VAPOR": "B09",
+    "VAPOR": "B09",
+    "CIRRUS": "B10",
+    "SWIR1": "B11",
+    "SWIR2": "B12",
+    # Landsat-8/9 canonical aliases
+    "LANDSAT_BLUE": "B2",
+    "LANDSAT_GREEN": "B3",
+    "LANDSAT_RED": "B4",
+    "LANDSAT_NIR": "B5",
+    "LANDSAT_SWIR1": "B6",
+    "LANDSAT_SWIR2": "B7",
+    "THERMAL": "B10",
+    # Drone RGB / Multispectral aliases
+    "DRONE_RED": "R",
+    "DRONE_GREEN": "G",
+    "DRONE_BLUE": "B",
+    "DRONE_NIR": "NIR",
+    "DRONE_RE": "RE"
+}
+
+VALID_BAND_MATH_FUNCTIONS: Dict[str, Dict[str, Any]] = {
+    "sqrt": {
+        "name": "sqrt",
+        "min_args": 1,
+        "max_args": 1,
+        "description": "Square root with safe non-negative lower bound clamping (max(0, x))."
+    },
+    "abs": {
+        "name": "abs",
+        "min_args": 1,
+        "max_args": 1,
+        "description": "Absolute value."
+    },
+    "log": {
+        "name": "log",
+        "min_args": 1,
+        "max_args": 1,
+        "description": "Natural logarithm with 1e-12 epsilon clamping (log(max(1e-12, x)))."
+    },
+    "exp": {
+        "name": "exp",
+        "min_args": 1,
+        "max_args": 1,
+        "description": "Exponential with overflow protection clamping to [-50.0, 50.0]."
+    },
+    "min": {
+        "name": "min",
+        "min_args": 2,
+        "max_args": 2,
+        "description": "Minimum of two sub-expressions: min(a, b)."
+    },
+    "max": {
+        "name": "max",
+        "min_args": 2,
+        "max_args": 2,
+        "description": "Maximum of two sub-expressions: max(a, b)."
+    },
+    "clamp": {
+        "name": "clamp",
+        "min_args": 3,
+        "max_args": 3,
+        "description": "Clamp expression between low and high bounds: clamp(x, low, high)."
+    },
+    "norm_diff": {
+        "name": "norm_diff",
+        "min_args": 2,
+        "max_args": 2,
+        "description": "Normalized difference ratio: (a - b) / (a + b + epsilon)."
+    }
+}
+
+BAND_MATH_PRESETS: Dict[str, Dict[str, Any]] = {
+    "ndvi": {
+        "id": "ndvi",
+        "name": "Normalized Difference Vegetation Index",
+        "formula": "(B08 - B04) / (B08 + B04)",
+        "bands_required": ["B08", "B04"],
+        "description": "Evaluates photosynthetic canopy vigor and green biomass absorption.",
+        "category": "vegetation",
+        "default_colormap": "rdylgn",
+        "default_rescale": [-0.2, 0.8],
+        "units": "NDVI ratio (-1 to +1)"
+    },
+    "ndmi": {
+        "id": "ndmi",
+        "name": "Normalized Difference Moisture Index",
+        "formula": "(B08 - B11) / (B08 + B11)",
+        "bands_required": ["B08", "B11"],
+        "description": "Detects canopy liquid water content and tailings impoundment saturation.",
+        "category": "water_moisture",
+        "default_colormap": "spectral",
+        "default_rescale": [-0.4, 0.6],
+        "units": "NDMI ratio (-1 to +1)"
+    },
+    "mndwi": {
+        "id": "mndwi",
+        "name": "Modified Normalized Difference Water Index",
+        "formula": "(B03 - B11) / (B03 + B11)",
+        "bands_required": ["B03", "B11"],
+        "description": "Suppresses built-up and soil noise to isolate open water impoundments.",
+        "category": "water_moisture",
+        "default_colormap": "blues",
+        "default_rescale": [-0.5, 0.5],
+        "units": "MNDWI ratio (-1 to +1)"
+    },
+    "ndci": {
+        "id": "ndci",
+        "name": "Normalized Difference Chlorophyll Index",
+        "formula": "(B05 - B04) / (B05 + B04)",
+        "bands_required": ["B05", "B04"],
+        "description": "Quantifies chlorophyll-a concentration in turbid waters and algal blooms.",
+        "category": "vegetation",
+        "default_colormap": "viridis",
+        "default_rescale": [-0.1, 0.5],
+        "units": "NDCI ratio (-1 to +1)"
+    },
+    "nbr": {
+        "id": "nbr",
+        "name": "Normalized Burn Ratio",
+        "formula": "(B08 - B12) / (B08 + B12)",
+        "bands_required": ["B08", "B12"],
+        "description": "Assesses wildfire burn scars and bare charcoal ash exposure.",
+        "category": "burn_geology",
+        "default_colormap": "rdylbu",
+        "default_rescale": [-0.5, 0.8],
+        "units": "NBR ratio (-1 to +1)"
+    },
+    "savi": {
+        "id": "savi",
+        "name": "Soil-Adjusted Vegetation Index (L=0.5)",
+        "formula": "1.5 * (B08 - B04) / (B08 + B04 + 0.5)",
+        "bands_required": ["B08", "B04"],
+        "description": "Minimizes soil brightness influences in sparse arid vegetation zones.",
+        "category": "vegetation",
+        "default_colormap": "rdylgn",
+        "default_rescale": [-0.1, 0.9],
+        "units": "SAVI ratio (-1 to +1)"
+    },
+    "evi": {
+        "id": "evi",
+        "name": "Enhanced Vegetation Index",
+        "formula": "2.5 * (B08 - B04) / (B08 + 6.0 * B04 - 7.5 * B02 + 1.0)",
+        "bands_required": ["B08", "B04", "B02"],
+        "description": "High-sensitivity canopy index decoupled from atmospheric haze and background soil.",
+        "category": "vegetation",
+        "default_colormap": "rdylgn",
+        "default_rescale": [0.0, 1.0],
+        "units": "EVI ratio (0 to +1)"
+    },
+    "bsi": {
+        "id": "bsi",
+        "name": "Bare Soil Index",
+        "formula": "((B11 + B04) - (B08 + B02)) / ((B11 + B04) + (B08 + B02))",
+        "bands_required": ["B11", "B04", "B08", "B02"],
+        "description": "Differentiates bare exposed soil, mine excavation pits, and fallow terrain.",
+        "category": "burn_geology",
+        "default_colormap": "turbo",
+        "default_rescale": [-0.5, 0.5],
+        "units": "BSI ratio (-1 to +1)"
+    },
+    "ndre": {
+        "id": "ndre",
+        "name": "Normalized Difference Red Edge",
+        "formula": "(B08 - B05) / (B08 + B05)",
+        "bands_required": ["B08", "B05"],
+        "description": "Detects subtle chlorosis and chlorophyll transitions in dense crop canopies.",
+        "category": "vegetation",
+        "default_colormap": "viridis",
+        "default_rescale": [-0.2, 0.7],
+        "units": "NDRE ratio (-1 to +1)"
+    },
+    "msavi2": {
+        "id": "msavi2",
+        "name": "Modified Soil-Adjusted Vegetation Index 2",
+        "formula": "(2.0 * B08 + 1.0 - sqrt((2.0 * B08 + 1.0)^2 - 8.0 * (B08 - B04))) / 2.0",
+        "bands_required": ["B08", "B04"],
+        "description": "Inductive soil adjustment parameter eliminating manual soil line fitting.",
+        "category": "vegetation",
+        "default_colormap": "rdylgn",
+        "default_rescale": [0.0, 1.0],
+        "units": "MSAVI2 ratio (0 to +1)"
+    },
+    "ferric_iron": {
+        "id": "ferric_iron",
+        "name": "Ferric Iron Oxide Ratio",
+        "formula": "B04 / B02",
+        "bands_required": ["B04", "B02"],
+        "description": "Detects hematite, goethite, and jarosite weathering in mine waste rock.",
+        "category": "minerals",
+        "default_colormap": "plasma",
+        "default_rescale": [0.5, 3.0],
+        "units": "Band ratio"
+    },
+    "clay_minerals": {
+        "id": "clay_minerals",
+        "name": "Clay and Alunite Minerals Ratio",
+        "formula": "B11 / B12",
+        "bands_required": ["B11", "B12"],
+        "description": "Highlights hydroxyl-bearing minerals, kaolinite, and illite hydrothermal alteration.",
+        "category": "minerals",
+        "default_colormap": "magma",
+        "default_rescale": [0.5, 2.5],
+        "units": "Band ratio"
+    }
+}
+
+
+class BandMathToken(BaseModel):
+    """Individual lexical token produced by the safe algebraic band math lexer."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    type: BandMathTokenType
+    value: str
+    start: int = 0
+    end: int = 0
+
+
+class BandMathASTNode(BaseModel):
+    """Hierarchical node within the algebraic expression Abstract Syntax Tree."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    type: BandMathNodeType
+    value: Optional[float] = None
+    name: Optional[str] = None
+    raw_name: Optional[str] = None
+    op: Optional[str] = None
+    left: Optional[Dict[str, Any]] = None
+    right: Optional[Dict[str, Any]] = None
+    operand: Optional[Dict[str, Any]] = None
+    args: Optional[List[Dict[str, Any]]] = None
+    depth: int = Field(default=1, ge=1)
+    node_count: int = Field(default=1, ge=1)
+    variables: List[str] = Field(default_factory=list)
+
+
+class BandMathValidationRequest(BaseModel):
+    """Request envelope for verifying band math expression grammar and band identifier resolution."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    formula: str = Field(..., description="Algebraic formula string, e.g. '(B08 - B04) / (B08 + B04)'.")
+    collection: Optional[str] = Field(default="sentinel-2-l2a", description="Target satellite or drone collection.")
+
+
+class BandMathValidationResponse(BaseModel):
+    """Validation response providing parsed AST, syntax diagnostics, and required band identifiers."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    is_valid: bool
+    formula: str
+    normalized_formula: str
+    ast: Optional[Dict[str, Any]] = None
+    bands_detected: List[str] = Field(default_factory=list)
+    unrecognized_identifiers: List[str] = Field(default_factory=list)
+    ast_depth: int = 0
+    node_count: int = 0
+    syntax_errors: List[str] = Field(default_factory=list)
+    error_message: Optional[str] = None
+
+
+class BandMathEvaluationRequest(BaseModel):
+    """Request payload for safe scalar evaluation of a band math expression with variable bindings."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    formula: str = Field(..., description="Algebraic formula string.")
+    band_values: Dict[str, float] = Field(..., description="Mapping of band identifiers to surface reflectance values.")
+    collection: Optional[str] = Field(default="sentinel-2-l2a", description="Sensor collection context.")
+    epsilon: float = Field(default=1e-6, ge=1e-12, le=1.0, description="Numerical stability denominator clamp.")
+
+
+class BandMathEvaluationResponse(BaseModel):
+    """Result of safe scalar mathematical expression evaluation."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    is_valid: bool
+    formula: str
+    result: Optional[float] = None
+    bands_used: List[str] = Field(default_factory=list)
+    ast_depth: int = 0
+    node_count: int = 0
+    execution_time_ms: float = 0.0
+    error_message: Optional[str] = None
+
+
+class BandMathPreset(BaseModel):
+    """Pre-configured verified spectral index band math preset specification."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: str
+    formula: str
+    bands_required: List[str]
+    description: str
+    category: str
+    default_colormap: str
+    default_rescale: List[float]
+    units: str
+
+
+class BandMathPresetsResponse(BaseModel):
+    """Catalog of verified industry-standard and custom band math formula presets."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    presets: List[BandMathPreset]
+    total: int
+
+
+class BandMathTileRequestParams(BaseModel):
+    """Query parameter contract for dynamic XYZ custom band math expression raster tile streaming."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    expr: str = Field(..., description="Band math formula expression.")
+    collection: Optional[str] = Field(default="sentinel-2-l2a", description="Satellite collection identifier.")
+    item_id: Optional[str] = Field(default=None, description="STAC scene asset item ID.")
+    colormap: Optional[str] = Field(default="viridis", description="Display colormap palette.")
+    rescale: Optional[str] = Field(default="-1.0,1.0", description="Min/max contrast stretch bounds.")
+    epsilon: float = Field(default=1e-6, description="Division-by-zero stability offset.")
+
+
+def tokenize_band_math(formula: str) -> List[Dict[str, Any]]:
+    """Safely tokenizes a band math formula into numbers, identifiers, operators, and parens.
+    
+    Security Guarantee:
+    Rejects dangerous characters (quotes, semicolons, brackets, curly braces, double underscores,
+    attribute access, system calls) to prevent code injection attacks before AST parsing.
+    """
+    if not formula or not isinstance(formula, str):
+        raise ValueError("Formula must be a non-empty string.")
+
+    if len(formula) > 500:
+        raise ValueError("Formula exceeds maximum permitted length of 500 characters.")
+
+    if "__" in formula:
+        raise ValueError("Security violation: Double underscores '__' are forbidden in band math expressions.")
+
+    tokens: List[Dict[str, Any]] = []
+    i = 0
+    n = len(formula)
+
+    # Whitelisted operators and symbols
+    # Allowed chars: letters, digits, whitespace, '.', '+', '-', '*', '/', '^', '(', ')', ','
+    forbidden_pattern = re.compile(r"['\";`\[\]{}\$\\\?!=<>@#%&|~]")
+    match_forbidden = forbidden_pattern.search(formula)
+    if match_forbidden:
+        bad_char = match_forbidden.group(0)
+        raise ValueError(f"Security violation: Illegal character '{bad_char}' is forbidden in band math formulas.")
+
+    while i < n:
+        c = formula[i]
+
+        if c.isspace():
+            i += 1
+            continue
+
+        # Numbers (integer, decimal, scientific notation e.g. 1e-6, 0.5, 12)
+        if c.isdigit() or (c == "." and i + 1 < n and formula[i + 1].isdigit()):
+            start = i
+            while i < n and (formula[i].isdigit() or formula[i] == "."):
+                i += 1
+            if i < n and formula[i] in ("e", "E"):
+                i += 1
+                if i < n and formula[i] in ("+", "-"):
+                    i += 1
+                while i < n and formula[i].isdigit():
+                    i += 1
+            val_str = formula[start:i]
+            tokens.append({
+                "type": BandMathTokenType.NUMBER.value,
+                "value": val_str,
+                "start": start,
+                "end": i
+            })
+            continue
+
+        # Identifiers: Bands (e.g. B08, B8A, NIR) or Math Functions (e.g. sqrt, abs)
+        if c.isalpha() or c == "_":
+            start = i
+            while i < n and (formula[i].isalnum() or formula[i] == "_"):
+                i += 1
+            ident_str = formula[start:i]
+            tokens.append({
+                "type": BandMathTokenType.IDENTIFIER.value,
+                "value": ident_str,
+                "start": start,
+                "end": i
+            })
+            continue
+
+        # Double asterisk '**' power operator
+        if c == "*" and i + 1 < n and formula[i + 1] == "*":
+            tokens.append({
+                "type": BandMathTokenType.OPERATOR.value,
+                "value": "^",
+                "start": i,
+                "end": i + 2
+            })
+            i += 2
+            continue
+
+        # Single operators: '+', '-', '*', '/', '^'
+        if c in ("+", "-", "*", "/", "^"):
+            tokens.append({
+                "type": BandMathTokenType.OPERATOR.value,
+                "value": c,
+                "start": i,
+                "end": i + 1
+            })
+            i += 1
+            continue
+
+        # Parentheses
+        if c == "(":
+            tokens.append({
+                "type": BandMathTokenType.LPAREN.value,
+                "value": "(",
+                "start": i,
+                "end": i + 1
+            })
+            i += 1
+            continue
+
+        if c == ")":
+            tokens.append({
+                "type": BandMathTokenType.RPAREN.value,
+                "value": ")",
+                "start": i,
+                "end": i + 1
+            })
+            i += 1
+            continue
+
+        # Argument separator comma
+        if c == ",":
+            tokens.append({
+                "type": BandMathTokenType.COMMA.value,
+                "value": ",",
+                "start": i,
+                "end": i + 1
+            })
+            i += 1
+            continue
+
+        raise ValueError(f"Unrecognized character '{c}' at position {i}.")
+
+    if not tokens:
+        raise ValueError("Formula contains no valid mathematical tokens.")
+
+    if len(tokens) > 100:
+        raise ValueError("Formula exceeds maximum token count of 100 tokens.")
+
+    return tokens
+
+
+class _BandMathParser:
+    """Internal recursive-descent parser producing a validated Abstract Syntax Tree (AST)."""
+
+    def __init__(self, tokens: List[Dict[str, Any]], max_depth: int = 20):
+        self.tokens = tokens
+        self.pos = 0
+        self.max_depth = max_depth
+
+    def parse(self) -> Dict[str, Any]:
+        node = self.expr(1)
+        if self.pos < len(self.tokens):
+            tok = self.tokens[self.pos]
+            raise ValueError(f"Unexpected token '{tok['value']}' at position {tok.get('start', self.pos)}.")
+        return node
+
+    def check_depth(self, depth: int):
+        if depth > self.max_depth:
+            raise ValueError(f"AST parser recursion depth limit exceeded (depth {depth} > max {self.max_depth}).")
+
+    def expr(self, depth: int = 1) -> Dict[str, Any]:
+        self.check_depth(depth)
+        node = self.term(depth + 1)
+        while self.pos < len(self.tokens) and self.tokens[self.pos]["value"] in ("+", "-"):
+            op = self.tokens[self.pos]["value"]
+            self.pos += 1
+            right = self.term(depth + 1)
+            node = {
+                "type": BandMathNodeType.BINARY_OP.value,
+                "op": op,
+                "left": node,
+                "right": right,
+                "depth": max(node.get("depth", 1), right.get("depth", 1)) + 1,
+                "node_count": node.get("node_count", 1) + right.get("node_count", 1) + 1,
+                "variables": sorted(list(set(node.get("variables", []) + right.get("variables", []))))
+            }
+        return node
+
+    def term(self, depth: int = 1) -> Dict[str, Any]:
+        self.check_depth(depth)
+        node = self.power(depth + 1)
+        while self.pos < len(self.tokens) and self.tokens[self.pos]["value"] in ("*", "/"):
+            op = self.tokens[self.pos]["value"]
+            self.pos += 1
+            right = self.power(depth + 1)
+            node = {
+                "type": BandMathNodeType.BINARY_OP.value,
+                "op": op,
+                "left": node,
+                "right": right,
+                "depth": max(node.get("depth", 1), right.get("depth", 1)) + 1,
+                "node_count": node.get("node_count", 1) + right.get("node_count", 1) + 1,
+                "variables": sorted(list(set(node.get("variables", []) + right.get("variables", []))))
+            }
+        return node
+
+    def power(self, depth: int = 1) -> Dict[str, Any]:
+        self.check_depth(depth)
+        node = self.unary(depth + 1)
+        if self.pos < len(self.tokens) and self.tokens[self.pos]["value"] == "^":
+            op = "^"
+            self.pos += 1
+            right = self.power(depth + 1)  # Right-associative exponentiation
+            node = {
+                "type": BandMathNodeType.BINARY_OP.value,
+                "op": op,
+                "left": node,
+                "right": right,
+                "depth": max(node.get("depth", 1), right.get("depth", 1)) + 1,
+                "node_count": node.get("node_count", 1) + right.get("node_count", 1) + 1,
+                "variables": sorted(list(set(node.get("variables", []) + right.get("variables", []))))
+            }
+        return node
+
+    def unary(self, depth: int = 1) -> Dict[str, Any]:
+        self.check_depth(depth)
+        if self.pos < len(self.tokens) and self.tokens[self.pos]["value"] in ("+", "-"):
+            op = self.tokens[self.pos]["value"]
+            self.pos += 1
+            operand = self.unary(depth + 1)
+            # Constant fold unary on literal numbers
+            if operand.get("type") == BandMathNodeType.CONSTANT.value:
+                val = float(operand["value"]) if op == "+" else -float(operand["value"])
+                return {
+                    "type": BandMathNodeType.CONSTANT.value,
+                    "value": val,
+                    "depth": 1,
+                    "node_count": 1,
+                    "variables": []
+                }
+            return {
+                "type": BandMathNodeType.UNARY_OP.value,
+                "op": op,
+                "operand": operand,
+                "depth": operand.get("depth", 1) + 1,
+                "node_count": operand.get("node_count", 1) + 1,
+                "variables": operand.get("variables", [])
+            }
+        return self.primary(depth)
+
+    def primary(self, depth: int = 1) -> Dict[str, Any]:
+        self.check_depth(depth)
+        if self.pos >= len(self.tokens):
+            raise ValueError("Unexpected end of formula while parsing expression.")
+
+        tok = self.tokens[self.pos]
+
+        # Constant numeric literal
+        if tok["type"] == BandMathTokenType.NUMBER.value:
+            self.pos += 1
+            return {
+                "type": BandMathNodeType.CONSTANT.value,
+                "value": float(tok["value"]),
+                "depth": 1,
+                "node_count": 1,
+                "variables": []
+            }
+
+        # Identifier: variable or function call
+        if tok["type"] == BandMathTokenType.IDENTIFIER.value:
+            ident = tok["value"]
+            self.pos += 1
+
+            # Function call syntax: ident(...)
+            if self.pos < len(self.tokens) and self.tokens[self.pos]["value"] == "(":
+                fname = ident.lower()
+                if fname not in VALID_BAND_MATH_FUNCTIONS:
+                    valid_names = sorted(list(VALID_BAND_MATH_FUNCTIONS.keys()))
+                    raise ValueError(f"Unsupported math function '{fname}'. Supported functions: {valid_names}.")
+                self.pos += 1  # Consume '('
+                args: List[Dict[str, Any]] = []
+                if self.pos < len(self.tokens) and self.tokens[self.pos]["value"] != ")":
+                    args.append(self.expr(depth + 1))
+                    while self.pos < len(self.tokens) and self.tokens[self.pos]["value"] == ",":
+                        self.pos += 1  # Consume ','
+                        args.append(self.expr(depth + 1))
+
+                if self.pos >= len(self.tokens) or self.tokens[self.pos]["value"] != ")":
+                    raise ValueError(f"Unclosed parenthesis in function call '{fname}'.")
+                self.pos += 1  # Consume ')'
+
+                f_meta = VALID_BAND_MATH_FUNCTIONS[fname]
+                if len(args) < f_meta["min_args"] or len(args) > f_meta["max_args"]:
+                    raise ValueError(f"Function '{fname}' requires {f_meta['min_args']}-{f_meta['max_args']} arguments, got {len(args)}.")
+
+                v_used: List[str] = []
+                max_d = 1
+                n_count = 1
+                for a in args:
+                    v_used.extend(a.get("variables", []))
+                    max_d = max(max_d, a.get("depth", 1))
+                    n_count += a.get("node_count", 1)
+
+                return {
+                    "type": BandMathNodeType.FUNCTION_CALL.value,
+                    "name": fname,
+                    "args": args,
+                    "depth": max_d + 1,
+                    "node_count": n_count,
+                    "variables": sorted(list(set(v_used)))
+                }
+            else:
+                # Variable band identifier
+                upper_ident = ident.upper()
+                canonical_band = BAND_NAME_ALIASES.get(upper_ident, upper_ident)
+                return {
+                    "type": BandMathNodeType.VARIABLE.value,
+                    "name": canonical_band,
+                    "raw_name": ident,
+                    "depth": 1,
+                    "node_count": 1,
+                    "variables": [canonical_band]
+                }
+
+        # Parenthesized sub-expression
+        if tok["value"] == "(":
+            self.pos += 1  # Consume '('
+            node = self.expr(depth + 1)
+            if self.pos >= len(self.tokens) or self.tokens[self.pos]["value"] != ")":
+                raise ValueError("Unclosed parenthesis in expression.")
+            self.pos += 1  # Consume ')'
+            return node
+
+        raise ValueError(f"Unexpected token '{tok['value']}' at position {tok.get('start', self.pos)}.")
+
+
+def parse_band_math_ast(formula: str, max_depth: int = 20) -> Dict[str, Any]:
+    """Parses a validated band math formula into an Abstract Syntax Tree (AST) dictionary.
+    
+    Operator Precedence (PEMDAS / BODMAS):
+    1. Parentheses and Function Calls: (...), func(...)
+    2. Unary Signs: +x, -x
+    3. Exponentiation: ^, ** (Right-associative)
+    4. Multiplication and Division: *, /
+    5. Addition and Subtraction: +, -
+    """
+    tokens = tokenize_band_math(formula)
+    parser = _BandMathParser(tokens, max_depth=max_depth)
+    return parser.parse()
+
+
+def _format_ast_to_normalized_string(node: Dict[str, Any]) -> str:
+    """Reconstructs a canonical parenthesized formula string from an AST node."""
+    ntype = node.get("type")
+    if ntype == BandMathNodeType.CONSTANT.value:
+        val = node.get("value", 0.0)
+        return str(int(val)) if float(val).is_integer() else str(val)
+    elif ntype == BandMathNodeType.VARIABLE.value:
+        return str(node.get("name", "B01"))
+    elif ntype == BandMathNodeType.UNARY_OP.value:
+        return f"{node.get('op', '-')}{_format_ast_to_normalized_string(node['operand'])}"
+    elif ntype == BandMathNodeType.BINARY_OP.value:
+        left_s = _format_ast_to_normalized_string(node["left"])
+        right_s = _format_ast_to_normalized_string(node["right"])
+        return f"({left_s} {node.get('op', '+')} {right_s})"
+    elif ntype == BandMathNodeType.FUNCTION_CALL.value:
+        args_s = ", ".join([_format_ast_to_normalized_string(a) for a in node.get("args", [])])
+        return f"{node.get('name', 'sqrt')}({args_s})"
+    return ""
+
+
+def validate_band_math_formula(
+    formula: str,
+    valid_bands: Optional[List[str]] = None,
+    collection: Optional[str] = "sentinel-2-l2a",
+    max_depth: int = 20
+) -> Dict[str, Any]:
+    """Validates formula grammar, parses AST, detects variables, and verifies band identifiers."""
+    syntax_errors: List[str] = []
+    bands_detected: List[str] = []
+    unrecognized: List[str] = []
+    ast: Optional[Dict[str, Any]] = None
+    normalized_formula = ""
+    ast_depth = 0
+    node_count = 0
+
+    try:
+        ast = parse_band_math_ast(formula, max_depth=max_depth)
+        bands_detected = ast.get("variables", [])
+        ast_depth = ast.get("depth", 1)
+        node_count = ast.get("node_count", 1)
+        normalized_formula = _format_ast_to_normalized_string(ast)
+
+        # Standard collection band registries
+        s2_bands = {"B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12"}
+        landsat_bands = {"B1", "B2", "B3", "B4", "B5", "B6", "B7", "B10", "B11"}
+        drone_bands = {"R", "G", "B", "NIR", "RE"}
+
+        target_set: Set[str] = set()
+        if valid_bands:
+            target_set = {b.upper() for b in valid_bands}
+        elif collection in ("landsat-c2-l2", "landsat-8", "landsat-9"):
+            target_set = landsat_bands
+        elif collection and "drone" in collection.lower():
+            target_set = drone_bands | s2_bands
+        else:
+            target_set = s2_bands | landsat_bands | drone_bands
+
+        for b in bands_detected:
+            if b.upper() not in target_set and b.upper() not in BAND_NAME_ALIASES:
+                unrecognized.append(b)
+
+    except Exception as exc:
+        syntax_errors.append(str(exc))
+
+    is_valid = len(syntax_errors) == 0 and len(unrecognized) == 0 and ast is not None
+
+    return {
+        "is_valid": is_valid,
+        "formula": formula,
+        "normalized_formula": normalized_formula or formula,
+        "ast": ast,
+        "bands_detected": bands_detected,
+        "unrecognized_identifiers": unrecognized,
+        "ast_depth": ast_depth,
+        "node_count": node_count,
+        "syntax_errors": syntax_errors,
+        "error_message": "; ".join(syntax_errors) if syntax_errors else (
+            f"Unrecognized band identifiers: {unrecognized}" if unrecognized else None
+        )
+    }
+
+
+def evaluate_band_math_ast(
+    ast_node: Dict[str, Any],
+    band_values: Dict[str, float],
+    epsilon: float = 1e-6
+) -> float:
+    """Safely evaluates an Abstract Syntax Tree (AST) against scalar band values.
+    
+    Mathematical Safety:
+    - Epsilon-clamped division-by-zero protection: denom clamped to (|denom| >= epsilon).
+    - Real-domain non-negative clamping for sqrt(x).
+    - Clamped natural logarithm log(max(1e-12, x)).
+    - Overflow-protected exponential exp(clamp(x, -50, 50)).
+    - Division-by-zero safe normalized difference: norm_diff(a, b) = (a - b) / (a + b + eps).
+    """
+    if not isinstance(ast_node, dict):
+        raise ValueError("ast_node must be a dictionary.")
+
+    normalized_values = {k.upper(): float(v) for k, v in band_values.items()}
+    # Mirror known aliases in values dict
+    for alias, canonical in BAND_NAME_ALIASES.items():
+        if canonical in normalized_values and alias not in normalized_values:
+            normalized_values[alias] = normalized_values[canonical]
+        elif alias in normalized_values and canonical not in normalized_values:
+            normalized_values[canonical] = normalized_values[alias]
+
+    def _eval(node: Dict[str, Any]) -> float:
+        ntype = node.get("type")
+
+        if ntype == BandMathNodeType.CONSTANT.value:
+            return float(node.get("value", 0.0))
+
+        if ntype == BandMathNodeType.VARIABLE.value:
+            vname = str(node.get("name", "")).upper()
+            if vname in normalized_values:
+                return normalized_values[vname]
+            raw_vname = str(node.get("raw_name", "")).upper()
+            if raw_vname in normalized_values:
+                return normalized_values[raw_vname]
+            canonical = BAND_NAME_ALIASES.get(vname, vname)
+            if canonical in normalized_values:
+                return normalized_values[canonical]
+            available = sorted(list(normalized_values.keys()))
+            raise KeyError(f"Missing required band value for '{node.get('name')}'. Available values: {available}.")
+
+        if ntype == BandMathNodeType.UNARY_OP.value:
+            op = node.get("op", "-")
+            val = _eval(node["operand"])
+            if op == "-":
+                return -val
+            elif op == "+":
+                return val
+            raise ValueError(f"Unknown unary operator '{op}'.")
+
+        if ntype == BandMathNodeType.BINARY_OP.value:
+            op = node.get("op", "+")
+            left_val = _eval(node["left"])
+            right_val = _eval(node["right"])
+
+            if op == "+":
+                return left_val + right_val
+            elif op == "-":
+                return left_val - right_val
+            elif op == "*":
+                return left_val * right_val
+            elif op == "/":
+                denom = right_val
+                if abs(denom) < epsilon:
+                    sign = 1.0 if denom >= 0.0 else -1.0
+                    denom = sign * epsilon
+                return left_val / denom
+            elif op in ("^", "**"):
+                if left_val < 0.0 and not float(right_val).is_integer():
+                    return math.pow(abs(left_val), right_val)
+                if left_val == 0.0 and right_val < 0.0:
+                    safe_denom = math.pow(epsilon, abs(right_val))
+                    return 1.0 / safe_denom
+                try:
+                    return math.pow(left_val, right_val)
+                except OverflowError:
+                    return 1e12 if (left_val > 0 or int(right_val) % 2 == 0) else -1e12
+            raise ValueError(f"Unknown binary operator '{op}'.")
+
+        if ntype == BandMathNodeType.FUNCTION_CALL.value:
+            fname = str(node.get("name", "")).lower()
+            args = [_eval(a) for a in node.get("args", [])]
+
+            if fname == "sqrt":
+                return math.sqrt(max(0.0, args[0]))
+            elif fname == "abs":
+                return abs(args[0])
+            elif fname == "log":
+                return math.log(max(1e-12, args[0]))
+            elif fname == "exp":
+                clamped_exp = min(max(args[0], -50.0), 50.0)
+                return math.exp(clamped_exp)
+            elif fname == "min":
+                return min(args[0], args[1])
+            elif fname == "max":
+                return max(args[0], args[1])
+            elif fname == "clamp":
+                val = args[0]
+                low = min(args[1], args[2])
+                high = max(args[1], args[2])
+                return min(max(val, low), high)
+            elif fname == "norm_diff":
+                a = args[0]
+                b = args[1]
+                denom = a + b
+                if abs(denom) < epsilon:
+                    sign = 1.0 if denom >= 0.0 else -1.0
+                    denom = sign * epsilon
+                return (a - b) / denom
+            raise ValueError(f"Unknown function '{fname}'.")
+
+        raise ValueError(f"Invalid AST node type '{ntype}'.")
+
+    return _eval(ast_node)
+
+
+def evaluate_band_math_formula(
+    formula: str,
+    band_values: Dict[str, float],
+    epsilon: float = 1e-6,
+    max_depth: int = 20
+) -> float:
+    """Parses and safely evaluates a band math formula string with variable bindings."""
+    ast = parse_band_math_ast(formula, max_depth=max_depth)
+    return evaluate_band_math_ast(ast, band_values=band_values, epsilon=epsilon)
+
+
+def build_custom_expression_tile_url(
+    z: int,
+    x: int,
+    y: int,
+    expr: str,
+    collection: Optional[str] = None,
+    item_id: Optional[str] = None,
+    colormap: Optional[str] = "viridis",
+    rescale: Optional[str] = "-1.0,1.0",
+    epsilon: float = 1e-6
+) -> str:
+    """Builds a dynamic XYZ custom expression raster tile endpoint URL."""
+    encoded_expr = urllib.parse.quote(expr, safe="")
+    if collection and item_id:
+        url = f"/api/v1/tiles/{collection}/{item_id}/custom-expression/{z}/{x}/{y}.png"
+    else:
+        url = f"/api/v1/tiles/custom-expression/{z}/{x}/{y}.png"
+
+    params = [f"expr={encoded_expr}"]
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if epsilon != 1e-6:
+        params.append(f"epsilon={epsilon}")
+
+    return f"{url}?{'&'.join(params)}"
+
+
+def build_custom_expression_tile_url_template(
+    expr: str,
+    collection: Optional[str] = None,
+    item_id: Optional[str] = None,
+    colormap: Optional[str] = "viridis",
+    rescale: Optional[str] = "-1.0,1.0"
+) -> str:
+    """Builds a dynamic Leaflet tile URL template for a custom band math expression."""
+    encoded_expr = urllib.parse.quote(expr, safe="")
+    if collection and item_id:
+        base = f"/api/v1/tiles/{collection}/{item_id}/custom-expression/{{z}}/{{x}}/{{y}}.png"
+    else:
+        base = "/api/v1/tiles/custom-expression/{z}/{x}/{y}.png"
+
+    params = [f"expr={encoded_expr}"]
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+
+    return f"{base}?{'&'.join(params)}"
+
+

@@ -19,12 +19,27 @@ from app.models.schemas import (
     AOISubscriptionResponse,
     annotation_to_geojson_feature,
     annotations_to_feature_collection,
-    parse_bbox
+    parse_bbox,
+    WebhookEndpointConfig,
+    STACHarvesterSubscription,
+    STACHarvesterSubscriptionCreateRequest,
+    STACHarvesterSubscriptionResponse,
+    STACHarvesterTriggerRequest,
+    STACHarvesterTriggerResponse,
+    WebhookTestDispatchPayloadRequest,
+    WebhookTestDispatchPayloadResponse,
+    DeadLetterQueueRetryRequest,
+    DeadLetterQueueRetryResponse,
+    DeadLetterQueueItem,
+    WebhookEventEnvelope,
+    WebhookDeliveryAttempt
 )
+from app.services.alerting import stac_harvester_service
 
 annotations_router = APIRouter(prefix="/annotations", tags=["Geotechnical Defect Annotations"])
 work_orders_router = APIRouter(prefix="/work-orders", tags=["Maintenance Work Orders"])
 subscriptions_router = APIRouter(prefix="/subscriptions", tags=["Automated AOI Subscriptions"])
+operations_router = APIRouter(prefix="/operations", tags=["Automated STAC Harvester & Secure Webhooks"])
 
 # ============================================================================
 # IN-MEMORY DATA STORES (Station & Field Initial Baselines)
@@ -315,3 +330,97 @@ def delete_subscription(subscription_id: str):
         raise HTTPException(status_code=404, detail=f"Subscription '{subscription_id}' not found.")
     del _SUBSCRIPTIONS_DB[subscription_id]
     return {"status": "deleted", "subscription_id": subscription_id}
+
+
+# ============================================================================
+# AUTOMATED STAC HARVESTER, SECURE WEBHOOKS & DLQ ENDPOINTS
+# ============================================================================
+
+@operations_router.get("/harvester/subscriptions")
+def list_harvester_subscriptions():
+    """Lists registered automated STAC harvester subscriptions."""
+    subs = stac_harvester_service.list_subscriptions()
+    return {"subscriptions": [s.model_dump(by_alias=True) for s in subs]}
+
+@operations_router.post("/harvester/subscriptions", response_model=STACHarvesterSubscriptionResponse)
+def create_harvester_subscription(req: STACHarvesterSubscriptionCreateRequest):
+    """Registers a new automated STAC harvester subscription."""
+    sub = stac_harvester_service.create_subscription(req)
+    return STACHarvesterSubscriptionResponse(
+        subscription=sub,
+        status="active",
+        message="Subscription successfully registered."
+    )
+
+@operations_router.get("/harvester/subscriptions/{subscription_id}")
+def get_harvester_subscription(subscription_id: str):
+    """Retrieves specific STAC harvester subscription details."""
+    sub = stac_harvester_service.get_subscription(subscription_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail=f"STAC Harvester subscription '{subscription_id}' not found.")
+    return {"subscription": sub.model_dump(by_alias=True)}
+
+@operations_router.delete("/harvester/subscriptions/{subscription_id}")
+def delete_harvester_subscription(subscription_id: str):
+    """Deletes an automated STAC harvester subscription."""
+    success = stac_harvester_service.delete_subscription(subscription_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"STAC Harvester subscription '{subscription_id}' not found.")
+    return {"status": "deleted", "subscription_id": subscription_id}
+
+@operations_router.post("/harvester/trigger", response_model=STACHarvesterTriggerResponse)
+async def trigger_harvester_execution(req: Optional[STACHarvesterTriggerRequest] = None):
+    """Manually triggers or tests execution of an automated STAC harvester."""
+    return await stac_harvester_service.trigger_harvester_cycle(req)
+
+@operations_router.get("/webhooks")
+def list_webhook_endpoints():
+    """Lists configured outbound webhook endpoints."""
+    endpoints = stac_harvester_service.list_endpoints()
+    return {"endpoints": [ep.model_dump(by_alias=True) for ep in endpoints]}
+
+@operations_router.post("/webhooks", response_model=WebhookEndpointConfig)
+def create_webhook_endpoint(ep: WebhookEndpointConfig):
+    """Registers a new outbound webhook endpoint."""
+    return stac_harvester_service.create_endpoint(ep)
+
+@operations_router.get("/webhooks/{webhook_id}", response_model=WebhookEndpointConfig)
+def get_webhook_endpoint(webhook_id: str):
+    """Retrieves specific outbound webhook endpoint configuration."""
+    ep = stac_harvester_service.get_endpoint(webhook_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail=f"Webhook endpoint '{webhook_id}' not found.")
+    return ep
+
+@operations_router.delete("/webhooks/{webhook_id}")
+def delete_webhook_endpoint(webhook_id: str):
+    """Deletes an outbound webhook endpoint."""
+    success = stac_harvester_service.delete_endpoint(webhook_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Webhook endpoint '{webhook_id}' not found.")
+    return {"status": "deleted", "webhook_id": webhook_id}
+
+@operations_router.post("/webhooks/{webhook_id}/test", response_model=WebhookTestDispatchPayloadResponse)
+async def test_webhook_endpoint_dispatch(webhook_id: str, req: Optional[WebhookTestDispatchPayloadRequest] = None):
+    """Dispatches a test notification payload to a webhook destination."""
+    try:
+        return await stac_harvester_service.test_webhook_dispatch(webhook_id, req)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Webhook endpoint '{webhook_id}' not found.")
+
+@operations_router.get("/dlq")
+def list_dead_letter_queue():
+    """Lists quarantined failure deliveries in the Dead-Letter Queue."""
+    items = stac_harvester_service.list_dlq()
+    return {"dead_letter_items": [item.model_dump(by_alias=True) for item in items]}
+
+@operations_router.post("/dlq/retry", response_model=DeadLetterQueueRetryResponse)
+async def retry_dead_letter_queue(req: Optional[DeadLetterQueueRetryRequest] = None):
+    """Replays failed deliveries quarantined in the Dead-Letter Queue."""
+    return await stac_harvester_service.retry_dlq(req)
+
+@operations_router.delete("/dlq")
+def clear_dead_letter_queue():
+    """Flushes quarantined items from the Dead-Letter Queue."""
+    cnt = stac_harvester_service.clear_dlq()
+    return {"status": "cleared", "cleared_count": cnt}

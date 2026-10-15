@@ -1794,6 +1794,414 @@ class TestScientificRigor(unittest.TestCase):
         tile_tpl = build_phenology_anomaly_tile_url_template("SIM_RIGOR_PHENO_01", metric="mad_anomaly_zscore")
         self.assertEqual(tile_tpl, "/api/v1/tiles/phenology/anomaly/SIM_RIGOR_PHENO_01/mad_anomaly_zscore/{z}/{x}/{y}.png")
 
+    def test_stac_harvester_webhook_and_perimeter_scientific_rigor(self):
+        """Task T-202: Continuous Scientific QA for Cycle v2.5.23 Automated STAC Harvester Subscriptions,
+        HMAC-SHA256 Cryptographic Signature Verification, Point-in-Polygon Topological Invariants & Exponential Backoff.
+        """
+        from app.models.schemas import (
+            generate_hmac_sha256_signature,
+            verify_hmac_sha256_signature,
+            point_in_perimeter_polygon,
+            calculate_retry_backoff,
+            format_channel_notification_payload,
+            simulate_stac_harvester_cycle,
+            STACCollectionName,
+            HarvestScheduleInterval,
+            WebhookChannelType,
+            WebhookDeliveryStatus,
+            HarvesterAlertSeverity,
+            PerimeterTriggerCondition,
+            HARVEST_SCHEDULE_CONFIGS,
+            WEBHOOK_CHANNEL_CONFIGS,
+            STACHarvesterSubscription,
+            WebhookEventEnvelope,
+            DeadLetterQueueItem
+        )
+
+        # 1. HMAC-SHA256 Cryptographic Invariants & Symmetric Verification
+        secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        payload = {
+            "event_id": "EVT-STAC-20261015-001",
+            "subscription_id": "SUB-SANLUIS-001",
+            "collection": STACCollectionName.SENTINEL_2.value,
+            "scene_id": "S2A_MSIL2A_20261015T184511_N0500_R113_T10SEJ",
+            "anomaly_z_score": 2.94,
+            "severity": HarvesterAlertSeverity.CRITICAL.value,
+            "timestamp": "2026-10-15T05:00:00Z"
+        }
+        sig = generate_hmac_sha256_signature(payload, secret)
+        self.assertIsInstance(sig, str)
+        self.assertEqual(len(sig), 64)  # 256 bits = 64 hex characters
+
+        # Symmetric constant-time verification
+        self.assertTrue(verify_hmac_sha256_signature(payload, secret, sig))
+        # Prefix insensitivity (RFC / GitHub / Stripe webhook standard format)
+        self.assertTrue(verify_hmac_sha256_signature(payload, secret, f"sha256={sig}"))
+        self.assertTrue(verify_hmac_sha256_signature(payload, secret, f"SHA256={sig}"))
+
+        # Envelope self-signing invariance (hmac_signature field automatic omission)
+        envelope_with_sig = dict(payload)
+        envelope_with_sig["hmac_signature"] = sig
+        self.assertTrue(verify_hmac_sha256_signature(envelope_with_sig, secret, sig))
+
+        # Tampering resistance: single-bit modification fails verification
+        tampered_payload = dict(payload)
+        tampered_payload["anomaly_z_score"] = 2.95
+        self.assertFalse(verify_hmac_sha256_signature(tampered_payload, secret, sig))
+
+        # Key isolation: differing secret fails verification
+        wrong_secret = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+        self.assertFalse(verify_hmac_sha256_signature(payload, wrong_secret, sig))
+
+        # Empty / None inputs protection
+        self.assertFalse(verify_hmac_sha256_signature(payload, "", sig))
+        self.assertFalse(verify_hmac_sha256_signature(payload, secret, ""))
+
+        # 2. Ray-Casting Point-in-Polygon (PIP) Topological Invariants
+        # Convex bounding box: San Luis Reservoir test polygon
+        poly = [
+            [-121.05, 37.00],
+            [-120.95, 37.00],
+            [-120.95, 37.10],
+            [-121.05, 37.10],
+            [-121.05, 37.00]
+        ]
+        # Interior points
+        self.assertTrue(point_in_perimeter_polygon(-121.00, 37.05, poly))
+        self.assertTrue(point_in_perimeter_polygon(-120.96, 37.01, poly))
+
+        # Exterior points
+        self.assertFalse(point_in_perimeter_polygon(-121.10, 37.05, poly))
+        self.assertFalse(point_in_perimeter_polygon(-121.00, 37.15, poly))
+        self.assertFalse(point_in_perimeter_polygon(-120.90, 37.05, poly))
+        self.assertFalse(point_in_perimeter_polygon(-121.00, 36.95, poly))
+
+        # Boundary tolerance: collinear edge points
+        self.assertTrue(point_in_perimeter_polygon(-121.00, 37.00, poly))  # Bottom edge
+        self.assertTrue(point_in_perimeter_polygon(-121.00, 37.10, poly))  # Top edge
+        self.assertTrue(point_in_perimeter_polygon(-121.05, 37.05, poly))  # Left edge
+        self.assertTrue(point_in_perimeter_polygon(-120.95, 37.05, poly))  # Right edge
+
+        # Boundary tolerance: coincident vertex points
+        self.assertTrue(point_in_perimeter_polygon(-121.05, 37.00, poly))
+        self.assertTrue(point_in_perimeter_polygon(-120.95, 37.00, poly))
+        self.assertTrue(point_in_perimeter_polygon(-120.95, 37.10, poly))
+        self.assertTrue(point_in_perimeter_polygon(-121.05, 37.10, poly))
+
+        # Non-convex polygon: L-shaped catchment boundary
+        l_shape = [
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 2.0],
+            [2.0, 2.0],
+            [2.0, 4.0],
+            [0.0, 4.0],
+            [0.0, 0.0]
+        ]
+        self.assertTrue(point_in_perimeter_polygon(1.0, 1.0, l_shape))    # Base corner
+        self.assertTrue(point_in_perimeter_polygon(1.0, 3.0, l_shape))    # Top arm
+        self.assertTrue(point_in_perimeter_polygon(3.0, 1.0, l_shape))    # Right arm
+        self.assertFalse(point_in_perimeter_polygon(3.0, 3.0, l_shape))   # Concave outer indentation
+        self.assertFalse(point_in_perimeter_polygon(5.0, 1.0, l_shape))   # Far outside
+
+        # Degenerate cases
+        self.assertFalse(point_in_perimeter_polygon(0.0, 0.0, []))
+        self.assertFalse(point_in_perimeter_polygon(0.0, 0.0, [[0.0, 0.0], [1.0, 1.0]]))
+
+        # 3. Exponential Backoff & Jitter Mathematical Bounds
+        # Exact powers of 2 for unjittered backoff
+        self.assertEqual(calculate_retry_backoff(0, base_delay=1.0, max_delay=60.0), 1.0)
+        self.assertEqual(calculate_retry_backoff(1, base_delay=1.0, max_delay=60.0), 2.0)
+        self.assertEqual(calculate_retry_backoff(2, base_delay=1.0, max_delay=60.0), 4.0)
+        self.assertEqual(calculate_retry_backoff(3, base_delay=1.0, max_delay=60.0), 8.0)
+        self.assertEqual(calculate_retry_backoff(4, base_delay=1.0, max_delay=60.0), 16.0)
+        self.assertEqual(calculate_retry_backoff(5, base_delay=1.0, max_delay=60.0), 32.0)
+        # Clamping at max_delay
+        self.assertEqual(calculate_retry_backoff(6, base_delay=1.0, max_delay=60.0), 60.0)
+        self.assertEqual(calculate_retry_backoff(10, base_delay=1.0, max_delay=60.0), 60.0)
+        # Negative attempt clamping
+        self.assertEqual(calculate_retry_backoff(-2, base_delay=2.0, max_delay=60.0), 2.0)
+        # Stochastic jitter scaling bounds
+        j_val = calculate_retry_backoff(2, base_delay=1.0, max_delay=60.0, jitter_factor=0.20)
+        self.assertEqual(j_val, 4.8)  # 4.0 * 1.20 = 4.8
+
+        # 4. Multi-Channel Notification Payload Structural Invariants
+        test_envelope = {
+            "event_id": "EVT-STAC-20261015-001",
+            "subscription_id": "SUB-TEST-001",
+            "event_type": "stac_harvester.anomaly_detected",
+            "severity": HarvesterAlertSeverity.CRITICAL.value,
+            "biophysical_metrics": {
+                "collection": "sentinel-2-l2a",
+                "scene_id": "S2A_MSIL2A_20261015_T10SEJ",
+                "anomaly_z_score": 3.12,
+                "cloud_cover_percentage": 4.5
+            },
+            "hmac_signature": sig
+        }
+        # Slack Attachments & Text
+        slack_payload = format_channel_notification_payload(WebhookChannelType.SLACK, test_envelope)
+        self.assertIn("attachments", slack_payload)
+        self.assertIn("text", slack_payload)
+        self.assertGreater(len(slack_payload["attachments"]), 0)
+
+        # MS Teams Adaptive Card
+        teams_payload = format_channel_notification_payload(WebhookChannelType.MS_TEAMS, test_envelope)
+        self.assertEqual(teams_payload["type"], "message")
+        self.assertIn("attachments", teams_payload)
+        self.assertEqual(teams_payload["attachments"][0]["contentType"], "application/vnd.microsoft.card.adaptive")
+
+        # PagerDuty Events API v2
+        pd_payload = format_channel_notification_payload(WebhookChannelType.PAGERDUTY, test_envelope)
+        self.assertEqual(pd_payload["event_action"], "trigger")
+        self.assertIn("payload", pd_payload)
+        self.assertEqual(pd_payload["payload"]["severity"], "critical")
+
+        # Email SMTP
+        email_payload = format_channel_notification_payload(WebhookChannelType.EMAIL_SMTP, test_envelope)
+        self.assertIn("subject", email_payload)
+        self.assertIn("body_html", email_payload)
+        self.assertIn("body_text", email_payload)
+
+        # Custom Webhook (Raw RFC 7946 Feature)
+        custom_payload = format_channel_notification_payload(WebhookChannelType.CUSTOM_WEBHOOK, test_envelope)
+        self.assertIn("event_id", custom_payload)
+        self.assertIn("hmac_signature", custom_payload)
+
+        # 5. STAC Ingestion Simulation Cycle Verification
+        sim_cycle = simulate_stac_harvester_cycle({
+            "subscription_id": "SUB-CYCLE-001",
+            "aoi_id": "AOI_SANLUIS",
+            "anomaly_threshold": 2.5
+        })
+        self.assertEqual(sim_cycle["subscription_id"], "SUB-CYCLE-001")
+        self.assertIn("evaluated_scenes", sim_cycle)
+        self.assertIn("events", sim_cycle)
+        self.assertIn("delivery_attempts", sim_cycle)
+        self.assertIn("dead_letter_queue", sim_cycle)
+        self.assertGreater(sim_cycle["evaluated_scenes_count"], 0)
+        self.assertGreaterEqual(sim_cycle["triggered_anomalies_count"], 0)
+
+    def test_drone_photogrammetry_gcp_affine_and_reprojection_scientific_rigor(self):
+        r"""Task T-208: Continuous Scientific QA for Cycle v2.5.24:
+        1. Least-Squares 2D Affine Transformation Matrix Recovery ($X_w = a + b X_p + c Y_p$, $Y_w = d + e X_p + f Y_p$)
+        2. Ground Sampling Distance (GSD) Trigonometry: $GSD_x = \sqrt{b^2 + e^2} \times 100$, $GSD_y = \sqrt{c^2 + f^2} \times 100$
+        3. Spatial Residual RMSE Bounds: RMSE_xy < 0.05m (strict geodetic control limit)
+        4. Independent Check Point Isolation & Pixel RMSE Residual Verification
+        5. Degenerate Geometry Invariants (<3 points, collinearity, zero determinant)
+        6. Drone Flight Planner Trigonometric Spacing & Motion-Blur Shutter Speed Limits
+        7. OpenDroneMap (ODM) GCP File Specification Serialization & Invariant Parsing Roundtrip
+        8. Benchmark Epipolar Bundle Adjustment Residue Bounds & Dynamic 7-Metric COG Tile Streaming
+        """
+        from app.models.schemas import (
+            solve_gcp_affine_transform,
+            calculate_drone_flight_plan,
+            format_odm_gcp_file,
+            parse_odm_gcp_file,
+            build_drone_photogrammetry_tile_url,
+            build_drone_photogrammetry_tile_url_template,
+            simulate_nodeodm_task_progression,
+            GroundControlPoint,
+            DroneFlightPlanRequest,
+            NodeODMLifecycleStatus,
+            NodeODMPipelineStage,
+            DronePhotogrammetryTileMetric,
+            DRONE_CAMERA_PRESETS,
+            DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS
+        )
+        from app.services.drone_service import drone_service
+        from app.services.tile_service import tile_service
+
+        # 1. Exact Least-Squares Affine Matrix Recovery
+        true_a = 591234.50
+        true_b = 0.035000   # 3.5 cm / px along X
+        true_c = -0.002000  # Slight shear/rotation
+        true_d = 4105678.90
+        true_e = 0.002000
+        true_f = 0.035000   # 3.5 cm / px along Y
+
+        grid_pts = [
+            (500.0, 500.0),
+            (9500.0, 600.0),
+            (9200.0, 7500.0),
+            (800.0, 7400.0),
+            (5000.0, 4000.0),
+            (2500.0, 3500.0),
+        ]
+        gcps = []
+        for idx, (px, py) in enumerate(grid_pts, 1):
+            wx = true_a + true_b * px + true_c * py
+            wy = true_d + true_e * px + true_f * py
+            gcps.append({
+                "gcp_id": f"GCP-{idx:02d}",
+                "pixel_x": px,
+                "pixel_y": py,
+                "world_x": wx,
+                "world_y": wy,
+                "elevation_z": 125.0 + idx * 2.5,
+                "is_check_point": False,
+                "is_enabled": True
+            })
+
+        res_affine = solve_gcp_affine_transform(gcps)
+        recovered = res_affine["affine_matrix"]
+        self.assertAlmostEqual(recovered[0], true_a, places=2)
+        self.assertAlmostEqual(recovered[1], true_b, places=6)
+        self.assertAlmostEqual(recovered[2], true_c, places=6)
+        self.assertAlmostEqual(recovered[3], true_d, places=2)
+        self.assertAlmostEqual(recovered[4], true_e, places=6)
+        self.assertAlmostEqual(recovered[5], true_f, places=6)
+
+        # 2. Ground Sampling Distance (GSD) & Rotation Invariants
+        expected_gsd_x = math.sqrt(true_b**2 + true_e**2) * 100.0
+        expected_gsd_y = math.sqrt(true_c**2 + true_f**2) * 100.0
+        expected_rot = math.degrees(math.atan2(true_e, true_b))
+
+        self.assertAlmostEqual(res_affine["gsd_x_cm"], expected_gsd_x, places=3)
+        self.assertAlmostEqual(res_affine["gsd_y_cm"], expected_gsd_y, places=3)
+        self.assertAlmostEqual(res_affine["mean_gsd_cm"], (expected_gsd_x + expected_gsd_y) / 2.0, places=3)
+        self.assertAlmostEqual(res_affine["rotation_deg"], expected_rot, places=3)
+        self.assertLess(res_affine["rmse_xy_m"], 0.001)
+        self.assertLess(res_affine["rmse_pixel"], 0.05)
+
+        # 3. Controlled Sub-Pixel Survey Noise (<0.05m RMSE limit)
+        noisy_gcps = []
+        noise_offsets = [
+            (0.20, -0.15),
+            (-0.30, 0.25),
+            (0.15, 0.30),
+            (-0.25, -0.20),
+            (0.10, -0.10),
+            (-0.05, 0.15)
+        ]
+        for idx, (px, py) in enumerate(grid_pts):
+            dx_px, dy_px = noise_offsets[idx]
+            noisy_px = px + dx_px
+            noisy_py = py + dy_px
+            wx = true_a + true_b * px + true_c * py
+            wy = true_d + true_e * px + true_f * py
+            noisy_gcps.append({
+                "gcp_id": f"GCP-{idx+1}",
+                "pixel_x": noisy_px,
+                "pixel_y": noisy_py,
+                "world_x": wx,
+                "world_y": wy,
+                "elevation_z": 130.0,
+                "is_check_point": False
+            })
+
+        noisy_res = solve_gcp_affine_transform(noisy_gcps)
+        self.assertLess(noisy_res["rmse_xy_m"], 0.05, "Spatial RMSE must satisfy rigorous geodetic requirement < 0.05m")
+        self.assertLess(noisy_res["rmse_pixel"], 1.0, "Pixel RMSE must remain sub-pixel < 1.0 px")
+
+        # 4. Check Point Isolation & Evaluation
+        check_pt = {
+            "gcp_id": "CHK-01",
+            "pixel_x": 4800.0,
+            "pixel_y": 3800.0,
+            "world_x": true_a + true_b * 4800.0 + true_c * 3800.0 + 0.02,
+            "world_y": true_d + true_e * 4800.0 + true_f * 3800.0 - 0.015,
+            "elevation_z": 132.0,
+            "is_check_point": True
+        }
+        with_chk = noisy_gcps + [check_pt]
+        chk_res = solve_gcp_affine_transform(with_chk)
+        self.assertEqual(len(chk_res["residuals"]), 7)
+        chk_item = next(r for r in chk_res["residuals"] if r["gcp_id"] == "CHK-01")
+        self.assertTrue(chk_item["is_check_point"])
+        self.assertGreater(chk_item["residual_world_xy_m"], 0.0)
+        self.assertLess(chk_item["residual_world_xy_m"], 0.05)
+
+        # 5. Degenerate Geometry Invariants
+        with self.assertRaises(ValueError):
+            solve_gcp_affine_transform(gcps[:2])
+
+        collinear_pts = [
+            {"pixel_x": 100.0, "pixel_y": 100.0, "world_x": 1000.0, "world_y": 1000.0},
+            {"pixel_x": 200.0, "pixel_y": 200.0, "world_x": 2000.0, "world_y": 2000.0},
+            {"pixel_x": 300.0, "pixel_y": 300.0, "world_x": 3000.0, "world_y": 3000.0},
+        ]
+        with self.assertRaises(ValueError):
+            solve_gcp_affine_transform(collinear_pts)
+
+        # 6. Drone Flight Planner Calculations & Shutter Motion-Blur Limits
+        cam = DRONE_CAMERA_PRESETS["DJI_FC6310R"]
+        flight_req = DroneFlightPlanRequest(
+            cameraModel="DJI_FC6310R",
+            targetGsdCm=2.5,
+            flightSpeedMs=5.0,
+            forwardOverlapPercent=75.0,
+            sideOverlapPercent=70.0,
+            surveyAreaHa=25.0
+        )
+        plan_res = calculate_drone_flight_plan(flight_req)
+        plan = plan_res["plan"]
+
+        # Theoretical altitude: H = (GSD * f) / pixel_size (f and pixel_size both in mm)
+        pixel_size_mm = cam["sensor_width_mm"] / cam["image_width_px"]
+        expected_alt = (0.025 * cam["focal_length_mm"]) / pixel_size_mm
+        self.assertAlmostEqual(plan["flight_altitude_m"], expected_alt, places=1)
+        self.assertGreater(plan["flight_altitude_m"], 80.0)
+        self.assertLess(plan["flight_altitude_m"], 120.0)
+
+        expected_w_fp = (cam["image_width_px"] * 0.025)
+        expected_h_fp = (cam["image_height_px"] * 0.025)
+        self.assertAlmostEqual(plan["ground_footprint_width_m"], expected_w_fp, places=1)
+        self.assertAlmostEqual(plan["ground_footprint_height_m"], expected_h_fp, places=1)
+
+        expected_fwd_spacing = expected_h_fp * (1.0 - 0.75)
+        self.assertAlmostEqual(plan["forward_photo_spacing_m"], expected_fwd_spacing, places=1)
+        self.assertAlmostEqual(plan["trigger_interval_seconds"], expected_fwd_spacing / 5.0, places=2)
+
+        max_shutter = (0.5 * 0.025) / 5.0  # 0.0025 s = 1/400 s
+        self.assertAlmostEqual(plan["min_shutter_speed_seconds"], max_shutter, places=5)
+        self.assertGreater(plan["estimated_photo_count"], 10)
+        self.assertGreater(plan["estimated_flight_time_minutes"], 0.5)
+
+        # 7. OpenDroneMap GCP Specification Roundtrip
+        formatted_gcp = format_odm_gcp_file(gcps[:4], epsg_code=32610)
+        self.assertTrue(formatted_gcp.startswith("+proj=utm +zone=10 +datum=WGS84 +units=m"))
+        parsed_gcps = parse_odm_gcp_file(formatted_gcp)
+        self.assertEqual(len(parsed_gcps), 4)
+        for orig, parsed in zip(gcps[:4], parsed_gcps):
+            self.assertEqual(parsed["gcp_id"], orig["gcp_id"])
+            self.assertAlmostEqual(parsed["world_x"], orig["world_x"], places=2)
+            self.assertAlmostEqual(parsed["world_y"], orig["world_y"], places=2)
+            self.assertAlmostEqual(parsed["elevation_z"], orig["elevation_z"], places=2)
+            self.assertAlmostEqual(parsed["pixel_x"], orig["pixel_x"], places=1)
+            self.assertAlmostEqual(parsed["pixel_y"], orig["pixel_y"], places=1)
+
+        # 8. Benchmark Task Epipolar Bundle Adjustment Residue Bounds & Dynamic Tile Streaming
+        benchmark_task = drone_service.get_photogrammetry_task("ODM-BENCHMARK-001")
+        self.assertIsNotNone(benchmark_task)
+        self.assertEqual(benchmark_task["status"], "completed")
+        self.assertIn("rmse_reprojection_px", benchmark_task)
+        reproj_err = benchmark_task["rmse_reprojection_px"]
+        self.assertLess(reproj_err, 1.0, "Epipolar bundle adjustment reprojection error must be sub-pixel (<1.0 px)")
+        self.assertAlmostEqual(reproj_err, 0.38, delta=0.05)
+
+        metrics = [
+            "orthophoto",
+            "dsm",
+            "dtm",
+            "chm",
+            "slope",
+            "reprojection_error",
+            "point_density"
+        ]
+        for m in metrics:
+            tile_bytes = tile_service.render_drone_photogrammetry_tile("ODM-BENCHMARK-001", z=18, x=42150, y=103240, metric=m)
+            self.assertIsInstance(tile_bytes, bytes)
+            self.assertGreater(len(tile_bytes), 200, f"Tile metric {m} must return non-empty PNG raster")
+            self.assertTrue(tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"), f"Tile metric {m} must have valid PNG magic header")
+
+        t_url_ortho = build_drone_photogrammetry_tile_url("ODM-BENCHMARK-001", 18, 42150, 103240, metric="orthophoto")
+        self.assertEqual(t_url_ortho, "/api/v1/tiles/drone/photogrammetry/ODM-BENCHMARK-001/18/42150/103240.png")
+        t_url_dsm = build_drone_photogrammetry_tile_url("ODM-BENCHMARK-001", 18, 42150, 103240, metric="dsm")
+        self.assertEqual(t_url_dsm, "/api/v1/tiles/drone/photogrammetry/ODM-BENCHMARK-001/dsm/18/42150/103240.png")
+        t_tpl = build_drone_photogrammetry_tile_url_template("ODM-BENCHMARK-001", metric="dsm")
+        self.assertEqual(t_tpl, "/api/v1/tiles/drone/photogrammetry/ODM-BENCHMARK-001/dsm/{z}/{x}/{y}.png")
+
 if __name__ == "__main__":
     unittest.main()
 

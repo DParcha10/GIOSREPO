@@ -852,7 +852,67 @@ from app.models.schemas import (
     PhenologyMADAnalysisRequest,
     PhenologyMADAnalysisResponse,
     PhenologyDecompositionRequest,
-    PhenologyDecompositionResponse
+    PhenologyDecompositionResponse,
+    STACCollectionName,
+    HarvestScheduleInterval,
+    WebhookChannelType,
+    WebhookDeliveryStatus,
+    HarvesterAlertSeverity,
+    PerimeterTriggerCondition,
+    HARVEST_SCHEDULE_CONFIGS,
+    WEBHOOK_CHANNEL_CONFIGS,
+    generate_hmac_sha256_signature,
+    verify_hmac_sha256_signature,
+    point_in_perimeter_polygon,
+    calculate_retry_backoff,
+    format_channel_notification_payload,
+    simulate_stac_harvester_cycle,
+    STACSubscriptionSchedule,
+    PerimeterGeoFence,
+    WebhookEndpointConfig,
+    STACHarvesterSubscription,
+    WebhookEventEnvelope,
+    WebhookDeliveryAttempt,
+    DeadLetterQueueItem,
+    STACHarvesterSubscriptionCreateRequest,
+    STACHarvesterSubscriptionResponse,
+    STACHarvesterTriggerRequest,
+    STACHarvesterTriggerResponse,
+    WebhookTestDispatchPayloadRequest,
+    WebhookTestDispatchPayloadResponse,
+    DeadLetterQueueRetryRequest,
+    DeadLetterQueueRetryResponse,
+    NodeODMLifecycleStatus,
+    DronePhotogrammetryTaskStatus,
+    NodeODMPipelineStage,
+    DronePhotogrammetryTileMetric,
+    PhotogrammetryFeatureQuality,
+    RadiometricCalibrationMode,
+    NODEODM_PIPELINE_STAGE_METADATA,
+    DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS,
+    DRONE_CAMERA_PRESETS,
+    GroundControlPoint,
+    CameraCalibrationParams,
+    GCPAffineTransformResult,
+    DroneFlightPlan,
+    NodeODMTaskOptions,
+    DronePhotogrammetryArtifacts,
+    DronePhotogrammetryTaskCreateRequest,
+    DronePhotogrammetryTaskStatusResponse,
+    DronePhotogrammetryGCPUpdateRequest,
+    DronePhotogrammetryGCPUpdateResponse,
+    DronePhotogrammetryCancelResponse,
+    DronePhotogrammetryAffineSolveRequest,
+    DronePhotogrammetryAffineSolveResponse,
+    DroneFlightPlanRequest,
+    DroneFlightPlanResponse,
+    solve_gcp_affine_transform,
+    calculate_drone_flight_plan,
+    format_odm_gcp_file,
+    parse_odm_gcp_file,
+    build_drone_photogrammetry_tile_url,
+    build_drone_photogrammetry_tile_url_template,
+    simulate_nodeodm_task_progression
 )
 from app.config import settings
 
@@ -9822,8 +9882,658 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(empty_ts["slope_per_year"], 0.0)
         self.assertEqual(empty_ts["trend_direction"], "no_trend")
 
+    def test_hmac_sha256_signature_generation_and_verification(self):
+        """Verify HMAC-SHA256 signature generation and constant-time verification across string and dict payloads."""
+        key = "gios-test-super-secret-key-32chars!"
+        msg_str = "hello world"
+        sig_str = generate_hmac_sha256_signature(msg_str, key)
+        self.assertEqual(len(sig_str), 64)
+        self.assertTrue(verify_hmac_sha256_signature(msg_str, key, sig_str))
+        self.assertTrue(verify_hmac_sha256_signature(msg_str, key, f"sha256={sig_str}"))
+        self.assertFalse(verify_hmac_sha256_signature(msg_str, key, "a" * 64))
+        self.assertFalse(verify_hmac_sha256_signature(msg_str, "wrong-key", sig_str))
+        self.assertFalse(verify_hmac_sha256_signature("tampered message", key, sig_str))
+        self.assertFalse(verify_hmac_sha256_signature(msg_str, key, ""))
+        self.assertFalse(verify_hmac_sha256_signature(msg_str, "", sig_str))
+
+        # Dict payload canonical sorting
+        payload_a = {"event_id": "EVT-123", "z_score": 2.85, "severity": "warning"}
+        payload_b = {"severity": "warning", "z_score": 2.85, "event_id": "EVT-123"}
+        sig_a = generate_hmac_sha256_signature(payload_a, key)
+        sig_b = generate_hmac_sha256_signature(payload_b, key)
+        self.assertEqual(sig_a, sig_b)
+        self.assertTrue(verify_hmac_sha256_signature(payload_b, key, sig_a))
+
+    def test_perimeter_point_in_polygon_ray_casting(self):
+        """Verify Point-in-Polygon (PIP) ray-casting algorithm on vertices, edges, and exterior points."""
+        polygon = [
+            [-121.0, 37.0],
+            [-120.0, 37.0],
+            [-120.0, 38.0],
+            [-121.0, 38.0],
+            [-121.0, 37.0]
+        ]
+        # Strictly interior point
+        self.assertTrue(point_in_perimeter_polygon(-120.5, 37.5, polygon))
+        # Strictly exterior point
+        self.assertFalse(point_in_perimeter_polygon(-119.5, 37.5, polygon))
+        self.assertFalse(point_in_perimeter_polygon(-120.5, 36.5, polygon))
+        # Exact vertex coincidence
+        self.assertTrue(point_in_perimeter_polygon(-121.0, 37.0, polygon))
+        self.assertTrue(point_in_perimeter_polygon(-120.0, 38.0, polygon))
+        # Collinear edge boundary point
+        self.assertTrue(point_in_perimeter_polygon(-120.5, 37.0, polygon))
+        self.assertTrue(point_in_perimeter_polygon(-120.0, 37.5, polygon))
+        # Degenerate polygons
+        self.assertFalse(point_in_perimeter_polygon(-120.5, 37.5, []))
+        self.assertFalse(point_in_perimeter_polygon(-120.5, 37.5, [[-121.0, 37.0], [-120.0, 37.0]]))
+
+    def test_exponential_backoff_and_jitter_bounds(self):
+        """Verify retry exponential backoff progression and jitter boundaries."""
+        # Deterministic base backoff (jitter = 0.0)
+        self.assertEqual(calculate_retry_backoff(0, base_delay=1.0, max_delay=60.0), 1.0)
+        self.assertEqual(calculate_retry_backoff(1, base_delay=1.0, max_delay=60.0), 2.0)
+        self.assertEqual(calculate_retry_backoff(2, base_delay=1.0, max_delay=60.0), 4.0)
+        self.assertEqual(calculate_retry_backoff(3, base_delay=1.0, max_delay=60.0), 8.0)
+        self.assertEqual(calculate_retry_backoff(4, base_delay=1.0, max_delay=60.0), 16.0)
+        self.assertEqual(calculate_retry_backoff(10, base_delay=1.0, max_delay=60.0), 60.0)
+        # Negative attempt clamped to 0
+        self.assertEqual(calculate_retry_backoff(-2, base_delay=2.5, max_delay=30.0), 2.5)
+        # Jitter bounds
+        jittered = calculate_retry_backoff(2, base_delay=1.0, max_delay=60.0, jitter_factor=0.1)
+        self.assertAlmostEqual(jittered, 4.4, places=2)
+
+    def test_multi_channel_notification_formatting(self):
+        """Verify notification payload formatting across Slack, MS Teams, PagerDuty, Email, and Custom Webhook."""
+        envelope = {
+            "event_id": "EVT-STAC-999",
+            "event_type": "stac_harvester.anomaly_detected",
+            "timestamp": "2026-10-15T12:00:00Z",
+            "subscription_id": "SUB-TEST-001",
+            "severity": "critical",
+            "metrics": {"z_score": 3.42, "cloud_cover": 5.1},
+            "hmac_signature": "abcdef0123456789" * 4,
+            "geojson_feature": {"type": "Feature", "properties": {"z_score": 3.42}}
+        }
+        # 1. Slack
+        slack_payload = format_channel_notification_payload(WebhookChannelType.SLACK, envelope)
+        self.assertEqual(slack_payload["channel"], "#gios-alerts")
+        self.assertIn("CRITICAL", slack_payload["text"])
+        self.assertEqual(slack_payload["attachments"][0]["color"], "#EF4444")
+        self.assertEqual(len(slack_payload["attachments"][0]["fields"]), 5)
+
+        # 2. MS Teams
+        teams_payload = format_channel_notification_payload("ms_teams", envelope)
+        self.assertEqual(teams_payload["type"], "message")
+        card = teams_payload["attachments"][0]["content"]
+        self.assertEqual(card["type"], "AdaptiveCard")
+        self.assertEqual(card["version"], "1.4")
+
+        # 3. PagerDuty
+        pd_payload = format_channel_notification_payload(WebhookChannelType.PAGERDUTY, envelope, webhook_url="test-routing-key")
+        self.assertEqual(pd_payload["routing_key"], "test-routing-key")
+        self.assertEqual(pd_payload["event_action"], "trigger")
+        self.assertEqual(pd_payload["payload"]["severity"], "critical")
+
+        # 4. Email SMTP
+        email_payload = format_channel_notification_payload("email_smtp", envelope, webhook_url="ops@tailings-monitor.internal")
+        self.assertIn("[GIOS CRITICAL]", email_payload["subject"])
+        self.assertEqual(email_payload["to"], ["ops@tailings-monitor.internal"])
+        self.assertIn("EVT-STAC-999", email_payload["body_text"])
+
+        # 5. Custom Webhook
+        custom_payload = format_channel_notification_payload(WebhookChannelType.CUSTOM_WEBHOOK, envelope)
+        self.assertEqual(custom_payload["event_id"], "EVT-STAC-999")
+        self.assertEqual(custom_payload["hmac_signature"], "abcdef0123456789" * 4)
+
+    def test_stac_harvester_pydantic_models_and_camelcase_serialization(self):
+        """Verify Pydantic model validation and camelCase alias serialization for STAC harvester entities."""
+        sched = STACSubscriptionSchedule(
+            interval=HarvestScheduleInterval.DAILY,
+            cloud_cover_max=15.0,
+            lookback_hours=72
+        )
+        dumped_sched = sched.model_dump(by_alias=True)
+        self.assertEqual(dumped_sched["interval"], "daily")
+        self.assertEqual(dumped_sched["cloudCoverMax"], 15.0)
+        self.assertEqual(dumped_sched["lookbackHours"], 72)
+
+        ep = WebhookEndpointConfig(
+            endpoint_id="EP-TEST-01",
+            channel_type=WebhookChannelType.SLACK,
+            target_url="https://hooks.slack.com/services/T1/B2/X3",
+            secret_token="sec-token",
+            max_retries=4
+        )
+        dumped_ep = ep.model_dump(by_alias=True)
+        self.assertEqual(dumped_ep["channelType"], "slack")
+        self.assertEqual(dumped_ep["targetUrl"], "https://hooks.slack.com/services/T1/B2/X3")
+
+        sub = STACHarvesterSubscription(
+            subscription_id="SUB-REG-01",
+            name="California Aqueduct Surveillance",
+            schedule=sched,
+            webhook_endpoints=[ep],
+            z_score_threshold=2.8
+        )
+        dumped_sub = sub.model_dump(by_alias=True)
+        self.assertEqual(dumped_sub["subscriptionId"], "SUB-REG-01")
+        self.assertEqual(dumped_sub["zScoreThreshold"], 2.8)
+        self.assertEqual(len(dumped_sub["webhookEndpoints"]), 1)
+
+        # WebhookDeliveryAttempt & DeadLetterQueueItem
+        attempt = WebhookDeliveryAttempt(
+            attempt_id="ATT-001",
+            event_id="EVT-001",
+            endpoint_id="EP-TEST-01",
+            channel_type=WebhookChannelType.SLACK,
+            status=WebhookDeliveryStatus.DELIVERED,
+            status_code=200,
+            response_latency_ms=35.2
+        )
+        self.assertEqual(attempt.status, WebhookDeliveryStatus.DELIVERED)
+
+        envelope = WebhookEventEnvelope(
+            event_id="EVT-ENV-01",
+            subscription_id="SUB-REG-01",
+            geojson_feature={"type": "Feature", "geometry": {"type": "Point", "coordinates": [-120.85, 37.05]}},
+            hmac_signature="sig-123"
+        )
+        dlq = DeadLetterQueueItem(
+            dlq_id="DLQ-01",
+            event=envelope,
+            endpoint_id="EP-TEST-01",
+            failure_reason="HTTP 503 Service Unavailable"
+        )
+        self.assertEqual(dlq.failure_reason, "HTTP 503 Service Unavailable")
+        self.assertTrue(dlq.can_retry)
+
+    def test_stac_harvester_route_contracts_and_parameter_interpolation(self):
+        """Verify canonical route contracts and parameter interpolation for all operations endpoints."""
+        self.assertEqual(API_ROUTE_CONTRACTS["operations_webhooks"], "/api/v1/operations/webhooks")
+        self.assertEqual(API_ROUTE_CONTRACTS["operations_harvester_subscriptions"], "/api/v1/operations/harvester/subscriptions")
+        self.assertEqual(API_ROUTE_CONTRACTS["operations_harvester_trigger"], "/api/v1/operations/harvester/trigger")
+        self.assertEqual(API_ROUTE_CONTRACTS["operations_dlq"], "/api/v1/operations/dlq")
+        self.assertEqual(API_ROUTE_CONTRACTS["operations_dlq_retry"], "/api/v1/operations/dlq/retry")
+
+        # Dynamic format_api_route with webhook_id and aliases
+        r1 = format_api_route("operations_webhook_detail", webhook_id="EP-TEST-99")
+        self.assertEqual(r1, "/api/v1/operations/webhooks/EP-TEST-99")
+        r1_alias = format_api_route("operations_webhook_detail", id="EP-TEST-99")
+        self.assertEqual(r1_alias, "/api/v1/operations/webhooks/EP-TEST-99")
+
+        r2 = format_api_route("operations_webhook_test", webhook_id="EP-TEST-99")
+        self.assertEqual(r2, "/api/v1/operations/webhooks/EP-TEST-99/test")
+
+        # Dynamic format_api_route with subscription_id and aliases
+        r3 = format_api_route("operations_harvester_detail", subscription_id="SUB-STAC-777")
+        self.assertEqual(r3, "/api/v1/operations/harvester/subscriptions/SUB-STAC-777")
+        r3_alias = format_api_route("operations_harvester_detail", sub_id="SUB-STAC-777")
+        self.assertEqual(r3_alias, "/api/v1/operations/harvester/subscriptions/SUB-STAC-777")
+
+    def test_simulate_stac_harvester_cycle_and_event_envelope(self):
+        """Verify synthetic automated STAC harvester cycle, cloud filtering, and HMAC signed dispatch."""
+        sub_def = {
+            "subscription_id": "SUB-SAN-LUIS-001",
+            "name": "San Luis Dam Perimeter Surveillance",
+            "schedule": {"cloud_cover_max": 25.0},
+            "z_score_threshold": 2.5,
+            "perimeter": {
+                "polygon_coordinates": [
+                    [-120.90, 37.00], [-120.80, 37.00], [-120.80, 37.10], [-120.90, 37.10], [-120.90, 37.00]
+                ]
+            },
+            "webhook_endpoints": [
+                {
+                    "endpoint_id": "EP-DISPATCH-01",
+                    "channel_type": "custom_webhook",
+                    "target_url": "https://api.gios.internal/webhooks",
+                    "secret_token": "secret-test-token-for-hmac",
+                    "is_active": True
+                }
+            ]
+        }
+        res = simulate_stac_harvester_cycle(sub_def)
+        self.assertEqual(res["subscription_id"], "SUB-SAN-LUIS-001")
+        self.assertEqual(res["evaluated_scenes_count"], 3)
+        self.assertEqual(res["triggered_anomalies_count"], 1)
+        self.assertEqual(res["dispatches_count"], 1)
+
+        event = res["events"][0]
+        self.assertTrue(verify_hmac_sha256_signature(event, "secret-test-token-for-hmac", event["hmac_signature"]))
+        self.assertEqual(event["geojson_feature"]["geometry"]["type"], "Point")
+
+    def test_harvester_and_dlq_immutability_and_edge_cases(self):
+        """Verify input immutability, catalog completeness, and DLQ models."""
+        caller_dict = {"subscription_id": "SUB-IMMUTABLE-01", "name": "Immutable Watchdog"}
+        caller_copy = dict(caller_dict)
+        res = simulate_stac_harvester_cycle(caller_dict)
+        self.assertEqual(caller_dict, caller_copy)
+
+        # Schedule and channel configs completeness
+        self.assertIn("hourly", HARVEST_SCHEDULE_CONFIGS)
+        self.assertIn("daily", HARVEST_SCHEDULE_CONFIGS)
+        self.assertIn("slack", WEBHOOK_CHANNEL_CONFIGS)
+        self.assertIn("ms_teams", WEBHOOK_CHANNEL_CONFIGS)
+        self.assertIn("custom_webhook", WEBHOOK_CHANNEL_CONFIGS)
+
+        # DLQ retry request / response models
+        retry_req = DeadLetterQueueRetryRequest(dlq_ids=["DLQ-01", "DLQ-02"], retry_all=False)
+        self.assertFalse(retry_req.retry_all)
+        self.assertEqual(len(retry_req.dlq_ids), 2)
+
+        retry_resp = DeadLetterQueueRetryResponse(
+            replayed_count=2,
+            succeeded_count=2,
+            failed_count=0,
+            remaining_dlq_count=0
+        )
+        self.assertEqual(retry_resp.succeeded_count, 2)
+        self.assertEqual(retry_resp.remaining_dlq_count, 0)
+
+    def test_nodeodm_lifecycle_and_pipeline_stage_enums_and_metadata(self):
+        """Verify Cycle v2.5.24 NodeODM lifecycle enums, pipeline stage metadata, and camera presets."""
+        # 1. Lifecycle status values
+        self.assertEqual(NodeODMLifecycleStatus.QUEUED.value, "queued")
+        self.assertEqual(NodeODMLifecycleStatus.RUNNING.value, "running")
+        self.assertEqual(NodeODMLifecycleStatus.COMPLETED.value, "completed")
+        self.assertEqual(NodeODMLifecycleStatus.FAILED.value, "failed")
+        self.assertEqual(NodeODMLifecycleStatus.CANCELLED.value, "cancelled")
+        self.assertEqual(NodeODMLifecycleStatus.CANCELED.value, "cancelled")
+        self.assertEqual(NodeODMLifecycleStatus.RESTARTING.value, "restarting")
+
+        # 2. Pipeline stages and metadata completeness
+        self.assertEqual(NodeODMPipelineStage.DATASET_INITIALIZATION.value, "dataset_initialization")
+        self.assertEqual(NodeODMPipelineStage.STRUCTURE_FROM_MOTION.value, "structure_from_motion")
+        self.assertEqual(NodeODMPipelineStage.MVS_DENSE_POINT_CLOUD.value, "mvs_dense_point_cloud")
+        self.assertEqual(NodeODMPipelineStage.ORTHOPHOTO_MOSAICING.value, "orthophoto_mosaicing")
+        self.assertEqual(NodeODMPipelineStage.DEM_CSF_SURFACE_EXTRACTION.value, "dem_csf_surface_extraction")
+        self.assertEqual(NodeODMPipelineStage.COG_PYRAMIDAL_TILES.value, "cog_pyramidal_tiles")
+
+        # Verify all operational stages are registered in NODEODM_PIPELINE_STAGE_METADATA
+        for stage_enum in NodeODMPipelineStage:
+            if stage_enum.value in ("completed", "failed"):
+                continue
+            self.assertIn(stage_enum.value, NODEODM_PIPELINE_STAGE_METADATA)
+            meta = NODEODM_PIPELINE_STAGE_METADATA[stage_enum.value]
+            self.assertIn("label", meta)
+            self.assertIn("progress_range", meta)
+            p_min, p_max = meta["progress_range"]
+            self.assertLessEqual(p_min, p_max)
+
+        # 3. Drone photogrammetry tile metrics
+        self.assertEqual(DronePhotogrammetryTileMetric.ORTHOPHOTO.value, "orthophoto")
+        self.assertEqual(DronePhotogrammetryTileMetric.DSM.value, "dsm")
+        self.assertEqual(DronePhotogrammetryTileMetric.DTM.value, "dtm")
+        self.assertEqual(DronePhotogrammetryTileMetric.CHM.value, "chm")
+        self.assertEqual(DronePhotogrammetryTileMetric.SLOPE.value, "slope")
+        self.assertEqual(DronePhotogrammetryTileMetric.REPROJECTION_ERROR.value, "reprojection_error")
+        self.assertEqual(DronePhotogrammetryTileMetric.POINT_DENSITY.value, "point_density")
+
+        for metric_enum in DronePhotogrammetryTileMetric:
+            self.assertIn(metric_enum.value, DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS)
+            m_cfg = DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS[metric_enum.value]
+            self.assertIn("name", m_cfg)
+            self.assertIn("units", m_cfg)
+            self.assertIn("default_colormap", m_cfg)
+            self.assertIn("default_rescale", m_cfg)
+
+        # 4. Feature quality & radiometric calibration modes
+        self.assertEqual(PhotogrammetryFeatureQuality.ULTRA.value, "ultra")
+        self.assertEqual(PhotogrammetryFeatureQuality.HIGH.value, "high")
+        self.assertEqual(PhotogrammetryFeatureQuality.MEDIUM.value, "medium")
+        self.assertEqual(RadiometricCalibrationMode.NONE.value, "none")
+        self.assertEqual(RadiometricCalibrationMode.CAMERA.value, "camera")
+        self.assertEqual(RadiometricCalibrationMode.CAMERA_SUN.value, "camera+sun")
+
+        # 5. Camera presets
+        self.assertIn("DJI_FC6310R", DRONE_CAMERA_PRESETS)
+        self.assertIn("DJI_M3E", DRONE_CAMERA_PRESETS)
+        self.assertIn("DJI_P1_35", DRONE_CAMERA_PRESETS)
+        fc6310 = DRONE_CAMERA_PRESETS["DJI_FC6310R"]
+        self.assertEqual(fc6310["focal_length_mm"], 8.8)
+        self.assertEqual(fc6310["image_width_px"], 5472)
+        self.assertEqual(fc6310["image_height_px"], 3648)
+
+    def test_gcp_affine_transform_solver_mathematical_rigor(self):
+        """Verify least-squares 6-parameter 2D affine geotransform solver, GSD, and RMSE residuals."""
+        # 1. Synthetic ground truth affine transform:
+        # X_w = 674000.0 + 0.05 * X_p - 0.01 * Y_p
+        # Y_w = 4102000.0 + 0.01 * X_p + 0.05 * Y_p
+        test_gcps = [
+            {"gcp_id": "GCP-1", "pixel_x": 100.0, "pixel_y": 100.0, "world_x": 674004.0, "world_y": 4102006.0, "elevation_z": 120.0, "is_check_point": False, "is_enabled": True},
+            {"gcp_id": "GCP-2", "pixel_x": 1000.0, "pixel_y": 100.0, "world_x": 674049.0, "world_y": 4102015.0, "elevation_z": 120.0, "is_check_point": False, "is_enabled": True},
+            {"gcp_id": "GCP-3", "pixel_x": 1000.0, "pixel_y": 800.0, "world_x": 674042.0, "world_y": 4102050.0, "elevation_z": 120.0, "is_check_point": False, "is_enabled": True},
+            {"gcp_id": "GCP-4", "pixel_x": 100.0, "pixel_y": 800.0, "world_x": 673997.0, "world_y": 4102041.0, "elevation_z": 120.0, "is_check_point": False, "is_enabled": True},
+            {"gcp_id": "GCP-5", "pixel_x": 500.0, "pixel_y": 400.0, "world_x": 674021.0, "world_y": 4102025.0, "elevation_z": 120.0, "is_check_point": True, "is_enabled": True}
+        ]
+
+        result = solve_gcp_affine_transform(test_gcps)
+
+        # 2. Assert affine matrix coefficients [a, b, c, d, e, f]
+        a, b, c, d, e, f = result["affine_matrix"]
+        self.assertAlmostEqual(a, 674000.0, places=2)
+        self.assertAlmostEqual(b, 0.05, places=5)
+        self.assertAlmostEqual(c, -0.01, places=5)
+        self.assertAlmostEqual(d, 4102000.0, places=2)
+        self.assertAlmostEqual(e, 0.01, places=5)
+        self.assertAlmostEqual(f, 0.05, places=5)
+
+        # 3. Assert GSD calculations: sqrt(0.05^2 + 0.01^2) * 100 = sqrt(0.0026) * 100 = 5.099 cm/px
+        expected_gsd = math.sqrt(0.05**2 + 0.01**2) * 100.0
+        self.assertAlmostEqual(result["gsd_x_cm"], expected_gsd, places=2)
+        self.assertAlmostEqual(result["gsd_y_cm"], expected_gsd, places=2)
+        self.assertAlmostEqual(result["mean_gsd_cm"], expected_gsd, places=2)
+
+        # 4. Assert zero residuals for perfect synthetic data
+        self.assertLess(result["rmse_xy_m"], 0.001)
+        self.assertLess(result["rmse_pixel"], 0.01)
+        self.assertEqual(result["points_used"], 5)
+        self.assertEqual(len(result["residuals"]), 5)
+
+        # 5. Degenerate collinear case raises ValueError
+        collinear_gcps = [
+            {"gcp_id": "C-1", "pixel_x": 100.0, "pixel_y": 100.0, "world_x": 10.0, "world_y": 20.0},
+            {"gcp_id": "C-2", "pixel_x": 200.0, "pixel_y": 200.0, "world_x": 20.0, "world_y": 40.0},
+            {"gcp_id": "C-3", "pixel_x": 300.0, "pixel_y": 300.0, "world_x": 30.0, "world_y": 60.0}
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            solve_gcp_affine_transform(collinear_gcps)
+        self.assertIn("collinear", str(ctx.exception).lower())
+
+        # 6. Fewer than 3 points raises ValueError
+        with self.assertRaises(ValueError):
+            solve_gcp_affine_transform(test_gcps[:2])
+
+    def test_drone_flight_plan_calculations_and_shutter_bounds(self):
+        """Verify photogrammetric flight planning equations, ground footprint, and blur-free shutter bounds."""
+        req_params = {
+            "target_gsd_cm": 2.5,
+            "camera_model": "DJI_FC6310R",
+            "forward_overlap_percent": 75.0,
+            "side_overlap_percent": 60.0,
+            "survey_area_ha": 25.0,
+            "flight_speed_ms": 8.0
+        }
+
+        res = calculate_drone_flight_plan(req_params)
+        plan = res["plan"]
+        cam = res["camera_used"]
+
+        # Pixel size = 13.2 mm / 5472 px = 0.00241228 mm/px
+        # Flight altitude H = (0.025 m) * (8.8 mm / 0.00241228 mm) = 91.2 meters
+        self.assertAlmostEqual(plan["flight_altitude_m"], 91.2, places=1)
+
+        # Footprints: width = 0.025 * 5472 = 136.8 m; height = 0.025 * 3648 = 91.2 m
+        self.assertAlmostEqual(plan["ground_footprint_width_m"], 136.8, places=1)
+        self.assertAlmostEqual(plan["ground_footprint_height_m"], 91.2, places=1)
+
+        # Forward photo spacing: 91.2 * (1 - 0.75) = 22.8 m
+        self.assertAlmostEqual(plan["forward_photo_spacing_m"], 22.8, places=1)
+
+        # Flight line spacing: 136.8 * (1 - 0.60) = 54.72 m
+        self.assertAlmostEqual(plan["flight_line_spacing_m"], 54.72, places=1)
+
+        # Trigger interval: 22.8 m / 8.0 m/s = 2.85 seconds
+        self.assertAlmostEqual(plan["trigger_interval_seconds"], 2.85, places=2)
+
+        # Max blur-free shutter speed: (0.5 * 0.025 m) / 8.0 m/s = 0.0015625 s (~1/640 sec)
+        self.assertAlmostEqual(plan["min_shutter_speed_seconds"], 0.00156, places=5)
+        self.assertGreater(plan["estimated_photo_count"], 0)
+        self.assertGreater(plan["estimated_flight_time_minutes"], 0.0)
+
+        # Camera used verification
+        self.assertEqual(cam["camera_id"], "DJI_FC6310R")
+        self.assertIn("FC6310R", cam["camera_model"])
+        self.assertEqual(cam["sensor_width_mm"], 13.2)
+        self.assertEqual(cam["focal_length_mm"], 8.8)
+
+        # Verify polymorphism with DroneFlightPlanRequest model
+        model_req = DroneFlightPlanRequest(
+            target_gsd_cm=2.5,
+            camera_model="DJI_FC6310R",
+            forward_overlap_percent=75.0,
+            side_overlap_percent=60.0,
+            survey_area_ha=25.0,
+            flight_speed_ms=8.0
+        )
+        res_model = calculate_drone_flight_plan(model_req)
+        self.assertEqual(res_model["plan"]["flight_altitude_m"], plan["flight_altitude_m"])
+
+    def test_odm_gcp_file_formatting_and_parsing_roundtrip(self):
+        """Verify OpenDroneMap GCP text file formatting, projection header, and parsing roundtrip."""
+        gcps = [
+            GroundControlPoint(gcp_id="GCP-01", world_x=674100.0, world_y=4102300.0, elevation_z=132.5, pixel_x=500.0, pixel_y=450.0, image_name="frame_001.jpg", is_enabled=True),
+            GroundControlPoint(gcp_id="GCP-02", world_x=674207.5, world_y=4102302.0, elevation_z=132.8, pixel_x=4800.0, pixel_y=520.0, image_name="frame_002.jpg", is_enabled=True),
+            GroundControlPoint(gcp_id="GCP-03", world_x=674102.5, world_y=4102231.2, elevation_z=88.4, pixel_x=600.0, pixel_y=3200.0, image_name="frame_003.jpg", is_enabled=True),
+            GroundControlPoint(gcp_id="GCP-DISABLED", world_x=0.0, world_y=0.0, elevation_z=0.0, pixel_x=0.0, pixel_y=0.0, image_name="frame_004.jpg", is_enabled=False)
+        ]
+
+        formatted = format_odm_gcp_file(gcps, epsg_code=32610)
+        lines = formatted.strip().splitlines()
+
+        # Line 0 must be UTM WGS84 SRS definition
+        self.assertIn("+proj=utm +zone=10 +datum=WGS84", lines[0])
+        # Only enabled points should be included (3 lines + 1 header = 4 lines)
+        self.assertEqual(len(lines), 4)
+
+        # Parse back
+        parsed = parse_odm_gcp_file(formatted)
+        self.assertEqual(len(parsed), 3)
+        self.assertEqual(parsed[0]["gcp_id"], "GCP-01")
+        self.assertEqual(parsed[0]["world_x"], 674100.0)
+        self.assertEqual(parsed[0]["pixel_x"], 500.0)
+        self.assertEqual(parsed[0]["image_name"], "frame_001.jpg")
+
+        # Parsing empty/comment-only text returns empty list
+        self.assertEqual(parse_odm_gcp_file("# comment line\n"), [])
+
+    def test_drone_photogrammetry_pydantic_models_and_camelcase_serialization(self):
+        """Verify Pydantic models for task creation, status, GCP updates, and camelCase aliases."""
+        # 1. Task Create Request
+        create_payload = {
+            "taskId": "ODM-TAILINGS-2026",
+            "projectName": "Tailings Dam Crest Survey",
+            "droneModel": "DJI_M3E",
+            "targetGsdCm": 2.0,
+            "forwardOverlapPercent": 80.0,
+            "sideOverlapPercent": 70.0,
+            "imageFilenames": ["img_001.jpg", "img_002.jpg", "img_003.jpg"],
+            "options": {
+                "featureQuality": "high",
+                "fastOrthophoto": True,
+                "dsmResolutionCm": 4.0,
+                "dtmResolutionCm": 4.0
+            }
+        }
+        create_req = DronePhotogrammetryTaskCreateRequest.model_validate(create_payload)
+        self.assertEqual(create_req.task_id, "ODM-TAILINGS-2026")
+        self.assertEqual(create_req.target_gsd_cm, 2.0)
+        self.assertEqual(create_req.options.feature_quality, PhotogrammetryFeatureQuality.HIGH)
+        self.assertTrue(create_req.options.fast_orthophoto)
+
+        # 2. Task Status Response
+        status_resp = DronePhotogrammetryTaskStatusResponse(
+            task_id="ODM-TAILINGS-2026",
+            project_name="Tailings Dam Crest Survey",
+            status=NodeODMLifecycleStatus.RUNNING,
+            stage=NodeODMPipelineStage.ORTHOPHOTO_MOSAICING,
+            stage_label="Orthophoto Seamline Mosaicing",
+            progress_percent=78.5,
+            elapsed_seconds=320.0,
+            estimated_remaining_seconds=85.0,
+            image_count=120,
+            reconstructed_points=1850000,
+            achieved_gsd_cm=2.02,
+            rmse_reprojection_px=0.38,
+            artifacts=DronePhotogrammetryArtifacts(
+                orthophoto_cog_url="/static/drone/ortho.tif",
+                dtm_cog_url="/static/drone/dtm.tif",
+                dsm_cog_url="/static/drone/dsm.tif"
+            ),
+            tile_url_template="/api/v1/tiles/drone/photogrammetry/ODM-TAILINGS-2026/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(status_resp.status, NodeODMLifecycleStatus.RUNNING)
+        self.assertEqual(status_resp.progress_percent, 78.5)
+        self.assertIsNotNone(status_resp.artifacts)
+        self.assertIn("ortho.tif", status_resp.artifacts.orthophoto_cog_url)
+
+        # 3. GCP update request and response
+        gcp_req = DronePhotogrammetryGCPUpdateRequest(
+            gcps=[
+                GroundControlPoint(gcp_id="GCP-01", world_x=674100.0, world_y=4102300.0, elevation_z=132.5, pixel_x=500.0, pixel_y=450.0)
+            ],
+            epsg_code=32610
+        )
+        self.assertEqual(len(gcp_req.gcps), 1)
+
+        gcp_resp = DronePhotogrammetryGCPUpdateResponse(
+            task_id="ODM-TAILINGS-2026",
+            total_gcps=1,
+            enabled_gcps=1,
+            check_points=0,
+            message="GCP network updated successfully."
+        )
+        self.assertEqual(gcp_resp.total_gcps, 1)
+        self.assertEqual(gcp_resp.enabled_gcps, 1)
+        self.assertEqual(gcp_resp.check_points, 0)
+
+        # 4. Cancel response
+        cancel_resp = DronePhotogrammetryCancelResponse(task_id="ODM-TAILINGS-2026", status=NodeODMLifecycleStatus.CANCELLED.value)
+        self.assertEqual(cancel_resp.status, "cancelled")
+
+    def test_drone_photogrammetry_canonical_route_contracts_and_parameter_interpolation(self):
+        """Verify all 16 canonical API route contracts and parameter interpolation."""
+        expected_routes = [
+            "drone_photogrammetry_tasks",
+            "drone_photogrammetry_tasks_short",
+            "drone_photogrammetry_task_detail",
+            "drone_photogrammetry_task_detail_short",
+            "drone_photogrammetry_task_cancel",
+            "drone_photogrammetry_task_cancel_short",
+            "drone_photogrammetry_task_restart",
+            "drone_photogrammetry_task_restart_short",
+            "drone_photogrammetry_task_gcp",
+            "drone_photogrammetry_task_gcp_short",
+            "drone_photogrammetry_flight_plan",
+            "drone_photogrammetry_flight_plan_short",
+            "drone_photogrammetry_solve_affine",
+            "drone_photogrammetry_solve_affine_short",
+            "tiles_drone_photogrammetry",
+            "tiles_drone_photogrammetry_metric"
+        ]
+
+        for r_name in expected_routes:
+            self.assertIn(r_name, API_ROUTE_CONTRACTS)
+
+        # Parameter formatting and alias tests
+        route_detail = format_api_route("drone_photogrammetry_task_detail", task_id="ODM-101")
+        self.assertEqual(route_detail, "/api/v1/drone/photogrammetry/tasks/ODM-101")
+
+        route_alias_camel = format_api_route("drone_photogrammetry_task_detail", taskId="ODM-101")
+        self.assertEqual(route_alias_camel, "/api/v1/drone/photogrammetry/tasks/ODM-101")
+
+        route_alias_id = format_api_route("drone_photogrammetry_task_detail", id="ODM-101")
+        self.assertEqual(route_alias_id, "/api/v1/drone/photogrammetry/tasks/ODM-101")
+
+        # Tile URL formatting
+        tile_url = format_api_route("tiles_drone_photogrammetry", task_id="ODM-101", z=16, x=1024, y=2048)
+        self.assertEqual(tile_url, "/api/v1/tiles/drone/photogrammetry/ODM-101/16/1024/2048.png")
+
+        tile_metric_url = format_api_route("tiles_drone_photogrammetry_metric", task_id="ODM-101", metric="dsm", z=16, x=1024, y=2048)
+        self.assertEqual(tile_metric_url, "/api/v1/tiles/drone/photogrammetry/ODM-101/dsm/16/1024/2048.png")
+
+        # Tile builders
+        tile_builder_res = build_drone_photogrammetry_tile_url("ODM-101", 16, 1024, 2048, metric="slope", colormap="viridis")
+        self.assertIn("/api/v1/tiles/drone/photogrammetry/ODM-101/slope/16/1024/2048.png?colormap=viridis", tile_builder_res)
+
+        template_res = build_drone_photogrammetry_tile_url_template("ODM-101", metric="dtm")
+        self.assertEqual(template_res, "/api/v1/tiles/drone/photogrammetry/ODM-101/dtm/{z}/{x}/{y}.png")
+
+    def test_simulate_nodeodm_task_progression_and_telemetry(self):
+        """Verify synthetic telemetry generation across all pipeline lifecycle stages."""
+        # 1. Running dense point cloud stage
+        sim_running = simulate_nodeodm_task_progression(
+            task_id="ODM-SIM-01",
+            stage=NodeODMPipelineStage.MVS_DENSE_POINT_CLOUD,
+            elapsed_seconds=150.0,
+            image_count=100
+        )
+        self.assertEqual(sim_running["status"], "running")
+        self.assertEqual(sim_running["stage"], "mvs_dense_point_cloud")
+        self.assertGreaterEqual(sim_running["progress_percent"], 50.0)
+        self.assertLessEqual(sim_running["progress_percent"], 70.0)
+        self.assertGreater(sim_running["reconstructed_points"], 0)
+        self.assertIsNone(sim_running["artifacts"])
+        self.assertIsNone(sim_running["error_message"])
+
+        # 2. Completed stage with artifacts
+        sim_completed = simulate_nodeodm_task_progression(
+            task_id="ODM-SIM-01",
+            stage="completed",
+            image_count=100
+        )
+        self.assertEqual(sim_completed["status"], "completed")
+        self.assertEqual(sim_completed["progress_percent"], 100.0)
+        self.assertEqual(sim_completed["estimated_remaining_seconds"], 0.0)
+        self.assertIsNotNone(sim_completed["artifacts"])
+        self.assertIn("orthophoto.tif", sim_completed["artifacts"]["orthophoto_cog_url"])
+
+        # 3. Failed stage with error message
+        sim_failed = simulate_nodeodm_task_progression(
+            task_id="ODM-SIM-01",
+            stage="failed"
+        )
+        self.assertEqual(sim_failed["status"], "failed")
+        self.assertEqual(sim_failed["progress_percent"], 0.0)
+        self.assertIsNotNone(sim_failed["error_message"])
+
+    def test_drone_photogrammetry_immutability_and_edge_cases(self):
+        """Verify caller dictionary immutability, BoundingBox lat/lng aliasing, and edge cases."""
+        # 1. Caller dict immutability in solvers
+        gcps_input = [
+            {"gcp_id": "GCP-1", "pixel_x": 100.0, "pixel_y": 100.0, "world_x": 100.0, "world_y": 100.0},
+            {"gcp_id": "GCP-2", "pixel_x": 1000.0, "pixel_y": 100.0, "world_x": 1000.0, "world_y": 100.0},
+            {"gcp_id": "GCP-3", "pixel_x": 1000.0, "pixel_y": 1000.0, "world_x": 1000.0, "world_y": 1000.0}
+        ]
+        gcps_copy = [dict(g) for g in gcps_input]
+        _ = solve_gcp_affine_transform(gcps_input)
+        self.assertEqual(gcps_input, gcps_copy)
+
+        plan_input = {"target_gsd_cm": 2.5, "camera_model": "DJI_FC6310R"}
+        plan_copy = dict(plan_input)
+        _ = calculate_drone_flight_plan(plan_input)
+        self.assertEqual(plan_input, plan_copy)
+
+        # 2. BoundingBox lon/lng alias compatibility
+        bbox = BoundingBox.model_validate({
+            "min_lng": -122.5,
+            "min_lat": 37.5,
+            "max_lng": -122.0,
+            "max_lat": 38.0
+        })
+        self.assertEqual(bbox.min_lon, -122.5)
+        self.assertEqual(bbox.max_lon, -122.0)
+
+        # 3. GCP solver with disabled points filtering
+        gcps_with_disabled = [
+            {"gcp_id": "GCP-1", "pixel_x": 100.0, "pixel_y": 100.0, "world_x": 100.0, "world_y": 100.0, "is_enabled": True},
+            {"gcp_id": "GCP-2", "pixel_x": 1000.0, "pixel_y": 100.0, "world_x": 1000.0, "world_y": 100.0, "is_enabled": True},
+            {"gcp_id": "GCP-3", "pixel_x": 1000.0, "pixel_y": 1000.0, "world_x": 1000.0, "world_y": 1000.0, "is_enabled": True},
+            {"gcp_id": "GCP-4", "pixel_x": 0.0, "pixel_y": 0.0, "world_x": 0.0, "world_y": 0.0, "is_enabled": False}
+        ]
+        res_filter = solve_gcp_affine_transform(gcps_with_disabled)
+        self.assertEqual(res_filter["points_used"], 3)
+
+        # If disabling leaves < 3 points, raise ValueError
+        gcps_with_disabled[2]["is_enabled"] = False
+        with self.assertRaises(ValueError):
+            solve_gcp_affine_transform(gcps_with_disabled)
+
 if __name__ == "__main__":
     unittest.main()
+
+
 
 
 

@@ -51,7 +51,16 @@ import {
   decomposeDualOrbitInSARVelocities,
   calculateSarCoherenceLoss,
   calculateDamageProxyMappingAnalysis,
-  calculatePhenologyDecompositionAnalysis
+  calculatePhenologyDecompositionAnalysis,
+  simulateSTACHarvesterCycle,
+  solveGcpAffineTransform,
+  calculateDroneFlightPlan,
+  simulateNodeODMTaskProgression,
+  validateBandMathFormula,
+  evaluateBandMathFormula,
+  parseBandMathAst,
+  BAND_MATH_PRESETS,
+  buildCustomExpressionTileUrlTemplate
 } from '../config/constants.js';
 
 export {
@@ -2676,6 +2685,177 @@ const demoAdapter = async (config) => {
           }
         }
         data = calculatePhenologyDecompositionAnalysis(parsed);
+      }
+      else if (url.includes('/api/v1/operations/harvester/subscriptions') || url.includes('/operations/harvester/subscriptions')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (config.method === 'post') {
+          data = {
+            subscription: {
+              subscription_id: parsed.subscription_id || parsed.subscriptionId || `SUB-STAC-${Date.now()}`,
+              name: parsed.name || 'San Luis Reservoir Perimeter Watchdog',
+              description: parsed.description || 'Automated STAC satellite surveillance',
+              schedule: parsed.schedule || { interval: 'hourly', cloud_cover_max: 20.0 },
+              perimeter: parsed.perimeter || { fence_id: 'FENCE-01' },
+              webhook_endpoints: parsed.webhook_endpoints || parsed.webhookEndpoints || [],
+              trigger_conditions: parsed.trigger_conditions || ['anomaly_exceeded', 'new_scene'],
+              z_score_threshold: parsed.z_score_threshold ?? 2.5,
+              is_enabled: parsed.is_enabled ?? true,
+              created_at: new Date().toISOString(),
+              total_dispatches: 0
+            },
+            status: 'active',
+            message: 'Subscription successfully registered.'
+          };
+        } else {
+          data = {
+            subscriptions: [
+              {
+                subscription_id: 'SUB-STAC-001',
+                name: 'San Luis Dam & Reservoir Perimeter Watchdog',
+                description: 'Automated Sentinel-2 & Landsat anomaly detection',
+                schedule: { interval: 'hourly', cloud_cover_max: 20.0, collections: ['sentinel-2-l2a', 'landsat-c2-l2'] },
+                perimeter: { fence_id: 'FENCE-001', name: 'San Luis Reservoir Buffer' },
+                webhook_endpoints: [
+                  { endpoint_id: 'EP-01', channel_type: 'custom_webhook', target_url: 'https://api.gios.internal/webhooks/incoming', is_active: true }
+                ],
+                trigger_conditions: ['anomaly_exceeded', 'new_scene'],
+                z_score_threshold: 2.5,
+                is_enabled: true,
+                created_at: new Date().toISOString(),
+                total_dispatches: 4
+              }
+            ]
+          };
+        }
+      }
+      else if (url.includes('/api/v1/operations/harvester/trigger') || url.includes('/operations/harvester/trigger')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = simulateSTACHarvesterCycle(parsed);
+      }
+      else if (url.includes('/api/v1/operations/webhooks') || url.includes('/operations/webhooks')) {
+        if (url.includes('/test')) {
+          let parsed = {};
+          try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+          data = {
+            endpoint_id: parsed.endpoint_id || parsed.endpointId || 'EP-001',
+            channel_type: 'custom_webhook',
+            target_url: 'https://api.gios.internal/webhooks/incoming',
+            status_code: 200,
+            delivery_status: 'delivered',
+            dispatched_payload: { test: true, message: 'Test notification dispatch' },
+            latency_ms: 38.4,
+            dispatched_at: new Date().toISOString()
+          };
+        } else {
+          data = {
+            endpoints: [
+              { endpoint_id: 'EP-01', channel_type: 'custom_webhook', target_url: 'https://api.gios.internal/webhooks/incoming', is_active: true, max_retries: 3 },
+              { endpoint_id: 'EP-02', channel_type: 'slack', target_url: 'https://hooks.slack.com/services/T00/B00/X00', is_active: true, max_retries: 3 }
+            ]
+          };
+        }
+      }
+      else if (url.includes('/api/v1/operations/dlq') || url.includes('/operations/dlq')) {
+        if (url.includes('/retry')) {
+          data = {
+            replayed_count: 2,
+            succeeded_count: 2,
+            failed_count: 0,
+            remaining_dlq_count: 0,
+            replayed_at: new Date().toISOString()
+          };
+        } else {
+          data = {
+            dead_letter_items: []
+          };
+        }
+      }
+      else if (url.includes('/api/v1/drone/photogrammetry') || url.includes('/drone/photogrammetry')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (url.includes('/flight-plan')) {
+          data = calculateDroneFlightPlan(parsed);
+        } else if (url.includes('/solve-affine')) {
+          const affine = solveGcpAffineTransform(parsed.gcps || []);
+          data = { success: true, affine_geotransform: affine, message: 'Affine geotransform resolved successfully.' };
+        } else if (url.includes('/cancel')) {
+          data = { task_id: 'ODM-TASK-001', status: 'cancelled', message: 'Drone photogrammetry task aborted.' };
+        } else if (url.includes('/restart')) {
+          data = simulateNodeODMTaskProgression('ODM-TASK-001', 'queued', 0.0);
+        } else if (url.includes('/gcp')) {
+          const affine = solveGcpAffineTransform(parsed.gcps || []);
+          data = {
+            task_id: 'ODM-TASK-001',
+            total_gcps: (parsed.gcps || []).length,
+            enabled_gcps: (parsed.gcps || []).filter(g => g.is_enabled !== false).length,
+            check_points: (parsed.gcps || []).filter(g => g.is_check_point).length,
+            affine_geotransform: affine,
+            message: 'GCP network updated successfully.'
+          };
+        } else if ((config.method === 'get' || !config.method) && (url.endsWith('/photogrammetry/tasks') || url.endsWith('/photogrammetry/tasks/'))) {
+          data = [
+            {
+              ...simulateNodeODMTaskProgression('ODM-BENCHMARK-001', 'completed', 480.0, 120),
+              project_name: 'San Luis Dam Crest High-Resolution Photogrammetry Survey'
+            },
+            {
+              ...simulateNodeODMTaskProgression('ODM-TAILINGS-2026', 'orthophoto_mosaicing', 320.0, 150),
+              project_name: 'Tailings Dam Upstream Embankment Survey'
+            }
+          ];
+        } else if ((config.method === 'get' || !config.method) && url.includes('/tasks/')) {
+          const parts = url.split('/tasks/');
+          const tId = parts[1]?.split('?')[0]?.split('/')[0] || 'ODM-BENCHMARK-001';
+          data = simulateNodeODMTaskProgression(tId, tId.includes('TAILINGS') ? 'orthophoto_mosaicing' : 'completed', 300.0, 120);
+        } else {
+          const tId = parsed.task_id || parsed.taskId || 'ODM-TASK-001';
+          data = simulateNodeODMTaskProgression(tId, 'mvs_dense_point_cloud', 180.0, parsed.image_count || 120);
+        }
+      }
+      else if (url.includes('/api/v1/analysis/custom-expression') || url.includes('/analysis/custom-expression')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        if (url.includes('/validate')) {
+          data = validateBandMathFormula(parsed.formula || '(B08 - B04) / (B08 + B04)', null, parsed.collection);
+        } else if (url.includes('/evaluate')) {
+          const formula = parsed.formula || '(B08 - B04) / (B08 + B04)';
+          const bandValues = parsed.band_values || parsed.bandValues || { B08: 0.5, B04: 0.1 };
+          const eps = parsed.epsilon !== undefined ? Number(parsed.epsilon) : 1e-6;
+          try {
+            const val = evaluateBandMathFormula(formula, bandValues, eps);
+            const ast = parseBandMathAst(formula);
+            data = {
+              is_valid: true,
+              formula,
+              result: val,
+              bands_used: ast.variables || [],
+              ast_depth: ast.depth || 1,
+              node_count: ast.node_count || 1,
+              execution_time_ms: 1.25,
+              error_message: null
+            };
+          } catch (evalErr) {
+            data = {
+              is_valid: false,
+              formula,
+              result: null,
+              bands_used: [],
+              ast_depth: 0,
+              node_count: 0,
+              execution_time_ms: 0.5,
+              error_message: evalErr.message || String(evalErr)
+            };
+          }
+        } else if (url.includes('/presets')) {
+          data = {
+            presets: Object.values(BAND_MATH_PRESETS),
+            total: Object.keys(BAND_MATH_PRESETS).length
+          };
+        } else {
+          data = { is_valid: true, message: 'Custom expression endpoint reached.' };
+        }
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -7294,6 +7474,301 @@ export const getPhenologyAnomalyTileUrlTemplate = (simId, metric = 'mad_anomaly_
 export const buildPhenologyAnomalyTileUrlTemplateInternal = getPhenologyAnomalyTileUrlTemplate;
 export const buildPhenologyAnomalyTileUrlTemplate = getPhenologyAnomalyTileUrlTemplate;
 
+/**
+ * @typedef {Object} STACSubscriptionSchedule
+ * @property {'hourly' | '6h' | 'daily' | 'weekly' | 'custom_cron'} interval - Polling interval
+ * @property {string} [cron_expression] - Cron schedule expression
+ * @property {number} cloud_cover_max - Maximum allowable scene cloud cover %
+ * @property {string[]} collections - STAC collections monitored
+ * @property {number} lookback_hours - Hours of lookback for scene publishing
+ */
+
+/**
+ * @typedef {Object} PerimeterGeoFence
+ * @property {string} fence_id - Perimeter fence identifier
+ * @property {string} name - Name of monitored perimeter
+ * @property {number[][]} [polygon_coordinates] - Closed linear ring of [lon, lat] coordinates
+ * @property {string} [asset_id] - Associated critical asset ID
+ */
+
+/**
+ * @typedef {Object} WebhookEndpointConfig
+ * @property {string} endpoint_id - Unique endpoint ID
+ * @property {'slack' | 'ms_teams' | 'pagerduty' | 'email_smtp' | 'custom_webhook'} channel_type - Delivery channel
+ * @property {string} target_url - HTTP webhook destination URL or email address
+ * @property {string} secret_token - Secret key for HMAC-SHA256 signature generation
+ * @property {boolean} is_active - Delivery active status
+ * @property {number} max_retries - Retry attempts before dead-lettering
+ */
+
+/**
+ * @typedef {Object} STACHarvesterSubscription
+ * @property {string} subscription_id - Unique subscription ID
+ * @property {string} name - Subscription name
+ * @property {string} [description] - Description
+ * @property {STACSubscriptionSchedule} schedule - Polling schedule
+ * @property {PerimeterGeoFence} perimeter - Area of interest fence
+ * @property {WebhookEndpointConfig[]} webhook_endpoints - Destination endpoints
+ * @property {string[]} trigger_conditions - Anomaly trigger rules
+ * @property {number} z_score_threshold - Climatological MAD z-score anomaly cutoff
+ * @property {boolean} is_enabled - Subscription active state
+ * @property {string} created_at - ISO 8601 UTC registration timestamp
+ * @property {number} total_dispatches - Count of dispatched anomaly events
+ */
+
+/**
+ * Fetches all registered automated STAC harvester subscriptions.
+ * 
+ * @returns {Promise<{ subscriptions: STACHarvesterSubscription[] }>}
+ */
+export const fetchHarvesterSubscriptions = async () => {
+  const response = await giosApi.get('/api/v1/operations/harvester/subscriptions');
+  return response.data;
+};
+
+/**
+ * Registers a new automated STAC harvester subscription.
+ * 
+ * @param {Object} payload - Harvester subscription definition
+ * @returns {Promise<{ subscription: STACHarvesterSubscription, status: string, message: string }>}
+ */
+export const createHarvesterSubscription = async (payload) => {
+  const response = await giosApi.post('/api/v1/operations/harvester/subscriptions', payload);
+  return response.data;
+};
+
+/**
+ * Retrieves a specific STAC harvester subscription by ID.
+ * 
+ * @param {string} subscriptionId - Subscription identifier
+ * @returns {Promise<{ subscription: STACHarvesterSubscription }>}
+ */
+export const fetchHarvesterSubscription = async (subscriptionId) => {
+  const response = await giosApi.get(`/api/v1/operations/harvester/subscriptions/${subscriptionId}`);
+  return response.data;
+};
+
+/**
+ * Triggers a manual or scheduled execution run of an automated STAC harvester.
+ * 
+ * @param {Object} params - Trigger parameters
+ * @returns {Promise<Object>} Execution report with evaluated scenes and dispatches
+ */
+export const triggerHarvesterRun = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/operations/harvester/trigger', params);
+  return response.data;
+};
+
+/**
+ * Fetches configured outbound webhook endpoints.
+ * 
+ * @returns {Promise<{ endpoints: WebhookEndpointConfig[] }>}
+ */
+export const fetchWebhookEndpoints = async () => {
+  const response = await giosApi.get('/api/v1/operations/webhooks');
+  return response.data;
+};
+
+/**
+ * Dispatches a synthetic test notification event to a webhook endpoint.
+ * 
+ * @param {string} webhookId - Endpoint identifier
+ * @param {Object} [payload={}] - Test parameters
+ * @returns {Promise<Object>} Dispatch result with HTTP status code and latency
+ */
+export const testWebhookDispatch = async (webhookId, payload = {}) => {
+  const response = await giosApi.post(`/api/v1/operations/webhooks/${webhookId}/test`, payload);
+  return response.data;
+};
+
+/**
+ * Retrieves failed deliveries currently in the Dead-Letter Queue (DLQ).
+ * 
+ * @returns {Promise<{ dead_letter_items: Object[] }>}
+ */
+export const fetchDeadLetterQueue = async () => {
+  const response = await giosApi.get('/api/v1/operations/dlq');
+  return response.data;
+};
+
+/**
+ * Triggers replay of quarantined deliveries in the Dead-Letter Queue.
+ * 
+ * @param {Object} [params={}] - Retry parameters
+ * @returns {Promise<{ replayed_count: number, succeeded_count: number, failed_count: number, remaining_dlq_count: number }>}
+ */
+export const retryDeadLetterQueue = async (params = { retry_all: true }) => {
+  const response = await giosApi.post('/api/v1/operations/dlq/retry', params);
+  return response.data;
+};
+
+/**
+ * Dispatches an asynchronous drone photogrammetry reconstruction mission to NodeODM worker.
+ * 
+ * @param {Object} payload - Task configuration and staged image count
+ * @returns {Promise<Object>} Task creation response with tracking identifier
+ */
+export const createDronePhotogrammetryTask = async (payload) => {
+  const response = await giosApi.post('/api/v1/drone/photogrammetry/tasks', payload);
+  return response.data;
+};
+
+/**
+ * Lists all registered drone photogrammetry tasks.
+ * 
+ * @returns {Promise<Array<Object>>} List of recorded photogrammetry tasks
+ */
+export const fetchDronePhotogrammetryTasks = async () => {
+  const response = await giosApi.get('/api/v1/drone/photogrammetry/tasks');
+  return response.data;
+};
+
+export const listDronePhotogrammetryTasks = fetchDronePhotogrammetryTasks;
+
+/**
+ * Retrieves real-time execution status and product deliverables for a photogrammetry mission.
+ * 
+ * @param {string} taskId - Photogrammetry task identifier
+ * @returns {Promise<Object>} Live telemetry, stage progress, GSD, and output artifacts
+ */
+export const fetchDronePhotogrammetryTaskStatus = async (taskId) => {
+  const response = await giosApi.get(`/api/v1/drone/photogrammetry/tasks/${taskId}`);
+  return response.data;
+};
+
+/**
+ * Aborts an active or queued drone photogrammetry mission on the NodeODM worker.
+ * 
+ * @param {string} taskId - Photogrammetry task identifier
+ * @returns {Promise<Object>} Cancellation confirmation
+ */
+export const cancelDronePhotogrammetryTask = async (taskId) => {
+  const response = await giosApi.post(`/api/v1/drone/photogrammetry/tasks/${taskId}/cancel`);
+  return response.data;
+};
+
+/**
+ * Restarts a failed or cancelled photogrammetry task from dataset initialization stage.
+ * 
+ * @param {string} taskId - Photogrammetry task identifier
+ * @returns {Promise<Object>} Reset task status
+ */
+export const restartDronePhotogrammetryTask = async (taskId) => {
+  const response = await giosApi.post(`/api/v1/drone/photogrammetry/tasks/${taskId}/restart`);
+  return response.data;
+};
+
+/**
+ * Updates Ground Control Points (GCPs) and re-solves georeferencing for a mission.
+ * 
+ * @param {string} taskId - Photogrammetry task identifier
+ * @param {Object} payload - List of GCPs with image and world coordinates
+ * @returns {Promise<Object>} Updated GCP network and re-solved affine matrix
+ */
+export const updateDronePhotogrammetryGCPs = async (taskId, payload) => {
+  const response = await giosApi.post(`/api/v1/drone/photogrammetry/tasks/${taskId}/gcp`, payload);
+  return response.data;
+};
+
+/**
+ * Calculates optimal photogrammetric flight altitude, ground footprint, and trigger spacing.
+ * 
+ * @param {Object} params - Target GSD, camera sensor parameters, overlap, and area
+ * @returns {Promise<Object>} Detailed flight plan and camera parameters
+ */
+export const calculateDroneFlightPlanApi = async (params) => {
+  const response = await giosApi.post('/api/v1/drone/photogrammetry/flight-plan', params);
+  return response.data;
+};
+
+/**
+ * Computes least-squares 2D affine geotransform matrix and residuals from Ground Control Points.
+ * 
+ * @param {Object} payload - List of GCPs
+ * @returns {Promise<Object>} Affine matrix, resolution, rotation, and residuals
+ */
+export const solveDronePhotogrammetryAffine = async (payload) => {
+  const response = await giosApi.post('/api/v1/drone/photogrammetry/solve-affine', payload);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic XYZ tile streaming URL template for drone orthomosaics and DEMs.
+ * 
+ * @param {string} taskId - Task identifier
+ * @param {string} [metric='orthophoto'] - Raster metric ('orthophoto', 'dsm', 'dtm', 'chm', 'slope', 'reprojection_error', 'point_density')
+ * @returns {string} Tile URL template
+ */
+export const getDronePhotogrammetryTileUrlTemplate = (taskId, metric = 'orthophoto') => {
+  const base = import.meta?.env?.VITE_API_BASE_URL || '';
+  if (metric && metric !== 'orthophoto') {
+    return `${base}/api/v1/tiles/drone/photogrammetry/${taskId}/${metric}/{z}/{x}/{y}.png`;
+  }
+  return `${base}/api/v1/tiles/drone/photogrammetry/${taskId}/{z}/{x}/{y}.png`;
+};
+
+export const buildDronePhotogrammetryTileUrlTemplateInternal = getDronePhotogrammetryTileUrlTemplate;
+
+/**
+ * Simulates a photogrammetry task state client-side for offline testing and demos.
+ */
+export const simulateDronePhotogrammetryTask = simulateNodeODMTaskProgression;
+
+/**
+ * Validates a custom band math formula syntax, detects variables, and verifies band IDs.
+ * 
+ * @param {string} formula - Mathematical formula, e.g. '(B08 - B04) / (B08 + B04)'
+ * @param {string} [collection='sentinel-2-l2a'] - Target satellite/drone collection
+ * @returns {Promise<Object>} AST and validation diagnostic report
+ */
+export const validateBandMathFormulaApi = async (formula, collection = 'sentinel-2-l2a') => {
+  const response = await giosApi.post('/api/v1/analysis/custom-expression/validate', {
+    formula,
+    collection
+  });
+  return response.data;
+};
+
+/**
+ * Safely evaluates a custom band math expression against scalar band values.
+ * 
+ * @param {string} formula - Formula string
+ * @param {Record<string, number>} bandValues - Band reflectance mapping (e.g. { B08: 0.5, B04: 0.1 })
+ * @param {string} [collection='sentinel-2-l2a'] - Sensor collection context
+ * @param {number} [epsilon=1e-6] - Denominator stability clamp
+ * @returns {Promise<Object>} Evaluated result, variable list, and metrics
+ */
+export const evaluateBandMathFormulaApi = async (formula, bandValues, collection = 'sentinel-2-l2a', epsilon = 1e-6) => {
+  const response = await giosApi.post('/api/v1/analysis/custom-expression/evaluate', {
+    formula,
+    band_values: bandValues,
+    collection,
+    epsilon
+  });
+  return response.data;
+};
+
+/**
+ * Fetches the library of verified industry-standard and custom band math presets.
+ * 
+ * @returns {Promise<Object>} List of formula presets
+ */
+export const fetchBandMathPresetsApi = async () => {
+  const response = await giosApi.get('/api/v1/analysis/custom-expression/presets');
+  return response.data;
+};
+
+/**
+ * Constructs a dynamic Leaflet tile URL template for custom expression raster tiles.
+ * 
+ * @param {string} expr - Custom band math formula
+ * @param {Object} [options={}] - Optional collection, itemId, colormap, rescale
+ * @returns {string} Tile URL template
+ */
+export const getCustomExpressionTileUrlTemplate = (expr, options = {}) => {
+  return buildCustomExpressionTileUrlTemplate(expr, options);
+};
+
 export {
   InSARDeformationHazardTier,
   INSAR_HAZARD_CONFIGS,
@@ -7335,7 +7810,50 @@ export {
   calculateClimatologicalMonthlyMad,
   calculateSeasonalMadAnomalies,
   calculatePhenologyDecompositionAnalysis,
-  buildPhenologyAnomalyTileUrl
+  buildPhenologyAnomalyTileUrl,
+  STACCollectionName,
+  HarvestScheduleInterval,
+  WebhookChannelType,
+  WebhookDeliveryStatus,
+  HarvesterAlertSeverity,
+  PerimeterTriggerCondition,
+  HARVEST_SCHEDULE_CONFIGS,
+  WEBHOOK_CHANNEL_CONFIGS,
+  generateHmacSha256Signature,
+  verifyHmacSha256Signature,
+  pointInPerimeterPolygon,
+  calculateRetryBackoff,
+  formatChannelNotificationPayload,
+  simulateSTACHarvesterCycle,
+  calculateSTACHarvesterSimulation,
+  NODEODM_LIFECYCLE_STATUSES,
+  DRONE_PHOTOGRAMMETRY_TASK_STATUSES,
+  NODEODM_PIPELINE_STAGES,
+  DRONE_PHOTOGRAMMETRY_TILE_METRICS,
+  PHOTOGRAMMETRY_FEATURE_QUALITIES,
+  RADIOMETRIC_CALIBRATION_MODES,
+  NODEODM_PIPELINE_STAGE_METADATA,
+  DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS,
+  DRONE_CAMERA_PRESETS,
+  solveGcpAffineTransform,
+  calculateDroneFlightPlan,
+  formatOdmGcpFile,
+  parseOdmGcpFile,
+  buildDronePhotogrammetryTileUrl,
+  buildDronePhotogrammetryTileUrlTemplate,
+  simulateNodeODMTaskProgression,
+  BAND_MATH_TOKEN_TYPES,
+  BAND_MATH_NODE_TYPES,
+  BAND_NAME_ALIASES,
+  VALID_BAND_MATH_FUNCTIONS,
+  BAND_MATH_PRESETS,
+  tokenizeBandMath,
+  parseBandMathAst,
+  validateBandMathFormula,
+  evaluateBandMathAst,
+  evaluateBandMathFormula,
+  buildCustomExpressionTileUrl,
+  buildCustomExpressionTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;
