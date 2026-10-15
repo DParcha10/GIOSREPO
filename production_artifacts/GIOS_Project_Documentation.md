@@ -1,5 +1,5 @@
 # GIOS: Global Intelligence & Observation System
-**Project Dossier & Scientific Specification (v2.5.25 Enterprise Release)**  
+**Project Dossier & Scientific Specification (v2.5.26 Enterprise Release)**  
 *Live Production: [https://gios-react.vercel.app](https://gios-react.vercel.app)*  
 *Backend Engine: FastAPI + rio-tiler + odc-stac + Leaflet Web GIS*
 
@@ -9,7 +9,7 @@
 
 The **Global Intelligence & Observation System (GIOS v2.5)** is an enterprise geospatial intelligence platform designed for critical infrastructure hazard monitoring, environmental anomaly detection, and real-time disaster response.
 
-GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10** through **v2.5.25** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
+GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10** through **v2.5.26** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
 - **v2.5.10**: NodeODM Distributed Photogrammetry Processing Queue with 9-stage asynchronous state machine and stage-weighted progress telemetry, Multi-Temporal Quality Mosaic Cloud-Free Compositor Studio with pixel-rank temporal reductions (median, greenest, clearest, max-NDMI, min-LST) and dynamic XYZ tile streaming, and Multi-Hazard Live Telemetry Alert System with resilient USGS NWIS event bus and Server-Sent Events (SSE).
 - **v2.5.11**: Geotechnical Tailings Dam Hydrodynamic Inundation Simulation Engine with 2D shallow water Saint-Venant wave front routing, Froehlich (2008) peak breach discharge formulation ($Q_p = 0.607 \cdot V_w^{0.295} \cdot h_w^{1.24} \cdot \mu_{\text{mech}}$), Bingham plastic and Herschel-Bulkley non-Newtonian tailings slurry yield stress routing, Australian/USBR velocity-depth hazard intensity cross-product tiering ($v \cdot h$), dynamic downstream evacuation corridor buffer vectorization, critical infrastructure exposure scoring, and interactive Tailings Dam Breach Simulation Studio (`DamBreakModal.jsx`) with dynamic XYZ tile streaming (`/api/v1/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png`).
 - **v2.5.12**: Geotechnical Embankment Phreatic Surface Seepage Inversion, 2D Dupuit-Forchheimer unconfined seepage flow, Casagrande top-seepage line inversion, Van Genuchten (1980) Soil Water Retention Curve (SWRC) parameter optimization ($\theta(\psi) = \theta_r + \frac{\theta_s - \theta_r}{[1 + (\alpha \psi)^n]^m}$), Terzaghi critical piping Factor of Safety ($FS_{\text{piping}} = i_{\text{crit}} / i_{\text{exit}}$), in-situ multi-depth piezometer residual fusion, and interactive Phreatic Surface Seepage Studio (`PhreaticSeepageModal.jsx`) with dynamic hydrogeological XYZ tile streaming (`/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png`).
@@ -26,8 +26,9 @@ GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9
 - **v2.5.23**: Automated STAC Ingestion Watchdog, Real-Time Biophysical Anomaly Webhook Engine & Multi-Channel Alert Dispatcher (Slack Block Kit, MS Teams Adaptive Cards, PagerDuty Events v2, SMTP, and Custom Webhook HMAC-SHA256 RFC 7946 GeoJSON event containers, ray-casting point-in-polygon geo-fence perimeter filtering, exponential backoff with jitter retry loop, Dead-Letter Queue (DLQ) persistent quarantine buffer, candidate scene evaluation telemetry, and interactive 5-tab `WebhookManagerModal.jsx`).
 - **v2.5.24**: Decoupled Headless NodeODM Drone Photogrammetry Bridge, REST Task Orchestration & Telemetry Lifecycle (`QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`), 6-Parameter Least-Squares Affine Geotransform Solver ($X_w = a + b X_p + c Y_p$, $Y_w = d + e X_p + f Y_p$) with Sub-Pixel Ground Sampling Distance ($GSD$) Recovery & ODM Ground Control Points (GCP) Specification Serialization/Parsing ($RMSE < 0.05\text{m}$), Photogrammetric Flight Mission Calculator (altitude, forward/side spacing, trigger interval, blur-free shutter speed $t_{\text{shutter}} \le \frac{0.5 \cdot GSD}{v}$), Interactive 5-Tab Drone Photogrammetry Mission Studio (`DronePhotogrammetryModal.jsx`) with Sub-Pixel Reticle Preview Canvas, Leaflet MapExplorer Centimeter Zoom Layer (`maxZoom: 24`, `maxNativeZoom: 22`), Survey Footprint Polygon, Interactive GCP Markers, and Dynamic Multimodal XYZ Centimeter COG Tile Streaming (`/api/v1/tiles/drone/photogrammetry/{task_id}/{metric}/{z}/{x}/{y}.png`) across 7 Metrics (`orthophoto`, `dsm`, `dtm`, `chm`, `slope`, `reprojection_error`, `point_density`).
 - **v2.5.25**: Custom Spectral Formula Studio & Band Math AST Compiler Engine (Abstract Syntax Tree recursive descent parser with PEMDAS precedence, sandboxed execution with $\epsilon = 10^{-6}$ division-by-zero guards, 12 pre-configured spectral indices from `BAND_MATH_PRESETS`, interactive 4-tab `BandMathStudioModal.jsx` with AST token inspector, real-time scalar pixel sandbox simulator, dynamic XYZ custom expression tile service `/api/v1/tiles/custom-expression/{z}/{x}/{y}.png`, and STAC scene item tile endpoint `/api/v1/tiles/{collection}/{item_id}/custom-expression/{z}/{x}/{y}.png`).
-- **v2.5.26 (Staged / Planned)**: Copernicus 30m Global DEM (GLO-30) COG Ingestion, 2D Convolutional Horn Slope/Aspect Vectorizer, Analytical Lambertian Hillshade Illumination & Topographic Wetness Index (TWI) Relief Tiles.
+- **v2.5.26**: Copernicus 30m Global DEM (GLO-30) STAC Ingestion, 2D Convolutional Horn (1981) 3x3 Finite-Difference Slope and Downhill Aspect Vectorizer, Analytical Lambertian Hillshade Illumination Physics ($I = 255 \cdot \max(0, \cos \theta_z \cos \theta + \sin \theta_z \sin \theta \cos(\phi_s - \alpha))$), Topographic Wetness Index ($\text{TWI} = \ln(a / \tan \beta)$) with division-by-zero numerical safety clamping, Geotechnical Slope Hazard Tier Zonification (5 tiers: Flat $<5^\circ$, Gentle $5^\circ-15^\circ$, Moderate $15^\circ-25^\circ$, Steep $25^\circ-35^\circ$, Critical Hazard $\ge 35^\circ$), 1D Crest-to-Toe Cross-Sectional Transect Elevation & Slope Profiler, Interactive 4-Tab Topographic Relief & Hillshade Studio (`DemTopographyModal.jsx`), and Dynamic XYZ Copernicus DEM Relief Tile Streaming Endpoints (`/api/v1/tiles/dem/{metric}/{z}/{x}/{y}.png`, `/relief`, `/hillshade`, `/slope`, `/twi`).
 - **v2.5.27 (Staged / Planned)**: Multi-Granule Sentinel-2 MGRS Overlap Geometry, Voronoi Seamline Weighting, 2D Distance-Transform Seamline Feathering Array Blender & Dynamic XYZ Seamless Mosaic Tile Service.
+- **v2.5.28 (Staged / Planned)**: Multi-Temporal Scene Stacking, Statistical Reducer Enums, Quality Band Weighting & Dynamic Composite Tile Contracts.
 
 ---
 
@@ -352,18 +353,26 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
 | `GET` | `/api/v1/analysis/custom-expression/presets` | Standardized verified catalog of 12 pre-configured spectral index presets |
 | `GET` | `/api/v1/tiles/custom-expression/{z}/{x}/{y}.png` | Dynamic XYZ custom expression raster tile stream with colormap & contrast stretch |
 | `GET` | `/api/v1/tiles/{collection}/{item_id}/custom-expression/{z}/{x}/{y}.png` | Dynamic XYZ STAC item custom expression tile stream |
+| `POST` | `/api/v1/analysis/dem/topography` | Copernicus DEM 30m Horn 3x3 slope, aspect, Lambertian hillshade & TWI point extraction |
+| `POST` | `/api/v1/analysis/dem/transect` | 1D crest-to-toe cross-sectional elevation & slope transect profile interpolation |
+| `POST` | `/api/v1/analysis/dem/slope-hazard` | Geotechnical slope hazard tier distribution & critical slope angle exposure |
+| `GET` | `/api/v1/tiles/dem/{metric}/{z}/{x}/{y}.png` | Dynamic XYZ DEM tile stream across 7 morphometric metrics (relief, elevation, slope, aspect, hillshade, twi, tri) |
+| `GET` | `/api/v1/tiles/dem/relief/{z}/{x}/{y}.png` | Dynamic blended color relief tile streaming |
+| `GET` | `/api/v1/tiles/dem/hillshade/{z}/{x}/{y}.png` | Dynamic Lambertian hillshade tile streaming |
+| `GET` | `/api/v1/tiles/dem/slope/{z}/{x}/{y}.png` | Dynamic Horn 3x3 slope angle tile streaming |
+| `GET` | `/api/v1/tiles/dem/twi/{z}/{x}/{y}.png` | Dynamic Topographic Wetness Index tile streaming |
 | `GET` | `/health` | Live system health and service status |
 
 ---
 
 ## 5. Verification & Quality Assurance
 
-- **Unit & Integration Test Suite**: 369 tests passing via pytest across `test_schemas.py` (255), `test_api.py` (85), `test_scientific_rigor.py` (22), `test_stac_signing.py` (1), and `test_tile_server.py` (6) with 0 failures, 0 regressions, and 0 warnings (79.00s).
-- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` compiled 2,882 modules in 10.94s with 0 errors).
+- **Unit & Integration Test Suite**: 372 tests passing via pytest across `test_schemas.py` (256), `test_api.py` (86), `test_scientific_rigor.py` (23), `test_stac_signing.py` (1), and `test_tile_server.py` (6) with 0 failures, 0 regressions, and 0 warnings (74.18s).
+- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` compiled 2,883 modules in 8.59s with 0 errors).
 - **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, USGS NWIS/Earthquake feeds, cache storage, database integrity, 2D hydrodynamic finite-volume Courant-Friedrichs-Lewy (CFL) stability guard ($\Delta t \le \frac{\Delta x}{\sqrt{g h} + |u|}$ max CFL: 0.881 <= 1.0 `STABLE`), and host system RAM. Latest inspection confirms System Status **HEALTHY** with 0 active anomalies.
 - **Live Production Telemetry**: Continuous surveillance confirms System Status HEALTHY with 0 active anomalies and stable headroom.
 
 ---
-*GIOS v2.5.25 — Verified and Approved for Production Deployment.*
+*GIOS v2.5.26 — Verified and Approved for Production Deployment.*
 
 

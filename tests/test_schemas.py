@@ -933,7 +933,38 @@ from app.models.schemas import (
     evaluate_band_math_ast,
     evaluate_band_math_formula,
     build_custom_expression_tile_url,
-    build_custom_expression_tile_url_template
+    build_custom_expression_tile_url_template,
+    DemCollectionType,
+    DemMetricType,
+    SlopeUnit,
+    DemSlopeHazardTier,
+    DemSunIllumination,
+    HornGradientResult,
+    LambertianHillshadeResult,
+    TopographicWetnessResult,
+    DemTopographyRequest,
+    DemTopographySummary,
+    DemTopographyResponse,
+    DemTransectPoint,
+    DemTransectRequest,
+    DemTransectResponse,
+    DemSlopeHazardAnalysisRequest,
+    DemSlopeHazardAnalysisResponse,
+    DemTileRequestParams,
+    DEM_COLLECTIONS_METADATA,
+    DEM_METRIC_CONFIGS,
+    SLOPE_HAZARD_CONFIGS,
+    DEFAULT_DEM_SUN_ILLUMINATION,
+    aspect_to_compass_direction,
+    calculate_horn_gradient,
+    calculate_terrain_slope,
+    calculate_compass_aspect,
+    calculate_lambertian_hillshade,
+    calculate_dem_topographic_wetness_index,
+    classify_dem_slope_hazard_tier,
+    calculate_elevation_transect_profile,
+    build_dem_tile_url,
+    build_dem_tile_url_template
 )
 from app.config import settings
 
@@ -10862,6 +10893,158 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         )
         self.assertIn("/api/v1/tiles/sentinel-2-l2a/S2A_SCENE_01/custom-expression/{z}/{x}/{y}.png?expr=", template_url)
         self.assertIn("colormap=viridis", template_url)
+
+    def test_dem_glo30_models_algorithms_and_contracts(self):
+        """Cycle v2.5.26: Verify Copernicus 30m DEM models, Horn gradient, aspect, hillshade, TWI, and tile contracts."""
+        # 1. Enums and Metadata
+        self.assertEqual(DemCollectionType.COP_DEM_GLO_30, "cop-dem-glo-30")
+        self.assertEqual(DemMetricType.HILLSHADE, "hillshade")
+        self.assertEqual(DemMetricType.RELIEF, "relief")
+        self.assertEqual(DemMetricType.TWI, "twi")
+        self.assertEqual(DemSlopeHazardTier.CRITICAL_HAZARD, "critical_hazard")
+        self.assertIn("cop-dem-glo-30", DEM_COLLECTIONS_METADATA)
+        self.assertIn("elevation", DEM_METRIC_CONFIGS)
+        self.assertIn("slope", DEM_METRIC_CONFIGS)
+        self.assertIn("aspect", DEM_METRIC_CONFIGS)
+        self.assertIn("hillshade", DEM_METRIC_CONFIGS)
+        self.assertIn("twi", DEM_METRIC_CONFIGS)
+        self.assertIn("relief", DEM_METRIC_CONFIGS)
+        self.assertEqual(len(SLOPE_HAZARD_CONFIGS), 5)
+        self.assertEqual(DEFAULT_DEM_SUN_ILLUMINATION["azimuth_deg"], 315.0)
+
+        # 2. Horn 3x3 Finite Difference Gradient & Terrain Slope
+        flat_window = [
+            [100.0, 100.0, 100.0],
+            [100.0, 100.0, 100.0],
+            [100.0, 100.0, 100.0]
+        ]
+        grad_flat = calculate_horn_gradient(flat_window, cell_size_x=30.0, cell_size_y=30.0)
+        self.assertAlmostEqual(grad_flat.dz_dx, 0.0, places=5)
+        self.assertAlmostEqual(grad_flat.dz_dy, 0.0, places=5)
+        self.assertAlmostEqual(grad_flat.slope_deg, 0.0, places=5)
+        self.assertAlmostEqual(grad_flat.slope_percent, 0.0, places=5)
+
+        # Slope facing West (elevation rises East: 70 -> 100 -> 130, downhill faces West)
+        # Horn dz_dx = ((130+2*130+130) - (70+2*70+70)) / (8*30) = 1.0
+        west_facing_window = [
+            [70.0, 100.0, 130.0],
+            [70.0, 100.0, 130.0],
+            [70.0, 100.0, 130.0]
+        ]
+        grad_west = calculate_horn_gradient(west_facing_window, cell_size_x=30.0, cell_size_y=30.0)
+        self.assertAlmostEqual(grad_west.dz_dx, 1.0, places=5)
+        self.assertAlmostEqual(grad_west.dz_dy, 0.0, places=5)
+        self.assertAlmostEqual(grad_west.slope_deg, 45.0, places=3)
+        self.assertAlmostEqual(grad_west.slope_percent, 100.0, places=3)
+        self.assertAlmostEqual(grad_west.aspect_deg, 270.0, places=3)
+        self.assertEqual(grad_west.aspect_compass, "W")
+
+        # Slope facing East (elevation drops East: 130 -> 100 -> 70, downhill faces East)
+        east_facing_window = [
+            [130.0, 100.0, 70.0],
+            [130.0, 100.0, 70.0],
+            [130.0, 100.0, 70.0]
+        ]
+        grad_east = calculate_horn_gradient(east_facing_window, cell_size_x=30.0, cell_size_y=30.0)
+        self.assertAlmostEqual(grad_east.dz_dx, -1.0, places=5)
+        self.assertAlmostEqual(grad_east.dz_dy, 0.0, places=5)
+        self.assertAlmostEqual(grad_east.slope_deg, 45.0, places=3)
+        self.assertAlmostEqual(grad_east.aspect_deg, 90.0, places=3)
+        self.assertEqual(grad_east.aspect_compass, "E")
+
+        # Slope facing South (elevation drops South: North 130m -> Center 100m -> South 70m)
+        south_facing_window = [
+            [130.0, 130.0, 130.0],
+            [100.0, 100.0, 100.0],
+            [70.0, 70.0, 70.0]
+        ]
+        grad_south = calculate_horn_gradient(south_facing_window, cell_size_x=30.0, cell_size_y=30.0)
+        self.assertAlmostEqual(grad_south.dz_dx, 0.0, places=5)
+        self.assertAlmostEqual(grad_south.dz_dy, 1.0, places=5)
+        self.assertAlmostEqual(grad_south.slope_deg, 45.0, places=3)
+        self.assertAlmostEqual(grad_south.aspect_deg, 180.0, places=3)
+        self.assertEqual(grad_south.aspect_compass, "S")
+
+        # 3. Compass Aspect & Cardinal Bins
+        self.assertEqual(aspect_to_compass_direction(0.0), "N")
+        self.assertEqual(aspect_to_compass_direction(45.0), "NE")
+        self.assertEqual(aspect_to_compass_direction(90.0), "E")
+        self.assertEqual(aspect_to_compass_direction(135.0), "SE")
+        self.assertEqual(aspect_to_compass_direction(180.0), "S")
+        self.assertEqual(aspect_to_compass_direction(225.0), "SW")
+        self.assertEqual(aspect_to_compass_direction(270.0), "W")
+        self.assertEqual(aspect_to_compass_direction(315.0), "NW")
+        self.assertEqual(aspect_to_compass_direction(355.0), "N")
+
+        # 4. Analytical Lambertian Hillshade Illumination
+        hs_perfect = calculate_lambertian_hillshade(slope_deg=45.0, aspect_deg=315.0, sun_azimuth_deg=315.0, sun_altitude_deg=45.0)
+        self.assertAlmostEqual(hs_perfect.illumination, 255.0, places=1)
+        self.assertAlmostEqual(hs_perfect.cos_incidence, 1.0, places=2)
+        self.assertFalse(hs_perfect.is_shadow)
+
+        hs_shadow = calculate_lambertian_hillshade(slope_deg=45.0, aspect_deg=135.0, sun_azimuth_deg=315.0, sun_altitude_deg=45.0)
+        self.assertAlmostEqual(hs_shadow.illumination, 0.0, places=1)
+        self.assertTrue(hs_shadow.is_shadow)
+
+        # 5. Topographic Wetness Index (TWI)
+        twi_flat = calculate_dem_topographic_wetness_index(slope_deg=1.0, specific_catchment_area_m=100.0)
+        self.assertGreater(twi_flat.twi, 8.0)
+        self.assertEqual(twi_flat.seepage_hazard_tier, "moderate")
+
+        twi_saturated = calculate_dem_topographic_wetness_index(slope_deg=0.5, specific_catchment_area_m=2000.0)
+        self.assertGreater(twi_saturated.twi, 10.0)
+        self.assertIn(twi_saturated.seepage_hazard_tier, {"high", "critical"})
+
+        twi_steep = calculate_dem_topographic_wetness_index(slope_deg=40.0, specific_catchment_area_m=100.0)
+        self.assertLess(twi_steep.twi, 5.0)
+        self.assertEqual(twi_steep.seepage_hazard_tier, "low")
+
+        # 6. Geotechnical DemSlopeHazardTier Classification
+        self.assertEqual(classify_dem_slope_hazard_tier(3.0), DemSlopeHazardTier.FLAT)
+        self.assertEqual(classify_dem_slope_hazard_tier(10.0), DemSlopeHazardTier.GENTLE)
+        self.assertEqual(classify_dem_slope_hazard_tier(20.0), DemSlopeHazardTier.MODERATE)
+        self.assertEqual(classify_dem_slope_hazard_tier(30.0), DemSlopeHazardTier.STEEP)
+        self.assertEqual(classify_dem_slope_hazard_tier(42.0), DemSlopeHazardTier.CRITICAL_HAZARD)
+
+        # 7. Elevation Transect Profile Calculation
+        transect = calculate_elevation_transect_profile(
+            start_point=[37.05, -121.05],
+            end_point=[37.045, -121.045],
+            samples=25,
+            collection="cop-dem-glo-30",
+            crest_elevation=1250.0,
+            toe_elevation=1110.0
+        )
+        self.assertEqual(len(transect.points), 25)
+        self.assertAlmostEqual(transect.crest_elevation_m, 1250.0, places=1)
+        self.assertAlmostEqual(transect.toe_elevation_m, 1110.0, places=1)
+        self.assertAlmostEqual(transect.total_relief_drop_m, 140.0, places=1)
+        self.assertGreater(transect.total_distance_m, 0.0)
+        self.assertIsInstance(transect.critical_slope_encountered, bool)
+
+        # 8. Dynamic Tile URL Builders and Leaflet Templates
+        tile_url = build_dem_tile_url(12, 100, 200, metric="relief", colormap="terrain", sun_azimuth=315.0)
+        self.assertEqual(tile_url, "/api/v1/tiles/dem/relief/12/100/200.png?colormap=terrain")
+
+        slope_tile_url = build_dem_tile_url(10, 50, 80, metric="slope", colormap="rdylgn_r", rescale="0,45")
+        self.assertIn("/api/v1/tiles/dem/slope/10/50/80.png", slope_tile_url)
+        self.assertIn("colormap=rdylgn_r", slope_tile_url)
+        self.assertIn("rescale=0,45", slope_tile_url)
+
+        template_relief = build_dem_tile_url_template(metric="relief")
+        self.assertEqual(template_relief, "/api/v1/tiles/dem/relief/{z}/{x}/{y}.png")
+
+        template_twi = build_dem_tile_url_template(metric="twi", colormap="blues", rescale="2,18")
+        self.assertIn("/api/v1/tiles/dem/twi/{z}/{x}/{y}.png", template_twi)
+        self.assertIn("colormap=blues", template_twi)
+        self.assertIn("rescale=2,18", template_twi)
+
+        # 9. API Route Contract Formatting Parity
+        self.assertEqual(format_api_route("analysis_dem_topography"), "/api/v1/analysis/dem/topography")
+        self.assertEqual(format_api_route("analysis_dem_transect"), "/api/v1/analysis/dem/transect")
+        self.assertEqual(format_api_route("analysis_dem_slope_hazard"), "/api/v1/analysis/dem/slope-hazard")
+        self.assertEqual(format_api_route("tiles_dem_relief", z=14, x=2048, y=4096), "/api/v1/tiles/dem/relief/14/2048/4096.png")
+        self.assertEqual(format_api_route("tiles_dem_metric", metric="slope", z=12, x=1024, y=2048), "/api/v1/tiles/dem/slope/12/1024/2048.png")
 
 if __name__ == "__main__":
     unittest.main()

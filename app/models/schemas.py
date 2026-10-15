@@ -10,6 +10,7 @@ Comprehensive shared contracts for GIOS v2.5:
 - Automated Hazard Alerting & Webhooks
 """
 import math
+import time
 import re
 import hashlib
 import hmac
@@ -892,6 +893,32 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_dem_slope_short": "/tiles/dem/slope/{z}/{x}/{y}.png",
     "tiles_dem_twi": "/api/v1/tiles/dem/twi/{z}/{x}/{y}.png",
     "tiles_dem_twi_short": "/tiles/dem/twi/{z}/{x}/{y}.png",
+    # Cycle v2.5.27: Multi-Tile Seamline Feathering & VRT Mosaic Contracts
+    "analysis_mosaic_vrt": "/api/v1/analysis/mosaic/vrt",
+    "analysis_mosaic_vrt_short": "/analysis/mosaic/vrt",
+    "analysis_mosaic_feather": "/api/v1/analysis/mosaic/feather",
+    "analysis_mosaic_feather_short": "/analysis/mosaic/feather",
+    "analysis_mosaic_granules": "/api/v1/analysis/mosaic/granules",
+    "analysis_mosaic_granules_short": "/analysis/mosaic/granules",
+    "mosaic_seamlines": "/api/v1/mosaic/seamlines",
+    "mosaic_seamlines_short": "/mosaic/seamlines",
+    "mosaic_overlap_analysis": "/api/v1/mosaic/overlap-analysis",
+    "mosaic_overlap_analysis_short": "/mosaic/overlap-analysis",
+    "mosaic_vrt_generate": "/api/v1/mosaic/vrt/generate",
+    "mosaic_vrt_generate_short": "/mosaic/vrt/generate",
+    "mosaic_presets": "/api/v1/mosaic/presets",
+    "mosaic_presets_short": "/mosaic/presets",
+    "tiles_mosaic_composite": "/api/v1/tiles/mosaic/{collection}/{z}/{x}/{y}.png",
+    "tiles_mosaic_composite_short": "/tiles/mosaic/{collection}/{z}/{x}/{y}.png",
+    "tiles_mosaic_feather": "/api/v1/tiles/mosaic/feather/{z}/{x}/{y}.png",
+    "tiles_mosaic_feather_short": "/tiles/mosaic/feather/{z}/{x}/{y}.png",
+    "tiles_mosaic_seamline": "/api/v1/tiles/mosaic/seamline/{z}/{x}/{y}.png",
+    "tiles_mosaic_seamline_short": "/tiles/mosaic/seamline/{z}/{x}/{y}.png",
+    "tiles_mosaic_seamless": "/api/v1/tiles/mosaic/seamless/{z}/{x}/{y}.png",
+    "tiles_mosaic_seamless_short": "/tiles/mosaic/seamless/{z}/{x}/{y}.png",
+    "tiles_mosaic_id": "/api/v1/tiles/mosaic/{mosaic_id}/{z}/{x}/{y}.png",
+    "tiles_mosaic_id_short": "/tiles/mosaic/{mosaic_id}/{z}/{x}/{y}.png",
+    "tiles_mosaic_seamline_debug": "/api/v1/tiles/mosaic/{mosaic_id}/seamline-debug/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1012,6 +1039,17 @@ def format_api_route(route_name: str, **kwargs) -> str:
                     break
         if "collection" not in kwargs:
             kwargs["collection"] = "sentinel-2-l2a"
+    elif route_name in ("tiles_mosaic_composite", "tiles_mosaic_composite_short"):
+        if "collection" not in kwargs:
+            kwargs["collection"] = "sentinel-2-l2a"
+    elif route_name in ("tiles_mosaic_id", "tiles_mosaic_id_short", "tiles_mosaic_seamline_debug"):
+        if "mosaic_id" not in kwargs:
+            for alt in ("id", "mosaicId"):
+                if alt in kwargs:
+                    kwargs["mosaic_id"] = kwargs[alt]
+                    break
+            if "mosaic_id" not in kwargs:
+                kwargs["mosaic_id"] = "seamless"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -27108,20 +27146,25 @@ def classify_dem_slope_hazard_tier(slope_deg: float) -> DemSlopeHazardTier:
 
 
 def calculate_elevation_transect_profile(
-    start_coord: List[float],
-    end_coord: List[float],
+    start_coord: Optional[List[float]] = None,
+    end_coord: Optional[List[float]] = None,
     samples: int = 50,
     crest_elevation: float = 1250.0,
     toe_elevation: float = 1110.0,
-    collection: str = "cop-dem-glo-30"
+    collection: str = "cop-dem-glo-30",
+    start_point: Optional[List[float]] = None,
+    end_point: Optional[List[float]] = None,
+    **kwargs
 ) -> DemTransectResponse:
     """Generates synthetic or interpolated elevation transect profile points from crest to toe."""
-    if len(start_coord) < 2 or len(end_coord) < 2:
+    sc = start_coord if start_coord is not None else start_point
+    ec = end_coord if end_coord is not None else end_point
+    if sc is None or ec is None or len(sc) < 2 or len(ec) < 2:
         raise ValueError("start_coord and end_coord must be [lat, lon] pairs.")
     samples = max(5, min(500, samples))
 
-    lat1, lon1 = float(start_coord[0]), float(start_coord[1])
-    lat2, lon2 = float(end_coord[0]), float(end_coord[1])
+    lat1, lon1 = float(sc[0]), float(sc[1])
+    lat2, lon2 = float(ec[0]), float(ec[1])
 
     # Haversine total distance
     r_earth = 6371000.0
@@ -27203,6 +27246,9 @@ def calculate_elevation_transect_profile(
     )
 
 
+generate_dem_elevation_transect = calculate_elevation_transect_profile
+
+
 def build_dem_tile_url(
     z: int,
     x: int,
@@ -27266,3 +27312,591 @@ def build_dem_tile_url_template(
     if params:
         return f"{base}?{'&'.join(params)}"
     return base
+
+
+# ==============================================================================
+# CYCLE v2.5.27: MULTI-TILE SEAMLINE FEATHERING, VIRTUAL RASTER (VRT) MOSAICS & MGRS GRANULE EDGE BLENDING
+# ==============================================================================
+
+class MosaicBlendMethod(str, Enum):
+    """Radiometric blending methods across overlapping satellite swath granules."""
+    FEATHER = "feather"          # 2D Euclidean distance-transform distance-to-edge feathering
+    VORONOI = "voronoi"          # Voronoi graph-cut boundary partition (nearest distance seamline)
+    LINEAR_RAMP = "linear_ramp"  # Directional linear gradient transition ramp
+    COSINE_BELL = "cosine_bell"  # Raised cosine bell feathering window
+    MIN_CLOUD = "min_cloud"      # Cloud-probability quality weighted blending
+    DISTANCE_TRANSFORM = "distance_transform" # Canonical alias for 2D distance-transform feathering
+    NONE = "none"                # Direct overwrite with hard boundary cut
+
+
+MGRS_TILE_DIMENSIONS: Dict[str, Any] = {
+    "grid_width_m": 109800.0,
+    "grid_height_m": 109800.0,
+    "nominal_overlap_width_m": 10000.0,
+    "default_gsd_m": 10.0,
+    "pixels_per_dim": 10980,
+}
+
+
+class MosaicSeamlineTier(str, Enum):
+    """Radiometric continuity quality tier across granule seamline boundaries."""
+    SEAMLESS = "seamless"                         # Delta rho < 0.005 (virtually invisible boundary)
+    SUBTLE = "subtle"                             # 0.005 <= Delta rho < 0.020 (faint boundary transition)
+    VISIBLE_STEP = "visible_step"                 # 0.020 <= Delta rho < 0.050 (observable radiometric step)
+    SEVERE_DISCONTINUITY = "severe_discontinuity" # Delta rho >= 0.050 (stark contrast step needing gain adjustment)
+
+
+class MosaicGranuleStatus(str, Enum):
+    """Operational status of candidate MGRS / Landsat scene granules."""
+    OPTIMAL = "optimal"
+    ACCEPTABLE = "acceptable"
+    SUBOPTIMAL = "suboptimal"
+
+
+MGRS_GRANULE_PRESETS: Dict[str, Dict[str, Any]] = {
+    "T10SEG": {
+        "granule_id": "T10SEG",
+        "utm_zone": 10,
+        "name": "San Luis Reservoir West / Pacheco Pass",
+        "collection": "sentinel-2-l2a",
+        "bbox": [-121.20, 36.90, -120.90, 37.20],
+        "cloud_cover_pct": 2.1,
+        "acquisition_date": "2026-09-12T18:42:15Z",
+        "mean_reflectance": 0.285,
+        "radiometric_gain": 1.002,
+        "radiometric_offset": -0.001
+    },
+    "T10SFG": {
+        "granule_id": "T10SFG",
+        "utm_zone": 10,
+        "name": "Los Banos Central East / Delta-Mendota Canal",
+        "collection": "sentinel-2-l2a",
+        "bbox": [-120.95, 36.90, -120.65, 37.20],
+        "cloud_cover_pct": 1.4,
+        "acquisition_date": "2026-09-12T18:42:38Z",
+        "mean_reflectance": 0.282,
+        "radiometric_gain": 0.998,
+        "radiometric_offset": 0.001
+    },
+    "T10TEK": {
+        "granule_id": "T10TEK",
+        "utm_zone": 10,
+        "name": "Orestimba Creek / Newman North",
+        "collection": "sentinel-2-l2a",
+        "bbox": [-121.20, 37.15, -120.90, 37.45],
+        "cloud_cover_pct": 3.8,
+        "acquisition_date": "2026-09-12T18:41:50Z",
+        "mean_reflectance": 0.291,
+        "radiometric_gain": 1.005,
+        "radiometric_offset": -0.002
+    }
+}
+
+MOSAIC_BLEND_METHOD_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "feather": {
+        "id": "feather",
+        "label": "2D Distance-Transform Feathering",
+        "description": "Euclidean distance-to-edge weighted blending (w_i = d_i / sum d_j) eliminating boundary seams",
+        "default_feather_width_m": 200.0,
+        "supports_smoothstep": True
+    },
+    "distance_transform": {
+        "id": "distance_transform",
+        "label": "2D Distance-Transform Feathering",
+        "description": "Euclidean distance-to-edge weighted blending (w_i = d_i / sum d_j) eliminating boundary seams",
+        "default_feather_width_m": 200.0,
+        "supports_smoothstep": True
+    },
+    "voronoi": {
+        "id": "voronoi",
+        "label": "Voronoi Minimum Energy Seamline Cut",
+        "description": "Hard boundary partition along ridge of equal distance to edges (d_a = d_b)",
+        "default_feather_width_m": 0.0,
+        "supports_smoothstep": False
+    },
+    "linear_ramp": {
+        "id": "linear_ramp",
+        "label": "Linear Overlap Ramp",
+        "description": "Directional linear gradient feathering across swath overlap zone",
+        "default_feather_width_m": 150.0,
+        "supports_smoothstep": False
+    },
+    "cosine_bell": {
+        "id": "cosine_bell",
+        "label": "Raised Cosine (Hann) Bell",
+        "description": "C1-continuous raised cosine feathering window with zero boundary gradient",
+        "default_feather_width_m": 250.0,
+        "supports_smoothstep": True
+    },
+    "min_cloud": {
+        "id": "min_cloud",
+        "label": "Cloud-Probability Quality Weighted",
+        "description": "Distance transform weights modulated inversely by scene cloud cover percentage",
+        "default_feather_width_m": 200.0,
+        "supports_smoothstep": True
+    },
+    "none": {
+        "id": "none",
+        "label": "Direct Overwrite (No Blending)",
+        "description": "Top tile directly covers bottom tile with hard boundary edge",
+        "default_feather_width_m": 0.0,
+        "supports_smoothstep": False
+    }
+}
+
+SEAMLINE_TIER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "seamless": {
+        "tier": "seamless",
+        "max_delta_rho": 0.005,
+        "badge": "Seamless (Δρ < 0.005)",
+        "color": "#10B981",
+        "status": "optimal"
+    },
+    "subtle": {
+        "tier": "subtle",
+        "max_delta_rho": 0.020,
+        "badge": "Subtle Transition (Δρ < 0.020)",
+        "color": "#3B82F6",
+        "status": "acceptable"
+    },
+    "visible_step": {
+        "tier": "visible_step",
+        "max_delta_rho": 0.050,
+        "badge": "Visible Step (Δρ < 0.050)",
+        "color": "#F59E0B",
+        "status": "suboptimal"
+    },
+    "severe_discontinuity": {
+        "tier": "severe_discontinuity",
+        "max_delta_rho": 1.000,
+        "badge": "Severe Discontinuity (Δρ ≥ 0.050)",
+        "color": "#EF4444",
+        "status": "critical"
+    }
+}
+
+
+class MgrsGranuleMetadata(BaseModel):
+    """Metadata specification for an MGRS / Landsat satellite scene granule."""
+    granule_id: str = Field(..., description="MGRS tile identifier (e.g. T10SEG) or scene ID")
+    utm_zone: int = Field(..., description="UTM projection zone")
+    name: str = Field(..., description="Geographic location name")
+    collection: str = Field("sentinel-2-l2a", description="STAC collection ID")
+    bbox: List[float] = Field(..., description="Bounding box [min_lon, min_lat, max_lon, max_lat]")
+    cloud_cover_pct: float = Field(..., ge=0.0, le=100.0, description="Cloud cover percentage")
+    acquisition_date: str = Field(..., description="ISO 8601 acquisition timestamp")
+    mean_reflectance: float = Field(..., description="Mean surface reflectance across optical bands")
+    radiometric_gain: float = Field(1.0, description="Normalizing radiometric gain factor")
+    radiometric_offset: float = Field(0.0, description="Normalizing radiometric offset bias")
+
+
+class SeamlinePoint(BaseModel):
+    """Sample point along an evaluated granule seamline boundary."""
+    point_index: int = Field(..., description="Index along seamline path")
+    lat: float = Field(..., description="Latitude coordinate in WGS84")
+    lon: float = Field(..., description="Longitude coordinate in WGS84")
+    delta_rho: float = Field(..., ge=0.0, description="Surface reflectance difference across boundary (|rho_A - rho_B|)")
+    distance_to_edge_m: float = Field(..., ge=0.0, description="Distance from granule boundary in meters")
+    feather_weight: float = Field(..., ge=0.0, le=1.0, description="Normalized blending weight w_A")
+
+
+class SeamlinePolyline(BaseModel):
+    """Trace geometry and radiometric statistics of a seamline between two granules."""
+    seamline_id: str = Field(..., description="Unique seamline identifier")
+    granule_a: str = Field(..., description="Left / Master granule identifier")
+    granule_b: str = Field(..., description="Right / Adjacent granule identifier")
+    length_km: float = Field(..., ge=0.0, description="Total seamline trajectory length in kilometers")
+    mean_delta_rho: float = Field(..., ge=0.0, description="Mean radiometric reflectance discrepancy along seamline")
+    max_delta_rho: float = Field(..., ge=0.0, description="Maximum radiometric reflectance step along seamline")
+    radiometric_tier: MosaicSeamlineTier = Field(..., description="Seamline radiometric continuity classification")
+    coordinates: List[List[float]] = Field(..., description="Seamline polyline coordinates [[lon, lat], ...]")
+
+
+class VrtGranuleEntry(BaseModel):
+    """Individual raster source entry in a Virtual Raster (VRT) mosaic catalog."""
+    granule_id: str = Field(..., description="Granule identifier")
+    source_uri: str = Field(..., description="STAC COG URI or VRT source path")
+    bbox: List[float] = Field(..., description="Granule bounding box [min_lon, min_lat, max_lon, max_lat]")
+    overlap_area_sqkm: float = Field(..., ge=0.0, description="Overlap area with adjacent granules in square kilometers")
+    overlap_percentage: float = Field(..., ge=0.0, le=100.0, description="Overlap fraction relative to granule area")
+    weight_contribution: float = Field(..., ge=0.0, le=1.0, description="Relative area contribution to mosaic")
+
+
+class VrtMosaicSummary(BaseModel):
+    """Statistical summary of multi-granule mosaic composition and feathering."""
+    total_mosaic_area_sqkm: float = Field(..., ge=0.0, description="Total composite mosaic area in km2")
+    overlap_area_sqkm: float = Field(..., ge=0.0, description="Total swath overlap area in km2")
+    overlap_percentage: float = Field(..., ge=0.0, le=100.0, description="Overlap percentage across whole mosaic")
+    mean_seamline_delta_rho: float = Field(..., ge=0.0, description="Mean radiometric step across all seamlines")
+    radiometric_continuity_tier: MosaicSeamlineTier = Field(..., description="Overall mosaic radiometric continuity tier")
+    feather_buffer_width_m: float = Field(..., ge=0.0, description="Applied feather buffer width in meters")
+    active_granule_count: int = Field(..., ge=1, description="Number of assembled granules")
+
+
+class VrtMosaicRequest(BaseModel):
+    """Request payload to assemble a Virtual Raster (VRT) seamless mosaic."""
+    bbox: Optional[Union[List[float], Dict[str, float], str, BoundingBox]] = Field(
+        None,
+        description="Target bounding box [min_lon, min_lat, max_lon, max_lat]"
+    )
+    collection: str = Field("sentinel-2-l2a", description="Satellite STAC collection")
+    granule_ids: Optional[List[str]] = Field(
+        None,
+        description="Explicit list of granule IDs to blend (defaults to all intersecting bbox)"
+    )
+    target_crs: str = Field("EPSG:3857", description="Mosaic output coordinate reference system")
+    target_resolution_m: float = Field(10.0, gt=0.0, description="Target pixel resolution in meters")
+    feather_width_m: float = Field(200.0, ge=0.0, le=2000.0, description="Seamline feathering buffer width in meters")
+    blend_method: MosaicBlendMethod = Field(MosaicBlendMethod.FEATHER, description="Array blending algorithm")
+    bands: List[str] = Field(default_factory=lambda: ["B04", "B03", "B02"], description="Spectral bands to include")
+    start_date: Optional[str] = Field(None, description="Start date for multi-granule search (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(None, description="End date for multi-granule search (YYYY-MM-DD)")
+
+
+class VrtMosaicResponse(BaseModel):
+    """Response payload containing VRT mosaic specification, seamlines, and tile templates."""
+    mosaic_id: str = Field(..., description="Unique mosaic identifier")
+    collection: str = Field(..., description="Satellite collection")
+    target_crs: str = Field(..., description="Mosaic output coordinate reference system")
+    target_resolution_m: float = Field(..., description="Target pixel resolution in meters")
+    blend_method: MosaicBlendMethod = Field(..., description="Applied array blending method")
+    granules: List[VrtGranuleEntry] = Field(..., description="Assembled source granule catalog")
+    seamlines: List[SeamlinePolyline] = Field(..., description="Seamline boundary geometry and continuity metrics")
+    summary: VrtMosaicSummary = Field(..., description="Mosaic area and radiometric summary")
+    vrt_xml: str = Field(..., description="GDAL VRT XML specification representation")
+    tile_url_template: str = Field(..., description="Dynamic XYZ seamless mosaic tile streaming URL template")
+    created_at: str = Field(..., description="ISO 8601 creation timestamp")
+
+
+class SeamlineFeatherRequest(BaseModel):
+    """Request payload to analyze 2D distance-transform feathering between two granules."""
+    bbox: Optional[Union[List[float], Dict[str, float], str, BoundingBox]] = Field(
+        None,
+        description="AOI bounding box"
+    )
+    granule_a: str = Field("T10SEG", description="Left / Master granule identifier")
+    granule_b: str = Field("T10SFG", description="Right / Adjacent granule identifier")
+    feather_width_m: float = Field(200.0, ge=0.0, le=2000.0, description="Feather buffer width in meters")
+    blend_method: MosaicBlendMethod = Field(MosaicBlendMethod.FEATHER, description="Blending algorithm")
+    collection: str = Field("sentinel-2-l2a", description="Source STAC collection")
+
+
+class SeamlineFeatherResponse(BaseModel):
+    """Response payload containing 2D distance transform feathering weights and radiometric continuity."""
+    analysis_id: str = Field(..., description="Unique feather analysis identifier")
+    granule_a: str = Field(..., description="First granule identifier")
+    granule_b: str = Field(..., description="Second granule identifier")
+    feather_width_m: float = Field(..., description="Applied feather buffer width in meters")
+    blend_method: MosaicBlendMethod = Field(..., description="Applied blending algorithm")
+    mean_delta_rho: float = Field(..., ge=0.0, description="Mean radiometric reflectance discrepancy across boundary")
+    max_delta_rho: float = Field(..., ge=0.0, description="Maximum step across boundary")
+    radiometric_continuity_tier: MosaicSeamlineTier = Field(..., description="Seamline continuity classification")
+    seamline_length_km: float = Field(..., ge=0.0, description="Seamline boundary length in km")
+    overlap_width_m: float = Field(..., ge=0.0, description="Physical swath overlap width in meters")
+    sample_points: List[SeamlinePoint] = Field(..., description="Point samples along seamline with weights")
+    weight_profile_samples: List[Dict[str, float]] = Field(..., description="Cross-boundary transect weight profile")
+    tile_url_template: str = Field(..., description="Dynamic XYZ blended mosaic tile URL template")
+    analyzed_at: str = Field(..., description="ISO 8601 evaluation timestamp")
+
+
+class MosaicGranulesListResponse(BaseModel):
+    """Response listing candidate adjacent granules and their overlap status."""
+    collection: str = Field(..., description="Queried satellite collection")
+    bbox: List[float] = Field(..., description="Query bounding box [min_lon, min_lat, max_lon, max_lat]")
+    granules: List[MgrsGranuleMetadata] = Field(..., description="Available intersecting granules")
+    adjacent_pairs: List[Dict[str, Any]] = Field(..., description="Identified adjacent granule pairs with overlap info")
+
+
+class MosaicTileRequestParams(BaseModel):
+    """Request parameters for dynamic XYZ multi-tile seamless mosaic tile rendering."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level")
+    x: int = Field(..., ge=0, description="Slippy map tile column")
+    y: int = Field(..., ge=0, description="Slippy map tile row")
+    collection: str = Field("sentinel-2-l2a", description="Satellite collection")
+    feather_width_m: float = Field(200.0, ge=0.0, le=2000.0, description="Feather buffer width in meters")
+    blend_method: MosaicBlendMethod = Field(MosaicBlendMethod.FEATHER, description="Blending method")
+    colormap: Optional[str] = Field(None, description="Optional colormap name")
+    rescale: Optional[str] = Field(None, description="Optional contrast stretch min,max")
+    bands: Optional[str] = Field(None, description="Comma-separated band names")
+
+
+# ------------------------------------------------------------------------------
+# Mathematical Algorithms: 2D Distance-Transform Feathering & VRT Generation
+# ------------------------------------------------------------------------------
+
+def classify_mosaic_seamline_tier(delta_rho: float) -> MosaicSeamlineTier:
+    """Classifies radiometric reflectance continuity discrepancy Delta rho across seamline boundaries.
+    
+    Tiers:
+        - SEAMLESS: Delta rho < 0.005 (Virtually undetectable transition, research-grade)
+        - SUBTLE: 0.005 <= Delta rho < 0.020 (Faint boundary, acceptable for basemaps)
+        - VISIBLE_STEP: 0.020 <= Delta rho < 0.050 (Noticeable radiometric discrepancy)
+        - SEVERE_DISCONTINUITY: Delta rho >= 0.050 (Stark contrast step requiring gain/offset balancing)
+    """
+    val = max(0.0, float(delta_rho))
+    if val < 0.005:
+        return MosaicSeamlineTier.SEAMLESS
+    elif val < 0.020:
+        return MosaicSeamlineTier.SUBTLE
+    elif val < 0.050:
+        return MosaicSeamlineTier.VISIBLE_STEP
+    return MosaicSeamlineTier.SEVERE_DISCONTINUITY
+
+
+classify_mosaic_radiometric_tier = classify_mosaic_seamline_tier
+
+
+def calculate_distance_transform_feather_weights(
+    d1: Any,
+    d2: Any,
+    use_smoothstep: bool = True
+) -> Tuple[Any, Any]:
+    """Computes normalized distance-transform feathering weights w1, w2 satisfying partition of unity:
+        w1(x, y) + w2(x, y) = 1.0 (exact conservation across overlap zone).
+        
+    Formulas:
+        t = d1 / max(d1 + d2, 1e-9)
+        w1 = t^2 * (3 - 2t)  (Cubic Hermite smoothstep for C1-continuous transition)
+        w2 = 1.0 - w1
+    """
+    import numpy as np
+    arr1 = np.maximum(0.0, np.asarray(d1, dtype=np.float32))
+    arr2 = np.maximum(0.0, np.asarray(d2, dtype=np.float32))
+    sum_d = arr1 + arr2
+    
+    w1 = np.where(sum_d > 1e-7, arr1 / np.maximum(sum_d, 1e-7), 0.5).astype(np.float32)
+    if use_smoothstep:
+        w1 = np.clip(w1, 0.0, 1.0)
+        w1 = w1 * w1 * (3.0 - 2.0 * w1)
+    w2 = (1.0 - w1).astype(np.float32)
+
+    if np.isscalar(d1) and np.isscalar(d2):
+        return float(w1), float(w2)
+    return w1, w2
+
+
+def calculate_voronoi_seamline_weights(d1: float, d2: float) -> Tuple[float, float]:
+    """Computes binary or sharp Voronoi seamline weights based on distance-to-boundary."""
+    if float(d1) >= float(d2):
+        return 1.0, 0.0
+    return 0.0, 1.0
+
+
+def calculate_multi_granule_seamline_weights(
+    distances: Sequence[float],
+    method: Union[str, MosaicBlendMethod] = MosaicBlendMethod.FEATHER,
+    gamma: float = 1.5,
+    cloud_pcts: Optional[Sequence[float]] = None
+) -> List[float]:
+    """Computes normalized blending weights for N granules satisfying Partition of Unity:
+        sum_k w_k = 1.0.
+    """
+    m_val = method.value if isinstance(method, MosaicBlendMethod) else str(method).lower()
+    n = len(distances)
+    if n == 0:
+        return []
+    if n == 1:
+        return [1.0]
+
+    d_arr = [max(0.0, float(d)) for d in distances]
+    if m_val == "voronoi":
+        max_idx = int(max(range(n), key=lambda i: d_arr[i]))
+        weights = [0.0] * n
+        weights[max_idx] = 1.0
+        return weights
+
+    raw_weights: List[float] = []
+    if m_val in ("feather", "distance_transform"):
+        raw_weights = [d ** gamma for d in d_arr]
+    elif m_val == "cosine_bell":
+        max_d = max(max(d_arr), 1e-6)
+        raw_weights = [0.5 * (1.0 - math.cos(math.pi * min(1.0, d / max_d))) for d in d_arr]
+    elif m_val == "linear_ramp":
+        raw_weights = [min(1.0, d) for d in d_arr]
+    elif m_val == "min_cloud" and cloud_pcts is not None and len(cloud_pcts) == n:
+        raw_weights = [(d ** gamma) * ((100.0 - min(100.0, max(0.0, float(c)))) / 100.0) for d, c in zip(d_arr, cloud_pcts)]
+    else:  # none or fallback
+        raw_weights = [d ** gamma for d in d_arr]
+
+    sum_w = sum(raw_weights)
+    if sum_w > 1e-9:
+        return [round(w / sum_w, 6) for w in raw_weights]
+    return [round(1.0 / n, 6)] * n
+
+
+def calculate_distance_to_edge_2d(
+    width: int,
+    height: int,
+    feather_buffer_px: int = 64
+) -> List[List[float]]:
+    """Generates a 2D normalized Euclidean / Chebyshev distance-to-edge grid."""
+    grid: List[List[float]] = []
+    buf = max(1, feather_buffer_px)
+    for r in range(height):
+        row: List[float] = []
+        d_y = min(r, height - 1 - r)
+        for c in range(width):
+            d_x = min(c, width - 1 - c)
+            d_edge = min(d_x, d_y)
+            norm_d = min(1.0, d_edge / float(buf))
+            row.append(round(norm_d, 4))
+        grid.append(row)
+    return grid
+
+
+def calculate_mgrs_granule_overlap(
+    bbox_a: Union[Tuple[float, float, float, float], List[float]],
+    bbox_b: Union[Tuple[float, float, float, float], List[float]],
+    mean_refl_a: float = 0.285,
+    mean_refl_b: float = 0.282
+) -> Dict[str, Any]:
+    """Calculates geometric overlap area, overlap fraction, seamline trajectory, and radiometric tier between two granules."""
+    ba = [float(v) for v in bbox_a]
+    bb = [float(v) for v in bbox_b]
+
+    overlap_min_lon = max(ba[0], bb[0])
+    overlap_min_lat = max(ba[1], bb[1])
+    overlap_max_lon = min(ba[2], bb[2])
+    overlap_max_lat = min(ba[3], bb[3])
+
+    has_overlap = (overlap_max_lon > overlap_min_lon) and (overlap_max_lat > overlap_min_lat)
+    if not has_overlap:
+        return {
+            "has_overlap": False,
+            "overlap_area_sqkm": 0.0,
+            "overlap_percentage_a": 0.0,
+            "overlap_percentage_b": 0.0,
+            "seamline_mid_lon": (ba[2] + bb[0]) / 2.0,
+            "overlap_bbox": [0.0, 0.0, 0.0, 0.0],
+            "estimated_delta_rho": 0.0,
+            "seamline_tier": MosaicSeamlineTier.SEAMLESS.value
+        }
+
+    mid_lat = (overlap_min_lat + overlap_max_lat) / 2.0
+    dx_km = (overlap_max_lon - overlap_min_lon) * 111.32 * math.cos(math.radians(mid_lat))
+    dy_km = (overlap_max_lat - overlap_min_lat) * 111.32
+    overlap_sqkm = dx_km * dy_km
+
+    area_a = ((ba[2] - ba[0]) * 111.32 * math.cos(math.radians((ba[1] + ba[3]) / 2.0))) * ((ba[3] - ba[1]) * 111.32)
+    area_b = ((bb[2] - bb[0]) * 111.32 * math.cos(math.radians((bb[1] + bb[3]) / 2.0))) * ((bb[3] - bb[1]) * 111.32)
+
+    pct_a = min(100.0, (overlap_sqkm / max(area_a, 1e-4)) * 100.0)
+    pct_b = min(100.0, (overlap_sqkm / max(area_b, 1e-4)) * 100.0)
+    seam_lon = (overlap_min_lon + overlap_max_lon) / 2.0
+
+    delta_rho = round(abs(float(mean_refl_a) - float(mean_refl_b)), 4)
+    tier = classify_mosaic_seamline_tier(delta_rho)
+
+    return {
+        "has_overlap": True,
+        "overlap_area_sqkm": round(overlap_sqkm, 2),
+        "overlap_percentage_a": round(pct_a, 2),
+        "overlap_percentage_b": round(pct_b, 2),
+        "seamline_mid_lon": round(seam_lon, 6),
+        "overlap_bbox": [round(overlap_min_lon, 6), round(overlap_min_lat, 6), round(overlap_max_lon, 6), round(overlap_max_lat, 6)],
+        "estimated_delta_rho": delta_rho,
+        "seamline_tier": tier.value
+    }
+
+
+def generate_vrt_xml_definition(
+    mosaic_id: str,
+    collection: str,
+    granules: List[Dict[str, Any]],
+    crs: str = "EPSG:3857"
+) -> str:
+    """Generates standard GDAL Virtual Raster (VRT) XML catalog definition."""
+    sources_xml: List[str] = []
+    for idx, g in enumerate(granules):
+        gid = g.get("granule_id", f"G{idx+1}")
+        uri = g.get("source_uri", f"stac://{collection}/{gid}")
+        sources_xml.append(f"""    <SimpleSource>
+      <SourceFilename relativeToVRT="0">{uri}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="10980" RasterYSize="10980" DataType="Float32" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="10980" ySize="10980" />
+      <DstRect xOff="{idx * 8500}" yOff="0" xSize="10980" ySize="10980" />
+      <NODATA>0</NODATA>
+    </SimpleSource>""")
+
+    sources_block = "\n".join(sources_xml)
+    return f"""<VRTDataset rasterXSize="20000" rasterYSize="10980">
+  <SRS dataAxisToSRSAxisMapping="1,2">{crs}</SRS>
+  <GeoTransform>-121.20, 0.0001, 0.0, 37.45, 0.0, -0.0001</GeoTransform>
+  <VRTRasterBand dataType="Float32" band="1">
+    <ColorInterp>Gray</ColorInterp>
+{sources_block}
+  </VRTRasterBand>
+</VRTDataset>"""
+
+
+def build_mosaic_tile_url(
+    collection: str = "sentinel-2-l2a",
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    feather_width_m: float = 200.0,
+    blend_method: str = "feather",
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    bands: Optional[str] = None
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for multi-tile seamless mosaic raster tiles."""
+    base = f"/api/v1/tiles/mosaic/{collection}/{z}/{x}/{y}.png"
+    params: List[str] = []
+    if feather_width_m != 200.0:
+        params.append(f"feather_width_m={feather_width_m}")
+    if blend_method != "feather":
+        params.append(f"blend_method={blend_method}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if bands:
+        params.append(f"bands={bands}")
+    if params:
+        return f"{base}?{'&'.join(params)}"
+    return base
+
+
+def build_mosaic_tile_url_template(
+    collection: str = "sentinel-2-l2a",
+    feather_width_m: float = 200.0,
+    blend_method: str = "feather",
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    bands: Optional[str] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for multi-tile seamless mosaic raster tiles."""
+    base = f"/api/v1/tiles/mosaic/{collection}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = []
+    if feather_width_m != 200.0:
+        params.append(f"feather_width_m={feather_width_m}")
+    if blend_method != "feather":
+        params.append(f"blend_method={blend_method}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if bands:
+        params.append(f"bands={bands}")
+    if params:
+        return f"{base}?{'&'.join(params)}"
+    return base
+
+
+def build_mosaic_feather_tile_url_template(
+    collection: str = "sentinel-2-l2a",
+    feather_width_m: float = 200.0,
+    blend_method: str = "feather"
+) -> str:
+    """Builds dynamic Leaflet tile URL template for mosaic feathering weight gradient tiles."""
+    return f"/api/v1/tiles/mosaic/feather/{{z}}/{{x}}/{{y}}.png?collection={collection}&feather_width_m={feather_width_m}&blend_method={blend_method}"
+
+
+def build_mosaic_seamline_tile_url_template(
+    collection: str = "sentinel-2-l2a"
+) -> str:
+    """Builds dynamic Leaflet tile URL template for mosaic seamline boundary line overlay tiles."""
+    return f"/api/v1/tiles/mosaic/seamline/{{z}}/{{x}}/{{y}}.png?collection={collection}"
+

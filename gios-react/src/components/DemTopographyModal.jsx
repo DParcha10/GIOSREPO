@@ -654,7 +654,7 @@ export default function DemTopographyModal({
                       key={tierCfg.tier}
                       className={`p-4 rounded-xl border flex flex-col justify-between ${
                         tierCfg.badge
-                      } shadow-sm`}
+                      } shadow-sm ${isCritical ? 'ring-2 ring-rose-500/60' : ''}`}
                     >
                       <div>
                         <div className="flex items-center justify-between mb-1.5">

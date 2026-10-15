@@ -21415,6 +21415,28 @@ export default function MapExplorer() {
         }}
       />
 
+      {/* T-216/T-218: Topographic Relief & Hillshade Studio Modal (Cycle v2.5.26) */}
+      <DemTopographyModal
+        isOpen={demModalOpen}
+        onClose={() => setDemModalOpen(false)}
+        activeBbox={
+          customPolygonVertices.length >= 3 
+            ? bboxFromPoints(customPolygonVertices) 
+            : (selectedEvent ? [selectedEvent.lng - 0.04, selectedEvent.lat - 0.04, selectedEvent.lng + 0.04, selectedEvent.lat + 0.04] : [-121.1, 37.0, -121.0, 37.1])
+        }
+        onApply={(payload) => {
+          setDemCollection(payload.collection || 'cop-dem-glo-30');
+          setDemMetric(payload.metric || 'relief');
+          setDemSunAzimuth(payload.sunAzimuth ?? 315.0);
+          setDemSunAltitude(payload.sunAltitude ?? 45.0);
+          setDemZFactor(payload.zFactor ?? 1.0);
+          setDemColormap(payload.colormap || 'terrain');
+          setDemOpacity(payload.opacity ?? 0.85);
+          setDemBlendMode(payload.blendMode || 'multiply');
+          setShowDemLayer(true);
+        }}
+      />
+
     </div>
   );
 }

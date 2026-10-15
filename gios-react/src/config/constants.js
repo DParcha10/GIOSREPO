@@ -2736,6 +2736,226 @@ export const SEAMLINE_MODES = {
 };
 
 /**
+ * Military Grid Reference System (MGRS) benchmark granules for Sentinel-2 regional mosaics.
+ */
+export const MGRS_BENCHMARK_GRANULES = {
+  '10SEJ': {
+    tile_id: '10SEJ',
+    name: 'San Luis Dam & Pacheco Pass',
+    utm_zone: 10,
+    latitude_band: 'S',
+    square_id: 'EJ',
+    epsg_code: 32610,
+    bbox: [-121.25, 36.90, -120.15, 37.85],
+    center: [37.0582, -121.0744],
+    cloud_cover_pct: 1.2,
+    acquisition_date: '2026-08-15',
+    area_km2: 10000.0,
+    color: '#10b981'
+  },
+  '10SEH': {
+    tile_id: '10SEH',
+    name: 'South San Luis & Panoche Valley',
+    utm_zone: 10,
+    latitude_band: 'S',
+    square_id: 'EH',
+    epsg_code: 32610,
+    bbox: [-121.28, 36.00, -120.18, 36.95],
+    center: [36.4750, -120.7300],
+    cloud_cover_pct: 0.8,
+    acquisition_date: '2026-08-15',
+    area_km2: 10000.0,
+    color: '#06b6d4'
+  },
+  '10SFJ': {
+    tile_id: '10SFJ',
+    name: 'Santa Clara & Diablo Range North',
+    utm_zone: 10,
+    latitude_band: 'S',
+    square_id: 'FJ',
+    epsg_code: 32610,
+    bbox: [-122.38, 36.88, -121.22, 37.84],
+    center: [37.3600, -121.8000],
+    cloud_cover_pct: 2.4,
+    acquisition_date: '2026-08-15',
+    area_km2: 10000.0,
+    color: '#8b5cf6'
+  },
+  '10SFH': {
+    tile_id: '10SFH',
+    name: 'Salinas Valley & Gavilan Range',
+    utm_zone: 10,
+    latitude_band: 'S',
+    square_id: 'FH',
+    epsg_code: 32610,
+    bbox: [-122.35, 35.98, -121.24, 36.94],
+    center: [36.4600, -121.7950],
+    cloud_cover_pct: 3.1,
+    acquisition_date: '2026-08-15',
+    area_km2: 10000.0,
+    color: '#ec4899'
+  },
+  '11SKU': {
+    tile_id: '11SKU',
+    name: 'Fresno North & Sierra Foothills',
+    utm_zone: 11,
+    latitude_band: 'S',
+    square_id: 'KU',
+    epsg_code: 32611,
+    bbox: [-120.25, 36.90, -119.10, 37.85],
+    center: [37.3750, -119.6750],
+    cloud_cover_pct: 0.5,
+    acquisition_date: '2026-08-15',
+    area_km2: 10000.0,
+    color: '#f59e0b'
+  },
+  '11SKV': {
+    tile_id: '11SKV',
+    name: 'Yosemite & Sierra Crest',
+    utm_zone: 11,
+    latitude_band: 'S',
+    square_id: 'KV',
+    epsg_code: 32611,
+    bbox: [-120.20, 37.80, -119.05, 38.75],
+    center: [38.2750, -119.6250],
+    cloud_cover_pct: 4.8,
+    acquisition_date: '2026-08-15',
+    area_km2: 10000.0,
+    color: '#3b82f6'
+  }
+};
+
+/**
+ * Regional MGRS mosaic assembly presets.
+ */
+export const MGRS_REGIONAL_PRESETS = [
+  {
+    id: 'san_luis_corridor',
+    name: 'San Luis Dam & Pacheco Pass Corridor',
+    description: 'Bitemporal two-granule MGRS mosaic covering San Luis Reservoir, O’Neill Forebay, and Pacheco Pass.',
+    granule_ids: ['10SEJ', '10SEH'],
+    seamline_mode: 'feather',
+    feather_width_m: 120,
+    index: 'true_color_rgb',
+    target_crs: 'EPSG:3857'
+  },
+  {
+    id: 'central_valley_quad',
+    name: 'Central Coast to Central Valley Quad',
+    description: 'Four-granule regional quadrangle bridging Diablo Range, Santa Clara foothills, and San Joaquin agricultural basins.',
+    granule_ids: ['10SEJ', '10SEH', '10SFJ', '10SFH'],
+    seamline_mode: 'voronoi_cut',
+    feather_width_m: 200,
+    index: 'ndvi',
+    target_crs: 'EPSG:3857'
+  },
+  {
+    id: 'sierra_interzone',
+    name: 'Central Valley to Sierra Foothills Inter-UTM Transect',
+    description: 'Cross-zone UTM 10N / 11N boundary mosaic testing reprojection and distance-transform seamline feathering.',
+    granule_ids: ['10SEJ', '11SKU'],
+    seamline_mode: 'feather',
+    feather_width_m: 250,
+    index: 'mndwi',
+    target_crs: 'EPSG:3857'
+  }
+];
+
+/**
+ * Seamline mode UI and styling configurations.
+ */
+export const SEAMLINE_MODE_CONFIGS = {
+  feather: {
+    id: 'feather',
+    name: 'Distance Transform Feathering',
+    shortLabel: 'Feathered',
+    description: 'Sigmoid Euclidean distance-to-edge weighted blending across overlapping scene margins.',
+    badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    color: '#10b981'
+  },
+  voronoi_cut: {
+    id: 'voronoi_cut',
+    name: 'Minimum-Energy Voronoi Graph-Cut',
+    shortLabel: 'Graph-Cut',
+    description: 'Dynamic programming cutline avoiding high-contrast structures, water bodies, and cloud artifacts.',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+    color: '#3b82f6'
+  },
+  average: {
+    id: 'average',
+    name: 'Linear Average Overlap',
+    shortLabel: 'Average',
+    description: 'Direct arithmetic mean across overlapping valid pixel buffers.',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    color: '#f59e0b'
+  },
+  nearest: {
+    id: 'nearest',
+    name: 'Sharp Boundary Cut (Nearest)',
+    shortLabel: 'Nearest',
+    description: 'Direct Voronoi boundary step without radiometric transition blending.',
+    badgeClass: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+    color: '#a855f7'
+  }
+};
+
+/**
+ * Computes Euclidean distance transform sigmoid feathering weights across overlapping scenes.
+ * Guarantees partition of unity: w1 + w2 == 1.0.
+ */
+export const calculateDistanceTransformWeights = (distanceM, featherWidthM = 100.0, algorithm = 'sigmoid') => {
+  const w = Math.max(10.0, Number(featherWidthM) || 100.0);
+  const d = Math.max(-w / 2.0, Math.min(w / 2.0, Number(distanceM) || 0.0));
+  let w1;
+  if (algorithm === 'linear') {
+    w1 = (d + w / 2.0) / w;
+  } else if (algorithm === 'cosine') {
+    w1 = 0.5 + 0.5 * Math.sin((Math.PI * d) / w);
+  } else {
+    // Sigmoid smoothstep default: w1 = 1 / (1 + exp(-6 * d / W))
+    const k = 6.0 / w;
+    w1 = 1.0 / (1.0 + Math.exp(-k * d));
+  }
+  w1 = Math.max(0.0, Math.min(1.0, w1));
+  const w2 = Number((1.0 - w1).toFixed(6));
+  return {
+    distance_m: Number(d.toFixed(2)),
+    feather_width_m: Number(w.toFixed(2)),
+    weight_scene_1: Number(w1.toFixed(6)),
+    weight_scene_2: w2,
+    partition_of_unity: Number((w1 + w2).toFixed(6))
+  };
+};
+
+/**
+ * Computes combined WGS84 bounding envelope across multiple MGRS granules.
+ */
+export const calculateMosaicedBbox = (granuleIds = []) => {
+  if (!granuleIds || granuleIds.length === 0) {
+    return [-121.25, 36.00, -120.15, 37.85];
+  }
+  let minLon = 180.0, minLat = 90.0, maxLon = -180.0, maxLat = -90.0;
+  for (const id of granuleIds) {
+    const meta = MGRS_BENCHMARK_GRANULES[id];
+    if (meta && meta.bbox) {
+      minLon = Math.min(minLon, meta.bbox[0]);
+      minLat = Math.min(minLat, meta.bbox[1]);
+      maxLon = Math.max(maxLon, meta.bbox[2]);
+      maxLat = Math.max(maxLat, meta.bbox[3]);
+    }
+  }
+  if (minLon >= maxLon || minLat >= maxLat) {
+    return [-121.25, 36.00, -120.15, 37.85];
+  }
+  return [
+    Number(minLon.toFixed(4)),
+    Number(minLat.toFixed(4)),
+    Number(maxLon.toFixed(4)),
+    Number(maxLat.toFixed(4))
+  ];
+};
+
+/**
  * Constructs canonical XYZ tile URL for streaming a Virtual Raster (VRT) mosaic.
  * 
  * @param {string} vrtId - Virtual raster dataset identifier
@@ -2754,6 +2974,13 @@ export const buildVrtTileUrl = (vrtId, z, x, y, options = {}) => {
   const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
   const qs = params.toString() ? `?${params.toString()}` : '';
   return `${base}/api/v1/tiles/vrt/${vrtId}/${z}/${x}/${y}.png${qs}`;
+};
+
+/**
+ * Constructs dynamic XYZ tile URL template for streaming a Virtual Raster (VRT) mosaic in Leaflet.
+ */
+export const buildVrtTileUrlTemplate = (vrtId = 'VRT-DEMO-MGRS-01', options = {}) => {
+  return buildVrtTileUrl(vrtId, '{z}', '{x}', '{y}', options);
 };
 
 /**

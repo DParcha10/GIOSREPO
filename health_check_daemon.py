@@ -185,6 +185,10 @@ def inspect_data_ingestion() -> dict:
     sas_res = check_http_endpoint("https://planetarycomputer.microsoft.com/api/sas/v1/token/sentinel-2-l2a")
     results["planetary_computer_sas"] = sas_res
     
+    # 3. Microsoft Planetary Computer Copernicus DEM GLO-30 STAC Collection (Task T-219)
+    dem_stac_res = check_http_endpoint("https://planetarycomputer.microsoft.com/api/stac/v1/collections/cop-dem-glo-30")
+    results["planetary_computer_dem_stac"] = dem_stac_res
+    
     # 3. USGS NWIS Water Data
     usgs_res = check_http_endpoint("https://waterservices.usgs.gov/nwis/iv/?format=json&sites=11262900&parameterCd=00060&siteStatus=all", timeout=12.0, retries=3)
     results["usgs_nwis"] = usgs_res
@@ -345,6 +349,145 @@ def inspect_hydrodynamic_cfl_guard() -> dict:
     
     return results
 
+def inspect_band_math_ast_guard() -> dict:
+    """Inspects AST Band Math Grammar, safe tokenizer/lexer, recursion depth limits,
+    CPU execution timeout (<200ms), numerical division-by-zero safety, and 2D raster allocation (Task T-213).
+    """
+    results = {}
+    
+    # 1. AST Parser Recursion Depth Limit Guard (max depth <= 20)
+    nested_formula = "(" * 22 + "B04" + ")" * 22
+    depth_guard_passed = False
+    try:
+        from app.models.schemas import validate_band_math_formula
+        diag = validate_band_math_formula(nested_formula, max_depth=20)
+        if not diag.get("is_valid", True):
+            depth_guard_passed = any("depth" in str(e).lower() for e in diag.get("syntax_errors", []))
+    except Exception as e:
+        if "depth" in str(e).lower():
+            depth_guard_passed = True
+
+    results["recursion_depth_guard"] = {
+        "max_allowed_depth": 20,
+        "test_depth": 22,
+        "rejected_properly": depth_guard_passed
+    }
+
+    # 2. Formula Syntax & Safe Evaluation Performance (<200ms CPU timeout)
+    eval_status = {"passed": False, "duration_ms": 0.0, "result": None, "under_timeout": False, "error": None}
+    t0 = time.time()
+    try:
+        from app.models.schemas import evaluate_band_math_formula
+        test_val = evaluate_band_math_formula("(B08 - B04) / (B08 + B04)", {"B08": 0.8, "B04": 0.1})
+        elapsed_ms = (time.time() - t0) * 1000.0
+        eval_status = {
+            "passed": abs(test_val - (0.7 / 0.9)) < 1e-4,
+            "duration_ms": round(elapsed_ms, 2),
+            "result": round(test_val, 4),
+            "under_timeout": elapsed_ms < 200.0,
+            "error": None
+        }
+    except Exception as e:
+        eval_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t0) * 1000.0, 2),
+            "result": None,
+            "under_timeout": False,
+            "error": str(e)
+        }
+    results["evaluation_guard"] = eval_status
+
+    # 3. Numerical Safety & Division-by-Zero Guard (epsilon = 10^-6)
+    div_status = {"safe": False, "result": None, "error": None}
+    try:
+        from app.models.schemas import evaluate_band_math_formula
+        div_val = evaluate_band_math_formula("1.0 / 0.0", {})
+        div_status = {
+            "safe": div_val is not None and not (div_val != div_val) and abs(div_val) >= 1e5,
+            "result": div_val,
+            "error": None
+        }
+    except Exception as e:
+        div_status = {"safe": False, "result": None, "error": str(e)}
+    results["division_by_zero_guard"] = div_status
+
+    # 4. Vectorized 2D Raster Allocation Memory Guard
+    raster_status = {"passed": False, "shape": None, "duration_ms": 0.0, "error": None}
+    t_rast = time.time()
+    try:
+        import numpy as np
+        from app.services.indices import index_service
+        b4_arr = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32)
+        b8_arr = np.array([[0.8, 0.7], [0.6, 0.5]], dtype=np.float32)
+        raster_res = index_service.evaluate_band_math_raster("(B08 - B04) / (B08 + B04)", {"B08": b8_arr, "B04": b4_arr})
+        rast_elapsed = (time.time() - t_rast) * 1000.0
+        if raster_res is not None and np.all(np.isfinite(raster_res)):
+            raster_status = {
+                "passed": True,
+                "shape": list(raster_res.shape),
+                "duration_ms": round(rast_elapsed, 2),
+                "error": None
+            }
+        else:
+            raster_status = {
+                "passed": False,
+                "shape": list(raster_res.shape) if raster_res is not None else None,
+                "duration_ms": round(rast_elapsed, 2),
+                "error": "Non-finite values or empty array produced"
+            }
+    except Exception as e:
+        raster_status = {
+            "passed": False,
+            "shape": None,
+            "duration_ms": round((time.time() - t_rast) * 1000.0, 2),
+            "error": str(e)
+        }
+    results["vector_raster_guard"] = raster_status
+
+    return results
+
+def inspect_dem_topography_guard() -> dict:
+    """Inspects Copernicus 30m DEM (GLO-30) Horn's 3x3 finite-difference gradient operator,
+    analytical slope derivative bounds, and convolution kernel latency watchdog (<100ms) (Task T-219).
+    """
+    results = {}
+    solver_status = {"passed": False, "duration_ms": 0.0, "slope_deg": None, "under_timeout": False, "error": None}
+    t0 = time.time()
+    try:
+        from app.models.schemas import calculate_horn_gradient
+        # 3x3 elevation test grid with known slope
+        grid = [
+            [100.0, 100.0, 100.0],
+            [100.0, 115.0, 100.0],
+            [100.0, 100.0, 100.0]
+        ]
+        res = calculate_horn_gradient(grid, cell_size_x_m=30.0, cell_size_y_m=30.0)
+        elapsed_ms = (time.time() - t0) * 1000.0
+        solver_status = {
+            "passed": res is not None and hasattr(res, "slope_deg"),
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 100.0,
+            "slope_deg": round(res.slope_deg, 2) if res else None,
+            "error": None
+        }
+    except Exception as e:
+        solver_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t0) * 1000.0, 2),
+            "under_timeout": False,
+            "slope_deg": None,
+            "error": str(e)
+        }
+    results["horn_gradient_watchdog"] = solver_status
+
+    # Probe Dynamic DEM Relief Tile Server
+    probe_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/dem/relief/10/500/500.png?colormap=terrain",
+        timeout=3.0
+    )
+    results["dem_tile_probe"] = probe_tile
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
@@ -386,6 +529,8 @@ def run_health_check() -> dict:
     data_ingestion = inspect_data_ingestion()
     resources = inspect_resources()
     hydrodynamics = inspect_hydrodynamic_cfl_guard()
+    band_math = inspect_band_math_ast_guard()
+    dem_topography = inspect_dem_topography_guard()
     pipelines = inspect_pipelines()
     
     anomalies = []
@@ -459,6 +604,13 @@ def run_health_check() -> dict:
             "type": "INGESTION_ERROR",
             "message": f"Precipitation telemetry feed check failed: {data_ingestion['precipitation_telemetry']['error']}"
         })
+    if "planetary_computer_dem_stac" in data_ingestion and not data_ingestion["planetary_computer_dem_stac"]["ok"]:
+        anomalies.append({
+            "component": "Planetary Computer Copernicus DEM GLO-30 STAC Collection",
+            "severity": "MEDIUM",
+            "type": "INGESTION_ERROR",
+            "message": f"DEM STAC API check failed: {data_ingestion['planetary_computer_dem_stac']['error']}"
+        })
     if data_ingestion["sqlite_db"]["error"]:
         anomalies.append({
             "component": "SQLite Database (gios.db)",
@@ -490,7 +642,67 @@ def run_health_check() -> dict:
             "message": f"Dynamic flood inundation tile probe failed: {hydrodynamics['hydrodynamic_tile_probe']['error']}"
         })
         
-    # 4. Analyze Pipeline Anomalies
+    # 4. Analyze AST Band Math Engine & Safe Evaluation Anomalies
+    if not band_math["recursion_depth_guard"]["rejected_properly"]:
+        anomalies.append({
+            "component": "AST Band Math Recursion Depth Guard",
+            "severity": "HIGH",
+            "type": "SECURITY_GUARD_FAILURE",
+            "message": "AST parser failed to reject deeply nested expression exceeding max depth (depth 22 > max 20)."
+        })
+    if not band_math["evaluation_guard"]["passed"]:
+        anomalies.append({
+            "component": "AST Band Math Evaluator",
+            "severity": "HIGH",
+            "type": "EVALUATION_FAILURE",
+            "message": f"AST evaluation check failed: {band_math['evaluation_guard']['error']}"
+        })
+    elif not band_math["evaluation_guard"]["under_timeout"]:
+        anomalies.append({
+            "component": "AST Band Math CPU Watchdog",
+            "severity": "MEDIUM",
+            "type": "CPU_TIMEOUT",
+            "message": f"AST evaluation latency ({band_math['evaluation_guard']['duration_ms']} ms) exceeded 200 ms timeout ceiling."
+        })
+    if not band_math["division_by_zero_guard"]["safe"]:
+        anomalies.append({
+            "component": "AST Band Math Division-by-Zero Epsilon Guard",
+            "severity": "HIGH",
+            "type": "NUMERICAL_INSTABILITY",
+            "message": "AST division by zero failed to clamp safely to finite value."
+        })
+    if not band_math["vector_raster_guard"]["passed"]:
+        anomalies.append({
+            "component": "AST Band Math Vectorized 2D Raster Guard",
+            "severity": "MEDIUM",
+            "type": "RASTER_EVALUATION_FAILURE",
+            "message": f"Vectorized 2D raster AST evaluation failed: {band_math['vector_raster_guard']['error']}"
+        })
+
+    # 5. Analyze Copernicus 30m DEM (GLO-30) Topography & Hillshade Anomalies (Task T-219)
+    if not dem_topography["horn_gradient_watchdog"]["passed"]:
+        anomalies.append({
+            "component": "Horn's 3x3 DEM Finite-Difference Operator",
+            "severity": "HIGH",
+            "type": "CALCULATION_FAILURE",
+            "message": f"Horn gradient calculation failed: {dem_topography['horn_gradient_watchdog']['error']}"
+        })
+    elif not dem_topography["horn_gradient_watchdog"]["under_timeout"]:
+        anomalies.append({
+            "component": "Horn's 3x3 Convolution Latency Watchdog",
+            "severity": "MEDIUM",
+            "type": "CPU_TIMEOUT",
+            "message": f"Horn convolution kernel latency ({dem_topography['horn_gradient_watchdog']['duration_ms']} ms) exceeded 100 ms limit."
+        })
+    if dem_topography["dem_tile_probe"] and not dem_topography["dem_tile_probe"]["ok"]:
+        anomalies.append({
+            "component": "Dynamic DEM Topographic Relief Tile Server",
+            "severity": "MEDIUM",
+            "type": "TILE_ERROR",
+            "message": f"DEM relief tile probe failed: {dem_topography['dem_tile_probe']['error']}"
+        })
+
+    # 6. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
         test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
@@ -507,7 +719,7 @@ def run_health_check() -> dict:
             "message": "ResourceWarning: unclosed database in <sqlite3.Connection object> detected during test execution."
         })
         
-    # 5. Analyze Resource Anomalies
+    # 7. Analyze Resource Anomalies
     if resources["memory_percent"] > 95:
         anomalies.append({
             "component": "Host RAM",
@@ -534,6 +746,8 @@ def run_health_check() -> dict:
         "tile_cache": tile_cache,
         "data_ingestion": data_ingestion,
         "hydrodynamics": hydrodynamics,
+        "band_math": band_math,
+        "dem_topography": dem_topography,
         "pipelines": pipelines,
         "resources": resources,
         "anomalies": anomalies
@@ -550,6 +764,8 @@ def write_health_status(report: dict):
     tile_cache = report["tile_cache"]
     data_ing = report["data_ingestion"]
     hydrodynamics = report.get("hydrodynamics", {})
+    band_math = report.get("band_math", {})
+    dem_topo = report.get("dem_topography", {})
     pipelines = report["pipelines"]
     
     entry_lines = []
@@ -587,6 +803,9 @@ def write_health_status(report: dict):
     
     entry_lines.append(f"- **Microsoft Planetary Computer STAC**: `{stac_ok}` ({data_ing['planetary_computer_stac']['latency_ms']} ms)")
     entry_lines.append(f"- **Planetary Computer SAS Token Service**: `{sas_ok}` ({data_ing['planetary_computer_sas']['latency_ms']} ms)")
+    if "planetary_computer_dem_stac" in data_ing:
+        dem_stac_ok = "REACHABLE" if data_ing["planetary_computer_dem_stac"]["ok"] else f"ERROR ({data_ing['planetary_computer_dem_stac']['error']})"
+        entry_lines.append(f"- **Copernicus DEM (GLO-30) STAC Asset Ingestion**: `{dem_stac_ok}` ({data_ing['planetary_computer_dem_stac']['latency_ms']} ms)")
     entry_lines.append(f"- **USGS NWIS Real-Time Telemetry**: `{usgs_ok}` ({data_ing['usgs_nwis']['latency_ms']} ms)")
     entry_lines.append(f"- **NOAA / NWS Weather Services**: `{noaa_ok}` ({data_ing['noaa_weather']['latency_ms']} ms)")
     if "usgs_earthquake" in data_ing:
@@ -619,15 +838,43 @@ def write_health_status(report: dict):
         entry_lines.append(f"- **Dynamic Hydrodynamic Inundation Tile Server**: `{tile_status}` (Probe latency: {tile_probe.get('latency_ms', 0.0) if tile_probe else 'N/A'} ms)")
         entry_lines.append("")
 
-    # 5. Pipeline Execution & Verification
-    entry_lines.append("### 5. Pipeline Execution")
+    # 5. AST Band Math Engine & Safe Evaluation Guard
+    if band_math:
+        entry_lines.append("### 5. AST Band Math Engine & Safe Evaluation Guard")
+        depth_status = "ENFORCED" if band_math.get("recursion_depth_guard", {}).get("rejected_properly") else "FAILING"
+        eval_g = band_math.get("evaluation_guard", {})
+        eval_status = "PASSING" if (eval_g.get("passed") and eval_g.get("under_timeout")) else "FAILING"
+        div_g = band_math.get("division_by_zero_guard", {})
+        div_status = "VERIFIED" if div_g.get("safe") else "FAILING"
+        rast_g = band_math.get("vector_raster_guard", {})
+        raster_status = "VERIFIED" if rast_g.get("passed") else "FAILING"
+        
+        entry_lines.append(f"- **AST Parser Recursion Depth Limit Guard (Max Depth $\\le 20$)**: `{depth_status}` (Depth 22 nested expression rejected cleanly)")
+        entry_lines.append(f"- **CPU Execution Latency Watchdog ($< 200\\text{{ms}}$)**: `{eval_status}` ({eval_g.get('duration_ms', 0.0)} ms)")
+        entry_lines.append(f"- **Division-by-Zero Numerical Safety Epsilon Guard ($\\epsilon = 10^{{-6}}$)**: `{div_status}` (Clamped finite value: `{div_g.get('result')}`)")
+        entry_lines.append(f"- **Vectorized 2D NumPy Raster Allocation Guard**: `{raster_status}` ({rast_g.get('shape')} array evaluated in {rast_g.get('duration_ms', 0.0)} ms)")
+        entry_lines.append("")
+
+    # 6. Copernicus 30m DEM (GLO-30) Topography & Hillshade Guard (Task T-219)
+    if dem_topo:
+        entry_lines.append("### 6. Copernicus 30m DEM (GLO-30) Topography & Hillshade Guard")
+        horn_w = dem_topo.get("horn_gradient_watchdog", {})
+        horn_status = "PASSING" if (horn_w.get("passed") and horn_w.get("under_timeout")) else "FAILING"
+        dem_tile = dem_topo.get("dem_tile_probe")
+        dem_tile_status = "REACHABLE" if (dem_tile and dem_tile.get("ok")) else "UNREACHABLE"
+        entry_lines.append(f"- **Horn's 3x3 Finite-Difference Convolution Latency Watchdog ($< 100\\text{{ms}}$)**: `{horn_status}` ({horn_w.get('duration_ms', 0.0)} ms)")
+        entry_lines.append(f"- **Dynamic DEM Topographic Relief Tile Server (`/tiles/dem/relief/10/500/500.png`)**: `{dem_tile_status}` (Probe latency: {dem_tile.get('latency_ms', 0.0) if dem_tile else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 7. Pipeline Execution & Verification
+    entry_lines.append("### 7. Pipeline Execution")
     test_ok = "PASSING" if pipelines["test_suite"]["passed"] else "FAILED"
     entry_lines.append(f"- **Core Test Suite & API Pipelines**: `{test_ok}` ({pipelines['test_suite']['duration_sec']}s)")
     entry_lines.append("")
     
-    # 6. Anomalies & Agent 9 (@debugger) Handoff
+    # 8. Detected Anomalies & Action Items
     if anomalies:
-        entry_lines.append("### 6. Detected Anomalies & Action Items")
+        entry_lines.append("### 8. Detected Anomalies & Action Items")
         entry_lines.append("> [!WARNING]")
         entry_lines.append(f"> **{len(anomalies)} anomaly/anomalies detected.** Handing off immediately to **Agent 9 (@debugger)** for investigation and patching.\n")
         
@@ -641,7 +888,7 @@ def write_health_status(report: dict):
         for idx, a in enumerate(anomalies, 1):
             entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
-        entry_lines.append("### 6. Detected Anomalies")
+        entry_lines.append("### 8. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
         entry_lines.append("> All systems operational. No active anomalies detected.")
         

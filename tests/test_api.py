@@ -3479,6 +3479,89 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(res_scene_tile.headers["content-type"], "image/png")
         self.assertTrue(res_scene_tile.content.startswith(b"\x89PNG"))
 
+    def test_dem_topography_transect_and_tile_streaming_api(self):
+        """Test Cycle v2.5.26: Copernicus 30m DEM (GLO-30) Topography, Transect, Slope Hazard & Dynamic XYZ Tile Streaming."""
+        # 1. Topography Analysis Endpoint & Unversioned Route
+        topo_payload = {
+            "bbox": [-121.1, 37.0, -121.0, 37.1],
+            "collection": "cop-dem-glo-30",
+            "target_resolution_m": 30.0,
+            "sun_azimuth_deg": 315.0,
+            "sun_altitude_deg": 45.0,
+            "z_factor": 1.0
+        }
+        res_topo = self.client.post("/api/v1/analysis/dem/topography", json=topo_payload)
+        self.assertEqual(res_topo.status_code, 200)
+        topo_data = res_topo.json()
+        self.assertTrue(topo_data["simulation_id"].startswith("DEM-TOPO-"))
+        self.assertEqual(topo_data["collection"], "cop-dem-glo-30")
+        self.assertIn("summary", topo_data)
+        self.assertIn("min_elevation_m", topo_data["summary"])
+        self.assertIn("max_elevation_m", topo_data["summary"])
+        self.assertIn("mean_slope_deg", topo_data["summary"])
+        self.assertIn("mean_twi", topo_data["summary"])
+        self.assertIn("sun_illumination", topo_data)
+        self.assertEqual(topo_data["sun_illumination"]["azimuth_deg"], 315.0)
+        self.assertIn("hazard_distribution", topo_data)
+        self.assertIn("tile_url_templates", topo_data)
+        self.assertIn("relief", topo_data["tile_url_templates"])
+        self.assertIn("hillshade", topo_data["tile_url_templates"])
+
+        res_topo_unv = self.client.post("/analysis/dem/topography", json=topo_payload)
+        self.assertEqual(res_topo_unv.status_code, 200)
+
+        # 2. Elevation Transect Profile Endpoint
+        transect_payload = {
+            "start_point": [37.05, -121.05],
+            "end_point": [37.045, -121.045],
+            "samples": 20,
+            "collection": "cop-dem-glo-30",
+            "z_factor": 1.0
+        }
+        res_transect = self.client.post("/api/v1/analysis/dem/transect", json=transect_payload)
+        self.assertEqual(res_transect.status_code, 200)
+        transect_data = res_transect.json()
+        self.assertTrue(transect_data["transect_id"].startswith("TRANSECT-"))
+        self.assertEqual(transect_data["collection"], "cop-dem-glo-30")
+        self.assertGreater(transect_data["total_distance_m"], 0.0)
+        self.assertEqual(len(transect_data["points"]), 20)
+        p0 = transect_data["points"][0]
+        self.assertIn("elevation_m", p0)
+        self.assertIn("slope_deg", p0)
+        self.assertIn("twi", p0)
+        self.assertIn("hazard_tier", p0)
+
+        # 3. Slope Hazard Zonification Endpoint
+        hazard_payload = {
+            "bbox": [-121.1, 37.0, -121.0, 37.1],
+            "critical_threshold_deg": 35.0,
+            "collection": "cop-dem-glo-30"
+        }
+        res_hazard = self.client.post("/api/v1/analysis/dem/slope-hazard", json=hazard_payload)
+        self.assertEqual(res_hazard.status_code, 200)
+        hazard_data = res_hazard.json()
+        self.assertTrue(hazard_data["analysis_id"].startswith("DEM-HAZARD-"))
+        self.assertIn("tier_breakdown", hazard_data)
+        self.assertIn("flat", hazard_data["tier_breakdown"])
+        self.assertIn("critical_hazard", hazard_data["tier_breakdown"])
+        self.assertIn("critical_slope_percentage", hazard_data)
+        self.assertIn("overall_hazard_rating", hazard_data)
+
+        # 4. Dynamic DEM XYZ Tile Streaming across metrics (Versioned & Unversioned)
+        dem_tile_endpoints = [
+            "/api/v1/tiles/dem/relief/10/500/500.png?colormap=terrain",
+            "/api/v1/tiles/dem/hillshade/10/500/500.png?sun_azimuth=315&sun_altitude=45",
+            "/api/v1/tiles/dem/slope/10/500/500.png?colormap=rdylgn_r",
+            "/api/v1/tiles/dem/twi/10/500/500.png?colormap=blues",
+            "/api/v1/tiles/dem/elevation/10/500/500.png",
+            "/tiles/dem/relief/10/500/500.png"
+        ]
+        for tile_url in dem_tile_endpoints:
+            res_tile = self.client.get(tile_url)
+            self.assertEqual(res_tile.status_code, 200, f"Failed DEM tile: {tile_url}")
+            self.assertEqual(res_tile.headers.get("content-type"), "image/png")
+            self.assertTrue(res_tile.content.startswith(b"\x89PNG"))
+
 
 if __name__ == "__main__":
     unittest.main()

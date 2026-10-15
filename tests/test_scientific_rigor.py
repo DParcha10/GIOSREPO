@@ -2510,6 +2510,137 @@ class TestScientificRigor(unittest.TestCase):
         res_max = evaluate_band_math_formula("max(0.2, 0.8)", {})
         self.assertEqual(res_max, 0.8)
 
+    def test_task_t220_cop_dem_glo30_topography_and_hillshade_scientific_rigor(self):
+        """Task T-220: Continuous Scientific QA for Cycle v2.5.26 Copernicus 30m DEM (GLO-30),
+        Horn 3x3 Finite Difference Convergence, Lambertian Hillshade Illumination Conservation,
+        Topographic Wetness Index (TWI) Monotonicity & Dynamic XYZ Relief Tile Invariants."""
+        import io
+        from PIL import Image
+        from app.models.schemas import (
+            calculate_horn_gradient,
+            calculate_terrain_slope,
+            calculate_compass_aspect,
+            aspect_to_compass_direction,
+            calculate_lambertian_hillshade,
+            calculate_dem_topographic_wetness_index,
+            classify_dem_slope_hazard_tier,
+            calculate_elevation_transect_profile,
+            build_dem_tile_url,
+            build_dem_tile_url_template,
+            DemSlopeHazardTier,
+            DEM_METRIC_CONFIGS,
+            SLOPE_HAZARD_CONFIGS
+        )
+        from app.services.tile_service import tile_service
+
+        # -------------------------------------------------------------
+        # 1. Horn 3x3 Operator Mathematical Convergence & Exact Derivatives
+        # -------------------------------------------------------------
+        cell_size = 30.0
+        for A, B in [(0.5, 0.0), (0.0, -0.8), (0.3, 0.4), (-1.2, 0.5)]:
+            grid = [
+                [A * (-cell_size) + B * (+cell_size) + 500.0, A * (0.0) + B * (+cell_size) + 500.0, A * (+cell_size) + B * (+cell_size) + 500.0],
+                [A * (-cell_size) + B * (0.0) + 500.0,         A * (0.0) + B * (0.0) + 500.0,         A * (+cell_size) + B * (0.0) + 500.0],
+                [A * (-cell_size) + B * (-cell_size) + 500.0, A * (0.0) + B * (-cell_size) + 500.0, A * (+cell_size) + B * (-cell_size) + 500.0]
+            ]
+            grad = calculate_horn_gradient(grid, cell_size_x=cell_size, cell_size_y=cell_size)
+            self.assertAlmostEqual(grad.dz_dx, A, places=5)
+            self.assertAlmostEqual(grad.dz_dy, B, places=5)
+            expected_slope_rad = math.atan(math.sqrt(A * A + B * B))
+            self.assertAlmostEqual(grad.slope_rad, expected_slope_rad, places=5)
+            self.assertAlmostEqual(grad.slope_deg, math.degrees(expected_slope_rad), places=3)
+
+        # -------------------------------------------------------------
+        # 2. Aspect Vector & Downhill Flow Invariants
+        # -------------------------------------------------------------
+        test_cases = [
+            (0.0, -1.0, 0.0, "N"),
+            (-1.0, -1.0, 45.0, "NE"),
+            (-1.0, 0.0, 90.0, "E"),
+            (-1.0, 1.0, 135.0, "SE"),
+            (0.0, 1.0, 180.0, "S"),
+            (1.0, 1.0, 225.0, "SW"),
+            (1.0, 0.0, 270.0, "W"),
+            (1.0, -1.0, 315.0, "NW"),
+        ]
+        for A, B, exp_aspect, exp_cardinal in test_cases:
+            asp = calculate_compass_aspect(A, B)
+            self.assertAlmostEqual(asp, exp_aspect, places=2)
+            cardinal = aspect_to_compass_direction(asp)
+            self.assertEqual(cardinal, exp_cardinal)
+
+        # -------------------------------------------------------------
+        # 3. Analytical Lambertian Hillshade Physical Invariants
+        # -------------------------------------------------------------
+        for alt in [15.0, 30.0, 45.0, 60.0, 90.0]:
+            hs_horiz = calculate_lambertian_hillshade(slope_deg=0.0, aspect_deg=0.0, sun_altitude_deg=alt)
+            expected_illum = 255.0 * math.sin(math.radians(alt))
+            self.assertAlmostEqual(hs_horiz.illumination, expected_illum, places=2)
+            self.assertFalse(hs_horiz.is_shadow)
+
+        for az in [45.0, 135.0, 225.0, 315.0]:
+            hs_normal = calculate_lambertian_hillshade(slope_deg=45.0, aspect_deg=az, sun_azimuth_deg=az, sun_altitude_deg=45.0)
+            self.assertAlmostEqual(hs_normal.illumination, 255.0, places=2)
+            self.assertAlmostEqual(hs_normal.cos_incidence, 1.0, places=4)
+            self.assertFalse(hs_normal.is_shadow)
+
+        hs_deep_shadow = calculate_lambertian_hillshade(slope_deg=60.0, aspect_deg=180.0, sun_azimuth_deg=0.0, sun_altitude_deg=20.0)
+        self.assertAlmostEqual(hs_deep_shadow.illumination, 0.0, places=2)
+        self.assertTrue(hs_deep_shadow.is_shadow)
+        self.assertLess(hs_deep_shadow.cos_incidence, 0.0)
+
+        # -------------------------------------------------------------
+        # 4. Topographic Wetness Index (TWI) Monotonicity & Clamping Safety
+        # -------------------------------------------------------------
+        slopes = [0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0]
+        twis_by_slope = [calculate_dem_topographic_wetness_index(s, specific_catchment_area_m=100.0).twi for s in slopes]
+        for i in range(len(twis_by_slope) - 1):
+            self.assertGreater(twis_by_slope[i], twis_by_slope[i + 1])
+
+        catchment_areas = [10.0, 50.0, 100.0, 500.0, 2000.0, 10000.0]
+        twis_by_area = [calculate_dem_topographic_wetness_index(15.0, specific_catchment_area_m=a).twi for a in catchment_areas]
+        for i in range(len(twis_by_area) - 1):
+            self.assertLess(twis_by_area[i], twis_by_area[i + 1])
+
+        twi_zero_slope = calculate_dem_topographic_wetness_index(0.0, specific_catchment_area_m=100.0)
+        self.assertTrue(math.isfinite(twi_zero_slope.twi))
+        self.assertGreater(twi_zero_slope.twi, 10.0)
+
+        # -------------------------------------------------------------
+        # 5. Geotechnical Slope Stability Hazard Tiers Classification
+        # -------------------------------------------------------------
+        self.assertEqual(classify_dem_slope_hazard_tier(0.0), DemSlopeHazardTier.FLAT)
+        self.assertEqual(classify_dem_slope_hazard_tier(4.9), DemSlopeHazardTier.FLAT)
+        self.assertEqual(classify_dem_slope_hazard_tier(5.0), DemSlopeHazardTier.GENTLE)
+        self.assertEqual(classify_dem_slope_hazard_tier(14.9), DemSlopeHazardTier.GENTLE)
+        self.assertEqual(classify_dem_slope_hazard_tier(15.0), DemSlopeHazardTier.MODERATE)
+        self.assertEqual(classify_dem_slope_hazard_tier(24.9), DemSlopeHazardTier.MODERATE)
+        self.assertEqual(classify_dem_slope_hazard_tier(25.0), DemSlopeHazardTier.STEEP)
+        self.assertEqual(classify_dem_slope_hazard_tier(34.9), DemSlopeHazardTier.STEEP)
+        self.assertEqual(classify_dem_slope_hazard_tier(35.0), DemSlopeHazardTier.CRITICAL_HAZARD)
+        self.assertEqual(classify_dem_slope_hazard_tier(55.0), DemSlopeHazardTier.CRITICAL_HAZARD)
+
+        # -------------------------------------------------------------
+        # 6. Dynamic XYZ DEM Relief & Metric Tile Streaming Invariants
+        # -------------------------------------------------------------
+        metrics = ["relief", "elevation", "slope", "aspect", "hillshade", "twi", "tri"]
+        for m in metrics:
+            tile_bytes = tile_service.render_dem_tile(
+                z=11,
+                x=512,
+                y=1024,
+                metric=m,
+                collection="cop-dem-glo-30"
+            )
+            self.assertIsInstance(tile_bytes, bytes)
+            self.assertGreater(len(tile_bytes), 500)
+            self.assertTrue(tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+            img = Image.open(io.BytesIO(tile_bytes))
+            self.assertEqual(img.size, (256, 256))
+            self.assertEqual(img.mode, "RGBA")
+
+
 if __name__ == "__main__":
     unittest.main()
 
