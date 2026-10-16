@@ -42,6 +42,12 @@ import giosApi, {
   getDronePhotogrammetryTileUrlTemplate,
   getCustomExpressionTileUrlTemplate,
   getDemTileUrlTemplate,
+  getTemporalCompositeTileUrlTemplate,
+  TEMPORAL_REDUCER_CONFIGS,
+  getSarBackscatterTileUrlTemplate,
+  getSarFloodTileUrlTemplate,
+  SAR_POLARIZATION_CONFIGS,
+  SPECKLE_FILTER_CONFIGS,
   buildWildfireTileUrl,
   calculateTerrainAnalysis,
   calculateSarAnalysis,
@@ -231,6 +237,8 @@ import DronePhotogrammetryModal from '../components/DronePhotogrammetryModal';
 import BandMathStudioModal from '../components/BandMathStudioModal';
 import DemTopographyModal from '../components/DemTopographyModal';
 import MosaicStudioModal from '../components/MosaicStudioModal';
+import TemporalCompositeModal from '../components/TemporalCompositeModal';
+import SarRadarStudioModal from '../components/SarRadarStudioModal';
 import { 
   MGRS_BENCHMARK_GRANULES,
   DEFAULT_MAP_CONFIG,
@@ -1353,6 +1361,47 @@ export default function MapExplorer() {
   const [mosaicShowSeamlines, setMosaicShowSeamlines] = useState(true);
   const [mosaicShowFootprints, setMosaicShowFootprints] = useState(true);
   const [mosaicSeamSegments, setMosaicSeamSegments] = useState([]);
+
+  // T-228/T-230: Multi-Temporal Scene Stacking, Statistical Reducers & Quality Mosaic States (Cycle v2.5.28)
+  const [temporalModalOpen, setTemporalModalOpen] = useState(false);
+  const [showTemporalLayer, setShowTemporalLayer] = useState(false);
+  const [temporalCompositeId, setTemporalCompositeId] = useState('COMP_SENTINEL2_CALIFORNIA_2026');
+  const [temporalCollection, setTemporalCollection] = useState('sentinel-2-l2a');
+  const [temporalReducer, setTemporalReducer] = useState('median');
+  const [temporalTileUrlTemplate, setTemporalTileUrlTemplate] = useState('');
+  const [temporalStartDate, setTemporalStartDate] = useState('2026-06-01');
+  const [temporalEndDate, setTemporalEndDate] = useState('2026-08-31');
+  const [temporalMaxCloudCover, setTemporalMaxCloudCover] = useState(25.0);
+  const [temporalBands, setTemporalBands] = useState('B04,B03,B02');
+  const [temporalColormap, setTemporalColormap] = useState('spectral');
+  const [temporalRescale, setTemporalRescale] = useState('0.0,0.35');
+  const [temporalOpacity, setTemporalOpacity] = useState(0.90);
+  const [temporalBlendMode, setTemporalBlendMode] = useState('normal');
+  const [temporalQualityTier, setTemporalQualityTier] = useState('excellent');
+  const [temporalClearPixelPct, setTemporalClearPixelPct] = useState(96.5);
+  const [temporalScenesIncluded, setTemporalScenesIncluded] = useState(6);
+
+  // T-234/T-236: Sentinel-1 SAR Dual-Pol Backscatter, Speckle Filtering & Flood Inundation States (Cycle v2.5.29)
+  const [sarRadarModalOpen, setSarRadarModalOpen] = useState(false);
+  const [showSarRadarLayer, setShowSarRadarLayer] = useState(false);
+  const [sarSceneId, setSarSceneId] = useState('S1A_IW_GRDH_1SDV_20260910T140023_RTC');
+  const [sarCollection, setSarCollection] = useState('sentinel-1-rtc');
+  const [sarPolarization, setSarPolarization] = useState('vv');
+  const [sarDisplayMode, setSarDisplayMode] = useState('backscatter'); // 'backscatter' | 'flood_mask' | 'dual_pol_rgb'
+  const [sarSpeckleFilter, setSarSpeckleFilter] = useState('refined_lee');
+  const [sarKernelSize, setSarKernelSize] = useState(5);
+  const [sarNumLooks, setSarNumLooks] = useState(4.4);
+  const [sarFloodThresholdDb, setSarFloodThresholdDb] = useState(-16.5);
+  const [sarTileUrlTemplate, setSarTileUrlTemplate] = useState('');
+  const [sarColormap, setSarColormap] = useState('gray');
+  const [sarRescale, setSarRescale] = useState('-25.0,0.0');
+  const [sarOpacity, setSarOpacity] = useState(0.90);
+  const [sarBlendMode, setSarBlendMode] = useState('normal');
+  const [sarWaterFraction, setSarWaterFraction] = useState(0.084);
+  const [sarWaterAreaHa, setSarWaterAreaHa] = useState(142.5);
+  const [sarMeanVvDb, setSarMeanVvDb] = useState(-11.8);
+  const [sarMeanVhDb, setSarMeanVhDb] = useState(-18.4);
+  const [sarRatioDb, setSarRatioDb] = useState(-6.6);
 
   // T-168/T-170: Wave Arrival Playback Timer Ticker
   useEffect(() => {
@@ -4606,6 +4655,42 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={435}
+              />
+            )}
+
+            {/* T-228/T-230: Multi-Temporal Composite & Quality Mosaic Tile Layer (Cycle v2.5.28) */}
+            {showTemporalLayer && !curtainActive && (
+              <TileLayer 
+                key={`temporal-comp-${temporalCompositeId}-${temporalReducer}-${temporalColormap}-${temporalOpacity}-${temporalBlendMode}`}
+                url={temporalTileUrlTemplate || getTemporalCompositeTileUrlTemplate(temporalCollection, temporalReducer, {
+                  startDate: temporalStartDate,
+                  endDate: temporalEndDate,
+                  maxCloudCoverPct: temporalMaxCloudCover,
+                  bands: temporalBands,
+                  colormap: temporalColormap,
+                  rescale: temporalRescale
+                })}
+                opacity={temporalOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={436}
+              />
+            )}
+
+            {/* T-234/T-236: Sentinel-1 SAR Dual-Pol Backscatter & Flood Inundation Tile Layer (Cycle v2.5.29) */}
+            {showSarRadarLayer && !curtainActive && (
+              <TileLayer 
+                key={`sar-radar-${sarSceneId}-${sarPolarization}-${sarSpeckleFilter}-${sarDisplayMode}-${sarColormap}-${sarOpacity}-${sarBlendMode}`}
+                url={sarTileUrlTemplate || (sarDisplayMode === 'flood_mask'
+                  ? getSarFloodTileUrlTemplate({ collection: sarCollection, thresholdDb: sarFloodThresholdDb, speckleFilter: sarSpeckleFilter })
+                  : getSarBackscatterTileUrlTemplate({ collection: sarCollection, polarization: sarPolarization, speckleFilter: sarSpeckleFilter, kernelSize: sarKernelSize, colormap: sarColormap, rescale: sarRescale })
+                )}
+                opacity={sarOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={437}
               />
             )}
 
@@ -8876,6 +8961,148 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* T-228/T-230: Floating Temporal Composite HUD Card (Cycle v2.5.28) */}
+          {showTemporalLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-emerald-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[560px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[280px]">
+                    Temporal Composite: {temporalCompositeId}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {TEMPORAL_REDUCER_CONFIGS[temporalReducer]?.badge || temporalReducer}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    {temporalQualityTier}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setTemporalModalOpen(true)}
+                    className="px-2 py-1 bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust Stack
+                  </button>
+                  <button
+                    onClick={() => setShowTemporalLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Temporal Composite Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">Window:</span>
+                  <span className="text-zinc-200 font-bold">{temporalStartDate} → {temporalEndDate}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Scenes:</span>
+                  <span className="text-emerald-400 font-bold">{temporalScenesIncluded}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Clear:</span>
+                  <span className="text-emerald-300 font-bold">{temporalClearPixelPct}%</span>
+                  <span className="text-zinc-500 uppercase ml-1">Bands:</span>
+                  <span className="text-amber-400 font-bold text-[10px]">{temporalBands}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <span className="text-zinc-500 text-[10px] uppercase">Opacity:</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={temporalOpacity}
+                  onChange={(e) => setTemporalOpacity(parseFloat(e.target.value))}
+                  className="w-36 accent-emerald-500 cursor-pointer"
+                />
+                <span className="text-emerald-400 font-bold text-[11px]">
+                  {Math.round(temporalOpacity * 100)}%
+                </span>
+                <div className="flex items-center gap-2 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Colormap:</span>
+                  <span className="text-zinc-300 font-bold uppercase">{temporalColormap}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Blend:</span>
+                  <span className="text-zinc-300 font-bold uppercase">{temporalBlendMode}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* T-234/T-236: Floating SAR All-Weather Radar HUD Card (Cycle v2.5.29) */}
+          {showSarRadarLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-violet-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[560px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-violet-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[260px]">
+                    SAR Radar: {sarSceneId}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-violet-500/20 text-violet-300 border border-violet-500/30">
+                    {sarDisplayMode === 'dual_pol_rgb' ? 'Dual-Pol RGB' : (sarDisplayMode === 'flood_mask' ? 'Flood Mask' : (SAR_POLARIZATION_CONFIGS[sarPolarization]?.badge || sarPolarization))}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    {SPECKLE_FILTER_CONFIGS[sarSpeckleFilter]?.badge || sarSpeckleFilter}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setSarRadarModalOpen(true)}
+                    className="px-2 py-1 bg-violet-950 hover:bg-violet-900 border border-violet-500/40 text-violet-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust Radar
+                  </button>
+                  <button
+                    onClick={() => setShowSarRadarLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss SAR Radar Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">VV:</span>
+                  <span className="text-cyan-400 font-bold">{sarMeanVvDb} dB</span>
+                  <span className="text-zinc-500 uppercase ml-1">VH:</span>
+                  <span className="text-emerald-400 font-bold">{sarMeanVhDb} dB</span>
+                  <span className="text-zinc-500 uppercase ml-1">Ratio:</span>
+                  <span className="text-amber-400 font-bold">{sarRatioDb} dB</span>
+                  <span className="text-zinc-500 uppercase ml-1">Threshold:</span>
+                  <span className="text-cyan-300 font-bold">{sarFloodThresholdDb} dB</span>
+                  <span className="text-zinc-500 uppercase ml-1">Water:</span>
+                  <span className="text-violet-300 font-bold">{sarWaterAreaHa.toLocaleString()} ha ({(sarWaterFraction * 100).toFixed(1)}%)</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <span className="text-zinc-500 text-[10px] uppercase">Opacity:</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={sarOpacity}
+                  onChange={(e) => setSarOpacity(parseFloat(e.target.value))}
+                  className="w-36 accent-violet-500 cursor-pointer"
+                />
+                <span className="text-violet-400 font-bold text-[11px]">
+                  {Math.round(sarOpacity * 100)}%
+                </span>
+                <div className="flex items-center gap-2 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Colormap:</span>
+                  <span className="text-zinc-300 font-bold uppercase">{sarColormap}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Blend:</span>
+                  <span className="text-zinc-300 font-bold uppercase">{sarBlendMode}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -9765,6 +9992,30 @@ export default function MapExplorer() {
               >
                 <Grid className="w-3.5 h-3.5 text-emerald-400" />
                 <span>VRT Mosaic (v2.5.27)</span>
+              </button>
+
+              {/* T-228/T-230 Multi-Temporal Composite Studio Shortcut (Cycle v2.5.28) */}
+              <button
+                onClick={() => setTemporalModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-emerald-300 hover:text-white hover:bg-emerald-500/20 border border-emerald-500/30 ${
+                  temporalModalOpen || showTemporalLayer ? 'bg-emerald-600 text-white font-extrabold shadow-[0_0_12px_rgba(16,185,129,0.6)]' : ''
+                }`}
+                title="Multi-Temporal Composite Studio, Scene Stacking Scrubber, Statistical Reducers & Quality Mosaics (Cycle v2.5.28)"
+              >
+                <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Temporal Composite (v2.5.28)</span>
+              </button>
+
+              {/* T-234/T-236 SAR All-Weather Radar Studio Shortcut (Cycle v2.5.29) */}
+              <button
+                onClick={() => setSarRadarModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-violet-300 hover:text-white hover:bg-violet-500/20 border border-violet-500/30 ${
+                  sarRadarModalOpen || showSarRadarLayer ? 'bg-violet-600 text-white font-extrabold shadow-[0_0_12px_rgba(139,92,246,0.6)]' : ''
+                }`}
+                title="SAR All-Weather Radar Studio, Sentinel-1 Dual-Pol Backscatter, Refined Lee Speckle Filtering & Inundation Mapping (Cycle v2.5.29)"
+              >
+                <Radio className="w-3.5 h-3.5 text-violet-400" />
+                <span>SAR Radar (v2.5.29)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -21653,6 +21904,35 @@ export default function MapExplorer() {
           setMosaicShowFootprints(payload.showFootprints ?? true);
           setMosaicSeamSegments(payload.seamSegments || []);
           setShowMosaicLayer(true);
+        }}
+      />
+
+      {/* T-228/T-230: Multi-Temporal Composite Studio Modal (Cycle v2.5.28) */}
+      <TemporalCompositeModal
+        isOpen={temporalModalOpen}
+        onClose={() => setTemporalModalOpen(false)}
+        _activeBbox={
+          customPolygonVertices.length >= 3 
+            ? bboxFromPoints(customPolygonVertices) 
+            : (selectedEvent ? [selectedEvent.lng - 0.04, selectedEvent.lat - 0.04, selectedEvent.lng + 0.04, selectedEvent.lat + 0.04] : [-121.25, 36.90, -120.65, 37.45])
+        }
+        onApply={(payload) => {
+          setTemporalCompositeId(payload.compositeId || 'COMP_SENTINEL2_CALIFORNIA_2026');
+          setTemporalCollection(payload.collection || 'sentinel-2-l2a');
+          setTemporalReducer(payload.reducer || 'median');
+          setTemporalTileUrlTemplate(payload.tileUrlTemplate || '');
+          setTemporalStartDate(payload.startDate || '2026-06-01');
+          setTemporalEndDate(payload.endDate || '2026-08-31');
+          setTemporalMaxCloudCover(payload.maxCloudCoverPct ?? 25.0);
+          setTemporalBands(payload.bands || 'B04,B03,B02');
+          setTemporalColormap(payload.colormap || 'spectral');
+          setTemporalRescale(payload.rescale || '0.0,0.35');
+          setTemporalOpacity(payload.opacity ?? 0.90);
+          setTemporalBlendMode(payload.blendMode || 'normal');
+          setTemporalQualityTier(payload.qualityTier || 'excellent');
+          setTemporalClearPixelPct(payload.clearPixelPct ?? 96.5);
+          setTemporalScenesIncluded(payload.scenesIncluded ?? 6);
+          setShowTemporalLayer(true);
         }}
       />
 

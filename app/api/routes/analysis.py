@@ -69,6 +69,17 @@ from app.models.schemas import (
     CompositeReducer,
     TemporalCompositeRequest,
     TemporalCompositeResponse,
+    TemporalReducerMethod,
+    TemporalQualityTier,
+    TemporalSceneMetadata,
+    TemporalSceneStackRequest,
+    TemporalCompositeMetadata,
+    TemporalStackInspectionRequest,
+    TemporalStackInspectionResponse,
+    TEMPORAL_REDUCER_CONFIGS,
+    TEMPORAL_QUALITY_TIER_CONFIGS,
+    build_temporal_composite_tile_url_template,
+    build_temporal_quality_mosaic_tile_url_template,
     build_composite_tile_url,
     SeamlineMode,
     VRTAnalysisRequest,
@@ -9304,6 +9315,277 @@ def get_mosaic_seamline_tile(
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Mosaic-Seamline-Trace-v2.5"}
     )
+
+
+# ==============================================================================
+# CYCLE v2.5.28: MULTI-TEMPORAL SCENE STACKING, REDUCERS & QUALITY MOSAICS
+# ==============================================================================
+
+@router.post("/temporal/composite", response_model=TemporalCompositeResponse, response_model_by_alias=False)
+@router.post("/temporal/composite/", response_model=TemporalCompositeResponse, response_model_by_alias=False, include_in_schema=False)
+def create_temporal_composite_endpoint(
+    payload: Union[TemporalCompositeRequest, TemporalSceneStackRequest, Dict[str, Any]] = Body(...)
+):
+    """Generates a cloud-free multi-temporal satellite raster composite applying statistical reducers
+    (median, mean, p25, p75) or covariance-preserving quality mosaics (greenest-pixel, clearest-pixel).
+    """
+    if hasattr(payload, "model_dump"):
+        data = payload.model_dump()
+    elif isinstance(payload, dict):
+        data = dict(payload)
+    else:
+        data = dict(payload)
+
+    bbox = data.get("bbox")
+    col_raw = data.get("collection", "sentinel-2-l2a")
+    col_str = col_raw.value if hasattr(col_raw, "value") else str(col_raw)
+    start_date = str(data.get("start_date", "2026-06-01"))
+    end_date = str(data.get("end_date", "2026-08-31"))
+
+    red_raw = data.get("reducer", "median")
+    red_str = red_raw.value if hasattr(red_raw, "value") else str(red_raw)
+
+    max_cloud = float(data.get("max_cloud_cover_pct", data.get("max_cloud_cover", 40.0)))
+    bands = data.get("bands")
+    target_crs = str(data.get("target_crs", "EPSG:3857"))
+    target_res = float(data.get("target_resolution_m", 20.0))
+    quality_band = data.get("quality_band", "NDVI")
+    apply_cloud_mask = bool(data.get("apply_cloud_mask", True))
+    mask_buffer_px = int(data.get("mask_dilated_buffer_px", 3))
+    custom_scene_ids = data.get("custom_scene_ids")
+
+    reduced_ds, metadata_dict, scenes = data_acquisition_service.load_temporal_stack_cube(
+        bbox=bbox,
+        collection=col_str,
+        start_date=start_date,
+        end_date=end_date,
+        reducer=red_str,
+        bands=bands,
+        max_cloud_cover_pct=max_cloud,
+        resolution=target_res,
+        crs=target_crs,
+        apply_cloud_mask=apply_cloud_mask,
+        mask_dilated_buffer_px=mask_buffer_px,
+        quality_band=quality_band,
+        custom_scene_ids=custom_scene_ids
+    )
+
+    if red_str in ("max_ndvi", "greenest_pixel") or (quality_band and "ndvi" in str(quality_band).lower() and red_str == "max_ndvi"):
+        tile_url_template = build_temporal_quality_mosaic_tile_url_template(
+            collection=col_str,
+            quality_band=quality_band or "NDVI",
+            start_date=start_date,
+            end_date=end_date,
+            max_cloud_cover_pct=max_cloud
+        )
+    else:
+        tile_url_template = build_temporal_composite_tile_url_template(
+            collection=col_str,
+            reducer=red_str,
+            start_date=start_date,
+            end_date=end_date,
+            max_cloud_cover_pct=max_cloud
+        )
+
+    scene_models = [TemporalSceneMetadata(**sc) for sc in scenes]
+    meta_model = TemporalCompositeMetadata(**metadata_dict)
+
+    summary = {
+        "scenes_evaluated": len(scenes),
+        "scenes_included": len(scenes),
+        "clear_pixel_pct": round(metadata_dict["clear_pixel_fraction"] * 100.0, 2),
+        "quality_tier": metadata_dict["quality_tier"].value if hasattr(metadata_dict["quality_tier"], "value") else str(metadata_dict["quality_tier"]),
+        "preserves_covariance": metadata_dict["preserves_covariance"]
+    }
+
+    return TemporalCompositeResponse(
+        composite_id=metadata_dict["composite_id"],
+        collection=col_str,
+        reducer=red_str,
+        tile_url_template=tile_url_template,
+        created_at=metadata_dict["created_at"],
+        status="ready",
+        scene_count=len(scenes),
+        contributing_scenes=[s.scene_id for s in scene_models],
+        bbox=tuple(metadata_dict["bbox"]),
+        time_window=f"{start_date} to {end_date}",
+        metadata=meta_model,
+        scenes=scene_models,
+        summary=summary
+    )
+
+
+@router.post("/temporal/stack", response_model=TemporalStackInspectionResponse, response_model_by_alias=False)
+@router.post("/temporal/stack/", response_model=TemporalStackInspectionResponse, response_model_by_alias=False, include_in_schema=False)
+def inspect_temporal_stack_endpoint(
+    payload: Union[TemporalStackInspectionRequest, TemporalSceneStackRequest, Dict[str, Any]] = Body(...)
+):
+    """Inspects candidate satellite scene acquisitions across an AOI and temporal window without triggering full raster reduction."""
+    if hasattr(payload, "model_dump"):
+        data = payload.model_dump()
+    elif isinstance(payload, dict):
+        data = dict(payload)
+    else:
+        data = dict(payload)
+
+    bbox_raw = data.get("bbox")
+    bbox_norm = list(parse_bbox(bbox_raw)) if bbox_raw is not None else [-121.20, 36.90, -120.65, 37.45]
+    col_raw = data.get("collection", "sentinel-2-l2a")
+    col_str = col_raw.value if hasattr(col_raw, "value") else str(col_raw)
+    start_date = str(data.get("start_date", "2026-06-01"))
+    end_date = str(data.get("end_date", "2026-08-31"))
+    max_cloud = float(data.get("max_cloud_cover_pct", data.get("max_cloud_cover", 50.0)))
+
+    scenes = data_acquisition_service.search_temporal_stack(
+        bbox=bbox_norm,
+        collection=col_str,
+        start_date=start_date,
+        end_date=end_date,
+        max_cloud_cover_pct=max_cloud
+    )
+
+    scene_models = [TemporalSceneMetadata(**sc) for sc in scenes]
+    mean_cloud = float(np.mean([s.cloud_cover_pct for s in scene_models])) if scene_models else 0.0
+
+    if mean_cloud < 10.0 and len(scene_models) >= 3:
+        recommended_reducer = TemporalReducerMethod.MAX_NDVI
+    else:
+        recommended_reducer = TemporalReducerMethod.MEDIAN
+
+    return TemporalStackInspectionResponse(
+        collection=col_str,
+        bbox=bbox_norm,
+        start_date=start_date,
+        end_date=end_date,
+        total_scenes=len(scene_models),
+        scenes=scene_models,
+        mean_cloud_cover_pct=round(mean_cloud, 1),
+        recommended_reducer=recommended_reducer
+    )
+
+
+@router.get("/temporal/reducers")
+@router.get("/temporal/reducers/", include_in_schema=False)
+def list_temporal_reducers_endpoint():
+    """Returns catalog of statistical pixel reducers, quality mosaic algorithms, and quality tier configurations."""
+    return {
+        "status": "ready",
+        "total_reducers": len(TEMPORAL_REDUCER_CONFIGS),
+        "reducers": list(TEMPORAL_REDUCER_CONFIGS.values()),
+        "quality_tiers": TEMPORAL_QUALITY_TIER_CONFIGS
+    }
+
+
+# ==============================================================================
+# Dynamic XYZ Multi-Temporal Composite & Quality Mosaic Tile Streaming Endpoints
+# ==============================================================================
+
+@tiles_router.get("/temporal/{collection}/{reducer}/{z}/{x}/{y}.png")
+@router.get("/tiles/temporal/{collection}/{reducer}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_temporal_composite_tile(
+    collection: str,
+    reducer: str,
+    z: int,
+    x: int,
+    y: int,
+    start_date: Optional[str] = Query(None, description="Temporal window start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="Temporal window end date (YYYY-MM-DD)"),
+    max_cloud_cover_pct: float = Query(40.0, ge=0.0, le=100.0, description="Cloud filtering threshold in percent"),
+    bands: Optional[str] = Query(None, description="Comma-separated spectral bands to render (e.g. 'B04,B03,B02' or 'B08')"),
+    colormap: Optional[str] = Query(None, description="Optional rendering colormap"),
+    rescale: Optional[str] = Query(None, description="Optional contrast stretch min,max"),
+    quality_band: Optional[str] = Query(None, description="Ranking band for quality mosaic")
+):
+    """Dynamic XYZ tile streaming for multi-temporal composite satellite raster tiles."""
+    png_bytes = tile_service.render_temporal_composite_tile(
+        z=z,
+        x=x,
+        y=y,
+        collection=collection,
+        reducer=reducer,
+        start_date=start_date,
+        end_date=end_date,
+        max_cloud_cover_pct=max_cloud_cover_pct,
+        bands=bands,
+        colormap=colormap,
+        rescale=rescale,
+        quality_band=quality_band
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Temporal-Composite-v2.5"}
+    )
+
+
+@tiles_router.get("/temporal/quality-mosaic/{collection}/{z}/{x}/{y}.png")
+@router.get("/tiles/temporal/quality-mosaic/{collection}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_temporal_quality_mosaic_tile(
+    collection: str,
+    z: int,
+    x: int,
+    y: int,
+    quality_band: str = Query("NDVI", description="Quality ranking band: NDVI (greenest-pixel) or cloud_prob (clearest-pixel)"),
+    start_date: Optional[str] = Query(None, description="Temporal window start date"),
+    end_date: Optional[str] = Query(None, description="Temporal window end date"),
+    max_cloud_cover_pct: float = Query(40.0, ge=0.0, le=100.0, description="Cloud filtering threshold"),
+    bands: Optional[str] = Query(None, description="Comma-separated spectral bands"),
+    colormap: Optional[str] = Query(None, description="Optional rendering colormap"),
+    rescale: Optional[str] = Query(None, description="Optional contrast stretch min,max")
+):
+    """Dynamic XYZ tile streaming for greenest-pixel / clearest-pixel quality mosaics preserving spectral band covariance."""
+    png_bytes = tile_service.render_temporal_quality_mosaic_tile(
+        z=z,
+        x=x,
+        y=y,
+        collection=collection,
+        quality_band=quality_band,
+        start_date=start_date,
+        end_date=end_date,
+        max_cloud_cover_pct=max_cloud_cover_pct,
+        bands=bands,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Quality-Mosaic-v2.5"}
+    )
+
+
+@tiles_router.get("/composite/{collection}/{z}/{x}/{y}.png")
+@router.get("/tiles/composite/{collection}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_legacy_composite_tile(
+    collection: str,
+    z: int,
+    x: int,
+    y: int,
+    reducer: str = Query("median", description="Statistical reducer method"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    max_cloud_cover_pct: float = Query(40.0),
+    bands: Optional[str] = Query(None),
+    colormap: Optional[str] = Query(None),
+    rescale: Optional[str] = Query(None),
+    quality_band: Optional[str] = Query(None)
+):
+    """Compatibility endpoint for composite raster tile streaming."""
+    return get_temporal_composite_tile(
+        collection=collection,
+        reducer=reducer,
+        z=z,
+        x=x,
+        y=y,
+        start_date=start_date,
+        end_date=end_date,
+        max_cloud_cover_pct=max_cloud_cover_pct,
+        bands=bands,
+        colormap=colormap,
+        rescale=rescale,
+        quality_band=quality_band
+    )
+
 
 
 

@@ -1109,7 +1109,26 @@ export const API_ENDPOINTS = {
   TILES_MOSAIC_SEAMLESS_SHORT: (z, x, y) => `/tiles/mosaic/seamless/${z}/${x}/${y}.png`,
   TILES_MOSAIC_ID: (mosaicId, z, x, y) => `/api/v1/tiles/mosaic/${mosaicId}/${z}/${x}/${y}.png`,
   TILES_MOSAIC_ID_SHORT: (mosaicId, z, x, y) => `/tiles/mosaic/${mosaicId}/${z}/${x}/${y}.png`,
-  TILES_MOSAIC_SEAMLINE_DEBUG: (mosaicId, z, x, y) => `/api/v1/tiles/mosaic/${mosaicId}/seamline-debug/${z}/${x}/${y}.png`
+  TILES_MOSAIC_SEAMLINE_DEBUG: (mosaicId, z, x, y) => `/api/v1/tiles/mosaic/${mosaicId}/seamline-debug/${z}/${x}/${y}.png`,
+  ANALYSIS_TEMPORAL_COMPOSITE: '/api/v1/analysis/temporal/composite',
+  ANALYSIS_TEMPORAL_COMPOSITE_SHORT: '/analysis/temporal/composite',
+  ANALYSIS_TEMPORAL_STACK: '/api/v1/analysis/temporal/stack',
+  ANALYSIS_TEMPORAL_STACK_SHORT: '/analysis/temporal/stack',
+  ANALYSIS_TEMPORAL_REDUCERS: '/api/v1/analysis/temporal/reducers',
+  ANALYSIS_TEMPORAL_REDUCERS_SHORT: '/analysis/temporal/reducers',
+  TILES_TEMPORAL_COMPOSITE: (collection, reducer, z, x, y) => `/api/v1/tiles/temporal/${collection}/${reducer}/${z}/${x}/${y}.png`,
+  TILES_TEMPORAL_COMPOSITE_SHORT: (collection, reducer, z, x, y) => `/tiles/temporal/${collection}/${reducer}/${z}/${x}/${y}.png`,
+  TILES_TEMPORAL_QUALITY_MOSAIC: (collection, z, x, y) => `/api/v1/tiles/temporal/quality-mosaic/${collection}/${z}/${x}/${y}.png`,
+  TILES_TEMPORAL_QUALITY_MOSAIC_SHORT: (collection, z, x, y) => `/tiles/temporal/quality-mosaic/${collection}/${z}/${x}/${y}.png`,
+  // Cycle v2.5.29: SAR Dual-Pol Backscatter, Terrain Flattening & Refined Lee Speckle Filtering Contracts
+  ANALYSIS_SAR_BACKSCATTER: '/api/v1/analysis/sar/backscatter',
+  ANALYSIS_SAR_BACKSCATTER_SHORT: '/analysis/sar/backscatter',
+  TILES_SAR_BACKSCATTER: (collection, polarization, z, x, y) => `/api/v1/tiles/sar/${collection}/${polarization}/${z}/${x}/${y}.png`,
+  TILES_SAR_BACKSCATTER_SHORT: (collection, polarization, z, x, y) => `/tiles/sar/${collection}/${polarization}/${z}/${x}/${y}.png`,
+  TILES_SAR_SPECKLE_FILTER: (filter_method, z, x, y) => `/api/v1/tiles/sar/filtered/${filter_method}/${z}/${x}/${y}.png`,
+  TILES_SAR_SPECKLE_FILTER_SHORT: (filter_method, z, x, y) => `/tiles/sar/filtered/${filter_method}/${z}/${x}/${y}.png`,
+  TILES_SAR_FLOOD_INUNDATION: (z, x, y) => `/api/v1/tiles/sar/flood/${z}/${x}/${y}.png`,
+  TILES_SAR_FLOOD_INUNDATION_SHORT: (z, x, y) => `/tiles/sar/flood/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1403,6 +1422,21 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'TILES_MOSAIC_ID_SHORT':
       case 'TILES_MOSAIC_SEAMLINE_DEBUG':
         return endpoint(params.mosaicId || params.mosaic_id || 'seamless', params.z, params.x, params.y);
+      case 'TILES_TEMPORAL_COMPOSITE':
+      case 'TILES_TEMPORAL_COMPOSITE_SHORT':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.reducer || 'median', params.z, params.x, params.y);
+      case 'TILES_TEMPORAL_QUALITY_MOSAIC':
+      case 'TILES_TEMPORAL_QUALITY_MOSAIC_SHORT':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.z, params.x, params.y);
+      case 'TILES_SAR_BACKSCATTER':
+      case 'TILES_SAR_BACKSCATTER_SHORT':
+        return endpoint(params.collection || 'sentinel-1-rtc', params.polarization || 'vv', params.z, params.x, params.y);
+      case 'TILES_SAR_SPECKLE_FILTER':
+      case 'TILES_SAR_SPECKLE_FILTER_SHORT':
+        return endpoint(params.filter_method || params.filter || 'refined_lee', params.z, params.x, params.y);
+      case 'TILES_SAR_FLOOD_INUNDATION':
+      case 'TILES_SAR_FLOOD_INUNDATION_SHORT':
+        return endpoint(params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -2330,8 +2364,13 @@ export const TERRAIN_METRICS = {
 export const SAR_POLARIZATIONS = {
   VV: 'vv',
   VH: 'vh',
-  RATIO: 'ratio_vh_vv'
+  HH: 'hh',
+  HV: 'hv',
+  RATIO: 'ratio_vh_vv',
+  POLARIZATION_RATIO_VH_VV: 'ratio_vh_vv'
 };
+
+export const SarPolarization = SAR_POLARIZATIONS;
 
 /**
  * Sampling methods for linear engineering transects.
@@ -19628,4 +19667,1198 @@ export const buildMosaicFeatherTileUrlTemplate = (options = {}) => {
 export const buildMosaicSeamlineTileUrlTemplate = (collection = 'sentinel-2-l2a') => {
   return `/api/v1/tiles/mosaic/seamline/{z}/{x}/{y}.png?collection=${collection}`;
 };
+
+// ==============================================================================
+// CYCLE v2.5.28: MULTI-TEMPORAL SCENE STACKING, STATISTICAL REDUCERS & QUALITY MOSAIC CONTRACTS
+// ==============================================================================
+
+/**
+ * Statistical and quality-based reduction methods across multi-temporal scene stacks.
+ */
+export const TEMPORAL_REDUCER_METHODS = {
+  MEDIAN: 'median',
+  MEAN: 'mean',
+  MAX_NDVI: 'max_ndvi',
+  MIN_CLOUD: 'min_cloud',
+  PERCENTILE_25: 'p25',
+  PERCENTILE_75: 'p75',
+  MODE: 'mode',
+  MIN: 'min',
+  MAX: 'max'
+};
+
+export const TemporalReducerMethod = TEMPORAL_REDUCER_METHODS;
+
+/**
+ * Quality tier classification for multi-temporal composites based on clear pixel fraction.
+ */
+export const TEMPORAL_QUALITY_TIERS = {
+  EXCELLENT: 'excellent',
+  GOOD: 'good',
+  MARGINAL: 'marginal',
+  POOR: 'poor'
+};
+
+export const TemporalQualityTier = TEMPORAL_QUALITY_TIERS;
+
+/**
+ * Operational status of multi-temporal scene stack data cubes.
+ */
+export const TEMPORAL_STACK_STATUSES = {
+  AVAILABLE: 'available',
+  CACHED: 'cached',
+  PROCESSING: 'processing'
+};
+
+export const TemporalStackStatus = TEMPORAL_STACK_STATUSES;
+
+/**
+ * Detailed configuration metadata for each temporal reducer method.
+ */
+export const TEMPORAL_REDUCER_CONFIGS = {
+  median: {
+    id: 'median',
+    label: 'Temporal Median',
+    description: 'Pixel-by-pixel median across temporal acquisition stack (Flood 2013). Eliminates outlier cloud/shadow noise while maintaining radiometric calibration.',
+    is_quality_mosaic: false,
+    preserves_covariance: false,
+    badge: 'Median (Cloud-Free)',
+    recommended_window_days: 60,
+    icon: 'Filter'
+  },
+  mean: {
+    id: 'mean',
+    label: 'Temporal Mean',
+    description: 'Pixel-by-pixel arithmetic mean across time stack. Optimal for low-noise seasonal baselines.',
+    is_quality_mosaic: false,
+    preserves_covariance: false,
+    badge: 'Mean Baseline',
+    recommended_window_days: 90,
+    icon: 'TrendingUp'
+  },
+  max_ndvi: {
+    id: 'max_ndvi',
+    label: 'Greenest-Pixel (Max NDVI)',
+    description: 'Quality mosaic selecting all spectral bands simultaneously from the acquisition date where NDVI is maximized per pixel (Holben 1986). Preserves physical spectral band covariance.',
+    is_quality_mosaic: true,
+    preserves_covariance: true,
+    badge: 'Greenest-Pixel (Covariance)',
+    recommended_window_days: 90,
+    icon: 'Leaf'
+  },
+  min_cloud: {
+    id: 'min_cloud',
+    label: 'Clearest-Pixel (Min Cloud)',
+    description: 'Quality mosaic selecting all spectral bands simultaneously from the acquisition date with minimum cloud probability. Preserves spectral band covariance.',
+    is_quality_mosaic: true,
+    preserves_covariance: true,
+    badge: 'Clearest-Pixel (Covariance)',
+    recommended_window_days: 45,
+    icon: 'Sun'
+  },
+  p25: {
+    id: 'p25',
+    label: '25th Percentile (P25)',
+    description: 'Lower quartile reflectance composite. Ideal for dry-season baselines, moisture analysis, and water body delineations.',
+    is_quality_mosaic: false,
+    preserves_covariance: false,
+    badge: '25th Percentile',
+    recommended_window_days: 60,
+    icon: 'ArrowDown'
+  },
+  percentile_25: {
+    id: 'p25',
+    label: '25th Percentile (P25)',
+    description: 'Lower quartile reflectance composite. Ideal for dry-season baselines, moisture analysis, and water body delineations.',
+    is_quality_mosaic: false,
+    preserves_covariance: false,
+    badge: '25th Percentile',
+    recommended_window_days: 60,
+    icon: 'ArrowDown'
+  },
+  p75: {
+    id: 'p75',
+    label: '75th Percentile (P75)',
+    description: 'Upper quartile reflectance composite. Captures peak phenological greenness and maximum canopy reflectance.',
+    is_quality_mosaic: false,
+    preserves_covariance: false,
+    badge: '75th Percentile',
+    recommended_window_days: 60,
+    icon: 'ArrowUp'
+  },
+  percentile_75: {
+    id: 'p75',
+    label: '75th Percentile (P75)',
+    description: 'Upper quartile reflectance composite. Captures peak phenological greenness and maximum canopy reflectance.',
+    is_quality_mosaic: false,
+    preserves_covariance: false,
+    badge: '75th Percentile',
+    recommended_window_days: 60,
+    icon: 'ArrowUp'
+  },
+  mode: {
+    id: 'mode',
+    label: 'Temporal Mode',
+    description: 'Most frequent categorical pixel classification across acquisition dates. Designed for SCL and land cover classification layers.',
+    is_quality_mosaic: false,
+    preserves_covariance: false,
+    badge: 'Mode (Discrete)',
+    recommended_window_days: 90,
+    icon: 'Layers'
+  },
+  min: {
+    id: 'min',
+    label: 'Minimum Reflectance',
+    description: 'Per-pixel minimum surface reflectance across the stack. Highlights permanent water and extreme shadow features.',
+    is_quality_mosaic: false,
+    preserves_covariance: false,
+    badge: 'Min Reflectance',
+    recommended_window_days: 30,
+    icon: 'Minimize2'
+  },
+  max: {
+    id: 'max',
+    label: 'Maximum Reflectance',
+    description: 'Per-pixel maximum surface reflectance across the stack. Useful for identifying transient high-albedo structures.',
+    is_quality_mosaic: false,
+    preserves_covariance: false,
+    badge: 'Max Reflectance',
+    recommended_window_days: 30,
+    icon: 'Maximize2'
+  }
+};
+
+/**
+ * Quality tier configuration thresholds and visual styling.
+ */
+export const TEMPORAL_QUALITY_TIER_CONFIGS = {
+  excellent: {
+    tier: 'excellent',
+    min_clear_fraction: 0.90,
+    min_scenes: 4,
+    badge: 'Excellent Quality (≥90% Clear)',
+    color: '#10B981',
+    status: 'optimal'
+  },
+  good: {
+    tier: 'good',
+    min_clear_fraction: 0.75,
+    min_scenes: 3,
+    badge: 'Good Quality (≥75% Clear)',
+    color: '#3B82F6',
+    status: 'acceptable'
+  },
+  marginal: {
+    tier: 'marginal',
+    min_clear_fraction: 0.50,
+    min_scenes: 2,
+    badge: 'Marginal Quality (≥50% Clear)',
+    color: '#F59E0B',
+    status: 'suboptimal'
+  },
+  poor: {
+    tier: 'poor',
+    min_clear_fraction: 0.0,
+    min_scenes: 1,
+    badge: 'Poor Quality (<50% Clear)',
+    color: '#EF4444',
+    status: 'critical'
+  }
+};
+
+/**
+ * Benchmark Sentinel-2 multi-temporal scenes for regional testing and offline demo mode.
+ */
+export const TEMPORAL_BENCHMARK_SCENES = [
+  {
+    scene_id: 'S2A_MSIL2A_20260610T184921_T10SEG',
+    acquisition_date: '2026-06-10T18:49:21Z',
+    cloud_cover_pct: 1.2,
+    mean_sun_elevation: 68.4,
+    orbit_direction: 'DESCENDING',
+    tile_id: 'T10SEG',
+    collection: 'sentinel-2-l2a',
+    quality_score: 0.98,
+    valid_pixel_pct: 99.2,
+    mean_ndvi: 0.42
+  },
+  {
+    scene_id: 'S2B_MSIL2A_20260625T184919_T10SEG',
+    acquisition_date: '2026-06-25T18:49:19Z',
+    cloud_cover_pct: 3.8,
+    mean_sun_elevation: 69.1,
+    orbit_direction: 'DESCENDING',
+    tile_id: 'T10SEG',
+    collection: 'sentinel-2-l2a',
+    quality_score: 0.95,
+    valid_pixel_pct: 98.1,
+    mean_ndvi: 0.45
+  },
+  {
+    scene_id: 'S2A_MSIL2A_20260710T184921_T10SEG',
+    acquisition_date: '2026-07-10T18:49:21Z',
+    cloud_cover_pct: 14.5,
+    mean_sun_elevation: 67.8,
+    orbit_direction: 'DESCENDING',
+    tile_id: 'T10SEG',
+    collection: 'sentinel-2-l2a',
+    quality_score: 0.82,
+    valid_pixel_pct: 92.4,
+    mean_ndvi: 0.49
+  },
+  {
+    scene_id: 'S2B_MSIL2A_20260725T184919_T10SEG',
+    acquisition_date: '2026-07-25T18:49:19Z',
+    cloud_cover_pct: 0.6,
+    mean_sun_elevation: 65.9,
+    orbit_direction: 'DESCENDING',
+    tile_id: 'T10SEG',
+    collection: 'sentinel-2-l2a',
+    quality_score: 0.99,
+    valid_pixel_pct: 99.8,
+    mean_ndvi: 0.52
+  },
+  {
+    scene_id: 'S2A_MSIL2A_20260809T184921_T10SEG',
+    acquisition_date: '2026-08-09T18:49:21Z',
+    cloud_cover_pct: 8.3,
+    mean_sun_elevation: 63.2,
+    orbit_direction: 'DESCENDING',
+    tile_id: 'T10SEG',
+    collection: 'sentinel-2-l2a',
+    quality_score: 0.89,
+    valid_pixel_pct: 95.6,
+    mean_ndvi: 0.46
+  },
+  {
+    scene_id: 'S2B_MSIL2A_20260824T184919_T10SEG',
+    acquisition_date: '2026-08-24T18:49:19Z',
+    cloud_cover_pct: 2.1,
+    mean_sun_elevation: 59.7,
+    orbit_direction: 'DESCENDING',
+    tile_id: 'T10SEG',
+    collection: 'sentinel-2-l2a',
+    quality_score: 0.96,
+    valid_pixel_pct: 98.9,
+    mean_ndvi: 0.41
+  }
+];
+
+/**
+ * Calculates composite usability quality score Q in [0.0, 1.0] for a satellite acquisition.
+ * 
+ * @param {number} cloudCoverPct - Cloud cover percentage [0, 100]
+ * @param {number} sunElevationDeg - Sun elevation angle in degrees
+ * @param {number} [nadirAngleDeg=0.0] - Off-nadir viewing angle in degrees
+ * @returns {number} Score in [0.0, 1.0]
+ */
+export const calculatePixelQualityScore = (
+  cloudCoverPct,
+  sunElevationDeg,
+  nadirAngleDeg = 0.0
+) => {
+  const c = Math.max(0.0, Math.min(100.0, Number(cloudCoverPct) || 0.0));
+  const sunElev = Math.max(5.0, Math.min(90.0, Number(sunElevationDeg) || 60.0));
+  const nadir = Math.max(0.0, Math.min(60.0, Number(nadirAngleDeg) || 0.0));
+
+  const clearFactor = (100.0 - c) / 100.0;
+  const sunFactor = Math.sin((sunElev * Math.PI) / 180.0);
+  const viewFactor = Math.cos((nadir * Math.PI) / 180.0);
+
+  const q = clearFactor * sunFactor * viewFactor;
+  return Number(Math.max(0.0, Math.min(1.0, q)).toFixed(4));
+};
+
+/**
+ * Classifies composite quality tier based on clear pixel fraction and scene count.
+ * 
+ * @param {number} clearPixelPct - Percentage of clear non-cloud pixels
+ * @param {number} sceneCount - Number of contributing scenes
+ * @returns {string} Quality tier ('excellent', 'good', 'marginal', 'poor')
+ */
+export const classifyTemporalCompositeQuality = (clearPixelPct, sceneCount) => {
+  const pct = Math.max(0.0, Math.min(100.0, Number(clearPixelPct) || 0.0));
+  const count = Math.max(0, Number(sceneCount) || 0);
+
+  if (pct >= 90.0 && count >= 4) return TEMPORAL_QUALITY_TIERS.EXCELLENT;
+  if (pct >= 75.0 && count >= 3) return TEMPORAL_QUALITY_TIERS.GOOD;
+  if (pct >= 50.0 && count >= 2) return TEMPORAL_QUALITY_TIERS.MARGINAL;
+  return TEMPORAL_QUALITY_TIERS.POOR;
+};
+
+/**
+ * Computes Normalized Difference Vegetation Index (NDVI) = (NIR - Red) / (NIR + Red).
+ * Supports scalar numbers or numeric arrays.
+ * 
+ * @param {number|number[]} red - Red band reflectance
+ * @param {number|number[]} nir - Near-infrared band reflectance
+ * @returns {number|number[]} NDVI value(s) in [-1.0, 1.0]
+ */
+export const calculateNdvi = (red, nir) => {
+  if (Array.isArray(red) && Array.isArray(nir)) {
+    return red.map((r, i) => {
+      const n = nir[i];
+      const denom = n + r;
+      const safeDenom = Math.abs(denom) < 1e-7 ? 1e-7 : denom;
+      return Math.max(-1.0, Math.min(1.0, (n - r) / safeDenom));
+    });
+  }
+  const r = Number(red) || 0.0;
+  const n = Number(nir) || 0.0;
+  const denom = n + r;
+  const safeDenom = Math.abs(denom) < 1e-7 ? 1e-7 : denom;
+  return Math.max(-1.0, Math.min(1.0, (n - r) / safeDenom));
+};
+
+/**
+ * Selects greenest-pixel indices maximizing NDVI across a multi-temporal stack.
+ * 
+ * @param {number[][]} redStack - 2D array [dates][pixels]
+ * @param {number[][]} nirStack - 2D array [dates][pixels]
+ * @returns {{ bestIndices: number[], maxNdvi: number[] }}
+ */
+export const selectGreenestPixelIndices = (redStack, nirStack) => {
+  if (!Array.isArray(redStack) || redStack.length === 0) {
+    return { bestIndices: [], maxNdvi: [] };
+  }
+  const numDates = redStack.length;
+  const numPixels = redStack[0].length;
+  const bestIndices = new Array(numPixels).fill(0);
+  const maxNdvi = new Array(numPixels).fill(-Infinity);
+
+  for (let p = 0; p < numPixels; p += 1) {
+    let bestT = 0;
+    let highestNdvi = -Infinity;
+    for (let t = 0; t < numDates; t += 1) {
+      const r = redStack[t][p];
+      const n = nirStack[t][p];
+      const denom = n + r;
+      const safeDenom = Math.abs(denom) < 1e-7 ? 1e-7 : denom;
+      const val = (n - r) / safeDenom;
+      if (val > highestNdvi) {
+        highestNdvi = val;
+        bestT = t;
+      }
+    }
+    bestIndices[p] = bestT;
+    maxNdvi[p] = Number(highestNdvi.toFixed(4));
+  }
+
+  return { bestIndices, maxNdvi };
+};
+
+/**
+ * Selects clearest-pixel indices minimizing cloud probability across a multi-temporal stack.
+ * 
+ * @param {number[][]} cloudProbStack - 2D array [dates][pixels]
+ * @returns {{ bestIndices: number[], minCloudProb: number[] }}
+ */
+export const selectClearestPixelIndices = (cloudProbStack) => {
+  if (!Array.isArray(cloudProbStack) || cloudProbStack.length === 0) {
+    return { bestIndices: [], minCloudProb: [] };
+  }
+  const numDates = cloudProbStack.length;
+  const numPixels = cloudProbStack[0].length;
+  const bestIndices = new Array(numPixels).fill(0);
+  const minCloudProb = new Array(numPixels).fill(Infinity);
+
+  for (let p = 0; p < numPixels; p += 1) {
+    let bestT = 0;
+    let lowestCp = Infinity;
+    for (let t = 0; t < numDates; t += 1) {
+      const cp = cloudProbStack[t][p];
+      if (cp < lowestCp) {
+        lowestCp = cp;
+        bestT = t;
+      }
+    }
+    bestIndices[p] = bestT;
+    minCloudProb[p] = Number(lowestCp.toFixed(4));
+  }
+
+  return { bestIndices, minCloudProb };
+};
+
+/**
+ * Applies statistical reduction across an array of numbers representing time-series observations.
+ * 
+ * @param {number[]} values - Array of values across dates
+ * @param {string} [reducer='median'] - Reducer method ('median', 'mean', 'p25', 'p75', 'min', 'max', 'mode')
+ * @returns {number} Reduced value
+ */
+export const applyTemporalReduction = (values, reducer = 'median') => {
+  if (!Array.isArray(values) || values.length === 0) return 0.0;
+  const valid = values.filter((v) => typeof v === 'number' && !Number.isNaN(v)).sort((a, b) => a - b);
+  if (valid.length === 0) return 0.0;
+  const n = valid.length;
+  const r = String(reducer).toLowerCase();
+
+  if (r === 'mean') {
+    const sum = valid.reduce((acc, v) => acc + v, 0.0);
+    return sum / n;
+  }
+  if (r === 'p25' || r === 'percentile_25') {
+    const idx = Math.floor((n - 1) * 0.25);
+    return valid[idx];
+  }
+  if (r === 'p75' || r === 'percentile_75') {
+    const idx = Math.floor((n - 1) * 0.75);
+    return valid[idx];
+  }
+  if (r === 'min') {
+    return valid[0];
+  }
+  if (r === 'max') {
+    return valid[n - 1];
+  }
+  if (r === 'mode') {
+    const counts = {};
+    let maxCount = 0;
+    let modeVal = valid[0];
+    for (const v of valid) {
+      counts[v] = (counts[v] || 0) + 1;
+      if (counts[v] > maxCount) {
+        maxCount = counts[v];
+        modeVal = v;
+      }
+    }
+    return modeVal;
+  }
+  // Default to median
+  const mid = Math.floor(n / 2);
+  if (n % 2 !== 0) {
+    return valid[mid];
+  }
+  return (valid[mid - 1] + valid[mid]) / 2.0;
+};
+
+/**
+ * Constructs dynamic XYZ tile streaming URL for multi-temporal composite raster tiles.
+ * 
+ * @param {Object} [options={}] - Rendering and temporal reduction parameters
+ * @returns {string} Fully formed XYZ tile URL
+ */
+export const buildTemporalCompositeTileUrl = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    reducer = 'median',
+    z = 0,
+    x = 0,
+    y = 0,
+    startDate,
+    endDate,
+    maxCloudCoverPct = 40.0,
+    bands,
+    colormap,
+    rescale,
+    qualityBand
+  } = options;
+
+  const base = `/api/v1/tiles/temporal/${collection}/${reducer}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (startDate) params.push(`start_date=${startDate}`);
+  if (endDate) params.push(`end_date=${endDate}`);
+  if (maxCloudCoverPct !== 40.0) params.push(`max_cloud_cover_pct=${maxCloudCoverPct}`);
+  if (bands) params.push(`bands=${bands}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  if (qualityBand) params.push(`quality_band=${qualityBand}`);
+
+  return params.length ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Constructs a dynamic Leaflet tile URL template for multi-temporal composite raster tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const buildTemporalCompositeTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    reducer = 'median',
+    startDate,
+    endDate,
+    maxCloudCoverPct = 40.0,
+    bands,
+    colormap,
+    rescale,
+    qualityBand
+  } = options;
+
+  const base = `/api/v1/tiles/temporal/${collection}/${reducer}/{z}/{x}/{y}.png`;
+  const params = [];
+  if (startDate) params.push(`start_date=${startDate}`);
+  if (endDate) params.push(`end_date=${endDate}`);
+  if (maxCloudCoverPct !== 40.0) params.push(`max_cloud_cover_pct=${maxCloudCoverPct}`);
+  if (bands) params.push(`bands=${bands}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  if (qualityBand) params.push(`quality_band=${qualityBand}`);
+
+  return params.length ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Constructs a dynamic Leaflet tile URL template for quality mosaics (greenest-pixel / clearest-pixel).
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const buildTemporalQualityMosaicTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    qualityBand = 'NDVI',
+    startDate,
+    endDate,
+    maxCloudCoverPct = 40.0,
+    bands,
+    colormap,
+    rescale
+  } = options;
+
+  const base = `/api/v1/tiles/temporal/quality-mosaic/${collection}/{z}/{x}/{y}.png`;
+  const params = [`quality_band=${qualityBand}`];
+  if (startDate) params.push(`start_date=${startDate}`);
+  if (endDate) params.push(`end_date=${endDate}`);
+  if (maxCloudCoverPct !== 40.0) params.push(`max_cloud_cover_pct=${maxCloudCoverPct}`);
+  if (bands) params.push(`bands=${bands}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+
+  return `${base}?${params.join('&')}`;
+};
+
+// ==============================================================================
+// CYCLE v2.5.29: SENTINEL-1 SAR DUAL-POL BACKSCATTER, TERRAIN FLATTENING (GAMMA0)
+// & REFINED LEE SPECKLE FILTERING SCHEMAS & CONTRACTS
+// ==============================================================================
+
+export const SPECKLE_FILTER_METHODS = {
+  REFINED_LEE: 'refined_lee',
+  FROST: 'frost',
+  KUAN: 'kuan',
+  GAMMA_MAP: 'gamma_map',
+  BOXCAR_MEAN: 'boxcar_mean',
+  NONE: 'none'
+};
+
+export const SpeckleFilterMethod = SPECKLE_FILTER_METHODS;
+
+export const SAR_BACKSCATTER_CALIBRATIONS = {
+  GAMMA0: 'gamma0',
+  SIGMA0: 'sigma0',
+  BETA0: 'beta0'
+};
+
+export const SARBackscatterCalibration = SAR_BACKSCATTER_CALIBRATIONS;
+
+export const SAR_FLOOD_DETECTION_TIERS = {
+  CALM_WATER: 'calm_water',
+  ROUGH_WATER: 'rough_water',
+  MOIST_SOIL: 'moist_soil',
+  DRY_SOIL_VEGETATION: 'dry_soil_vegetation',
+  URBAN_DOUBLE_BOUNCE: 'urban_double_bounce'
+};
+
+export const SARFloodDetectionTier = SAR_FLOOD_DETECTION_TIERS;
+
+export const SAR_POLARIZATION_CONFIGS = {
+  vv: {
+    channel: 'vv',
+    name: 'Vertical-Vertical (VV)',
+    radar_band: 'C-band (5.405 GHz)',
+    wavelength_cm: 5.546,
+    mechanism: 'Co-polarized surface roughness scattering',
+    primary_sensitivity: 'Open water detection, surface soil roughness, smooth flat runways',
+    badge: 'VV Co-Pol',
+    default_rescale: '-25,0',
+    colormap: 'gray'
+  },
+  vh: {
+    channel: 'vh',
+    name: 'Vertical-Horizontal (VH)',
+    radar_band: 'C-band (5.405 GHz)',
+    wavelength_cm: 5.546,
+    mechanism: 'Cross-polarized multiple volume scattering',
+    primary_sensitivity: 'Vegetation canopy structure, forest biomass, crop development',
+    badge: 'VH Cross-Pol',
+    default_rescale: '-30,-5',
+    colormap: 'gray'
+  },
+  hh: {
+    channel: 'hh',
+    name: 'Horizontal-Horizontal (HH)',
+    radar_band: 'C-band (5.405 GHz)',
+    wavelength_cm: 5.546,
+    mechanism: 'Co-polarized horizontal scattering',
+    primary_sensitivity: 'Ice-water discrimination, sea ice roughness, horizontal structures',
+    badge: 'HH Co-Pol',
+    default_rescale: '-25,0',
+    colormap: 'gray'
+  },
+  hv: {
+    channel: 'hv',
+    name: 'Horizontal-Vertical (HV)',
+    radar_band: 'C-band (5.405 GHz)',
+    wavelength_cm: 5.546,
+    mechanism: 'Cross-polarized horizontal-vertical depolarization',
+    primary_sensitivity: 'Depolarizing volume scattering, canopy biomass',
+    badge: 'HV Cross-Pol',
+    default_rescale: '-30,-5',
+    colormap: 'gray'
+  },
+  ratio_vh_vv: {
+    channel: 'ratio_vh_vv',
+    name: 'Cross-Polarization Ratio (VH / VV)',
+    radar_band: 'C-band (5.405 GHz)',
+    wavelength_cm: 5.546,
+    mechanism: 'Volume-to-surface scattering ratio (VH_dB - VV_dB)',
+    primary_sensitivity: 'Soil moisture cancellation, biomass estimation, crop lodging',
+    badge: 'VH/VV Ratio',
+    default_rescale: '-15,0',
+    colormap: 'viridis'
+  }
+};
+
+export const SPECKLE_FILTER_CONFIGS = {
+  refined_lee: {
+    id: 'refined_lee',
+    label: 'Refined Lee Filter',
+    algorithm: 'Lee (1999) edge-directed directional sub-window adaptive filter',
+    description: 'Preserves sharp boundaries, roads, waterlines, and point scatterers while strongly suppressing granular speckle in homogeneous land covers.',
+    recommended_kernel: 5,
+    preserves_edges: true,
+    badge: 'Refined Lee (Adaptive Edge)',
+    icon: 'Filter'
+  },
+  frost: {
+    id: 'frost',
+    label: 'Frost Filter',
+    algorithm: 'Exponentially damped distance-weighted adaptive convolution',
+    description: 'Applies an exponential decay kernel inversely proportional to the local coefficient of variation squared.',
+    recommended_kernel: 5,
+    preserves_edges: true,
+    badge: 'Frost (Damped Distance)',
+    icon: 'Activity'
+  },
+  kuan: {
+    id: 'kuan',
+    label: 'Kuan Filter',
+    algorithm: 'Minimum Mean Square Error (MMSE) multiplicative speckle estimator',
+    description: 'Linear minimum mean-square error estimator unconstrained by hard edge thresholding.',
+    recommended_kernel: 5,
+    preserves_edges: false,
+    badge: 'Kuan (MMSE)',
+    icon: 'Maximize'
+  },
+  gamma_map: {
+    id: 'gamma_map',
+    label: 'Gamma MAP Filter',
+    algorithm: 'Maximum A Posteriori (MAP) estimation assuming Gamma-distributed radar cross-section',
+    description: 'Rigorous Bayesian estimator assuming Gamma radar reflectivity prior and Gamma speckle likelihood.',
+    recommended_kernel: 5,
+    preserves_edges: true,
+    badge: 'Gamma MAP (Bayesian)',
+    icon: 'Cpu'
+  },
+  boxcar_mean: {
+    id: 'boxcar_mean',
+    label: 'Boxcar Mean Filter',
+    algorithm: 'Uniform moving average kernel',
+    description: 'Simple spatial moving average. Smooths speckle but blurs edges, dikes, and linear infrastructure.',
+    recommended_kernel: 3,
+    preserves_edges: false,
+    badge: 'Boxcar (Uniform)',
+    icon: 'Grid'
+  },
+  none: {
+    id: 'none',
+    label: 'Unfiltered Raw Backscatter',
+    algorithm: 'Raw radar amplitude / intensity without spatial filtering',
+    description: 'Maintains raw single-look or multi-look resolution at the cost of high speckle variance.',
+    recommended_kernel: 1,
+    preserves_edges: true,
+    badge: 'Raw (No Filter)',
+    icon: 'Eye'
+  }
+};
+
+export const SAR_FLOOD_TIER_CONFIGS = {
+  calm_water: {
+    tier: 'calm_water',
+    label: 'Open Calm Water / Flood Inundation',
+    max_db: -16.5,
+    min_db: -35.0,
+    color: '#0ea5e9',
+    badge: 'Open Water / Inundated (≤ -16.5 dB)',
+    is_flood: true
+  },
+  rough_water: {
+    tier: 'rough_water',
+    label: 'Wind-Roughened Water / Shallows',
+    max_db: -13.0,
+    min_db: -16.5,
+    color: '#38bdf8',
+    badge: 'Roughened Water (-16.5 to -13.0 dB)',
+    is_flood: true
+  },
+  moist_soil: {
+    tier: 'moist_soil',
+    label: 'Saturated Soil / Mudflat',
+    max_db: -9.0,
+    min_db: -13.0,
+    color: '#f59e0b',
+    badge: 'Moist Soil (-13.0 to -9.0 dB)',
+    is_flood: false
+  },
+  dry_soil_vegetation: {
+    tier: 'dry_soil_vegetation',
+    label: 'Vegetation Canopy / Dry Ground',
+    max_db: -4.0,
+    min_db: -9.0,
+    color: '#10b981',
+    badge: 'Vegetation / Ground (-9.0 to -4.0 dB)',
+    is_flood: false
+  },
+  urban_double_bounce: {
+    tier: 'urban_double_bounce',
+    label: 'Built Structure / Corner Reflector',
+    max_db: 15.0,
+    min_db: -4.0,
+    color: '#ef4444',
+    badge: 'Built / Double Bounce (> -4.0 dB)',
+    is_flood: false
+  }
+};
+
+export const SAR_BENCHMARK_SCENES = [
+  {
+    scene_id: 'S1A_IW_GRDH_1SDV_20260910T140023_RTC',
+    acquisition_date: '2026-09-10T14:00:23Z',
+    orbit_direction: 'DESCENDING',
+    relative_orbit: 137,
+    polarizations: ['VV', 'VH'],
+    mean_vv_db: -11.8,
+    mean_vh_db: -18.4,
+    mean_ratio_db: -6.6,
+    incidence_angle_mid_deg: 38.6,
+    collection: 'sentinel-1-rtc',
+    provider: 'Copernicus / Planetary Computer',
+    resolution_m: 10.0,
+    water_area_pct: 8.4
+  },
+  {
+    scene_id: 'S1A_IW_GRDH_1SDV_20260922T140023_RTC',
+    acquisition_date: '2026-09-22T14:00:23Z',
+    orbit_direction: 'DESCENDING',
+    relative_orbit: 137,
+    polarizations: ['VV', 'VH'],
+    mean_vv_db: -14.2,
+    mean_vh_db: -20.1,
+    mean_ratio_db: -5.9,
+    incidence_angle_mid_deg: 38.6,
+    collection: 'sentinel-1-rtc',
+    provider: 'Copernicus / Planetary Computer',
+    resolution_m: 10.0,
+    water_area_pct: 14.7
+  }
+];
+
+/**
+ * Converts linear radar backscatter power or intensity to decibels (dB):
+ * sigma0_dB = 10 * log10(max(epsilon, sigma0))
+ * 
+ * @param {number|number[]} val - Linear radar backscatter
+ * @param {number} [epsilon=1e-7] - Denominator clamp
+ * @returns {number|number[]} Value in decibels
+ */
+export const linearToDecibel = (val, epsilon = 1e-7) => {
+  if (Array.isArray(val)) {
+    return val.map((v) => Number((10.0 * Math.log10(Math.max(epsilon, Number(v)))).toFixed(4)));
+  }
+  return Number((10.0 * Math.log10(Math.max(epsilon, Number(val)))).toFixed(4));
+};
+
+/**
+ * Converts radar backscatter from decibels (dB) to linear power:
+ * sigma0 = 10 ** (sigma0_dB / 10.0)
+ * 
+ * @param {number|number[]} val - Decibel value
+ * @returns {number|number[]} Linear power
+ */
+export const decibelToLinear = (val) => {
+  if (Array.isArray(val)) {
+    return val.map((v) => Number(Math.pow(10.0, Number(v) / 10.0).toFixed(6)));
+  }
+  return Number(Math.pow(10.0, Number(val) / 10.0).toFixed(6));
+};
+
+/**
+ * Calculates linear cross-polarization ratio = VH / max(epsilon, VV).
+ * 
+ * @param {number|number[]} vh - VH linear intensity
+ * @param {number|number[]} vv - VV linear intensity
+ * @param {number} [epsilon=1e-7] - Floor epsilon
+ * @returns {number|number[]} Linear ratio
+ */
+export const calculatePolarizationRatioLinear = (vh, vv, epsilon = 1e-7) => {
+  if (Array.isArray(vh) && Array.isArray(vv)) {
+    return vh.map((h, i) => {
+      const v = vv[i];
+      const denom = Math.abs(v) < epsilon ? epsilon : v;
+      return Number((Math.max(0.0, h) / denom).toFixed(6));
+    });
+  }
+  const denom = Math.abs(vv) < epsilon ? epsilon : vv;
+  return Number((Math.max(0.0, vh) / denom).toFixed(6));
+};
+
+/**
+ * Calculates cross-polarization ratio in decibels:
+ * ratio_dB = VH_dB - VV_dB = 10 * log10(VH / VV)
+ * 
+ * @param {number|number[]} vhDb - VH in decibels
+ * @param {number|number[]} vvDb - VV in decibels
+ * @returns {number|number[]} Ratio in dB
+ */
+export const calculatePolarizationRatioDb = (vhDb, vvDb) => {
+  if (Array.isArray(vhDb) && Array.isArray(vvDb)) {
+    return vhDb.map((h, i) => Number((Number(h) - Number(vvDb[i])).toFixed(4)));
+  }
+  return Number((Number(vhDb) - Number(vvDb)).toFixed(4));
+};
+
+/**
+ * Calculates cross-polarization ratio in either decibels or linear units.
+ * 
+ * @param {number|number[]} vh - VH value
+ * @param {number|number[]} vv - VV value
+ * @param {boolean} [inDb=true] - Whether output is in decibels
+ * @param {number} [epsilon=1e-7] - Denominator clamp
+ * @returns {number|number[]} Ratio
+ */
+export const calculatePolarizationRatio = (vh, vv, inDb = true, epsilon = 1e-7) => {
+  if (inDb) {
+    return calculatePolarizationRatioDb(vh, vv);
+  }
+  return calculatePolarizationRatioLinear(vh, vv, epsilon);
+};
+
+/**
+ * Calculates Normalized Difference Polarization Index:
+ * NDPI = (VV - VH) / max(epsilon, VV + VH)
+ * 
+ * @param {number|number[]} vv - VV linear intensity
+ * @param {number|number[]} vh - VH linear intensity
+ * @param {number} [epsilon=1e-7] - Floor epsilon
+ * @returns {number|number[]} NDPI in [-1, 1]
+ */
+export const calculateNormalizedDifferencePolarizationIndex = (vv, vh, epsilon = 1e-7) => {
+  if (Array.isArray(vv) && Array.isArray(vh)) {
+    return vv.map((v, i) => {
+      const h = vh[i];
+      const denom = Math.abs(v + h) < epsilon ? epsilon : (v + h);
+      return Number(((v - h) / denom).toFixed(4));
+    });
+  }
+  const denom = Math.abs(vv + vh) < epsilon ? epsilon : (vv + vh);
+  return Number(((vv - vh) / denom).toFixed(4));
+};
+
+/**
+ * Computes terrain-flattened gamma nought (gamma0) from sigma nought (sigma0)
+ * and local illuminated incidence angle theta_local.
+ * 
+ * @param {number|number[]} sigma0 - Radar backscatter
+ * @param {number|number[]} localIncidenceAngleDeg - Local slope incidence angle
+ * @param {boolean} [isDb=false] - Whether inputs are in decibels
+ * @param {number} [epsilon=1e-7] - Epsilon clamp
+ * @returns {number|number[]} Terrain-flattened gamma0
+ */
+export const applyTerrainFlatteningGamma0 = (sigma0, localIncidenceAngleDeg, isDb = false, epsilon = 1e-7) => {
+  const thetaRad = (Number(localIncidenceAngleDeg) * Math.PI) / 180.0;
+  const cosTheta = Math.max(epsilon, Math.cos(thetaRad));
+  if (isDb) {
+    return Number((Number(sigma0) - 10.0 * Math.log10(cosTheta)).toFixed(4));
+  }
+  return Number((Number(sigma0) / cosTheta).toFixed(6));
+};
+
+/**
+ * Classifies backscatter decibel value into surface scattering tier.
+ * 
+ * @param {number} vvDb - VV backscatter in dB
+ * @returns {string} SAR flood tier
+ */
+export const classifySarFloodTier = (vvDb) => {
+  const v = Number(vvDb);
+  if (v <= -16.5) return SAR_FLOOD_DETECTION_TIERS.CALM_WATER;
+  if (v <= -13.0) return SAR_FLOOD_DETECTION_TIERS.ROUGH_WATER;
+  if (v <= -9.0) return SAR_FLOOD_DETECTION_TIERS.MOIST_SOIL;
+  if (v <= -4.0) return SAR_FLOOD_DETECTION_TIERS.DRY_SOIL_VEGETATION;
+  return SAR_FLOOD_DETECTION_TIERS.URBAN_DOUBLE_BOUNCE;
+};
+
+/**
+ * Applies decibel thresholding to identify flood inundation / calm water pixels.
+ * 
+ * @param {number[]} vvDbArray - Array of VV values in dB
+ * @param {number} [thresholdDb=-16.5] - Decibel threshold for water
+ * @param {number} [pixelAreaHa=0.01] - Hectares per pixel (0.01 for 10m)
+ * @returns {{ waterMask: boolean[], waterPixels: number, totalPixels: number, waterFraction: number, waterAreaHa: number }}
+ */
+export const classifySarWaterPixels = (vvDbArray, thresholdDb = -16.5, pixelAreaHa = 0.01) => {
+  if (!Array.isArray(vvDbArray) || vvDbArray.length === 0) {
+    return { waterMask: [], waterPixels: 0, totalPixels: 0, waterFraction: 0.0, waterAreaHa: 0.0 };
+  }
+  const waterMask = vvDbArray.map((v) => Number(v) <= thresholdDb);
+  const waterPixels = waterMask.filter(Boolean).length;
+  const totalPixels = vvDbArray.length;
+  const waterFraction = Number((waterPixels / totalPixels).toFixed(4));
+  const waterAreaHa = Number((waterPixels * pixelAreaHa).toFixed(4));
+  return {
+    waterMask,
+    waterPixels,
+    totalPixels,
+    waterFraction,
+    waterAreaHa
+  };
+};
+
+/**
+ * Calculates adaptive weighting factor W in [0.0, 1.0] for the Lee speckle filter:
+ * W = max(0.0, 1.0 - (Cu^2 / Ci^2))
+ * 
+ * @param {number} localMean - Local window mean
+ * @param {number} localVariance - Local window variance
+ * @param {number} [numLooks=4.4] - Equivalent Number of Looks
+ * @returns {number} Weight W
+ */
+export const calculateRefinedLeeFilterWeights = (localMean, localVariance, numLooks = 4.4) => {
+  const meanVal = Math.max(1e-7, Number(localMean));
+  const varVal = Math.max(0.0, Number(localVariance));
+  const ciSq = varVal / (meanVal * meanVal);
+  const cuSq = 1.0 / Math.max(1.0, Number(numLooks));
+  if (ciSq <= cuSq) return 0.0;
+  const w = 1.0 - (cuSq / ciSq);
+  return Number(Math.max(0.0, Math.min(1.0, w)).toFixed(6));
+};
+
+/**
+ * Applies spatial speckle filter across a 1D array of values.
+ * 
+ * @param {number[]} values - 1D array of values
+ * @param {string} [method='refined_lee'] - Filter method
+ * @param {number} [kernelSize=5] - Kernel size
+ * @param {number} [numLooks=4.4] - ENL
+ * @returns {number[]} Filtered array
+ */
+export const applySpeckleFilter = (values, method = 'refined_lee', kernelSize = 5, numLooks = 4.4) => {
+  if (!Array.isArray(values) || values.length === 0) return [];
+  const m = String(method).toLowerCase();
+  if (m === 'none' || m === 'raw' || kernelSize <= 1) return [...values];
+
+  const k = Math.max(3, kernelSize % 2 === 1 ? kernelSize : kernelSize + 1);
+  const pad = Math.floor(k / 2);
+  const n = values.length;
+  const cuSq = 1.0 / Math.max(1.0, Number(numLooks));
+  const out = new Array(n).fill(0.0);
+
+  for (let i = 0; i < n; i += 1) {
+    const start = Math.max(0, i - pad);
+    const end = Math.min(n, i + pad + 1);
+    const win = values.slice(start, end);
+    const count = win.length;
+    const mean = win.reduce((a, b) => a + b, 0.0) / count;
+    const variance = win.reduce((a, b) => a + Math.pow(b - mean, 2), 0.0) / count;
+    const center = values[i];
+
+    if (m === 'boxcar_mean') {
+      out[i] = Number(mean.toFixed(4));
+    } else if (m === 'kuan') {
+      const ciSq = variance / Math.max(1e-7, mean * mean);
+      const w = (1.0 - cuSq / Math.max(1e-7, ciSq)) / (1.0 + cuSq);
+      const wClamp = Math.max(0.0, Math.min(1.0, w));
+      out[i] = Number((mean + wClamp * (center - mean)).toFixed(4));
+    } else if (m === 'frost') {
+      const ciSq = variance / Math.max(1e-7, mean * mean);
+      let sumW = 0.0;
+      let sumVal = 0.0;
+      for (let j = 0; j < count; j += 1) {
+        const dist = Math.abs(j - Math.floor(count / 2));
+        const weight = Math.exp(-1.0 * ciSq * dist);
+        sumW += weight;
+        sumVal += win[j] * weight;
+      }
+      out[i] = Number((sumVal / Math.max(1e-7, sumW)).toFixed(4));
+    } else {
+      // refined_lee default
+      const w = calculateRefinedLeeFilterWeights(mean, variance, numLooks);
+      out[i] = Number((mean + w * (center - mean)).toFixed(4));
+    }
+  }
+  return out;
+};
+
+/**
+ * Constructs dynamic XYZ tile streaming URL for calibrated SAR backscatter tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Tile URL
+ */
+export const buildSarBackscatterTileUrl = (options = {}) => {
+  const {
+    collection = 'sentinel-1-rtc',
+    polarization = 'vv',
+    z = 0,
+    x = 0,
+    y = 0,
+    speckleFilter = 'refined_lee',
+    kernelSize = 5,
+    calibration = 'gamma0',
+    colormap = 'gray',
+    rescale = '-25,0'
+  } = options;
+
+  const base = `/api/v1/tiles/sar/${collection}/${polarization}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (speckleFilter && speckleFilter !== 'none') {
+    params.push(`filter=${speckleFilter}`);
+    if (kernelSize !== 5) params.push(`kernel_size=${kernelSize}`);
+  }
+  if (calibration && calibration !== 'gamma0') params.push(`calibration=${calibration}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+
+  return params.length ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for calibrated SAR backscatter tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildSarBackscatterTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-1-rtc',
+    polarization = 'vv',
+    speckleFilter = 'refined_lee',
+    kernelSize = 5,
+    calibration = 'gamma0',
+    colormap = 'gray',
+    rescale = '-25,0'
+  } = options;
+
+  const base = `/api/v1/tiles/sar/${collection}/${polarization}/{z}/{x}/{y}.png`;
+  const params = [];
+  if (speckleFilter && speckleFilter !== 'none') {
+    params.push(`filter=${speckleFilter}`);
+    if (kernelSize !== 5) params.push(`kernel_size=${kernelSize}`);
+  }
+  if (calibration && calibration !== 'gamma0') params.push(`calibration=${calibration}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+
+  return params.length ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Constructs dynamic XYZ tile URL for filtered SAR backscatter tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Tile URL
+ */
+export const buildSarSpeckleFilterTileUrl = (options = {}) => {
+  const {
+    filterMethod = 'refined_lee',
+    z = 0,
+    x = 0,
+    y = 0,
+    collection = 'sentinel-1-rtc',
+    polarization = 'vv',
+    kernelSize = 5,
+    colormap = 'gray',
+    rescale = '-25,0'
+  } = options;
+
+  const base = `/api/v1/tiles/sar/filtered/${filterMethod}/${z}/${x}/${y}.png`;
+  const params = [`collection=${collection}`, `polarization=${polarization}`];
+  if (kernelSize !== 5) params.push(`kernel_size=${kernelSize}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+
+  return `${base}?${params.join('&')}`;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for filtered SAR backscatter tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildSarSpeckleFilterTileUrlTemplate = (options = {}) => {
+  const {
+    filterMethod = 'refined_lee',
+    collection = 'sentinel-1-rtc',
+    polarization = 'vv',
+    kernelSize = 5,
+    colormap = 'gray',
+    rescale = '-25,0'
+  } = options;
+
+  const base = `/api/v1/tiles/sar/filtered/${filterMethod}/{z}/{x}/{y}.png`;
+  const params = [`collection=${collection}`, `polarization=${polarization}`];
+  if (kernelSize !== 5) params.push(`kernel_size=${kernelSize}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+
+  return `${base}?${params.join('&')}`;
+};
+
+/**
+ * Constructs dynamic XYZ tile streaming URL for SAR flood inundation mask tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Tile URL
+ */
+export const buildSarFloodTileUrl = (options = {}) => {
+  const {
+    z = 0,
+    x = 0,
+    y = 0,
+    collection = 'sentinel-1-rtc',
+    thresholdDb = -16.5,
+    speckleFilter = 'refined_lee'
+  } = options;
+
+  const base = `/api/v1/tiles/sar/flood/${z}/${x}/${y}.png`;
+  const params = [`collection=${collection}`, `threshold_db=${thresholdDb}`];
+  if (speckleFilter && speckleFilter !== 'refined_lee') params.push(`filter=${speckleFilter}`);
+
+  return `${base}?${params.join('&')}`;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for SAR flood inundation mask tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildSarFloodTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-1-rtc',
+    thresholdDb = -16.5,
+    speckleFilter = 'refined_lee'
+  } = options;
+
+  const base = '/api/v1/tiles/sar/flood/{z}/{x}/{y}.png';
+  const params = [`collection=${collection}`, `threshold_db=${thresholdDb}`];
+  if (speckleFilter && speckleFilter !== 'refined_lee') params.push(`filter=${speckleFilter}`);
+
+  return `${base}?${params.join('&')}`;
+};
+
+
 

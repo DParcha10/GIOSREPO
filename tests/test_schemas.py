@@ -995,7 +995,61 @@ from app.models.schemas import (
     build_mosaic_tile_url,
     build_mosaic_tile_url_template,
     build_mosaic_feather_tile_url_template,
-    build_mosaic_seamline_tile_url_template
+    build_mosaic_seamline_tile_url_template,
+    # Cycle v2.5.28: Multi-Temporal Scene Stacking, Statistical Reducers & Quality Mosaic Contracts
+    TemporalReducerMethod,
+    TemporalQualityTier,
+    TemporalStackStatus,
+    TEMPORAL_REDUCER_CONFIGS,
+    TEMPORAL_QUALITY_TIER_CONFIGS,
+    TEMPORAL_BENCHMARK_SCENES,
+    TemporalSceneMetadata,
+    TemporalSceneStackRequest,
+    TemporalCompositeMetadata,
+    TemporalCompositeResponse,
+    TemporalStackInspectionRequest,
+    TemporalStackInspectionResponse,
+    TemporalCompositeTileRequestParams,
+    calculate_pixel_quality_score,
+    classify_temporal_composite_quality,
+    calculate_ndvi,
+    select_greenest_pixel_indices,
+    select_clearest_pixel_indices,
+    apply_temporal_reduction,
+    build_temporal_composite_tile_url,
+    build_temporal_composite_tile_url_template,
+    build_temporal_quality_mosaic_tile_url_template,
+    # Cycle v2.5.29: Sentinel-1 SAR Dual-Pol Backscatter Schemas, Speckle Filter Enums & SAR Tile Contracts
+    SarPolarization,
+    SpeckleFilterMethod,
+    SARBackscatterCalibration,
+    SARFloodDetectionTier,
+    SAR_POLARIZATION_CONFIGS,
+    SPECKLE_FILTER_CONFIGS,
+    SAR_FLOOD_TIER_CONFIGS,
+    SAR_BENCHMARK_SCENES,
+    SARBackscatterAnalysisRequest,
+    SARBackscatterSummary,
+    SARBackscatterAnalysisResponse,
+    SARBackscatterTileRequestParams,
+    SARFloodInundationTileRequestParams,
+    linear_to_decibel,
+    decibel_to_linear,
+    calculate_polarization_ratio_linear,
+    calculate_polarization_ratio_db,
+    calculate_polarization_ratio,
+    calculate_normalized_difference_polarization_index,
+    apply_terrain_flattening_gamma0,
+    classify_sar_flood_tier,
+    classify_sar_water_pixels,
+    calculate_refined_lee_filter_weights,
+    apply_speckle_filter_1d_or_2d,
+    build_sar_backscatter_tile_url,
+    build_sar_backscatter_tile_url_template,
+    build_sar_speckle_filter_tile_url,
+    build_sar_speckle_filter_tile_url_template,
+    build_sar_flood_tile_url,
+    build_sar_flood_tile_url_template
 )
 from app.config import settings
 
@@ -11354,8 +11408,547 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(format_api_route("tiles_mosaic_seamless", z=12, x=650, y=1520), "/api/v1/tiles/mosaic/seamless/12/650/1520.png")
         self.assertEqual(format_api_route("tiles_mosaic_id", mosaic_id="VRT-01", z=12, x=650, y=1520), "/api/v1/tiles/mosaic/VRT-01/12/650/1520.png")
 
+    def test_task_t228_multi_temporal_scene_stacking_reducers_and_quality_mosaic_contracts(self):
+        """Verify Task T-228: Multi-Temporal Scene Stacking, Statistical Reducer Enums, Quality Band Weighting & Dynamic Composite Tile Contracts."""
+        import numpy as np
+
+        # 1. Enums Verification
+        self.assertEqual(TemporalReducerMethod.MEDIAN.value, "median")
+        self.assertEqual(TemporalReducerMethod.MEAN.value, "mean")
+        self.assertEqual(TemporalReducerMethod.MAX_NDVI.value, "max_ndvi")
+        self.assertEqual(TemporalReducerMethod.MIN_CLOUD.value, "min_cloud")
+        self.assertEqual(TemporalReducerMethod.PERCENTILE_25.value, "p25")
+        self.assertEqual(TemporalReducerMethod.PERCENTILE_75.value, "p75")
+        self.assertEqual(TemporalReducerMethod.MODE.value, "mode")
+        self.assertEqual(TemporalReducerMethod.MIN.value, "min")
+        self.assertEqual(TemporalReducerMethod.MAX.value, "max")
+
+        self.assertEqual(TemporalQualityTier.EXCELLENT.value, "excellent")
+        self.assertEqual(TemporalQualityTier.GOOD.value, "good")
+        self.assertEqual(TemporalQualityTier.MARGINAL.value, "marginal")
+        self.assertEqual(TemporalQualityTier.POOR.value, "poor")
+
+        self.assertEqual(TemporalStackStatus.AVAILABLE.value, "available")
+        self.assertEqual(TemporalStackStatus.CACHED.value, "cached")
+        self.assertEqual(TemporalStackStatus.PROCESSING.value, "processing")
+
+        # 2. Configurations & Presets Verification
+        self.assertIn("median", TEMPORAL_REDUCER_CONFIGS)
+        self.assertIn("max_ndvi", TEMPORAL_REDUCER_CONFIGS)
+        self.assertIn("min_cloud", TEMPORAL_REDUCER_CONFIGS)
+        self.assertIn("p25", TEMPORAL_REDUCER_CONFIGS)
+        self.assertIn("p75", TEMPORAL_REDUCER_CONFIGS)
+
+        self.assertTrue(TEMPORAL_REDUCER_CONFIGS["max_ndvi"]["is_quality_mosaic"])
+        self.assertTrue(TEMPORAL_REDUCER_CONFIGS["max_ndvi"]["preserves_covariance"])
+        self.assertTrue(TEMPORAL_REDUCER_CONFIGS["min_cloud"]["is_quality_mosaic"])
+        self.assertTrue(TEMPORAL_REDUCER_CONFIGS["min_cloud"]["preserves_covariance"])
+        self.assertFalse(TEMPORAL_REDUCER_CONFIGS["median"]["is_quality_mosaic"])
+        self.assertFalse(TEMPORAL_REDUCER_CONFIGS["median"]["preserves_covariance"])
+
+        self.assertEqual(TEMPORAL_QUALITY_TIER_CONFIGS["excellent"]["color"], "#10B981")
+        self.assertEqual(TEMPORAL_QUALITY_TIER_CONFIGS["good"]["color"], "#3B82F6")
+        self.assertEqual(TEMPORAL_QUALITY_TIER_CONFIGS["marginal"]["color"], "#F59E0B")
+        self.assertEqual(TEMPORAL_QUALITY_TIER_CONFIGS["poor"]["color"], "#EF4444")
+
+        self.assertEqual(len(TEMPORAL_BENCHMARK_SCENES), 6)
+        self.assertEqual(TEMPORAL_BENCHMARK_SCENES[0]["tile_id"], "T10SEG")
+        self.assertLess(TEMPORAL_BENCHMARK_SCENES[0]["cloud_cover_pct"], 5.0)
+
+        # 3. Pydantic Models Validation & Serialization
+        scene = TemporalSceneMetadata(
+            scene_id="S2A_MSIL2A_20260715_T10SEG",
+            acquisition_date="2026-07-15T18:49:21Z",
+            cloud_cover_pct=2.4,
+            mean_sun_elevation=65.2,
+            orbit_direction="DESCENDING",
+            tile_id="T10SEG",
+            collection="sentinel-2-l2a",
+            quality_score=0.97,
+            valid_pixel_pct=99.5
+        )
+        self.assertEqual(scene.scene_id, "S2A_MSIL2A_20260715_T10SEG")
+        self.assertEqual(scene.cloud_cover_pct, 2.4)
+        self.assertEqual(scene.quality_score, 0.97)
+
+        req = TemporalSceneStackRequest(
+            bbox=[-121.20, 36.90, -120.65, 37.45],
+            collection="sentinel-2-l2a",
+            start_date="2026-06-01",
+            end_date="2026-08-31",
+            max_cloud_cover_pct=30.0,
+            reducer=TemporalReducerMethod.MAX_NDVI,
+            bands=["B04", "B03", "B02", "B08"],
+            quality_band="NDVI"
+        )
+        self.assertEqual(req.reducer, TemporalReducerMethod.MAX_NDVI)
+        self.assertEqual(req.quality_band, "NDVI")
+        self.assertEqual(len(req.bands), 4)
+
+        meta = TemporalCompositeMetadata(
+            composite_id="COMP-2026-SUMMER-01",
+            collection="sentinel-2-l2a",
+            reducer=TemporalReducerMethod.MAX_NDVI,
+            start_date="2026-06-01",
+            end_date="2026-08-31",
+            temporal_window_days=91,
+            total_scenes_evaluated=12,
+            scenes_included=6,
+            mean_cloud_cover_pct=4.8,
+            clear_pixel_fraction=0.965,
+            quality_tier=TemporalQualityTier.EXCELLENT,
+            preserves_covariance=True,
+            quality_band="NDVI",
+            bbox=[-121.20, 36.90, -120.65, 37.45],
+            target_crs="EPSG:3857",
+            created_at="2026-10-15T12:00:00Z"
+        )
+        self.assertEqual(meta.quality_tier, TemporalQualityTier.EXCELLENT)
+        self.assertTrue(meta.preserves_covariance)
+
+        resp = TemporalCompositeResponse(
+            composite_id="COMP-2026-SUMMER-01",
+            collection="sentinel-2-l2a",
+            reducer=TemporalReducerMethod.MAX_NDVI,
+            metadata=meta,
+            scenes=[scene],
+            summary={"clear_pixel_pct": 96.5, "scenes_count": 6},
+            tile_url_template="/api/v1/tiles/temporal/sentinel-2-l2a/max_ndvi/{z}/{x}/{y}.png",
+            created_at="2026-10-15T12:00:00Z"
+        )
+        self.assertEqual(resp.composite_id, "COMP-2026-SUMMER-01")
+        self.assertIn("max_ndvi", resp.tile_url_template)
+
+        inspect_req = TemporalStackInspectionRequest(
+            bbox=[-121.20, 36.90, -120.65, 37.45],
+            start_date="2026-06-01",
+            end_date="2026-08-31"
+        )
+        self.assertEqual(inspect_req.collection, "sentinel-2-l2a")
+
+        inspect_resp = TemporalStackInspectionResponse(
+            collection="sentinel-2-l2a",
+            bbox=[-121.20, 36.90, -120.65, 37.45],
+            start_date="2026-06-01",
+            end_date="2026-08-31",
+            total_scenes=6,
+            scenes=[scene],
+            mean_cloud_cover_pct=2.4,
+            recommended_reducer=TemporalReducerMethod.MEDIAN
+        )
+        self.assertEqual(inspect_resp.total_scenes, 6)
+
+        tile_params = TemporalCompositeTileRequestParams(
+            z=11,
+            x=327,
+            y=790,
+            collection="sentinel-2-l2a",
+            reducer=TemporalReducerMethod.MEDIAN,
+            start_date="2026-06-01",
+            end_date="2026-08-31",
+            bands="B04,B03,B02",
+            colormap="spectral",
+            rescale="0,3000"
+        )
+        self.assertEqual(tile_params.z, 11)
+        self.assertEqual(tile_params.reducer, TemporalReducerMethod.MEDIAN)
+
+        # 4. Pixel Quality Score & Composite Quality Classification
+        # High quality: 0% cloud, 90 deg solar elevation, nadir view
+        q_high = calculate_pixel_quality_score(cloud_cover_pct=0.0, sun_elevation_deg=90.0, nadir_angle_deg=0.0)
+        self.assertAlmostEqual(q_high, 1.0, places=3)
+
+        # Completely cloudy: 100% cloud
+        q_zero = calculate_pixel_quality_score(cloud_cover_pct=100.0, sun_elevation_deg=60.0)
+        self.assertEqual(q_zero, 0.0)
+
+        # Standard observation: 5% cloud, 60 deg sun
+        q_norm = calculate_pixel_quality_score(cloud_cover_pct=5.0, sun_elevation_deg=60.0, nadir_angle_deg=0.0)
+        expected_norm = (95.0 / 100.0) * math.sin(math.radians(60.0))
+        self.assertAlmostEqual(q_norm, expected_norm, places=3)
+
+        # Quality tiering classification
+        self.assertEqual(classify_temporal_composite_quality(95.0, 5), TemporalQualityTier.EXCELLENT)
+        self.assertEqual(classify_temporal_composite_quality(80.0, 3), TemporalQualityTier.GOOD)
+        self.assertEqual(classify_temporal_composite_quality(60.0, 2), TemporalQualityTier.MARGINAL)
+        self.assertEqual(classify_temporal_composite_quality(30.0, 1), TemporalQualityTier.POOR)
+
+        # 5. NDVI Calculation Math
+        # Scalar
+        ndvi_scalar = calculate_ndvi(red=0.1, nir=0.6)
+        self.assertAlmostEqual(ndvi_scalar, (0.6 - 0.1) / (0.6 + 0.1), places=4)
+
+        # Vectorized array
+        r_arr = np.array([0.1, 0.2, 0.05], dtype=np.float32)
+        n_arr = np.array([0.6, 0.3, 0.45], dtype=np.float32)
+        ndvi_arr = calculate_ndvi(r_arr, n_arr)
+        np.testing.assert_allclose(ndvi_arr, (n_arr - r_arr) / (n_arr + r_arr), atol=1e-5)
+
+        # 6. Greenest-Pixel Argmax Selection & Covariance Preservation
+        # 3 dates, 2x2 spatial pixels
+        red_stack = np.array([
+            [[0.2, 0.3], [0.1, 0.4]],  # Date 0
+            [[0.05, 0.25], [0.3, 0.15]], # Date 1: high greenness at (0,0) and (1,1)
+            [[0.3, 0.05], [0.08, 0.35]]  # Date 2: high greenness at (0,1) and (1,0)
+        ], dtype=np.float32)
+
+        nir_stack = np.array([
+            [[0.3, 0.35], [0.2, 0.45]],  # Date 0
+            [[0.6, 0.4], [0.35, 0.6]],   # Date 1
+            [[0.35, 0.6], [0.5, 0.4]]    # Date 2
+        ], dtype=np.float32)
+
+        best_green_idx, max_ndvi = select_greenest_pixel_indices(red_stack, nir_stack)
+        self.assertEqual(best_green_idx.shape, (2, 2))
+        self.assertEqual(max_ndvi.shape, (2, 2))
+
+        # Pixel (0,0): Date 1 NDVI is (0.6 - 0.05) / 0.65 = 0.846 (highest)
+        self.assertEqual(best_green_idx[0, 0], 1)
+        self.assertAlmostEqual(float(max_ndvi[0, 0]), 0.84615, places=3)
+
+        # Pixel (0,1): Date 2 NDVI is (0.6 - 0.05) / 0.65 = 0.846 (highest)
+        self.assertEqual(best_green_idx[0, 1], 2)
+
+        # Slicing all bands simultaneously with best_green_idx guarantees spectral covariance
+        composite_red = np.take_along_axis(red_stack, np.expand_dims(best_green_idx, axis=0), axis=0).squeeze(axis=0)
+        self.assertAlmostEqual(float(composite_red[0, 0]), 0.05, places=4)
+        self.assertAlmostEqual(float(composite_red[0, 1]), 0.05, places=4)
+
+        # 7. Clearest-Pixel Argmin Selection
+        cp_stack = np.array([
+            [[0.5, 0.05], [0.8, 0.3]],  # Date 0
+            [[0.02, 0.4], [0.1, 0.6]],  # Date 1
+            [[0.9, 0.2], [0.05, 0.01]]  # Date 2
+        ], dtype=np.float32)
+
+        best_clear_idx, min_cp = select_clearest_pixel_indices(cp_stack)
+        self.assertEqual(best_clear_idx[0, 0], 1) # Date 1 is clearest at (0,0) (0.02)
+        self.assertEqual(best_clear_idx[0, 1], 0) # Date 0 is clearest at (0,1) (0.05)
+        self.assertEqual(best_clear_idx[1, 0], 2) # Date 2 is clearest at (1,0) (0.05)
+        self.assertEqual(best_clear_idx[1, 1], 2) # Date 2 is clearest at (1,1) (0.01)
+
+        # 8. Statistical Reducers Across Stack
+        # 1D stack of 5 observations: [0.1, 0.2, 0.5, 0.8, 0.9]
+        data_1d = np.array([0.1, 0.2, 0.5, 0.8, 0.9], dtype=np.float32)
+        red_median = apply_temporal_reduction(data_1d, reducer=TemporalReducerMethod.MEDIAN)
+        red_mean = apply_temporal_reduction(data_1d, reducer=TemporalReducerMethod.MEAN)
+        red_p25 = apply_temporal_reduction(data_1d, reducer=TemporalReducerMethod.PERCENTILE_25)
+        red_p75 = apply_temporal_reduction(data_1d, reducer=TemporalReducerMethod.PERCENTILE_75)
+        red_min = apply_temporal_reduction(data_1d, reducer=TemporalReducerMethod.MIN)
+        red_max = apply_temporal_reduction(data_1d, reducer=TemporalReducerMethod.MAX)
+
+        self.assertAlmostEqual(float(red_median), 0.5, places=5)
+        self.assertAlmostEqual(float(red_mean), 0.5, places=5)
+        self.assertAlmostEqual(float(red_p25), 0.2, places=5)
+        self.assertAlmostEqual(float(red_p75), 0.8, places=5)
+        self.assertAlmostEqual(float(red_min), 0.1, places=5)
+        self.assertAlmostEqual(float(red_max), 0.9, places=5)
+
+        # Order statistics invariant: min <= p25 <= median <= p75 <= max
+        self.assertTrue(red_min <= red_p25 <= red_median <= red_p75 <= red_max)
+
+        # Categorical Mode
+        cat_1d = np.array([3, 4, 4, 4, 5], dtype=np.float32)
+        red_mode = apply_temporal_reduction(cat_1d, reducer=TemporalReducerMethod.MODE)
+        self.assertEqual(int(red_mode), 4)
+
+        # NaN Handling: ensure nan-reducers ignore missing / cloud-masked pixels
+        nan_1d = np.array([0.2, np.nan, 0.4], dtype=np.float32)
+        red_nan_med = apply_temporal_reduction(nan_1d, reducer=TemporalReducerMethod.MEDIAN)
+        self.assertAlmostEqual(float(red_nan_med), 0.3, places=5)
+
+        # 9. Dynamic Tile URL Builders and Leaflet Templates
+        tile_url = build_temporal_composite_tile_url(
+            collection="sentinel-2-l2a",
+            reducer="median",
+            z=10,
+            x=163,
+            y=395,
+            start_date="2026-06-01",
+            end_date="2026-08-31",
+            max_cloud_cover_pct=25.0,
+            bands="B04,B03,B02",
+            colormap="spectral",
+            rescale="0,3000"
+        )
+        self.assertIn("/api/v1/tiles/temporal/sentinel-2-l2a/median/10/163/395.png", tile_url)
+        self.assertIn("start_date=2026-06-01", tile_url)
+        self.assertIn("end_date=2026-08-31", tile_url)
+        self.assertIn("max_cloud_cover_pct=25.0", tile_url)
+        self.assertIn("bands=B04,B03,B02", tile_url)
+        self.assertIn("colormap=spectral", tile_url)
+
+        tmpl_composite = build_temporal_composite_tile_url_template(
+            collection="sentinel-2-l2a",
+            reducer="max_ndvi",
+            start_date="2026-06-01",
+            end_date="2026-08-31"
+        )
+        self.assertEqual(
+            tmpl_composite,
+            "/api/v1/tiles/temporal/sentinel-2-l2a/max_ndvi/{z}/{x}/{y}.png?start_date=2026-06-01&end_date=2026-08-31"
+        )
+
+        tmpl_quality = build_temporal_quality_mosaic_tile_url_template(
+            collection="sentinel-2-l2a",
+            quality_band="NDVI",
+            start_date="2026-06-01",
+            end_date="2026-08-31"
+        )
+        self.assertIn("/api/v1/tiles/temporal/quality-mosaic/sentinel-2-l2a/{z}/{x}/{y}.png", tmpl_quality)
+        self.assertIn("quality_band=NDVI", tmpl_quality)
+
+        # 10. Canonical API Route Contract Parity
+        self.assertEqual(format_api_route("analysis_temporal_composite"), "/api/v1/analysis/temporal/composite")
+        self.assertEqual(format_api_route("analysis_temporal_composite_short"), "/analysis/temporal/composite")
+        self.assertEqual(format_api_route("analysis_temporal_stack"), "/api/v1/analysis/temporal/stack")
+        self.assertEqual(format_api_route("analysis_temporal_stack_short"), "/analysis/temporal/stack")
+        self.assertEqual(format_api_route("analysis_temporal_reducers"), "/api/v1/analysis/temporal/reducers")
+        self.assertEqual(format_api_route("analysis_temporal_reducers_short"), "/analysis/temporal/reducers")
+        self.assertEqual(
+            format_api_route("tiles_temporal_composite", collection="sentinel-2-l2a", reducer="median", z=10, x=163, y=395),
+            "/api/v1/tiles/temporal/sentinel-2-l2a/median/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_temporal_quality_mosaic", collection="sentinel-2-l2a", z=10, x=163, y=395),
+            "/api/v1/tiles/temporal/quality-mosaic/sentinel-2-l2a/10/163/395.png"
+        )
+
+    def test_task_t234_sar_dual_pol_backscatter_speckle_filter_and_tile_contracts(self):
+        """Verify Task T-234 Sentinel-1 SAR Dual-Pol Backscatter, Speckle Filter Enums, Decibel Invariants & Tile Contracts."""
+        # 1. Enums & Polarization aliases
+        self.assertEqual(SarPolarization.VV.value, "vv")
+        self.assertEqual(SarPolarization.VH.value, "vh")
+        self.assertEqual(SarPolarization.HH.value, "hh")
+        self.assertEqual(SarPolarization.HV.value, "hv")
+        self.assertEqual(SarPolarization.POLARIZATION_RATIO_VH_VV.value, "ratio_vh_vv")
+        self.assertEqual(SarPolarization.RATIO.value, "ratio_vh_vv")
+
+        self.assertEqual(SpeckleFilterMethod.REFINED_LEE.value, "refined_lee")
+        self.assertEqual(SpeckleFilterMethod.FROST.value, "frost")
+        self.assertEqual(SpeckleFilterMethod.KUAN.value, "kuan")
+        self.assertEqual(SpeckleFilterMethod.GAMMA_MAP.value, "gamma_map")
+        self.assertEqual(SpeckleFilterMethod.BOXCAR_MEAN.value, "boxcar_mean")
+        self.assertEqual(SpeckleFilterMethod.NONE.value, "none")
+
+        self.assertEqual(SARBackscatterCalibration.GAMMA0.value, "gamma0")
+        self.assertEqual(SARBackscatterCalibration.SIGMA0.value, "sigma0")
+        self.assertEqual(SARBackscatterCalibration.BETA0.value, "beta0")
+
+        self.assertEqual(SARFloodDetectionTier.CALM_WATER.value, "calm_water")
+        self.assertEqual(SARFloodDetectionTier.ROUGH_WATER.value, "rough_water")
+        self.assertEqual(SARFloodDetectionTier.MOIST_SOIL.value, "moist_soil")
+        self.assertEqual(SARFloodDetectionTier.DRY_SOIL_VEGETATION.value, "dry_soil_vegetation")
+        self.assertEqual(SARFloodDetectionTier.URBAN_DOUBLE_BOUNCE.value, "urban_double_bounce")
+
+        # 2. Config dictionaries & benchmark scenes
+        self.assertIn("vv", SAR_POLARIZATION_CONFIGS)
+        self.assertIn("vh", SAR_POLARIZATION_CONFIGS)
+        self.assertIn("ratio_vh_vv", SAR_POLARIZATION_CONFIGS)
+        self.assertIn("refined_lee", SPECKLE_FILTER_CONFIGS)
+        self.assertIn("gamma_map", SPECKLE_FILTER_CONFIGS)
+        self.assertIn("calm_water", SAR_FLOOD_TIER_CONFIGS)
+        self.assertGreaterEqual(len(SAR_BENCHMARK_SCENES), 2)
+
+        # 3. Radiometric Decibel Invariants (linear_to_decibel & decibel_to_linear)
+        # Roundtrip identity: linear == decibel_to_linear(linear_to_decibel(linear))
+        test_linears = [0.0001, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 10.0]
+        for val in test_linears:
+            db_val = linear_to_decibel(val)
+            roundtrip = decibel_to_linear(db_val)
+            self.assertAlmostEqual(roundtrip, val, places=5)
+
+        # Exact logarithm values
+        self.assertAlmostEqual(linear_to_decibel(1.0), 0.0, places=5)
+        self.assertAlmostEqual(linear_to_decibel(0.1), -10.0, places=5)
+        self.assertAlmostEqual(linear_to_decibel(0.01), -20.0, places=5)
+        self.assertAlmostEqual(decibel_to_linear(0.0), 1.0, places=5)
+        self.assertAlmostEqual(decibel_to_linear(-10.0), 0.1, places=5)
+
+        # Floor clamp with epsilon=1e-7 gives -70.0 dB for non-positive values
+        self.assertAlmostEqual(linear_to_decibel(0.0), -70.0, places=4)
+        self.assertAlmostEqual(linear_to_decibel(-5.0), -70.0, places=4)
+
+        # 4. Polarization Ratios & NDPI
+        # Cross-pol to Co-pol ratio linear: VH / VV
+        vh_lin = 0.015
+        vv_lin = 0.080
+        lin_ratio = calculate_polarization_ratio_linear(vh_lin, vv_lin)
+        self.assertAlmostEqual(lin_ratio, vh_lin / vv_lin, places=6)
+
+        # In dB: VH_dB - VV_dB == 10 * log10(VH_lin / VV_lin)
+        vh_db = linear_to_decibel(vh_lin)
+        vv_db = linear_to_decibel(vv_lin)
+        db_ratio = calculate_polarization_ratio_db(vh_db, vv_db)
+        self.assertAlmostEqual(db_ratio, vh_db - vv_db, places=5)
+        self.assertAlmostEqual(db_ratio, linear_to_decibel(lin_ratio), places=5)
+
+        # Generic function test in both modes
+        self.assertAlmostEqual(calculate_polarization_ratio(vh_lin, vv_lin, in_db=False), lin_ratio, places=5)
+        self.assertAlmostEqual(calculate_polarization_ratio(vh_db, vv_db, in_db=True), db_ratio, places=5)
+
+        # NDPI = (VV - VH) / (VV + VH)
+        ndpi = calculate_normalized_difference_polarization_index(vv_lin, vh_lin)
+        expected_ndpi = (vv_lin - vh_lin) / (vv_lin + vh_lin)
+        self.assertAlmostEqual(ndpi, expected_ndpi, places=6)
+
+        # 5. Terrain Flattening: gamma0 = sigma0 / cos(theta_i)
+        # Linear mode (is_db=False):
+        lin_sig0 = 0.08
+        self.assertAlmostEqual(apply_terrain_flattening_gamma0(lin_sig0, 0.0, is_db=False), lin_sig0, places=5)
+        self.assertAlmostEqual(apply_terrain_flattening_gamma0(lin_sig0, 60.0, is_db=False), lin_sig0 / 0.5, places=5)
+
+        # Decibel mode (is_db=True):
+        # At theta = 0 deg -> gamma0 == sigma0
+        self.assertAlmostEqual(apply_terrain_flattening_gamma0(-12.0, 0.0, is_db=True), -12.0, places=4)
+        # At theta = 60 deg -> cos(60) = 0.5 -> gamma0_lin = sigma0_lin / 0.5 -> gamma0_dB = sigma0_dB - 10*log10(0.5)
+        gamma0_60 = apply_terrain_flattening_gamma0(-12.0, 60.0, is_db=True)
+        expected_gamma0_60 = -12.0 - 10.0 * math.log10(0.5)
+        self.assertAlmostEqual(gamma0_60, expected_gamma0_60, places=4)
+
+        # 6. SAR Flood Inundation & Water Classification
+        self.assertEqual(classify_sar_flood_tier(-18.5), "calm_water")
+        self.assertEqual(classify_sar_flood_tier(-15.0), "rough_water")
+        self.assertEqual(classify_sar_flood_tier(-11.5), "moist_soil")
+        self.assertEqual(classify_sar_flood_tier(-5.0), "dry_soil_vegetation")
+        self.assertEqual(classify_sar_flood_tier(1.5), "urban_double_bounce")
+
+        test_sar_grid = [
+            [-22.0, -19.0, -10.0],
+            [-17.0, -12.0, -4.0],
+            [-7.0,  0.5,   3.0]
+        ]
+        # calm water threshold <= -16.5 -> (-22.0, -19.0, -17.0) are water (3/9)
+        water_res = classify_sar_water_pixels(test_sar_grid, threshold_db=-16.5)
+        self.assertEqual(water_res["water_pixels"], 3)
+        self.assertEqual(water_res["total_pixels"], 9)
+        self.assertAlmostEqual(water_res["water_fraction"], 3.0 / 9.0, places=4)
+        self.assertTrue(bool(water_res["water_mask"][0][0]))
+        self.assertTrue(bool(water_res["water_mask"][0][1]))
+        self.assertFalse(bool(water_res["water_mask"][0][2]))
+
+        # 7. Refined Lee Speckle Filtering
+        # Homogeneous region: variance is small -> weight near 0 -> smoothed towards local mean
+        w_homo = calculate_refined_lee_filter_weights(local_mean=10.0, local_variance=0.02, num_looks=4.0)
+        self.assertAlmostEqual(w_homo, 0.0, places=2)
+
+        # Heterogeneous edge region: variance is large -> weight near 1 -> preserves edge pixel
+        w_edge = calculate_refined_lee_filter_weights(local_mean=10.0, local_variance=1000.0, num_looks=4.0)
+        self.assertGreater(w_edge, 0.7)
+
+        # 2D filtering execution
+        sar_filtered = apply_speckle_filter_1d_or_2d(test_sar_grid, method="refined_lee", kernel_size=3)
+        self.assertEqual(len(sar_filtered), 3)
+        self.assertEqual(len(sar_filtered[0]), 3)
+
+        # 8. Pydantic Models Validation
+        req = SARBackscatterAnalysisRequest(
+            bbox=[-121.20, 36.90, -120.65, 37.45],
+            collection="sentinel-1-rtc",
+            polarization=SarPolarization.VV,
+            speckle_filter=SpeckleFilterMethod.REFINED_LEE,
+            calibration=SARBackscatterCalibration.GAMMA0,
+            water_threshold_db=-16.5
+        )
+        self.assertEqual(req.polarization, SarPolarization.VV)
+        self.assertEqual(req.speckle_filter, SpeckleFilterMethod.REFINED_LEE)
+        self.assertEqual(req.water_threshold_db, -16.5)
+
+        summary = SARBackscatterSummary(
+            mean_backscatter_db=-11.8,
+            median_backscatter_db=-12.1,
+            min_backscatter_db=-28.4,
+            max_backscatter_db=4.2,
+            std_backscatter_db=3.8,
+            equivalent_number_of_looks=4.4,
+            speckle_variance_reduction_ratio=4.25,
+            water_fraction=0.084,
+            water_area_ha=142.5,
+            dominant_tier=SARFloodDetectionTier.CALM_WATER
+        )
+        self.assertAlmostEqual(summary.mean_backscatter_db, -11.8)
+        self.assertEqual(summary.dominant_tier, SARFloodDetectionTier.CALM_WATER)
+
+        resp = SARBackscatterAnalysisResponse(
+            analysis_id="SAR-ANA-20261015-001",
+            collection="sentinel-1-rtc",
+            polarization="vv",
+            speckle_filter="refined_lee",
+            calibration="gamma0",
+            filter_kernel_size=5,
+            summary=summary,
+            tile_url_template="/api/v1/tiles/sar/sentinel-1-rtc/vv/{z}/{x}/{y}.png?filter=refined_lee"
+        )
+        self.assertEqual(resp.analysis_id, "SAR-ANA-20261015-001")
+        self.assertEqual(resp.summary.water_fraction, 0.084)
+
+        # 9. Tile URL Builders & Leaflet Templates
+        url_single = build_sar_backscatter_tile_url(
+            collection="sentinel-1-rtc",
+            polarization="vv",
+            z=10,
+            x=163,
+            y=395,
+            speckle_filter="refined_lee",
+            calibration="gamma0"
+        )
+        self.assertIn("/api/v1/tiles/sar/sentinel-1-rtc/vv/10/163/395.png", url_single)
+        self.assertIn("filter=refined_lee", url_single)
+
+        tmpl_sar = build_sar_backscatter_tile_url_template(
+            collection="sentinel-1-rtc",
+            polarization="vv",
+            speckle_filter="refined_lee"
+        )
+        self.assertIn("/api/v1/tiles/sar/sentinel-1-rtc/vv/{z}/{x}/{y}.png", tmpl_sar)
+        self.assertIn("filter=refined_lee", tmpl_sar)
+
+        tmpl_filter = build_sar_speckle_filter_tile_url_template(
+            filter_method="frost",
+            collection="sentinel-1-rtc",
+            polarization="vh"
+        )
+        self.assertIn("/api/v1/tiles/sar/filtered/frost/{z}/{x}/{y}.png", tmpl_filter)
+        self.assertIn("collection=sentinel-1-rtc", tmpl_filter)
+        self.assertIn("polarization=vh", tmpl_filter)
+
+        tmpl_flood = build_sar_flood_tile_url_template(
+            collection="sentinel-1-rtc",
+            threshold_db=-16.5
+        )
+        self.assertEqual(tmpl_flood, "/api/v1/tiles/sar/flood/{z}/{x}/{y}.png?collection=sentinel-1-rtc&threshold_db=-16.5")
+
+        # 10. Canonical Route Contract Parity
+        self.assertEqual(format_api_route("analysis_sar_backscatter"), "/api/v1/analysis/sar/backscatter")
+        self.assertEqual(format_api_route("analysis_sar_backscatter_short"), "/analysis/sar/backscatter")
+        self.assertEqual(
+            format_api_route("tiles_sar_backscatter", collection="sentinel-1-rtc", polarization="vv", z=10, x=163, y=395),
+            "/api/v1/tiles/sar/sentinel-1-rtc/vv/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_sar_backscatter_short", collection="sentinel-1-rtc", polarization="vv", z=10, x=163, y=395),
+            "/tiles/sar/sentinel-1-rtc/vv/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_sar_speckle_filter", method="refined_lee", z=10, x=163, y=395),
+            "/api/v1/tiles/sar/filtered/refined_lee/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_sar_speckle_filter_short", method="frost", z=10, x=163, y=395),
+            "/tiles/sar/filtered/frost/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_sar_flood_inundation", z=10, x=163, y=395),
+            "/api/v1/tiles/sar/flood/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_sar_flood_inundation_short", z=10, x=163, y=395),
+            "/tiles/sar/flood/10/163/395.png"
+        )
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

@@ -930,6 +930,15 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_temporal_composite_short": "/tiles/temporal/{collection}/{reducer}/{z}/{x}/{y}.png",
     "tiles_temporal_quality_mosaic": "/api/v1/tiles/temporal/quality-mosaic/{collection}/{z}/{x}/{y}.png",
     "tiles_temporal_quality_mosaic_short": "/tiles/temporal/quality-mosaic/{collection}/{z}/{x}/{y}.png",
+    # Cycle v2.5.29: SAR Dual-Pol Backscatter, Terrain Flattening & Refined Lee Speckle Filtering Contracts
+    "analysis_sar_backscatter": "/api/v1/analysis/sar/backscatter",
+    "analysis_sar_backscatter_short": "/analysis/sar/backscatter",
+    "tiles_sar_backscatter": "/api/v1/tiles/sar/{collection}/{polarization}/{z}/{x}/{y}.png",
+    "tiles_sar_backscatter_short": "/tiles/sar/{collection}/{polarization}/{z}/{x}/{y}.png",
+    "tiles_sar_speckle_filter": "/api/v1/tiles/sar/filtered/{filter_method}/{z}/{x}/{y}.png",
+    "tiles_sar_speckle_filter_short": "/tiles/sar/filtered/{filter_method}/{z}/{x}/{y}.png",
+    "tiles_sar_flood_inundation": "/api/v1/tiles/sar/flood/{z}/{x}/{y}.png",
+    "tiles_sar_flood_inundation_short": "/tiles/sar/flood/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1071,6 +1080,25 @@ def format_api_route(route_name: str, **kwargs) -> str:
     elif route_name in ("tiles_temporal_quality_mosaic", "tiles_temporal_quality_mosaic_short"):
         if "collection" not in kwargs:
             kwargs["collection"] = "sentinel-2-l2a"
+    elif route_name in ("tiles_sar_backscatter", "tiles_sar_backscatter_short"):
+        if "collection" not in kwargs:
+            kwargs["collection"] = "sentinel-1-rtc"
+        if "polarization" not in kwargs:
+            kwargs["polarization"] = "vv"
+        elif hasattr(kwargs["polarization"], "value"):
+            kwargs["polarization"] = kwargs["polarization"].value
+    elif route_name in ("tiles_sar_speckle_filter", "tiles_sar_speckle_filter_short"):
+        if "filter_method" not in kwargs:
+            for alt in ("filter", "method", "filterMethod"):
+                if alt in kwargs:
+                    kwargs["filter_method"] = kwargs[alt]
+                    break
+            if "filter_method" not in kwargs:
+                kwargs["filter_method"] = "refined_lee"
+        elif hasattr(kwargs["filter_method"], "value"):
+            kwargs["filter_method"] = kwargs["filter_method"].value
+    elif route_name in ("tiles_sar_flood_inundation", "tiles_sar_flood_inundation_short"):
+        pass
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -2738,7 +2766,14 @@ class SARPolarization(str, Enum):
     """Synthetic Aperture Radar backscatter polarization channels."""
     VV = "vv"
     VH = "vh"
+    HH = "hh"
+    HV = "hv"
     RATIO = "ratio_vh_vv"
+    POLARIZATION_RATIO_VH_VV = "ratio_vh_vv"
+    DUAL_POL_RGB = "dual_pol_rgb"
+    RGB = "dual_pol_rgb"
+
+SarPolarization = SARPolarization
 
 class SARAnalysisRequest(BaseModel):
     """Payload for Sentinel-1 Synthetic Aperture Radar all-weather flood/moisture analysis."""
@@ -27930,4 +27965,1382 @@ def build_mosaic_seamline_tile_url_template(
 ) -> str:
     """Builds dynamic Leaflet tile URL template for mosaic seamline boundary line overlay tiles."""
     return f"/api/v1/tiles/mosaic/seamline/{{z}}/{{x}}/{{y}}.png?collection={collection}"
+
+
+# ==============================================================================
+# CYCLE v2.5.28: MULTI-TEMPORAL SCENE STACKING, STATISTICAL REDUCERS & QUALITY MOSAIC CONTRACTS
+# ==============================================================================
+
+class TemporalReducerMethod(str, Enum):
+    """Statistical and quality-based reduction methods across multi-temporal scene stacks."""
+    MEDIAN = "median"                    # Pixel-by-pixel temporal median (robust against clouds/shadows)
+    MEAN = "mean"                        # Pixel-by-pixel temporal mean (smooth baseline)
+    MAX_NDVI = "max_ndvi"                # Quality mosaic selecting pixel vector with max NDVI (greenest-pixel)
+    MIN_CLOUD = "min_cloud"              # Quality mosaic selecting pixel vector with min cloud probability (clearest-pixel)
+    PERCENTILE_25 = "p25"                # 25th percentile reflectance (low reflectance / water / dry baseline)
+    PERCENTILE_75 = "p75"                # 75th percentile reflectance (upper quartile / peak vigor)
+    MODE = "mode"                        # Categorical modal pixel classification (for SCL / discrete masks)
+    MIN = "min"                          # Minimum surface reflectance
+    MAX = "max"                          # Maximum surface reflectance
+
+
+class TemporalQualityTier(str, Enum):
+    """Quality tier classification for a multi-temporal composite based on clear pixel fraction."""
+    EXCELLENT = "excellent"              # >= 90% clear pixel fraction and >= 4 acquisitions
+    GOOD = "good"                        # >= 75% clear pixel fraction and >= 3 acquisitions
+    MARGINAL = "marginal"                # >= 50% clear pixel fraction and >= 2 acquisitions
+    POOR = "poor"                        # < 50% clear pixel fraction or single acquisition
+
+
+class TemporalStackStatus(str, Enum):
+    """Operational status of multi-temporal scene stack data cube."""
+    AVAILABLE = "available"
+    CACHED = "cached"
+    PROCESSING = "processing"
+
+
+TEMPORAL_REDUCER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "median": {
+        "id": "median",
+        "label": "Temporal Median",
+        "description": "Pixel-by-pixel median across temporal acquisition stack (Flood 2013). Eliminates outlier cloud/shadow noise while maintaining radiometric calibration.",
+        "is_quality_mosaic": False,
+        "preserves_covariance": False,
+        "badge": "Median (Cloud-Free)",
+        "recommended_window_days": 60,
+        "icon": "Filter"
+    },
+    "mean": {
+        "id": "mean",
+        "label": "Temporal Mean",
+        "description": "Pixel-by-pixel arithmetic mean across time stack. Optimal for low-noise seasonal baselines.",
+        "is_quality_mosaic": False,
+        "preserves_covariance": False,
+        "badge": "Mean Baseline",
+        "recommended_window_days": 90,
+        "icon": "TrendingUp"
+    },
+    "max_ndvi": {
+        "id": "max_ndvi",
+        "label": "Greenest-Pixel (Max NDVI)",
+        "description": "Quality mosaic selecting all spectral bands simultaneously from the acquisition date where NDVI is maximized per pixel (Holben 1986). Preserves physical spectral band covariance.",
+        "is_quality_mosaic": True,
+        "preserves_covariance": True,
+        "badge": "Greenest-Pixel (Covariance)",
+        "recommended_window_days": 90,
+        "icon": "Leaf"
+    },
+    "min_cloud": {
+        "id": "min_cloud",
+        "label": "Clearest-Pixel (Min Cloud)",
+        "description": "Quality mosaic selecting all spectral bands simultaneously from the acquisition date with minimum cloud probability. Preserves spectral band covariance.",
+        "is_quality_mosaic": True,
+        "preserves_covariance": True,
+        "badge": "Clearest-Pixel (Covariance)",
+        "recommended_window_days": 45,
+        "icon": "Sun"
+    },
+    "p25": {
+        "id": "p25",
+        "label": "25th Percentile (P25)",
+        "description": "Lower quartile reflectance composite. Ideal for dry-season baselines, moisture analysis, and water body delineations.",
+        "is_quality_mosaic": False,
+        "preserves_covariance": False,
+        "badge": "25th Percentile",
+        "recommended_window_days": 60,
+        "icon": "ArrowDown"
+    },
+    "percentile_25": {
+        "id": "p25",
+        "label": "25th Percentile (P25)",
+        "description": "Lower quartile reflectance composite. Ideal for dry-season baselines, moisture analysis, and water body delineations.",
+        "is_quality_mosaic": False,
+        "preserves_covariance": False,
+        "badge": "25th Percentile",
+        "recommended_window_days": 60,
+        "icon": "ArrowDown"
+    },
+    "p75": {
+        "id": "p75",
+        "label": "75th Percentile (P75)",
+        "description": "Upper quartile reflectance composite. Captures peak phenological greenness and maximum canopy reflectance.",
+        "is_quality_mosaic": False,
+        "preserves_covariance": False,
+        "badge": "75th Percentile",
+        "recommended_window_days": 60,
+        "icon": "ArrowUp"
+    },
+    "percentile_75": {
+        "id": "p75",
+        "label": "75th Percentile (P75)",
+        "description": "Upper quartile reflectance composite. Captures peak phenological greenness and maximum canopy reflectance.",
+        "is_quality_mosaic": False,
+        "preserves_covariance": False,
+        "badge": "75th Percentile",
+        "recommended_window_days": 60,
+        "icon": "ArrowUp"
+    },
+    "mode": {
+        "id": "mode",
+        "label": "Temporal Mode",
+        "description": "Most frequent categorical pixel classification across acquisition dates. Designed for SCL and land cover classification layers.",
+        "is_quality_mosaic": False,
+        "preserves_covariance": False,
+        "badge": "Mode (Discrete)",
+        "recommended_window_days": 90,
+        "icon": "Layers"
+    },
+    "min": {
+        "id": "min",
+        "label": "Minimum Reflectance",
+        "description": "Per-pixel minimum surface reflectance across the stack. Highlights permanent water and extreme shadow features.",
+        "is_quality_mosaic": False,
+        "preserves_covariance": False,
+        "badge": "Min Reflectance",
+        "recommended_window_days": 30,
+        "icon": "Minimize2"
+    },
+    "max": {
+        "id": "max",
+        "label": "Maximum Reflectance",
+        "description": "Per-pixel maximum surface reflectance across the stack. Useful for identifying transient high-albedo structures.",
+        "is_quality_mosaic": False,
+        "preserves_covariance": False,
+        "badge": "Max Reflectance",
+        "recommended_window_days": 30,
+        "icon": "Maximize2"
+    }
+}
+
+
+TEMPORAL_QUALITY_TIER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "excellent": {
+        "tier": "excellent",
+        "min_clear_fraction": 0.90,
+        "min_scenes": 4,
+        "badge": "Excellent Quality (≥90% Clear)",
+        "color": "#10B981",
+        "status": "optimal"
+    },
+    "good": {
+        "tier": "good",
+        "min_clear_fraction": 0.75,
+        "min_scenes": 3,
+        "badge": "Good Quality (≥75% Clear)",
+        "color": "#3B82F6",
+        "status": "acceptable"
+    },
+    "marginal": {
+        "tier": "marginal",
+        "min_clear_fraction": 0.50,
+        "min_scenes": 2,
+        "badge": "Marginal Quality (≥50% Clear)",
+        "color": "#F59E0B",
+        "status": "suboptimal"
+    },
+    "poor": {
+        "tier": "poor",
+        "min_clear_fraction": 0.0,
+        "min_scenes": 1,
+        "badge": "Poor Quality (<50% Clear)",
+        "color": "#EF4444",
+        "status": "critical"
+    }
+}
+
+
+TEMPORAL_BENCHMARK_SCENES: List[Dict[str, Any]] = [
+    {
+        "scene_id": "S2A_MSIL2A_20260610T184921_T10SEG",
+        "acquisition_date": "2026-06-10T18:49:21Z",
+        "cloud_cover_pct": 1.2,
+        "mean_sun_elevation": 68.4,
+        "orbit_direction": "DESCENDING",
+        "tile_id": "T10SEG",
+        "collection": "sentinel-2-l2a",
+        "quality_score": 0.98,
+        "valid_pixel_pct": 99.2,
+        "mean_ndvi": 0.42
+    },
+    {
+        "scene_id": "S2B_MSIL2A_20260625T184919_T10SEG",
+        "acquisition_date": "2026-06-25T18:49:19Z",
+        "cloud_cover_pct": 3.8,
+        "mean_sun_elevation": 69.1,
+        "orbit_direction": "DESCENDING",
+        "tile_id": "T10SEG",
+        "collection": "sentinel-2-l2a",
+        "quality_score": 0.95,
+        "valid_pixel_pct": 98.1,
+        "mean_ndvi": 0.45
+    },
+    {
+        "scene_id": "S2A_MSIL2A_20260710T184921_T10SEG",
+        "acquisition_date": "2026-07-10T18:49:21Z",
+        "cloud_cover_pct": 14.5,
+        "mean_sun_elevation": 67.8,
+        "orbit_direction": "DESCENDING",
+        "tile_id": "T10SEG",
+        "collection": "sentinel-2-l2a",
+        "quality_score": 0.82,
+        "valid_pixel_pct": 92.4,
+        "mean_ndvi": 0.49
+    },
+    {
+        "scene_id": "S2B_MSIL2A_20260725T184919_T10SEG",
+        "acquisition_date": "2026-07-25T18:49:19Z",
+        "cloud_cover_pct": 0.6,
+        "mean_sun_elevation": 65.9,
+        "orbit_direction": "DESCENDING",
+        "tile_id": "T10SEG",
+        "collection": "sentinel-2-l2a",
+        "quality_score": 0.99,
+        "valid_pixel_pct": 99.8,
+        "mean_ndvi": 0.52
+    },
+    {
+        "scene_id": "S2A_MSIL2A_20260809T184921_T10SEG",
+        "acquisition_date": "2026-08-09T18:49:21Z",
+        "cloud_cover_pct": 8.3,
+        "mean_sun_elevation": 63.2,
+        "orbit_direction": "DESCENDING",
+        "tile_id": "T10SEG",
+        "collection": "sentinel-2-l2a",
+        "quality_score": 0.89,
+        "valid_pixel_pct": 95.6,
+        "mean_ndvi": 0.46
+    },
+    {
+        "scene_id": "S2B_MSIL2A_20260824T184919_T10SEG",
+        "acquisition_date": "2026-08-24T18:49:19Z",
+        "cloud_cover_pct": 2.1,
+        "mean_sun_elevation": 59.7,
+        "orbit_direction": "DESCENDING",
+        "tile_id": "T10SEG",
+        "collection": "sentinel-2-l2a",
+        "quality_score": 0.96,
+        "valid_pixel_pct": 98.9,
+        "mean_ndvi": 0.41
+    }
+]
+
+
+class TemporalSceneMetadata(BaseModel):
+    """Metadata specification for a single satellite acquisition scene in a temporal stack."""
+    scene_id: str = Field(..., description="Unique STAC scene / granule identifier")
+    acquisition_date: str = Field(..., description="ISO 8601 acquisition timestamp")
+    cloud_cover_pct: float = Field(..., ge=0.0, le=100.0, description="Scene cloud cover percentage")
+    mean_sun_elevation: float = Field(62.5, description="Solar elevation angle in degrees")
+    orbit_direction: str = Field("DESCENDING", description="Satellite orbit pass direction (ASCENDING/DESCENDING)")
+    tile_id: Optional[str] = Field("T10SEG", description="MGRS tile ID or Landsat WRS path/row")
+    collection: str = Field("sentinel-2-l2a", description="STAC collection ID")
+    quality_score: float = Field(0.95, ge=0.0, le=1.0, description="Composite usability score")
+    valid_pixel_pct: float = Field(98.5, ge=0.0, le=100.0, description="Percentage of valid non-nodata pixels")
+    thumbnail_uri: Optional[str] = Field(None, description="STAC asset browse thumbnail URL")
+
+
+class TemporalSceneStackRequest(BaseModel):
+    """Request payload to query or reduce a multi-temporal satellite image stack."""
+    bbox: Optional[Union[List[float], Dict[str, float], str, BoundingBox]] = Field(
+        None,
+        description="Target bounding box [min_lon, min_lat, max_lon, max_lat]"
+    )
+    collection: str = Field("sentinel-2-l2a", description="Satellite STAC collection")
+    start_date: str = Field("2026-06-01", description="Start date of temporal window (YYYY-MM-DD)")
+    end_date: str = Field("2026-08-31", description="End date of temporal window (YYYY-MM-DD)")
+    max_cloud_cover_pct: float = Field(40.0, ge=0.0, le=100.0, description="Cloud cover filtering threshold")
+    reducer: TemporalReducerMethod = Field(TemporalReducerMethod.MEDIAN, description="Statistical reducer method")
+    bands: List[str] = Field(default_factory=lambda: ["B04", "B03", "B02", "B08"], description="Spectral bands to include")
+    target_crs: str = Field("EPSG:3857", description="Composite output coordinate reference system")
+    target_resolution_m: float = Field(10.0, gt=0.0, description="Target spatial pixel resolution in meters")
+    quality_band: Optional[str] = Field("NDVI", description="Quality ranking band for quality mosaics ('NDVI', 'cloud_prob', 'SCL')")
+    apply_cloud_mask: bool = Field(True, description="Whether to mask cloud/shadow pixels prior to reduction")
+    mask_dilated_buffer_px: int = Field(3, ge=0, le=10, description="Morphological dilation radius for cloud edges")
+    custom_scene_ids: Optional[List[str]] = Field(None, description="Explicit scene IDs overriding date query")
+
+
+class TemporalCompositeMetadata(BaseModel):
+    """Statistical and spatial metadata for a generated multi-temporal composite."""
+    composite_id: str = Field(..., description="Unique composite identifier")
+    collection: str = Field(..., description="Source satellite collection")
+    reducer: TemporalReducerMethod = Field(..., description="Applied reduction method")
+    start_date: str = Field(..., description="Start of temporal reduction window")
+    end_date: str = Field(..., description="End of temporal reduction window")
+    temporal_window_days: int = Field(..., ge=1, description="Length of temporal window in days")
+    total_scenes_evaluated: int = Field(..., ge=1, description="Total candidate scenes queried")
+    scenes_included: int = Field(..., ge=1, description="Number of scenes contributing valid clear pixels")
+    mean_cloud_cover_pct: float = Field(..., ge=0.0, le=100.0, description="Average cloud cover of included scenes")
+    clear_pixel_fraction: float = Field(..., ge=0.0, le=1.0, description="Fraction of composite pixels free of cloud masks")
+    quality_tier: TemporalQualityTier = Field(..., description="Overall composite quality tier")
+    preserves_covariance: bool = Field(..., description="Whether inter-band physical spectral covariance is preserved")
+    quality_band: Optional[str] = Field(None, description="Ranking band used if quality mosaic was applied")
+    bbox: List[float] = Field(..., description="Bounding box [min_lon, min_lat, max_lon, max_lat]")
+    target_crs: str = Field("EPSG:3857", description="Composite projection CRS")
+    created_at: str = Field(..., description="ISO 8601 generation timestamp")
+
+
+class TemporalCompositeResponse(BaseModel):
+    """Response payload containing multi-temporal composite specifications and tile endpoints."""
+    composite_id: str = Field(..., description="Unique composite identifier")
+    collection: str = Field("sentinel-2-l2a", description="Source satellite collection")
+    reducer: Union[TemporalReducerMethod, CompositeReducer, str] = Field(..., description="Applied reducer method")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template with {z}/{x}/{y}")
+    created_at: str = Field(..., description="ISO 8601 creation timestamp")
+    status: str = Field(default="ready", description="Composite status (ready, processing)")
+
+    # Legacy compatibility fields
+    scene_count: Optional[int] = Field(default=None, description="Number of scenes ingested into composite")
+    contributing_scenes: List[str] = Field(default_factory=list, description="IDs of contributing scenes")
+    bbox: Optional[Union[Tuple[float, float, float, float], List[float], BoundingBox, str]] = Field(default=None, description="Spatial envelope bounds")
+    time_window: Optional[str] = Field(default=None, description="Temporal interval string YYYY-MM-DD to YYYY-MM-DD")
+
+    # Cycle v2.5.28 Rich Metadata & Scene Stack
+    metadata: Optional[TemporalCompositeMetadata] = Field(default=None, description="Composite statistical metadata")
+    scenes: List[TemporalSceneMetadata] = Field(default_factory=list, description="Catalog of scene acquisitions in the stack")
+    summary: Dict[str, Any] = Field(default_factory=dict, description="Executive summary metrics")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reconcile_composite_response(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # If metadata is present, populate bbox, time_window, scene_count if missing
+            if "metadata" in data and data["metadata"] is not None:
+                meta = data["metadata"]
+                if isinstance(meta, dict):
+                    if "bbox" in meta and ("bbox" not in data or data["bbox"] is None):
+                        data["bbox"] = meta["bbox"]
+                    if "temporal_window_days" in meta and ("time_window" not in data or data["time_window"] is None):
+                        s = meta.get("start_date", "")
+                        e = meta.get("end_date", "")
+                        data["time_window"] = f"{s} to {e}"
+                    if "scenes_included" in meta and ("scene_count" not in data or data["scene_count"] is None):
+                        data["scene_count"] = meta["scenes_included"]
+                elif hasattr(meta, "bbox"):
+                    if "bbox" not in data or data["bbox"] is None:
+                        data["bbox"] = getattr(meta, "bbox", None)
+                    if "time_window" not in data or data["time_window"] is None:
+                        s = getattr(meta, "start_date", "")
+                        e = getattr(meta, "end_date", "")
+                        data["time_window"] = f"{s} to {e}"
+                    if "scene_count" not in data or data["scene_count"] is None:
+                        data["scene_count"] = getattr(meta, "scenes_included", None)
+            if "scenes" in data and data["scenes"] and ("scene_count" not in data or data["scene_count"] is None):
+                data["scene_count"] = len(data["scenes"])
+            if "scene_count" in data and data["scene_count"] is not None:
+                if "summary" not in data or not data["summary"]:
+                    data["summary"] = {"scenes_count": data["scene_count"]}
+                if "contributing_scenes" not in data or not data["contributing_scenes"]:
+                    if "scenes" in data and data["scenes"]:
+                        contrib = []
+                        for i, s in enumerate(data["scenes"]):
+                            if isinstance(s, dict):
+                                contrib.append(s.get("scene_id", f"S_{i}"))
+                            elif hasattr(s, "scene_id"):
+                                contrib.append(str(getattr(s, "scene_id")))
+                            else:
+                                contrib.append(str(s))
+                        data["contributing_scenes"] = contrib
+        return data
+
+
+class TemporalStackInspectionRequest(BaseModel):
+    """Request payload to inspect available scene acquisitions in a temporal window without reducing."""
+    bbox: Optional[Union[List[float], Dict[str, float], str, BoundingBox]] = Field(
+        None,
+        description="Target bounding box [min_lon, min_lat, max_lon, max_lat]"
+    )
+    collection: str = Field("sentinel-2-l2a", description="Satellite collection")
+    start_date: str = Field("2026-06-01", description="Start date (YYYY-MM-DD)")
+    end_date: str = Field("2026-08-31", description="End date (YYYY-MM-DD)")
+    max_cloud_cover_pct: float = Field(50.0, ge=0.0, le=100.0, description="Max cloud cover threshold")
+
+
+class TemporalStackInspectionResponse(BaseModel):
+    """Response payload detailing candidate scenes in a temporal stack with previews and quality rankings."""
+    collection: str = Field(..., description="Satellite collection")
+    bbox: List[float] = Field(..., description="Query bounding box [min_lon, min_lat, max_lon, max_lat]")
+    start_date: str = Field(..., description="Start date")
+    end_date: str = Field(..., description="End date")
+    total_scenes: int = Field(..., ge=0, description="Number of discovered scenes matching criteria")
+    scenes: List[TemporalSceneMetadata] = Field(..., description="Chronological scene catalog")
+    mean_cloud_cover_pct: float = Field(..., ge=0.0, le=100.0, description="Average scene cloud cover")
+    recommended_reducer: TemporalReducerMethod = Field(TemporalReducerMethod.MEDIAN, description="Recommended reducer")
+
+
+class TemporalCompositeTileRequestParams(BaseModel):
+    """Parameters for dynamic XYZ multi-temporal composite raster tile streaming."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level")
+    x: int = Field(..., ge=0, description="Slippy map tile column")
+    y: int = Field(..., ge=0, description="Slippy map tile row")
+    collection: str = Field("sentinel-2-l2a", description="Satellite collection")
+    reducer: TemporalReducerMethod = Field(TemporalReducerMethod.MEDIAN, description="Temporal reducer method")
+    start_date: Optional[str] = Field(None, description="Start date (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(None, description="End date (YYYY-MM-DD)")
+    max_cloud_cover_pct: float = Field(40.0, ge=0.0, le=100.0, description="Cloud filtering threshold")
+    bands: Optional[str] = Field(None, description="Comma-separated band names")
+    colormap: Optional[str] = Field(None, description="Optional colormap name")
+    rescale: Optional[str] = Field(None, description="Optional contrast stretch min,max")
+    quality_band: Optional[str] = Field(None, description="Quality mosaic ranking band")
+
+
+# ------------------------------------------------------------------------------
+# Mathematical Algorithms: Multi-Temporal Reductions & Quality Mosaicing
+# ------------------------------------------------------------------------------
+
+def calculate_pixel_quality_score(
+    cloud_cover_pct: float,
+    sun_elevation_deg: float,
+    nadir_angle_deg: float = 0.0
+) -> float:
+    """Calculates composite usability quality score Q in [0.0, 1.0] for a satellite acquisition.
+    
+    Formula:
+        Q = (1.0 - cloud_pct / 100.0) * sin(sun_elev_rad) * cos(nadir_rad)
+    """
+    c = max(0.0, min(100.0, float(cloud_cover_pct)))
+    sun_elev = max(5.0, min(90.0, float(sun_elevation_deg)))
+    nadir = max(0.0, min(60.0, float(nadir_angle_deg)))
+
+    clear_factor = (100.0 - c) / 100.0
+    sun_factor = math.sin(math.radians(sun_elev))
+    view_factor = math.cos(math.radians(nadir))
+
+    q = clear_factor * sun_factor * view_factor
+    return round(float(max(0.0, min(1.0, q))), 4)
+
+
+def classify_temporal_composite_quality(
+    clear_pixel_pct: float,
+    scene_count: int
+) -> TemporalQualityTier:
+    """Classifies temporal composite quality tier based on clear pixel fraction and acquisition depth."""
+    pct = max(0.0, min(100.0, float(clear_pixel_pct)))
+    count = max(0, int(scene_count))
+
+    if pct >= 90.0 and count >= 4:
+        return TemporalQualityTier.EXCELLENT
+    elif pct >= 75.0 and count >= 3:
+        return TemporalQualityTier.GOOD
+    elif pct >= 50.0 and count >= 2:
+        return TemporalQualityTier.MARGINAL
+    return TemporalQualityTier.POOR
+
+
+def calculate_ndvi(red: Any, nir: Any) -> Any:
+    """Computes Normalized Difference Vegetation Index (NDVI) = (NIR - Red) / (NIR + Red).
+    Supports scalar floats, Python lists, and NumPy arrays.
+    """
+    import numpy as np
+    r_arr = np.asarray(red, dtype=np.float32)
+    n_arr = np.asarray(nir, dtype=np.float32)
+    denom = n_arr + r_arr
+    denom_safe = np.where(np.abs(denom) < 1e-7, 1e-7, denom)
+    ndvi = (n_arr - r_arr) / denom_safe
+    ndvi = np.clip(ndvi, -1.0, 1.0)
+    if np.isscalar(red) and np.isscalar(nir):
+        return float(ndvi)
+    return ndvi
+
+
+def select_greenest_pixel_indices(
+    red_stack: Any,
+    nir_stack: Any
+) -> Tuple[Any, Any]:
+    """Evaluates multi-temporal NDVI stack along axis 0 (time) and selects argmax greenest-pixel indices.
+    
+    Returns:
+        (best_indices, max_ndvi)
+        best_indices: 2D array of integer indices (in 0..T-1) corresponding to the greenest acquisition per pixel.
+        max_ndvi: 2D array of maximum NDVI values.
+    """
+    import numpy as np
+    r = np.asarray(red_stack, dtype=np.float32)
+    n = np.asarray(nir_stack, dtype=np.float32)
+    denom = n + r
+    denom_safe = np.where(np.abs(denom) < 1e-7, 1e-7, denom)
+    ndvi_stack = (n - r) / denom_safe
+
+    best_idx = np.argmax(ndvi_stack, axis=0)
+    max_ndvi = np.take_along_axis(ndvi_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+
+    if ndvi_stack.ndim == 1:
+        return int(best_idx), float(max_ndvi)
+    return best_idx, max_ndvi
+
+
+def select_clearest_pixel_indices(
+    cloud_prob_stack: Any
+) -> Tuple[Any, Any]:
+    """Evaluates multi-temporal cloud probability stack along axis 0 (time) and selects argmin clearest-pixel indices.
+    
+    Returns:
+        (best_indices, min_cloud_prob)
+    """
+    import numpy as np
+    cp = np.asarray(cloud_prob_stack, dtype=np.float32)
+    best_idx = np.argmin(cp, axis=0)
+    min_cp = np.take_along_axis(cp, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+
+    if cp.ndim == 1:
+        return int(best_idx), float(min_cp)
+    return best_idx, min_cp
+
+
+def apply_temporal_reduction(
+    stack: Any,
+    reducer: Union[str, TemporalReducerMethod] = TemporalReducerMethod.MEDIAN,
+    axis: int = 0
+) -> Any:
+    """Applies statistical or quality reduction across axis 0 (time) of a multi-temporal raster stack.
+    Handles NaNs gracefully using numpy nan-functions.
+    """
+    import numpy as np
+    arr = np.asarray(stack, dtype=np.float32)
+    r_val = reducer.value if isinstance(reducer, TemporalReducerMethod) else str(reducer).lower()
+
+    if r_val in ("p25", "percentile_25"):
+        return np.nanpercentile(arr, 25.0, axis=axis)
+    elif r_val in ("p75", "percentile_75"):
+        return np.nanpercentile(arr, 75.0, axis=axis)
+    elif r_val == "mean":
+        return np.nanmean(arr, axis=axis)
+    elif r_val == "min":
+        return np.nanmin(arr, axis=axis)
+    elif r_val == "max":
+        return np.nanmax(arr, axis=axis)
+    elif r_val == "mode":
+        from scipy import stats
+        int_arr = np.where(np.isnan(arr), -1, arr).astype(np.int32)
+        mode_res = stats.mode(int_arr, axis=axis, keepdims=False)
+        out = mode_res.mode if hasattr(mode_res, 'mode') else mode_res[0]
+        return np.where(out == -1, np.nan, out.astype(np.float32))
+    else:  # Default to median
+        return np.nanmedian(arr, axis=axis)
+
+
+def build_temporal_composite_tile_url(
+    collection: str = "sentinel-2-l2a",
+    reducer: Union[str, TemporalReducerMethod] = "median",
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    max_cloud_cover_pct: float = 40.0,
+    bands: Optional[str] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    quality_band: Optional[str] = None
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for multi-temporal composite raster tiles."""
+    r_str = reducer.value if isinstance(reducer, TemporalReducerMethod) else str(reducer).lower()
+    base = f"/api/v1/tiles/temporal/{collection}/{r_str}/{z}/{x}/{y}.png"
+    params: List[str] = []
+    if start_date:
+        params.append(f"start_date={start_date}")
+    if end_date:
+        params.append(f"end_date={end_date}")
+    if max_cloud_cover_pct != 40.0:
+        params.append(f"max_cloud_cover_pct={max_cloud_cover_pct}")
+    if bands:
+        params.append(f"bands={bands}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if quality_band:
+        params.append(f"quality_band={quality_band}")
+    if params:
+        return f"{base}?{'&'.join(params)}"
+    return base
+
+
+def build_temporal_composite_tile_url_template(
+    collection: str = "sentinel-2-l2a",
+    reducer: Union[str, TemporalReducerMethod] = "median",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    max_cloud_cover_pct: float = 40.0,
+    bands: Optional[str] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    quality_band: Optional[str] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for multi-temporal composite raster tiles."""
+    r_str = reducer.value if isinstance(reducer, TemporalReducerMethod) else str(reducer).lower()
+    base = f"/api/v1/tiles/temporal/{collection}/{r_str}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = []
+    if start_date:
+        params.append(f"start_date={start_date}")
+    if end_date:
+        params.append(f"end_date={end_date}")
+    if max_cloud_cover_pct != 40.0:
+        params.append(f"max_cloud_cover_pct={max_cloud_cover_pct}")
+    if bands:
+        params.append(f"bands={bands}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if quality_band:
+        params.append(f"quality_band={quality_band}")
+    if params:
+        return f"{base}?{'&'.join(params)}"
+    return base
+
+
+def build_temporal_quality_mosaic_tile_url_template(
+    collection: str = "sentinel-2-l2a",
+    quality_band: str = "NDVI",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    max_cloud_cover_pct: float = 40.0,
+    bands: Optional[str] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for quality mosaics (greenest-pixel / clearest-pixel)."""
+    base = f"/api/v1/tiles/temporal/quality-mosaic/{collection}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = [f"quality_band={quality_band}"]
+    if start_date:
+        params.append(f"start_date={start_date}")
+    if end_date:
+        params.append(f"end_date={end_date}")
+    if max_cloud_cover_pct != 40.0:
+        params.append(f"max_cloud_cover_pct={max_cloud_cover_pct}")
+    if bands:
+        params.append(f"bands={bands}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    return f"{base}?{'&'.join(params)}"
+
+
+# ==============================================================================
+# CYCLE v2.5.29: SENTINEL-1 SAR DUAL-POL BACKSCATTER, TERRAIN FLATTENING (GAMMA0)
+# & REFINED LEE SPECKLE FILTERING SCHEMAS & CONTRACTS
+# ==============================================================================
+
+class SpeckleFilterMethod(str, Enum):
+    """Adaptive spatial speckle reduction filters for SAR backscatter rasters."""
+    REFINED_LEE = "refined_lee"
+    FROST = "frost"
+    KUAN = "kuan"
+    GAMMA_MAP = "gamma_map"
+    BOXCAR_MEAN = "boxcar_mean"
+    NONE = "none"
+
+
+class SARBackscatterCalibration(str, Enum):
+    """Radiometric calibration conventions for radar backscatter cross section."""
+    GAMMA0 = "gamma0"    # Terrain-flattened gamma nought normalized to illuminated slope area
+    SIGMA0 = "sigma0"    # Conventional sigma nought normalized to nominal ground area
+    BETA0 = "beta0"      # Radar brightness beta nought in slant-range geometry
+
+
+class SARFloodDetectionTier(str, Enum):
+    """Radar backscatter classification tiers for moisture and flood inundation."""
+    CALM_WATER = "calm_water"                    # Specular reflection, VV <= -16.5 dB
+    ROUGH_WATER = "rough_water"                  # Wind-roughened water, -16.5 to -13.0 dB
+    MOIST_SOIL = "moist_soil"                    # Saturated ground/mud, -13.0 to -9.0 dB
+    DRY_SOIL_VEGETATION = "dry_soil_vegetation"  # Diffuse canopy scattering, -9.0 to -4.0 dB
+    URBAN_DOUBLE_BOUNCE = "urban_double_bounce"  # Dihedral corner reflector, > -4.0 dB
+
+
+SAR_POLARIZATION_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "vv": {
+        "channel": "vv",
+        "name": "Vertical-Vertical (VV)",
+        "radar_band": "C-band (5.405 GHz)",
+        "wavelength_cm": 5.546,
+        "mechanism": "Co-polarized surface roughness scattering",
+        "primary_sensitivity": "Open water detection, surface soil roughness, smooth flat runways",
+        "badge": "VV Co-Pol",
+        "default_rescale": "-25,0",
+        "colormap": "gray"
+    },
+    "vh": {
+        "channel": "vh",
+        "name": "Vertical-Horizontal (VH)",
+        "radar_band": "C-band (5.405 GHz)",
+        "wavelength_cm": 5.546,
+        "mechanism": "Cross-polarized multiple volume scattering",
+        "primary_sensitivity": "Vegetation canopy structure, forest biomass, crop development",
+        "badge": "VH Cross-Pol",
+        "default_rescale": "-30,-5",
+        "colormap": "gray"
+    },
+    "hh": {
+        "channel": "hh",
+        "name": "Horizontal-Horizontal (HH)",
+        "radar_band": "C-band (5.405 GHz)",
+        "wavelength_cm": 5.546,
+        "mechanism": "Co-polarized horizontal scattering",
+        "primary_sensitivity": "Ice-water discrimination, sea ice roughness, horizontal structures",
+        "badge": "HH Co-Pol",
+        "default_rescale": "-25,0",
+        "colormap": "gray"
+    },
+    "hv": {
+        "channel": "hv",
+        "name": "Horizontal-Vertical (HV)",
+        "radar_band": "C-band (5.405 GHz)",
+        "wavelength_cm": 5.546,
+        "mechanism": "Cross-polarized horizontal-vertical depolarization",
+        "primary_sensitivity": "Depolarizing volume scattering, canopy biomass",
+        "badge": "HV Cross-Pol",
+        "default_rescale": "-30,-5",
+        "colormap": "gray"
+    },
+    "ratio_vh_vv": {
+        "channel": "ratio_vh_vv",
+        "name": "Cross-Polarization Ratio (VH / VV)",
+        "radar_band": "C-band (5.405 GHz)",
+        "wavelength_cm": 5.546,
+        "mechanism": "Volume-to-surface scattering ratio (VH_dB - VV_dB)",
+        "primary_sensitivity": "Soil moisture cancellation, biomass estimation, crop lodging",
+        "badge": "VH/VV Ratio",
+        "default_rescale": "-15,0",
+        "colormap": "viridis"
+    }
+}
+
+
+SPECKLE_FILTER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "refined_lee": {
+        "id": "refined_lee",
+        "label": "Refined Lee Filter",
+        "algorithm": "Lee (1999) edge-directed directional sub-window adaptive filter",
+        "description": "Preserves sharp boundaries, roads, waterlines, and point scatterers while strongly suppressing granular speckle in homogeneous land covers.",
+        "recommended_kernel": 5,
+        "preserves_edges": True,
+        "badge": "Refined Lee (Adaptive Edge)",
+        "icon": "Filter"
+    },
+    "frost": {
+        "id": "frost",
+        "label": "Frost Filter",
+        "algorithm": "Exponentially damped distance-weighted adaptive convolution",
+        "description": "Applies an exponential decay kernel inversely proportional to the local coefficient of variation squared.",
+        "recommended_kernel": 5,
+        "preserves_edges": True,
+        "badge": "Frost (Damped Distance)",
+        "icon": "Activity"
+    },
+    "kuan": {
+        "id": "kuan",
+        "label": "Kuan Filter",
+        "algorithm": "Minimum Mean Square Error (MMSE) multiplicative speckle estimator",
+        "description": "Linear minimum mean-square error estimator unconstrained by hard edge thresholding.",
+        "recommended_kernel": 5,
+        "preserves_edges": False,
+        "badge": "Kuan (MMSE)",
+        "icon": "Maximize"
+    },
+    "gamma_map": {
+        "id": "gamma_map",
+        "label": "Gamma MAP Filter",
+        "algorithm": "Maximum A Posteriori (MAP) estimation assuming Gamma-distributed radar cross-section",
+        "description": "Rigorous Bayesian estimator assuming Gamma radar reflectivity prior and Gamma speckle likelihood.",
+        "recommended_kernel": 5,
+        "preserves_edges": True,
+        "badge": "Gamma MAP (Bayesian)",
+        "icon": "Cpu"
+    },
+    "boxcar_mean": {
+        "id": "boxcar_mean",
+        "label": "Boxcar Mean Filter",
+        "algorithm": "Uniform moving average kernel",
+        "description": "Simple spatial moving average. Smooths speckle but blurs edges, dikes, and linear infrastructure.",
+        "recommended_kernel": 3,
+        "preserves_edges": False,
+        "badge": "Boxcar (Uniform)",
+        "icon": "Grid"
+    },
+    "none": {
+        "id": "none",
+        "label": "Unfiltered Raw Backscatter",
+        "algorithm": "Raw radar amplitude / intensity without spatial filtering",
+        "description": "Maintains raw single-look or multi-look resolution at the cost of high speckle variance.",
+        "recommended_kernel": 1,
+        "preserves_edges": True,
+        "badge": "Raw (No Filter)",
+        "icon": "Eye"
+    }
+}
+
+
+SAR_FLOOD_TIER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "calm_water": {
+        "tier": "calm_water",
+        "label": "Open Calm Water / Flood Inundation",
+        "max_db": -16.5,
+        "min_db": -35.0,
+        "color": "#0ea5e9",
+        "badge": "Open Water / Inundated (≤ -16.5 dB)",
+        "is_flood": True
+    },
+    "rough_water": {
+        "tier": "rough_water",
+        "label": "Wind-Roughened Water / Shallows",
+        "max_db": -13.0,
+        "min_db": -16.5,
+        "color": "#38bdf8",
+        "badge": "Roughened Water (-16.5 to -13.0 dB)",
+        "is_flood": True
+    },
+    "moist_soil": {
+        "tier": "moist_soil",
+        "label": "Saturated Soil / Mudflat",
+        "max_db": -9.0,
+        "min_db": -13.0,
+        "color": "#f59e0b",
+        "badge": "Moist Soil (-13.0 to -9.0 dB)",
+        "is_flood": False
+    },
+    "dry_soil_vegetation": {
+        "tier": "dry_soil_vegetation",
+        "label": "Vegetation Canopy / Dry Ground",
+        "max_db": -4.0,
+        "min_db": -9.0,
+        "color": "#10b981",
+        "badge": "Vegetation / Ground (-9.0 to -4.0 dB)",
+        "is_flood": False
+    },
+    "urban_double_bounce": {
+        "tier": "urban_double_bounce",
+        "label": "Built Structure / Corner Reflector",
+        "max_db": 15.0,
+        "min_db": -4.0,
+        "color": "#ef4444",
+        "badge": "Built / Double Bounce (> -4.0 dB)",
+        "is_flood": False
+    }
+}
+
+
+SAR_BENCHMARK_SCENES: List[Dict[str, Any]] = [
+    {
+        "scene_id": "S1A_IW_GRDH_1SDV_20260910T140023_RTC",
+        "acquisition_date": "2026-09-10T14:00:23Z",
+        "orbit_direction": "DESCENDING",
+        "relative_orbit": 137,
+        "polarizations": ["VV", "VH"],
+        "mean_vv_db": -11.8,
+        "mean_vh_db": -18.4,
+        "mean_ratio_db": -6.6,
+        "incidence_angle_mid_deg": 38.6,
+        "collection": "sentinel-1-rtc",
+        "provider": "Copernicus / Planetary Computer",
+        "resolution_m": 10.0,
+        "water_area_pct": 8.4
+    },
+    {
+        "scene_id": "S1A_IW_GRDH_1SDV_20260922T140023_RTC",
+        "acquisition_date": "2026-09-22T14:00:23Z",
+        "orbit_direction": "DESCENDING",
+        "relative_orbit": 137,
+        "polarizations": ["VV", "VH"],
+        "mean_vv_db": -14.2,
+        "mean_vh_db": -20.1,
+        "mean_ratio_db": -5.9,
+        "incidence_angle_mid_deg": 38.6,
+        "collection": "sentinel-1-rtc",
+        "provider": "Copernicus / Planetary Computer",
+        "resolution_m": 10.0,
+        "water_area_pct": 14.7
+    }
+]
+
+
+class SARBackscatterAnalysisRequest(BaseModel):
+    """Payload to request calibrated SAR backscatter and adaptive speckle filtering analysis."""
+    bbox: Optional[Union[List[float], Dict[str, float], str, BoundingBox]] = Field(
+        None,
+        description="Target bounding box [min_lon, min_lat, max_lon, max_lat]"
+    )
+    collection: str = Field("sentinel-1-rtc", description="SAR STAC collection identifier")
+    polarization: Union[SarPolarization, str] = Field(SarPolarization.VV, description="Polarization channel (vv, vh, ratio_vh_vv)")
+    speckle_filter: Union[SpeckleFilterMethod, str] = Field(SpeckleFilterMethod.REFINED_LEE, description="Adaptive speckle filter algorithm")
+    filter_kernel_size: int = Field(5, ge=1, le=15, description="Filter window size in pixels (odd number 3, 5, 7, etc.)")
+    calibration: Union[SARBackscatterCalibration, str] = Field(SARBackscatterCalibration.GAMMA0, description="Radiometric calibration (gamma0, sigma0, beta0)")
+    start_date: Optional[str] = Field("2026-09-01", description="Acquisition start date (YYYY-MM-DD)")
+    end_date: Optional[str] = Field("2026-09-30", description="Acquisition end date (YYYY-MM-DD)")
+    water_threshold_db: float = Field(-16.5, ge=-35.0, le=0.0, description="Decibel threshold for specular water classification")
+    target_resolution_m: float = Field(10.0, gt=0.0, description="Target raster resolution in meters")
+
+
+class SARBackscatterSummary(BaseModel):
+    """Statistical summary of calibrated radar backscatter and flood mapping."""
+    mean_backscatter_db: float = Field(..., description="Mean radar backscatter in decibels (dB)")
+    median_backscatter_db: float = Field(..., description="Median radar backscatter in dB")
+    min_backscatter_db: float = Field(..., description="Minimum radar backscatter in dB")
+    max_backscatter_db: float = Field(..., description="Maximum radar backscatter in dB")
+    std_backscatter_db: float = Field(..., description="Standard deviation in dB")
+    equivalent_number_of_looks: float = Field(4.4, description="Effective Number of Looks (ENL)")
+    speckle_variance_reduction_ratio: float = Field(..., description="Variance reduction factor from raw to filtered")
+    water_fraction: float = Field(..., ge=0.0, le=1.0, description="Fraction of area classified as water")
+    water_area_ha: float = Field(..., ge=0.0, description="Classified water area in hectares")
+    dominant_tier: SARFloodDetectionTier = Field(..., description="Dominant surface scattering tier")
+
+
+class SARBackscatterAnalysisResponse(BaseModel):
+    """Response payload containing calibrated SAR analysis and streaming tile contracts."""
+    analysis_id: str = Field(..., description="Unique SAR analysis execution identifier")
+    collection: str = Field("sentinel-1-rtc", description="Source STAC collection")
+    polarization: str = Field(..., description="Analyzed polarization channel")
+    speckle_filter: str = Field(..., description="Applied speckle filtering algorithm")
+    calibration: str = Field("gamma0", description="Applied radiometric calibration convention")
+    filter_kernel_size: int = Field(5, description="Filter kernel size")
+    summary: SARBackscatterSummary = Field(..., description="Statistical summary metrics")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for radar rendering")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO 8601 execution timestamp")
+    status: str = Field("completed", description="Analysis status")
+
+
+class SARBackscatterTileRequestParams(BaseModel):
+    """Parameters for dynamic XYZ SAR backscatter tile streaming."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level")
+    x: int = Field(..., ge=0, description="Slippy map tile column")
+    y: int = Field(..., ge=0, description="Slippy map tile row")
+    collection: str = Field("sentinel-1-rtc", description="SAR STAC collection")
+    polarization: Union[SarPolarization, str] = Field(SarPolarization.VV, description="Polarization channel")
+    speckle_filter: Union[SpeckleFilterMethod, str] = Field(SpeckleFilterMethod.REFINED_LEE, description="Speckle filter")
+    filter_kernel_size: int = Field(5, ge=1, le=15, description="Filter kernel size")
+    calibration: Union[SARBackscatterCalibration, str] = Field(SARBackscatterCalibration.GAMMA0, description="Calibration")
+    colormap: Optional[str] = Field("gray", description="Colormap for backscatter visualization")
+    rescale: Optional[str] = Field("-25,0", description="Contrast stretch min,max in dB")
+
+
+class SARFloodInundationTileRequestParams(BaseModel):
+    """Parameters for dynamic XYZ SAR flood inundation mask tile streaming."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level")
+    x: int = Field(..., ge=0, description="Slippy map tile column")
+    y: int = Field(..., ge=0, description="Slippy map tile row")
+    collection: str = Field("sentinel-1-rtc", description="SAR STAC collection")
+    water_threshold_db: float = Field(-16.5, ge=-35.0, le=0.0, description="Decibel threshold for water")
+    speckle_filter: Union[SpeckleFilterMethod, str] = Field(SpeckleFilterMethod.REFINED_LEE, description="Speckle filter")
+
+
+# ------------------------------------------------------------------------------
+# Mathematical Algorithms: SAR Radiometry, Terrain Flattening & Speckle Filtering
+# ------------------------------------------------------------------------------
+
+def linear_to_decibel(val: Any, epsilon: float = 1e-7) -> Any:
+    """Converts linear radar backscatter power or intensity to decibels (dB):
+    sigma0_dB = 10 * log10(max(epsilon, sigma0))
+    Handles scalars, Python lists, and NumPy arrays.
+    """
+    import numpy as np
+    arr = np.asarray(val, dtype=np.float32)
+    clamped = np.maximum(arr, epsilon)
+    db = 10.0 * np.log10(clamped)
+    if np.isscalar(val):
+        return float(db)
+    return db
+
+
+def decibel_to_linear(val: Any) -> Any:
+    """Converts radar backscatter from decibels (dB) to linear power:
+    sigma0 = 10 ** (sigma0_dB / 10.0)
+    Handles scalars, Python lists, and NumPy arrays.
+    """
+    import numpy as np
+    arr = np.asarray(val, dtype=np.float32)
+    lin = np.power(10.0, arr / 10.0)
+    if np.isscalar(val):
+        return float(lin)
+    return lin
+
+
+def calculate_polarization_ratio_linear(
+    vh: Any,
+    vv: Any,
+    epsilon: float = 1e-7
+) -> Any:
+    """Calculates linear cross-polarization ratio = VH / max(epsilon, VV)."""
+    import numpy as np
+    vh_arr = np.asarray(vh, dtype=np.float32)
+    vv_arr = np.asarray(vv, dtype=np.float32)
+    vv_safe = np.where(np.abs(vv_arr) < epsilon, epsilon, vv_arr)
+    ratio = np.maximum(vh_arr, 0.0) / vv_safe
+    if np.isscalar(vh) and np.isscalar(vv):
+        return float(ratio)
+    return ratio
+
+
+def calculate_polarization_ratio_db(
+    vh_db: Any,
+    vv_db: Any
+) -> Any:
+    """Calculates cross-polarization ratio in decibels:
+    ratio_dB = VH_dB - VV_dB = 10 * log10(VH / VV)
+    """
+    import numpy as np
+    vh_arr = np.asarray(vh_db, dtype=np.float32)
+    vv_arr = np.asarray(vv_db, dtype=np.float32)
+    diff = vh_arr - vv_arr
+    if np.isscalar(vh_db) and np.isscalar(vv_db):
+        return float(diff)
+    return diff
+
+
+def calculate_polarization_ratio(
+    vh_val: Any,
+    vv_val: Any,
+    in_db: bool = True,
+    epsilon: float = 1e-7
+) -> Any:
+    """Calculates cross-polarization ratio in either decibels or linear units."""
+    if in_db:
+        return calculate_polarization_ratio_db(vh_val, vv_val)
+    return calculate_polarization_ratio_linear(vh_val, vv_val, epsilon=epsilon)
+
+
+def calculate_normalized_difference_polarization_index(
+    vv: Any,
+    vh: Any,
+    epsilon: float = 1e-7
+) -> Any:
+    """Calculates Normalized Difference Polarization Index:
+    NDPI = (VV - VH) / max(epsilon, VV + VH)
+    """
+    import numpy as np
+    v_arr = np.asarray(vv, dtype=np.float32)
+    h_arr = np.asarray(vh, dtype=np.float32)
+    denom = v_arr + h_arr
+    denom_safe = np.where(np.abs(denom) < epsilon, epsilon, denom)
+    ndpi = (v_arr - h_arr) / denom_safe
+    if np.isscalar(vv) and np.isscalar(vh):
+        return float(ndpi)
+    return ndpi
+
+
+def apply_terrain_flattening_gamma0(
+    sigma0: Any,
+    local_incidence_angle_deg: Any,
+    is_db: bool = False,
+    epsilon: float = 1e-7
+) -> Any:
+    """Computes terrain-flattened gamma nought (gamma0) from sigma nought (sigma0)
+    and local illuminated incidence angle theta_local:
+    
+    Linear:
+        gamma0 = sigma0 / cos(theta_local)
+    Decibels:
+        gamma0_dB = sigma0_dB - 10 * log10(cos(theta_local))
+    """
+    import numpy as np
+    theta_rad = np.radians(np.asarray(local_incidence_angle_deg, dtype=np.float32))
+    cos_theta = np.maximum(epsilon, np.cos(theta_rad))
+    
+    if is_db:
+        sig_db = np.asarray(sigma0, dtype=np.float32)
+        gamma = sig_db - 10.0 * np.log10(cos_theta)
+    else:
+        sig_lin = np.asarray(sigma0, dtype=np.float32)
+        gamma = sig_lin / cos_theta
+        
+    if np.isscalar(sigma0) and np.isscalar(local_incidence_angle_deg):
+        return float(gamma)
+    return gamma
+
+
+def classify_sar_flood_tier(vv_db: float) -> SARFloodDetectionTier:
+    """Classifies backscatter decibel value into surface scattering tier."""
+    v = float(vv_db)
+    if v <= -16.5:
+        return SARFloodDetectionTier.CALM_WATER
+    elif v <= -13.0:
+        return SARFloodDetectionTier.ROUGH_WATER
+    elif v <= -9.0:
+        return SARFloodDetectionTier.MOIST_SOIL
+    elif v <= -4.0:
+        return SARFloodDetectionTier.DRY_SOIL_VEGETATION
+    return SARFloodDetectionTier.URBAN_DOUBLE_BOUNCE
+
+
+def classify_sar_water_pixels(
+    vv_db: Any,
+    threshold_db: float = -16.5,
+    pixel_area_ha: float = 0.01
+) -> Dict[str, Any]:
+    """Applies decibel thresholding to identify flood inundation / calm water pixels."""
+    import numpy as np
+    arr = np.asarray(vv_db, dtype=np.float32)
+    water_mask = arr <= threshold_db
+    total_pixels = int(arr.size)
+    water_pixels = int(np.sum(water_mask))
+    water_fraction = float(water_pixels / max(1, total_pixels))
+    water_ha = float(water_pixels * pixel_area_ha)
+    return {
+        "water_mask": water_mask,
+        "water_pixels": water_pixels,
+        "total_pixels": total_pixels,
+        "water_fraction": round(water_fraction, 4),
+        "water_area_ha": round(water_ha, 4),
+        "threshold_db": threshold_db
+    }
+
+
+def calculate_refined_lee_filter_weights(
+    local_mean: float,
+    local_variance: float,
+    num_looks: float = 4.4
+) -> float:
+    """Calculates adaptive weighting factor W in [0.0, 1.0] for the Lee speckle filter:
+    
+    W = max(0.0, 1.0 - (Cu^2 / Ci^2))
+    where:
+        Ci = sqrt(local_variance) / local_mean  (local coefficient of variation)
+        Cu = 1.0 / sqrt(num_looks)              (speckle noise coefficient of variation)
+    
+    In homogeneous regions (Ci ~ Cu), W -> 0.0, so filtered output -> local_mean.
+    Near high-contrast edges (Ci >> Cu), W -> 1.0, preserving center pixel intensity.
+    """
+    mean_val = max(1e-7, float(local_mean))
+    var_val = max(0.0, float(local_variance))
+    ci_sq = var_val / (mean_val * mean_val)
+    cu_sq = 1.0 / max(1.0, float(num_looks))
+    
+    if ci_sq <= cu_sq:
+        return 0.0
+    w = 1.0 - (cu_sq / ci_sq)
+    return float(max(0.0, min(1.0, w)))
+
+
+def apply_speckle_filter_1d_or_2d(
+    raster: Any,
+    method: Union[str, SpeckleFilterMethod] = SpeckleFilterMethod.REFINED_LEE,
+    kernel_size: int = 5,
+    num_looks: float = 4.4
+) -> Any:
+    """Applies adaptive spatial speckle filter to 1D or 2D radar amplitude/intensity array.
+    Supports refined_lee, frost, kuan, gamma_map, boxcar_mean, and none.
+    """
+    import numpy as np
+    arr = np.asarray(raster, dtype=np.float32)
+    m_str = method.value if isinstance(method, SpeckleFilterMethod) else str(method).lower()
+    
+    if m_str in ("none", "raw") or kernel_size <= 1:
+        return arr.copy()
+        
+    k = max(3, kernel_size if kernel_size % 2 == 1 else kernel_size + 1)
+    pad = k // 2
+    
+    if arr.ndim == 1:
+        padded = np.pad(arr, pad, mode='edge')
+        out = np.zeros_like(arr)
+        cu_sq = 1.0 / max(1.0, float(num_looks))
+        
+        for i in range(len(arr)):
+            win = padded[i:i + k]
+            mean = float(np.mean(win))
+            var = float(np.var(win))
+            center = float(arr[i])
+            
+            if m_str == "boxcar_mean":
+                out[i] = mean
+            elif m_str == "kuan":
+                ci_sq = var / max(1e-7, mean * mean)
+                w = (1.0 - cu_sq / max(1e-7, ci_sq)) / (1.0 + cu_sq)
+                w_clamp = max(0.0, min(1.0, w))
+                out[i] = mean + w_clamp * (center - mean)
+            elif m_str == "frost":
+                ci_sq = var / max(1e-7, mean * mean)
+                dists = np.abs(np.arange(k) - pad)
+                weights = np.exp(-1.0 * ci_sq * dists)
+                out[i] = float(np.sum(win * weights) / max(1e-7, np.sum(weights)))
+            elif m_str == "gamma_map":
+                ci_sq = var / max(1e-7, mean * mean)
+                if ci_sq <= cu_sq:
+                    out[i] = mean
+                else:
+                    alpha = (1.0 + cu_sq) / max(1e-7, ci_sq - cu_sq)
+                    b = alpha - float(num_looks) - 1.0
+                    disc = b * b * mean * mean + 4.0 * alpha * float(num_looks) * center * mean
+                    out[i] = (b * mean + np.sqrt(max(0.0, disc))) / (2.0 * alpha)
+            else:  # refined_lee default
+                w = calculate_refined_lee_filter_weights(mean, var, num_looks=num_looks)
+                out[i] = mean + w * (center - mean)
+        return out
+        
+    elif arr.ndim == 2:
+        padded = np.pad(arr, pad, mode='edge')
+        rows, cols = arr.shape
+        out = np.zeros_like(arr)
+        cu_sq = 1.0 / max(1.0, float(num_looks))
+        
+        for r in range(rows):
+            for c in range(cols):
+                win = padded[r:r + k, c:c + k]
+                mean = float(np.mean(win))
+                var = float(np.var(win))
+                center = float(arr[r, c])
+                
+                if m_str == "boxcar_mean":
+                    out[r, c] = mean
+                elif m_str == "kuan":
+                    ci_sq = var / max(1e-7, mean * mean)
+                    w = (1.0 - cu_sq / max(1e-7, ci_sq)) / (1.0 + cu_sq)
+                    w_clamp = max(0.0, min(1.0, w))
+                    out[r, c] = mean + w_clamp * (center - mean)
+                elif m_str == "frost":
+                    ci_sq = var / max(1e-7, mean * mean)
+                    y_idx, x_idx = np.ogrid[:k, :k]
+                    dists = np.sqrt((y_idx - pad)**2 + (x_idx - pad)**2)
+                    weights = np.exp(-1.0 * ci_sq * dists)
+                    out[r, c] = float(np.sum(win * weights) / max(1e-7, np.sum(weights)))
+                elif m_str == "gamma_map":
+                    ci_sq = var / max(1e-7, mean * mean)
+                    if ci_sq <= cu_sq:
+                        out[r, c] = mean
+                    else:
+                        alpha = (1.0 + cu_sq) / max(1e-7, ci_sq - cu_sq)
+                        b = alpha - float(num_looks) - 1.0
+                        disc = b * b * mean * mean + 4.0 * alpha * float(num_looks) * center * mean
+                        out[r, c] = (b * mean + np.sqrt(max(0.0, disc))) / (2.0 * alpha)
+                else:  # refined_lee default
+                    w = calculate_refined_lee_filter_weights(mean, var, num_looks=num_looks)
+                    out[r, c] = mean + w * (center - mean)
+        return out
+    return arr
+
+
+def build_sar_backscatter_tile_url(
+    collection: str = "sentinel-1-rtc",
+    polarization: Union[str, SarPolarization] = "vv",
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    speckle_filter: Union[str, SpeckleFilterMethod] = "refined_lee",
+    kernel_size: int = 5,
+    calibration: Optional[Union[str, SARBackscatterCalibration]] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for calibrated SAR backscatter tiles."""
+    p_str = polarization.value if isinstance(polarization, SarPolarization) else str(polarization).lower()
+    f_str = speckle_filter.value if isinstance(speckle_filter, SpeckleFilterMethod) else str(speckle_filter).lower()
+    base = f"/api/v1/tiles/sar/{collection}/{p_str}/{z}/{x}/{y}.png"
+    params: List[str] = []
+    if f_str and f_str != "none":
+        params.append(f"filter={f_str}")
+        if kernel_size != 5:
+            params.append(f"kernel_size={kernel_size}")
+    if calibration:
+        c_str = calibration.value if isinstance(calibration, SARBackscatterCalibration) else str(calibration).lower()
+        params.append(f"cal={c_str}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_sar_backscatter_tile_url_template(
+    collection: str = "sentinel-1-rtc",
+    polarization: Union[str, SarPolarization] = "vv",
+    speckle_filter: Union[str, SpeckleFilterMethod] = "refined_lee",
+    kernel_size: int = 5,
+    calibration: Optional[Union[str, SARBackscatterCalibration]] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for calibrated SAR backscatter tiles."""
+    p_str = polarization.value if isinstance(polarization, SarPolarization) else str(polarization).lower()
+    f_str = speckle_filter.value if isinstance(speckle_filter, SpeckleFilterMethod) else str(speckle_filter).lower()
+    base = f"/api/v1/tiles/sar/{collection}/{p_str}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = []
+    if f_str and f_str != "none":
+        params.append(f"filter={f_str}")
+        if kernel_size != 5:
+            params.append(f"kernel_size={kernel_size}")
+    if calibration:
+        c_str = calibration.value if isinstance(calibration, SARBackscatterCalibration) else str(calibration).lower()
+        params.append(f"cal={c_str}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_sar_speckle_filter_tile_url(
+    filter_method: Union[str, SpeckleFilterMethod] = "refined_lee",
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    collection: str = "sentinel-1-rtc",
+    polarization: str = "vv",
+    kernel_size: int = 5,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+) -> str:
+    """Builds dynamic XYZ tile URL for filtered SAR backscatter tiles."""
+    f_str = filter_method.value if isinstance(filter_method, SpeckleFilterMethod) else str(filter_method).lower()
+    base = f"/api/v1/tiles/sar/filtered/{f_str}/{z}/{x}/{y}.png"
+    params: List[str] = [f"collection={collection}", f"polarization={polarization}"]
+    if kernel_size != 5:
+        params.append(f"kernel_size={kernel_size}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    return f"{base}?{'&'.join(params)}"
+
+
+def build_sar_speckle_filter_tile_url_template(
+    filter_method: Union[str, SpeckleFilterMethod] = "refined_lee",
+    collection: str = "sentinel-1-rtc",
+    polarization: str = "vv",
+    kernel_size: int = 5,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for filtered SAR backscatter tiles."""
+    f_str = filter_method.value if isinstance(filter_method, SpeckleFilterMethod) else str(filter_method).lower()
+    base = f"/api/v1/tiles/sar/filtered/{f_str}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = [f"collection={collection}", f"polarization={polarization}"]
+    if kernel_size != 5:
+        params.append(f"kernel_size={kernel_size}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    return f"{base}?{'&'.join(params)}"
+
+
+def build_sar_flood_tile_url(
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    collection: str = "sentinel-1-rtc",
+    threshold_db: float = -16.5,
+    speckle_filter: Union[str, SpeckleFilterMethod] = "refined_lee"
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for SAR flood inundation mask tiles."""
+    f_str = speckle_filter.value if isinstance(speckle_filter, SpeckleFilterMethod) else str(speckle_filter).lower()
+    base = f"/api/v1/tiles/sar/flood/{z}/{x}/{y}.png"
+    params: List[str] = [f"collection={collection}", f"threshold_db={threshold_db}"]
+    if f_str != "refined_lee":
+        params.append(f"filter={f_str}")
+    return f"{base}?{'&'.join(params)}"
+
+
+def build_sar_flood_tile_url_template(
+    collection: str = "sentinel-1-rtc",
+    threshold_db: float = -16.5,
+    speckle_filter: Union[str, SpeckleFilterMethod] = "refined_lee"
+) -> str:
+    """Builds dynamic Leaflet tile URL template for SAR flood inundation mask tiles."""
+    f_str = speckle_filter.value if isinstance(speckle_filter, SpeckleFilterMethod) else str(speckle_filter).lower()
+    base = "/api/v1/tiles/sar/flood/{z}/{x}/{y}.png"
+    params: List[str] = [f"collection={collection}", f"threshold_db={threshold_db}"]
+    if f_str != "refined_lee":
+        params.append(f"filter={f_str}")
+    return f"{base}?{'&'.join(params)}"
+
+
 

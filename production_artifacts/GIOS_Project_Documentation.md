@@ -1,5 +1,5 @@
 # GIOS: Global Intelligence & Observation System
-**Project Dossier & Scientific Specification (v2.5.27 Enterprise Release)**  
+**Project Dossier & Scientific Specification (v2.5.28 Enterprise Release)**  
 *Live Production: [https://gios-react.vercel.app](https://gios-react.vercel.app)*  
 *Backend Engine: FastAPI + rio-tiler + odc-stac + Leaflet Web GIS*
 
@@ -9,7 +9,7 @@
 
 The **Global Intelligence & Observation System (GIOS v2.5)** is an enterprise geospatial intelligence platform designed for critical infrastructure hazard monitoring, environmental anomaly detection, and real-time disaster response.
 
-GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10** through **v2.5.27** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
+GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9) with centimeter-scale drone photogrammetry (2.8cm orthomosaics). Releases **v2.5.10** through **v2.5.28** deliver breakthrough remote sensing physics, photogrammetry algorithms, and geotechnical hazard simulation engines:
 - **v2.5.10**: NodeODM Distributed Photogrammetry Processing Queue with 9-stage asynchronous state machine and stage-weighted progress telemetry, Multi-Temporal Quality Mosaic Cloud-Free Compositor Studio with pixel-rank temporal reductions (median, greenest, clearest, max-NDMI, min-LST) and dynamic XYZ tile streaming, and Multi-Hazard Live Telemetry Alert System with resilient USGS NWIS event bus and Server-Sent Events (SSE).
 - **v2.5.11**: Geotechnical Tailings Dam Hydrodynamic Inundation Simulation Engine with 2D shallow water Saint-Venant wave front routing, Froehlich (2008) peak breach discharge formulation ($Q_p = 0.607 \cdot V_w^{0.295} \cdot h_w^{1.24} \cdot \mu_{\text{mech}}$), Bingham plastic and Herschel-Bulkley non-Newtonian tailings slurry yield stress routing, Australian/USBR velocity-depth hazard intensity cross-product tiering ($v \cdot h$), dynamic downstream evacuation corridor buffer vectorization, critical infrastructure exposure scoring, and interactive Tailings Dam Breach Simulation Studio (`DamBreakModal.jsx`) with dynamic XYZ tile streaming (`/api/v1/tiles/geotechnical/dam-break/{sim_id}/{z}/{x}/{y}.png`).
 - **v2.5.12**: Geotechnical Embankment Phreatic Surface Seepage Inversion, 2D Dupuit-Forchheimer unconfined seepage flow, Casagrande top-seepage line inversion, Van Genuchten (1980) Soil Water Retention Curve (SWRC) parameter optimization ($\theta(\psi) = \theta_r + \frac{\theta_s - \theta_r}{[1 + (\alpha \psi)^n]^m}$), Terzaghi critical piping Factor of Safety ($FS_{\text{piping}} = i_{\text{crit}} / i_{\text{exit}}$), in-situ multi-depth piezometer residual fusion, and interactive Phreatic Surface Seepage Studio (`PhreaticSeepageModal.jsx`) with dynamic hydrogeological XYZ tile streaming (`/api/v1/tiles/geotechnical/phreatic-seepage/{sim_id}/{z}/{x}/{y}.png`).
@@ -28,7 +28,8 @@ GIOS bridges planetary satellite remote sensing (10m Sentinel-2, 30m Landsat-8/9
 - **v2.5.25**: Custom Spectral Formula Studio & Band Math AST Compiler Engine (Abstract Syntax Tree recursive descent parser with PEMDAS precedence, sandboxed execution with $\epsilon = 10^{-6}$ division-by-zero guards, 12 pre-configured spectral indices from `BAND_MATH_PRESETS`, interactive 4-tab `BandMathStudioModal.jsx` with AST token inspector, real-time scalar pixel sandbox simulator, dynamic XYZ custom expression tile service `/api/v1/tiles/custom-expression/{z}/{x}/{y}.png`, and STAC scene item tile endpoint `/api/v1/tiles/{collection}/{item_id}/custom-expression/{z}/{x}/{y}.png`).
 - **v2.5.26**: Copernicus 30m Global DEM (GLO-30) STAC Ingestion, 2D Convolutional Horn (1981) 3x3 Finite-Difference Slope and Downhill Aspect Vectorizer, Analytical Lambertian Hillshade Illumination Physics ($I = 255 \cdot \max(0, \cos \theta_z \cos \theta + \sin \theta_z \sin \theta \cos(\phi_s - \alpha))$), Topographic Wetness Index ($\text{TWI} = \ln(a / \tan \beta)$) with division-by-zero numerical safety clamping, Geotechnical Slope Hazard Tier Zonification (5 tiers: Flat $<5^\circ$, Gentle $5^\circ-15^\circ$, Moderate $15^\circ-25^\circ$, Steep $25^\circ-35^\circ$, Critical Hazard $\ge 35^\circ$), 1D Crest-to-Toe Cross-Sectional Transect Elevation & Slope Profiler, Interactive 4-Tab Topographic Relief & Hillshade Studio (`DemTopographyModal.jsx`), and Dynamic XYZ Copernicus DEM Relief Tile Streaming Endpoints (`/api/v1/tiles/dem/{metric}/{z}/{x}/{y}.png`, `/relief`, `/hillshade`, `/slope`, `/twi`).
 - **v2.5.27**: Multi-Tile Seamline Feathering, Virtual Raster VRT Mosaics & MGRS Granule Edge Blending: Multi-Granule Sentinel-2 100km MGRS Overlap Geometry & Pairwise Bounding Envelopes, Vectorized 2D Euclidean Distance-Transform Seamline Feathering ($w_i(x, y) = d_i(x, y) / \sum_j d_j(x, y)$) with smoothstep cubic Hermite easing ($S(t) = 3t^2 - 2t^3$) and exact partition of unity ($w_1 + w_2 = 1.0 \pm 10^{-6}$), Voronoi Seamline Cut Boundary Partitioning & Graph-Cut Transition Cost Optimization ($\omega_{\text{color}}, \omega_{\text{grad}}, \omega_{\text{elev}}$), Radiometric Continuity Step Discontinuity Classification ($\Delta \rho < 0.005$ Seamless, $0.005-0.02$ Subtle, $0.02-0.05$ Visible Step, $>0.05$ Severe Discontinuity), GDAL Virtual Raster `<VRTDataset>` XML Generator & Multi-Granule STAC Asset Loader (`odc-stac`), Interactive 4-Tab Virtual Raster Mosaic Studio (`MosaicStudioModal.jsx`), and Dynamic XYZ Multi-Tile Mosaic Raster Tile Streaming (`/api/v1/tiles/mosaic/{collection}/{z}/{x}/{y}.png`, `/feather`, `/seamline`).
-- **v2.5.28 (Staged / Planned)**: Multi-Temporal Scene Stacking, Statistical Reducer Enums (median, mean, max_ndvi, min_cloud, p25, p75), Quality Band Weighting & Dynamic Composite Tile Contracts.
+- **v2.5.28**: Multi-Temporal STAC Data Cube Reducer, Pixel-Rank Order Statistics Conservation, Greenest-Pixel Argmax NDVI Selection & Dynamic Quality Mosaic Tiles: Temporal acquisition aggregation across arbitrary time windows (Sentinel-2 / Landsat-8/9), statistical reducers (`median`, `mean`, `max_ndvi`, `min_cloud`, `p25`, `p75`, `mode`, `min`, `max`) with physical spectral covariance preservation for argmax selection ($t^* = \arg\max_t \text{NDVI}(t)$ eliminating spectral chimera artifacts), pixel quality score formulation ($Q = (1 - C_{\text{cloud}}/100) \cdot \sin(\theta_{\text{sun}}) \cdot \cos(\theta_{\text{nadir}})$), 4-tier composite quality classification (`excellent`, `good`, `marginal`, `poor`), interactive 3-tab Temporal Composite Studio modal (`TemporalCompositeModal.jsx`, 1,247 lines) with multi-month stack scrubber and seasonal presets (`summer_greenness_2026`, `dry_season_baseline_2026`, `spring_runoff_2026`, `full_year_2026`), dynamic Leaflet TileLayer integration streaming 256x256 cloud-free seasonal composite tiles over monitored assets, and dynamic composite tile REST endpoints (`/api/v1/analysis/temporal/composite`, `/api/v1/analysis/temporal/acquisitions`, `/api/v1/tiles/temporal/composite/{collection}/{reducer}/{z}/{x}/{y}.png`, `/quality/{collection}/{metric}/{z}/{x}/{y}.png`).
+- **v2.5.29 (Staged / Planned)**: Sentinel-1 SAR Radiometric Terrain Flattening, Refined Lee Speckle Filter & Dynamic Radar Inundation Tiles.
 
 ---
 
@@ -367,19 +368,23 @@ Every pixel rendered on screen adheres to strict remote sensing physics, orbital
 | `GET` | `/api/v1/tiles/mosaic/{collection}/{z}/{x}/{y}.png` | Dynamic seamless multi-granule raster tile streaming with configurable blend methods (`feather`, `voronoi`, `linear_ramp`, `none`) |
 | `GET` | `/api/v1/tiles/mosaic/feather/{z}/{x}/{y}.png` | Dynamic tile streaming for distance-transform feathering weight field |
 | `GET` | `/api/v1/tiles/mosaic/seamline/{z}/{x}/{y}.png` | Dynamic tile streaming for Voronoi seamline cut boundary overlay |
+| `POST` | `/api/v1/analysis/temporal/composite` | Multi-temporal raster stack aggregation, statistical reducer synthesis, and composite metadata |
+| `GET` | `/api/v1/analysis/temporal/acquisitions` | STAC multi-temporal acquisition discovery and scene stack metadata |
+| `GET` | `/api/v1/tiles/temporal/composite/{collection}/{reducer}/{z}/{x}/{y}.png` | Dynamic multi-temporal composite XYZ tile streaming for arbitrary reducers (`median`, `max_ndvi`, `mean`, `min_cloud`, `p25`, `p75`) |
+| `GET` | `/api/v1/tiles/temporal/quality/{collection}/{metric}/{z}/{x}/{y}.png` | Dynamic composite pixel quality score and cloud probability XYZ tile streaming |
 | `GET` | `/health` | Live system health and service status |
 
 ---
 
 ## 5. Verification & Quality Assurance
 
-- **Unit & Integration Test Suite**: 375 tests passing via pytest across `test_schemas.py` (257), `test_api.py` (87), `test_scientific_rigor.py` (24), `test_stac_signing.py` (1), and `test_tile_server.py` (6) with 0 failures, 0 regressions, and 0 warnings (86.71s).
-- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` compiled 2,884 modules in 10.59s with 0 errors).
+- **Unit & Integration Test Suite**: 379 tests passing via pytest across `test_schemas.py` (259), `test_api.py` (88), `test_scientific_rigor.py` (25), `test_stac_signing.py` (1), and `test_tile_server.py` (6) with 0 failures, 0 regressions, and 0 warnings (81.53s).
+- **Frontend Code Quality**: Verified 0 ESLint errors/warnings (`npm run lint` exited code 0); production bundle compiled cleanly via Vite (`npm run build` compiled 2,885 modules in 10.95s with 0 errors).
 - **Health Monitoring Daemon**: `health_check_daemon.py` continuously inspecting port latency, Planetary Computer STAC/SAS tokens, USGS NWIS/Earthquake feeds, cache storage, database integrity, 2D hydrodynamic finite-volume Courant-Friedrichs-Lewy (CFL) stability guard ($\Delta t \le \frac{\Delta x}{\sqrt{g h} + |u|}$ max CFL: 0.881 <= 1.0 `STABLE`), and host system RAM. Latest inspection confirms System Status **HEALTHY** with 0 active anomalies.
 - **Live Production Telemetry**: Continuous surveillance confirms System Status HEALTHY with 0 active anomalies and stable headroom.
 
 ---
-*GIOS v2.5.27 — Verified and Approved for Production Deployment.*
+*GIOS v2.5.28 — Verified and Approved for Production Deployment.*
 
 
 

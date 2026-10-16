@@ -655,6 +655,101 @@ class IndexComputationService:
         """Alias for evaluate_band_math_raster using parsed AST."""
         return cls.evaluate_band_math_raster(ast_node, band_rasters, epsilon=epsilon)
 
+    # --------------------------------------------------------------------------
+    # Cycle v2.5.28: Multi-Temporal Scene Stacking & Quality Mosaic Reducers
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def reduce_temporal_stack(
+        cls,
+        stack: Any,
+        reducer: Union[str, Any] = "median",
+        axis: int = 0
+    ) -> np.ndarray:
+        """Applies statistical or quality reduction across axis 0 (time) of a multi-temporal raster stack.
+        Delegates to apply_temporal_reduction handling nanmedian, nanmean, p25, p75, min, max, mode.
+        """
+        from app.models.schemas import apply_temporal_reduction
+        return apply_temporal_reduction(stack, reducer=reducer, axis=axis)
+
+    @classmethod
+    def compute_greenest_pixel_mosaic(
+        cls,
+        band_dict: Dict[str, Any],
+        red_band: str = "B04",
+        nir_band: str = "B08"
+    ) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray]:
+        """Synthesizes a greenest-pixel quality mosaic (Holben 1986) preserving spectral band covariance.
+        
+        Evaluates NDVI across the time axis, determines per-pixel argmax time indices,
+        and samples all spectral bands simultaneously from that optimal acquisition date.
+        
+        Returns:
+            (composited_bands, best_indices, max_ndvi)
+        """
+        from app.models.schemas import select_greenest_pixel_indices
+
+        # Resolve red and nir band arrays
+        r_arr = band_dict.get(red_band)
+        if r_arr is None:
+            for alt in ("red", "B4", "b04", "b4"):
+                if alt in band_dict:
+                    r_arr = band_dict[alt]
+                    break
+        n_arr = band_dict.get(nir_band)
+        if n_arr is None:
+            for alt in ("nir", "B8", "b08", "b8", "nir08"):
+                if alt in band_dict:
+                    n_arr = band_dict[alt]
+                    break
+
+        if r_arr is None or n_arr is None:
+            raise ValueError(f"Greenest-pixel mosaic requires red and NIR bands; available bands: {list(band_dict.keys())}")
+
+        best_idx, max_ndvi = select_greenest_pixel_indices(r_arr, n_arr)
+
+        composited_bands: Dict[str, np.ndarray] = {}
+        for b_name, b_val in band_dict.items():
+            arr = np.asarray(b_val, dtype=np.float32)
+            if arr.ndim == 3 and arr.shape[0] > 1:
+                # Shape (T, H, W) -> sample with (H, W) indices
+                sampled = np.take_along_axis(arr, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+                composited_bands[b_name] = sampled
+            elif arr.ndim == 2:
+                composited_bands[b_name] = arr
+            else:
+                composited_bands[b_name] = arr
+
+        return composited_bands, best_idx, max_ndvi
+
+    @classmethod
+    def compute_clearest_pixel_mosaic(
+        cls,
+        band_dict: Dict[str, Any],
+        cloud_prob_stack: Any
+    ) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray]:
+        """Synthesizes a clearest-pixel quality mosaic selecting all bands from the acquisition with minimum cloud probability.
+        
+        Returns:
+            (composited_bands, best_indices, min_cloud_prob)
+        """
+        from app.models.schemas import select_clearest_pixel_indices
+
+        best_idx, min_cp = select_clearest_pixel_indices(cloud_prob_stack)
+
+        composited_bands: Dict[str, np.ndarray] = {}
+        for b_name, b_val in band_dict.items():
+            arr = np.asarray(b_val, dtype=np.float32)
+            if arr.ndim == 3 and arr.shape[0] > 1:
+                sampled = np.take_along_axis(arr, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+                composited_bands[b_name] = sampled
+            elif arr.ndim == 2:
+                composited_bands[b_name] = arr
+            else:
+                composited_bands[b_name] = arr
+
+        return composited_bands, best_idx, min_cp
+
 
 index_service = IndexComputationService()
 

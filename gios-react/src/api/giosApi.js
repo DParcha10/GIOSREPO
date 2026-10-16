@@ -71,7 +71,19 @@ import {
   generateVrtXmlDefinition,
   buildMosaicTileUrlTemplate,
   buildMosaicFeatherTileUrlTemplate,
-  buildMosaicSeamlineTileUrlTemplate
+  buildMosaicSeamlineTileUrlTemplate,
+  TEMPORAL_REDUCER_CONFIGS,
+  TEMPORAL_QUALITY_TIER_CONFIGS,
+  TEMPORAL_BENCHMARK_SCENES,
+  buildTemporalCompositeTileUrlTemplate,
+  buildTemporalQualityMosaicTileUrlTemplate,
+  SPECKLE_FILTER_CONFIGS,
+  SAR_POLARIZATION_CONFIGS,
+  SAR_BACKSCATTER_CALIBRATIONS,
+  SAR_FLOOD_TIER_CONFIGS,
+  buildSarBackscatterTileUrlTemplate,
+  buildSarSpeckleFilterTileUrlTemplate,
+  buildSarFloodTileUrlTemplate
 } from '../config/constants.js';
 
 export {
@@ -3047,6 +3059,106 @@ const demoAdapter = async (config) => {
             created_at: new Date().toISOString()
           };
         }
+      }
+      else if (url.includes('/api/v1/analysis/temporal') || url.includes('/analysis/temporal')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const collection = parsed.collection || 'sentinel-2-l2a';
+        const reducer = parsed.reducer || 'median';
+        const startDate = parsed.start_date || parsed.startDate || '2026-06-01';
+        const endDate = parsed.end_date || parsed.endDate || '2026-08-31';
+
+        if (url.includes('/reducers')) {
+          data = {
+            reducers: TEMPORAL_REDUCER_CONFIGS,
+            quality_tiers: TEMPORAL_QUALITY_TIER_CONFIGS
+          };
+        } else if (url.includes('/stack')) {
+          data = {
+            collection,
+            bbox: parsed.bbox || [-121.20, 36.90, -120.65, 37.45],
+            start_date: startDate,
+            end_date: endDate,
+            total_scenes: TEMPORAL_BENCHMARK_SCENES.length,
+            scenes: TEMPORAL_BENCHMARK_SCENES,
+            mean_cloud_cover_pct: 5.1,
+            recommended_reducer: 'median'
+          };
+        } else {
+          // /api/v1/analysis/temporal/composite
+          const compId = parsed.composite_id || parsed.compositeId || `COMP-${Date.now()}`;
+          const isQuality = reducer === 'max_ndvi' || reducer === 'min_cloud';
+          data = {
+            composite_id: compId,
+            collection,
+            reducer,
+            metadata: {
+              composite_id: compId,
+              collection,
+              reducer,
+              start_date: startDate,
+              end_date: endDate,
+              temporal_window_days: 91,
+              total_scenes_evaluated: 12,
+              scenes_included: TEMPORAL_BENCHMARK_SCENES.length,
+              mean_cloud_cover_pct: 5.1,
+              clear_pixel_fraction: 0.965,
+              quality_tier: 'excellent',
+              preserves_covariance: isQuality,
+              quality_band: parsed.quality_band || (isQuality ? (reducer === 'max_ndvi' ? 'NDVI' : 'cloud_prob') : null),
+              bbox: parsed.bbox || [-121.20, 36.90, -120.65, 37.45],
+              target_crs: parsed.target_crs || 'EPSG:3857',
+              created_at: new Date().toISOString()
+            },
+            scenes: TEMPORAL_BENCHMARK_SCENES,
+            summary: {
+              clear_pixel_pct: 96.5,
+              scenes_count: TEMPORAL_BENCHMARK_SCENES.length,
+              temporal_window_days: 91
+            },
+            tile_url_template: `/api/v1/tiles/temporal/${collection}/${reducer}/{z}/{x}/{y}.png?start_date=${startDate}&end_date=${endDate}`,
+            created_at: new Date().toISOString()
+          };
+        }
+      }
+      else if (url.includes('/api/v1/analysis/sar/backscatter') || url.includes('/analysis/sar/backscatter')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const pol = parsed.polarization || 'vv';
+        const filter = parsed.speckle_filter || parsed.speckleFilter || 'refined_lee';
+        const cal = parsed.calibration || 'gamma0';
+        const anaId = `SAR-ANA-${Date.now()}`;
+        data = {
+          analysis_id: anaId,
+          collection: parsed.collection || 'sentinel-1-rtc',
+          polarization: pol,
+          speckle_filter: filter,
+          calibration: cal,
+          filter_kernel_size: parsed.filter_kernel_size || 5,
+          summary: {
+            mean_backscatter_db: pol === 'vh' ? -18.4 : (pol === 'ratio_vh_vv' ? -6.6 : -11.8),
+            median_backscatter_db: pol === 'vh' ? -18.9 : (pol === 'ratio_vh_vv' ? -6.8 : -12.1),
+            min_backscatter_db: -28.4,
+            max_backscatter_db: 4.2,
+            std_backscatter_db: 3.8,
+            equivalent_number_of_looks: 4.4,
+            speckle_variance_reduction_ratio: 4.25,
+            water_fraction: 0.084,
+            water_area_ha: 142.5,
+            dominant_tier: 'calm_water'
+          },
+          tile_url_template: `/api/v1/tiles/sar/${parsed.collection || 'sentinel-1-rtc'}/${pol}/{z}/{x}/{y}.png?filter=${filter}`,
+          created_at: new Date().toISOString(),
+          status: 'completed'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/sar/speckle-filters') || url.includes('/analysis/sar/speckle-filters')) {
+        data = {
+          filters: SPECKLE_FILTER_CONFIGS,
+          polarizations: SAR_POLARIZATION_CONFIGS,
+          calibrations: SAR_BACKSCATTER_CALIBRATIONS,
+          flood_tiers: SAR_FLOOD_TIER_CONFIGS
+        };
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
@@ -8100,6 +8212,112 @@ export const getMosaicSeamlineTileUrlTemplate = (collection = 'sentinel-2-l2a') 
   return buildMosaicSeamlineTileUrlTemplate(collection);
 };
 
+/**
+ * Generates or queries a multi-temporal satellite image composite across an AOI.
+ * 
+ * @param {Object} [params={}] - bbox, collection, start_date, end_date, reducer, max_cloud_cover_pct, bands, quality_band
+ * @returns {Promise<Object>} Composite metadata, contributing scenes, and tile template
+ */
+export const fetchTemporalComposite = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/temporal/composite', params);
+  return response.data;
+};
+
+/**
+ * Inspects available satellite scene acquisitions across an AOI and temporal window without reducing.
+ * 
+ * @param {Object} [params={}] - bbox, collection, start_date, end_date, max_cloud_cover_pct
+ * @returns {Promise<Object>} Chronological scene catalog with cloud metrics and preview thumbnails
+ */
+export const fetchTemporalSceneStack = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/temporal/stack', params);
+  return response.data;
+};
+
+/**
+ * Fetches available statistical reducer methods, quality mosaic options, and tier configurations.
+ * 
+ * @returns {Promise<Object>} Available reducers and quality configs
+ */
+export const fetchTemporalReducers = async () => {
+  const response = await giosApi.get('/api/v1/analysis/temporal/reducers');
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for multi-temporal composite raster tiles.
+ * 
+ * @param {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @param {string} [reducer='median'] - Statistical reducer method
+ * @param {Object} [options={}] - Options (startDate, endDate, maxCloudCoverPct, bands, colormap, rescale, qualityBand)
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const getTemporalCompositeTileUrlTemplate = (collection = 'sentinel-2-l2a', reducer = 'median', options = {}) => {
+  return buildTemporalCompositeTileUrlTemplate({ collection, reducer, ...options });
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for quality mosaics (greenest-pixel / clearest-pixel).
+ * 
+ * @param {string} [collection='sentinel-2-l2a'] - Satellite collection
+ * @param {Object} [options={}] - Options (qualityBand, startDate, endDate, maxCloudCoverPct, bands, colormap, rescale)
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const getTemporalQualityMosaicTileUrlTemplate = (collection = 'sentinel-2-l2a', options = {}) => {
+  return buildTemporalQualityMosaicTileUrlTemplate({ collection, ...options });
+};
+
+/**
+ * Analyzes Sentinel-1 SAR dual-polarization backscatter with adaptive speckle filtering.
+ * 
+ * @param {Object} [params={}] - bbox, collection, polarization, speckle_filter, filter_kernel_size, calibration, water_threshold_db
+ * @returns {Promise<Object>} Backscatter summary, equivalent looks, water fraction, and tile URL template
+ */
+export const fetchSarBackscatter = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/sar/backscatter', params);
+  return response.data;
+};
+
+/**
+ * Fetches available SAR speckle filtering algorithms, polarization channels, and calibration conventions.
+ * 
+ * @returns {Promise<Object>} Configuration metadata
+ */
+export const fetchSarSpeckleFilters = async () => {
+  const response = await giosApi.get('/api/v1/analysis/sar/speckle-filters');
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for calibrated SAR backscatter tiles.
+ * 
+ * @param {Object} [options={}] - Options (collection, polarization, speckleFilter, kernelSize, calibration, colormap, rescale)
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const getSarBackscatterTileUrlTemplate = (options = {}) => {
+  return buildSarBackscatterTileUrlTemplate(options);
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for filtered SAR backscatter tiles.
+ * 
+ * @param {Object} [options={}] - Options (filterMethod, collection, polarization, kernelSize, colormap, rescale)
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const getSarSpeckleFilterTileUrlTemplate = (options = {}) => {
+  return buildSarSpeckleFilterTileUrlTemplate(options);
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for SAR flood inundation mask tiles.
+ * 
+ * @param {Object} [options={}] - Options (collection, thresholdDb, speckleFilter)
+ * @returns {string} Dynamic Leaflet tile URL template
+ */
+export const getSarFloodTileUrlTemplate = (options = {}) => {
+  return buildSarFloodTileUrlTemplate(options);
+};
+
 export {
   InSARDeformationHazardTier,
   INSAR_HAZARD_CONFIGS,
@@ -8231,7 +8449,53 @@ export {
   buildMosaicTileUrl,
   buildMosaicTileUrlTemplate,
   buildMosaicFeatherTileUrlTemplate,
-  buildMosaicSeamlineTileUrlTemplate
+  buildMosaicSeamlineTileUrlTemplate,
+  TEMPORAL_REDUCER_METHODS,
+  TemporalReducerMethod,
+  TEMPORAL_QUALITY_TIERS,
+  TemporalQualityTier,
+  TEMPORAL_STACK_STATUSES,
+  TemporalStackStatus,
+  TEMPORAL_REDUCER_CONFIGS,
+  TEMPORAL_QUALITY_TIER_CONFIGS,
+  TEMPORAL_BENCHMARK_SCENES,
+  calculatePixelQualityScore,
+  classifyTemporalCompositeQuality,
+  calculateNdvi,
+  selectGreenestPixelIndices,
+  selectClearestPixelIndices,
+  applyTemporalReduction,
+  buildTemporalCompositeTileUrl,
+  buildTemporalCompositeTileUrlTemplate,
+  buildTemporalQualityMosaicTileUrlTemplate,
+  SarPolarization,
+  SPECKLE_FILTER_METHODS,
+  SpeckleFilterMethod,
+  SAR_BACKSCATTER_CALIBRATIONS,
+  SARBackscatterCalibration,
+  SAR_FLOOD_DETECTION_TIERS,
+  SARFloodDetectionTier,
+  SAR_POLARIZATION_CONFIGS,
+  SPECKLE_FILTER_CONFIGS,
+  SAR_FLOOD_TIER_CONFIGS,
+  SAR_BENCHMARK_SCENES,
+  linearToDecibel,
+  decibelToLinear,
+  calculatePolarizationRatioLinear,
+  calculatePolarizationRatioDb,
+  calculatePolarizationRatio,
+  calculateNormalizedDifferencePolarizationIndex,
+  applyTerrainFlatteningGamma0,
+  classifySarFloodTier,
+  classifySarWaterPixels,
+  calculateRefinedLeeFilterWeights,
+  applySpeckleFilter,
+  buildSarBackscatterTileUrl,
+  buildSarBackscatterTileUrlTemplate,
+  buildSarSpeckleFilterTileUrl,
+  buildSarSpeckleFilterTileUrlTemplate,
+  buildSarFloodTileUrl,
+  buildSarFloodTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;

@@ -3623,9 +3623,105 @@ class TestGIOSApi(unittest.TestCase):
             self.assertEqual(res_t.headers.get("content-type"), "image/png")
             self.assertTrue(res_t.content.startswith(b"\x89PNG"))
 
+    def test_temporal_composite_stack_and_tile_streaming_api(self):
+        """Test Cycle v2.5.28: Multi-Temporal Scene Stacking, Statistical Reducers, Quality Mosaics & Dynamic XYZ Tile Streaming."""
+        # 1. Test POST /api/v1/analysis/temporal/composite (Median Reducer)
+        comp_payload = {
+            "bbox": [-121.20, 36.90, -120.65, 37.45],
+            "collection": "sentinel-2-l2a",
+            "start_date": "2026-06-01",
+            "end_date": "2026-08-31",
+            "reducer": "median",
+            "max_cloud_cover_pct": 35.0,
+            "bands": ["B04", "B03", "B02", "B08"]
+        }
+        res_comp = self.client.post("/api/v1/analysis/temporal/composite", json=comp_payload)
+        self.assertEqual(res_comp.status_code, 200)
+        comp_data = res_comp.json()
+        self.assertIn("composite_id", comp_data)
+        self.assertTrue(comp_data["composite_id"].startswith("COMPOSITE-"))
+        self.assertEqual(comp_data["collection"], "sentinel-2-l2a")
+        self.assertEqual(comp_data["reducer"], "median")
+        self.assertIn("tile_url_template", comp_data)
+        self.assertIn("/api/v1/tiles/temporal/sentinel-2-l2a/median/{z}/{x}/{y}.png", comp_data["tile_url_template"])
+        self.assertGreaterEqual(comp_data["scene_count"], 1)
+        self.assertIn("metadata", comp_data)
+        self.assertEqual(comp_data["metadata"]["preserves_covariance"], False)
+        self.assertIn("quality_tier", comp_data["metadata"])
+        self.assertIn("scenes", comp_data)
+
+        # Unversioned route alias
+        res_comp_alias = self.client.post("/analysis/temporal/composite", json=comp_payload)
+        self.assertEqual(res_comp_alias.status_code, 200)
+
+        # 2. Test POST /api/v1/analysis/temporal/composite with Greenest-Pixel (Max NDVI Quality Mosaic)
+        green_payload = {
+            "bbox": [-121.20, 36.90, -120.65, 37.45],
+            "collection": "sentinel-2-l2a",
+            "start_date": "2026-06-01",
+            "end_date": "2026-08-31",
+            "reducer": "max_ndvi",
+            "quality_band": "NDVI"
+        }
+        res_green = self.client.post("/api/v1/analysis/temporal/composite", json=green_payload)
+        self.assertEqual(res_green.status_code, 200)
+        green_data = res_green.json()
+        self.assertEqual(green_data["reducer"], "max_ndvi")
+        self.assertEqual(green_data["metadata"]["preserves_covariance"], True)
+        self.assertIn("quality-mosaic", green_data["tile_url_template"])
+
+        # 3. Test POST /api/v1/analysis/temporal/stack (Scene Stack Inspection)
+        stack_payload = {
+            "bbox": [-121.20, 36.90, -120.65, 37.45],
+            "collection": "sentinel-2-l2a",
+            "start_date": "2026-06-01",
+            "end_date": "2026-08-31",
+            "max_cloud_cover_pct": 40.0
+        }
+        res_stack = self.client.post("/api/v1/analysis/temporal/stack", json=stack_payload)
+        self.assertEqual(res_stack.status_code, 200)
+        stack_data = res_stack.json()
+        self.assertEqual(stack_data["collection"], "sentinel-2-l2a")
+        self.assertGreaterEqual(stack_data["total_scenes"], 1)
+        self.assertIn("scenes", stack_data)
+        self.assertIn("mean_cloud_cover_pct", stack_data)
+        self.assertIn("recommended_reducer", stack_data)
+
+        # Unversioned route alias
+        res_stack_alias = self.client.post("/analysis/temporal/stack", json=stack_payload)
+        self.assertEqual(res_stack_alias.status_code, 200)
+
+        # 4. Test GET /api/v1/analysis/temporal/reducers
+        res_red = self.client.get("/api/v1/analysis/temporal/reducers")
+        self.assertEqual(res_red.status_code, 200)
+        red_data = res_red.json()
+        self.assertGreaterEqual(red_data["total_reducers"], 6)
+        self.assertIn("reducers", red_data)
+        self.assertIn("quality_tiers", red_data)
+
+        res_red_alias = self.client.get("/analysis/temporal/reducers")
+        self.assertEqual(res_red_alias.status_code, 200)
+
+        # 5. Dynamic XYZ Tile Streaming across reducers and quality mosaics
+        temporal_tiles = [
+            "/api/v1/tiles/temporal/sentinel-2-l2a/median/10/163/395.png",
+            "/api/v1/tiles/temporal/sentinel-2-l2a/max_ndvi/10/163/395.png?colormap=rdylgn",
+            "/api/v1/tiles/temporal/sentinel-2-l2a/mean/10/163/395.png?bands=B04,B03,B02",
+            "/api/v1/tiles/temporal/quality-mosaic/sentinel-2-l2a/10/163/395.png?quality_band=NDVI",
+            "/api/v1/tiles/temporal/quality-mosaic/sentinel-2-l2a/10/163/395.png?quality_band=cloud_prob",
+            "/tiles/temporal/sentinel-2-l2a/median/10/163/395.png",
+            "/api/v1/tiles/composite/sentinel-2-l2a/10/163/395.png?reducer=p25"
+        ]
+        for url in temporal_tiles:
+            res_t = self.client.get(url)
+            self.assertEqual(res_t.status_code, 200, f"Failed temporal composite tile: {url}")
+            self.assertEqual(res_t.headers.get("content-type"), "image/png")
+            self.assertTrue(res_t.content.startswith(b"\x89PNG"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

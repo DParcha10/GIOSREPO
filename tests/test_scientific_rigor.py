@@ -2795,6 +2795,205 @@ class TestScientificRigor(unittest.TestCase):
         img_s = Image.open(io.BytesIO(seam_bytes))
         self.assertEqual(img_s.size, (256, 256))
 
+    def test_temporal_order_statistics_and_quality_mosaics_rigor(self):
+        """Task T-232: Verify Cycle v2.5.28 Temporal Order Statistics Conservation,
+        Greenest-Pixel NDVI Argmax Index Preservation, Physical Spectral Covariance,
+        Non-Negative Cloud Score Masking, Quality Tiers & Dynamic XYZ Composite Tiles.
+        """
+        from app.services.tile_service import tile_service
+        import io
+        from PIL import Image
+        from app.models.schemas import (
+            calculate_pixel_quality_score,
+            classify_temporal_composite_quality,
+            select_greenest_pixel_indices,
+            select_clearest_pixel_indices,
+            apply_temporal_reduction,
+            TemporalReducerMethod,
+            TemporalQualityTier
+        )
+
+        # -------------------------------------------------------------
+        # 1. Temporal Order Statistics Conservation & Monotonicity Invariants
+        # -------------------------------------------------------------
+        # For any time-series stack X with T scenes at any pixel:
+        # min(X) <= p25(X) <= median(X) <= p75(X) <= max(X)
+        T_len = 7
+        H, W = 16, 16
+        np.random.seed(42)
+        # Create non-trivial synthetic temporal raster stack with spatial variation
+        stack_time = np.random.uniform(0.05, 0.95, size=(T_len, H, W)).astype(np.float32)
+
+        arr_min = apply_temporal_reduction(stack_time, reducer="min", axis=0)
+        arr_p25 = apply_temporal_reduction(stack_time, reducer="p25", axis=0)
+        arr_median = apply_temporal_reduction(stack_time, reducer="median", axis=0)
+        arr_p75 = apply_temporal_reduction(stack_time, reducer="p75", axis=0)
+        arr_max = apply_temporal_reduction(stack_time, reducer="max", axis=0)
+        arr_mean = apply_temporal_reduction(stack_time, reducer="mean", axis=0)
+
+        # Verify element-wise order statistics inequalities everywhere
+        self.assertTrue(np.all(arr_min <= arr_p25 + 1e-6), "Violated: min <= p25")
+        self.assertTrue(np.all(arr_p25 <= arr_median + 1e-6), "Violated: p25 <= median")
+        self.assertTrue(np.all(arr_median <= arr_p75 + 1e-6), "Violated: median <= p75")
+        self.assertTrue(np.all(arr_median <= arr_max + 1e-6), "Violated: median <= max")
+        self.assertTrue(np.all(arr_p75 <= arr_max + 1e-6), "Violated: p75 <= max")
+        self.assertTrue(np.all(arr_min <= arr_mean + 1e-6), "Violated: min <= mean")
+        self.assertTrue(np.all(arr_mean <= arr_max + 1e-6), "Violated: mean <= max")
+
+        # Discrete classification band: Mode reducer preserves discrete integer categories
+        discrete_stack = np.array([
+            [[1, 2], [3, 4]],
+            [[1, 2], [4, 4]],
+            [[1, 5], [4, 4]],
+            [[2, 5], [4, 7]]
+        ], dtype=np.float32)
+        arr_mode = apply_temporal_reduction(discrete_stack, reducer="mode", axis=0)
+        # Pixel (0,0): values [1, 1, 1, 2] -> mode = 1
+        # Pixel (1,0): values [3, 4, 4, 4] -> mode = 4
+        # Pixel (1,1): values [4, 4, 4, 7] -> mode = 4
+        self.assertEqual(arr_mode[0, 0], 1.0)
+        self.assertIn(arr_mode[0, 1], (2.0, 5.0))
+        self.assertEqual(arr_mode[1, 0], 4.0)
+        self.assertEqual(arr_mode[1, 1], 4.0)
+
+        # NaN handling: nanmedian and nanmean ignore cloud-masked NaNs
+        stack_with_nan = stack_time.copy()
+        stack_with_nan[1:3, 5:10, 5:10] = np.nan
+        arr_nan_median = apply_temporal_reduction(stack_with_nan, reducer="median", axis=0)
+        self.assertFalse(np.isnan(arr_nan_median[7, 7]), "Median must ignore NaNs when valid scenes remain")
+        self.assertTrue(np.all(np.isfinite(arr_nan_median)), "All pixels with remaining valid scenes must be finite")
+
+        # -------------------------------------------------------------
+        # 2. Covariance-Preserving Greenest-Pixel Selection (Argmax NDVI)
+        # -------------------------------------------------------------
+        # When compositing multi-spectral bands, selecting argmax NDVI ensures that
+        # all bands (Red, Green, Blue, NIR, SWIR) are sampled from the EXACT SAME scene,
+        # perfectly preserving physical inter-band spectral covariance and avoiding spectral chimeras.
+        red_stack = np.zeros((3, 4, 4), dtype=np.float32)
+        nir_stack = np.zeros((3, 4, 4), dtype=np.float32)
+        blue_stack = np.zeros((3, 4, 4), dtype=np.float32)
+
+        # Scene 0: Dry soil / senescence (Low NDVI)
+        red_stack[0, :, :] = 0.35
+        nir_stack[0, :, :] = 0.40
+        blue_stack[0, :, :] = 0.20
+
+        # Scene 1: Peak vegetation / greenest canopy (High NDVI)
+        red_stack[1, :, :] = 0.08
+        nir_stack[1, :, :] = 0.82
+        blue_stack[1, :, :] = 0.05
+
+        # Scene 2: Moderate regrowth
+        red_stack[2, :, :] = 0.18
+        nir_stack[2, :, :] = 0.52
+        blue_stack[2, :, :] = 0.12
+
+        best_idx, max_ndvi = select_greenest_pixel_indices(red_stack, nir_stack)
+        self.assertEqual(best_idx.shape, (4, 4))
+        self.assertEqual(max_ndvi.shape, (4, 4))
+        # Scene 1 has highest NDVI: (0.82 - 0.08) / (0.82 + 0.08) = 0.74 / 0.90 = 0.8222
+        self.assertTrue(np.all(best_idx == 1), "Greenest pixel selector must pick Scene 1 across all pixels")
+        self.assertAlmostEqual(float(max_ndvi[0, 0]), (0.82 - 0.08) / (0.82 + 0.08), places=4)
+
+        # Spectral covariance verification:
+        sampled_blue = np.take_along_axis(blue_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+        sampled_red = np.take_along_axis(red_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+        sampled_nir = np.take_along_axis(nir_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+        self.assertTrue(np.allclose(sampled_blue, 0.05), "Blue must be sampled strictly from Scene 1 (0.05)")
+        self.assertTrue(np.allclose(sampled_red, 0.08), "Red must be sampled strictly from Scene 1 (0.08)")
+        self.assertTrue(np.allclose(sampled_nir, 0.82), "NIR must be sampled strictly from Scene 1 (0.82)")
+
+        # -------------------------------------------------------------
+        # 3. Clearest-Pixel Selection (Argmin Cloud Probability)
+        # -------------------------------------------------------------
+        cloud_prob_stack = np.array([
+            [[0.80, 0.15], [0.45, 0.90]],  # Scene 0
+            [[0.10, 0.70], [0.20, 0.85]],  # Scene 1
+            [[0.60, 0.30], [0.10, 0.05]]   # Scene 2
+        ], dtype=np.float32)
+        c_idx, min_cp = select_clearest_pixel_indices(cloud_prob_stack)
+        # (0,0): min at Scene 1 (0.10)
+        # (0,1): min at Scene 0 (0.15)
+        # (1,0): min at Scene 2 (0.10)
+        # (1,1): min at Scene 2 (0.05)
+        self.assertEqual(c_idx[0, 0], 1)
+        self.assertAlmostEqual(min_cp[0, 0], 0.10, places=4)
+        self.assertEqual(c_idx[0, 1], 0)
+        self.assertAlmostEqual(min_cp[0, 1], 0.15, places=4)
+        self.assertEqual(c_idx[1, 0], 2)
+        self.assertAlmostEqual(min_cp[1, 0], 0.10, places=4)
+        self.assertEqual(c_idx[1, 1], 2)
+        self.assertAlmostEqual(min_cp[1, 1], 0.05, places=4)
+
+        # -------------------------------------------------------------
+        # 4. Pixel Quality Score Formula & Bounds Verification
+        # -------------------------------------------------------------
+        # Q = (1 - C_cloud/100) * sin(theta_sun) * cos(theta_nadir)
+        # Test boundary conditions:
+        q_clear_zenith = calculate_pixel_quality_score(cloud_cover_pct=0.0, sun_elevation_deg=90.0, nadir_angle_deg=0.0)
+        self.assertAlmostEqual(q_clear_zenith, 1.0, places=4)
+
+        q_full_cloud = calculate_pixel_quality_score(cloud_cover_pct=100.0, sun_elevation_deg=65.0, nadir_angle_deg=10.0)
+        self.assertEqual(q_full_cloud, 0.0)
+
+        q_low_sun = calculate_pixel_quality_score(cloud_cover_pct=10.0, sun_elevation_deg=5.0, nadir_angle_deg=5.0)
+        expected_low = (1.0 - 0.10) * math.sin(math.radians(5.0)) * math.cos(math.radians(5.0))
+        self.assertAlmostEqual(q_low_sun, expected_low, places=4)
+
+        q_intermediate = calculate_pixel_quality_score(cloud_cover_pct=20.0, sun_elevation_deg=45.0, nadir_angle_deg=30.0)
+        expected_q = (1.0 - 0.20) * math.sin(math.radians(45.0)) * math.cos(math.radians(30.0))
+        self.assertAlmostEqual(q_intermediate, expected_q, places=4)
+        self.assertGreaterEqual(q_intermediate, 0.0)
+        self.assertLessEqual(q_intermediate, 1.0)
+
+        # -------------------------------------------------------------
+        # 5. Temporal Composite Quality Tier Classification Invariants
+        # -------------------------------------------------------------
+        self.assertEqual(classify_temporal_composite_quality(95.0, scene_count=5), TemporalQualityTier.EXCELLENT)
+        self.assertEqual(classify_temporal_composite_quality(91.0, scene_count=4), TemporalQualityTier.EXCELLENT)
+        self.assertEqual(classify_temporal_composite_quality(88.0, scene_count=4), TemporalQualityTier.GOOD)
+        self.assertEqual(classify_temporal_composite_quality(75.0, scene_count=3), TemporalQualityTier.GOOD)
+        self.assertEqual(classify_temporal_composite_quality(88.0, scene_count=2), TemporalQualityTier.MARGINAL)
+        self.assertEqual(classify_temporal_composite_quality(58.0, scene_count=2), TemporalQualityTier.MARGINAL)
+        self.assertEqual(classify_temporal_composite_quality(35.0, scene_count=1), TemporalQualityTier.POOR)
+
+        # -------------------------------------------------------------
+        # 6. Dynamic XYZ Composite & Quality Mosaic Tile Streaming Invariants
+        # -------------------------------------------------------------
+        reducers_to_test = ["median", "max_ndvi", "mean", "min_cloud", "p25", "p75"]
+        for r_name in reducers_to_test:
+            tile_bytes = tile_service.render_temporal_composite_tile(
+                z=10,
+                x=163,
+                y=395,
+                collection="sentinel-2-l2a",
+                reducer=r_name,
+                start_date="2026-06-01",
+                end_date="2026-08-31"
+            )
+            self.assertIsInstance(tile_bytes, bytes, f"Reducer {r_name} must return bytes")
+            self.assertTrue(tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"), f"Reducer {r_name} tile must have valid PNG magic header")
+            img = Image.open(io.BytesIO(tile_bytes))
+            self.assertEqual(img.size, (256, 256), f"Reducer {r_name} tile must be 256x256")
+            self.assertEqual(img.mode, "RGBA", f"Reducer {r_name} tile must be RGBA")
+
+        # Quality mosaic tiles (NDVI & Cloud Probability)
+        for q_band in ["NDVI", "cloud_prob"]:
+            qm_tile_bytes = tile_service.render_temporal_quality_mosaic_tile(
+                z=10,
+                x=163,
+                y=395,
+                collection="sentinel-2-l2a",
+                quality_band=q_band,
+                start_date="2026-06-01",
+                end_date="2026-08-31"
+            )
+            self.assertIsInstance(qm_tile_bytes, bytes)
+            self.assertTrue(qm_tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+            img_qm = Image.open(io.BytesIO(qm_tile_bytes))
+            self.assertEqual(img_qm.size, (256, 256))
+            self.assertEqual(img_qm.mode, "RGBA")
+
 
 if __name__ == "__main__":
     unittest.main()

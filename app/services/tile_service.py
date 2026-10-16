@@ -4132,8 +4132,226 @@ class TileService:
         img.save(buf, format="PNG", optimize=True)
         return buf.getvalue()
 
+    # --------------------------------------------------------------------------
+    # Cycle v2.5.28: Multi-Temporal Scene Stacking & Quality Mosaic XYZ Tiles
+    # --------------------------------------------------------------------------
+
+    def render_temporal_composite_tile(
+        self,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        collection: str = "sentinel-2-l2a",
+        reducer: Union[str, Any] = "median",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        max_cloud_cover_pct: float = 40.0,
+        bands: Optional[str] = None,
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        quality_band: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile for multi-temporal composite satellite imagery
+        with statistical reduction (median, mean, p25, p75) or quality mosaic selection (max_ndvi, min_cloud).
+        """
+        import hashlib
+        from PIL import Image
+        import io
+        from app.models.schemas import (
+            parse_rescale,
+            TemporalReducerMethod,
+            select_greenest_pixel_indices,
+            select_clearest_pixel_indices,
+            apply_temporal_reduction
+        )
+
+        actual_z = int(z)
+        actual_x = int(x)
+        actual_y = int(y)
+        col_clean = (collection or "sentinel-2-l2a").lower().strip()
+        red_clean = (reducer.value if hasattr(reducer, "value") else str(reducer)).lower().strip()
+        s_date = start_date or "2026-06-01"
+        e_date = end_date or "2026-08-31"
+
+        if rescale:
+            rmin, rmax = parse_rescale(rescale, default=(0.0, 0.7))
+        else:
+            rmin, rmax = (0.0, 0.7)
+
+        if rmax <= rmin:
+            rmax = rmin + 0.01
+
+        chosen_cmap = colormap.lower().strip() if colormap else None
+
+        cache_key = f"{col_clean}_{red_clean}_{s_date}_{e_date}_{bands}_{chosen_cmap}_{round(rmin, 2)}_{round(rmax, 2)}"
+        param_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()[:10]
+        cache_subdir = os.path.join(TILE_CACHE_DIR, "temporal", col_clean, red_clean, str(actual_z), str(actual_x))
+        os.makedirs(cache_subdir, exist_ok=True)
+        cache_file = os.path.join(cache_subdir, f"{actual_y}_{param_hash}.png")
+
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "rb") as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning("Error reading temporal composite tile cache: %s", e)
+
+        min_lon, min_lat, max_lon, max_lat = self.tile_to_bounds_wgs84(actual_z, actual_x, actual_y)
+        gx = np.linspace(min_lon, max_lon, 256, dtype=np.float32)
+        gy = np.linspace(max_lat, min_lat, 256, dtype=np.float32)
+        xx, yy = np.meshgrid(gx, gy)
+
+        T = 5
+        base_reflectance = 0.24 + np.sin(xx * 55.0 + yy * 35.0) * 0.10 + np.cos(yy * 45.0 - xx * 25.0) * 0.08
+        base_reflectance = np.clip(base_reflectance, 0.05, 0.85)
+
+        # Multi-temporal stacks for Red (B04), NIR (B08), Green (B03), Blue (B02)
+        red_stack = np.zeros((T, 256, 256), dtype=np.float32)
+        nir_stack = np.zeros((T, 256, 256), dtype=np.float32)
+        green_stack = np.zeros((T, 256, 256), dtype=np.float32)
+        blue_stack = np.zeros((T, 256, 256), dtype=np.float32)
+        cloud_prob_stack = np.zeros((T, 256, 256), dtype=np.float32)
+
+        for t in range(T):
+            # Phenological greenness factor peaking at mid-season
+            pheno = 1.0 + 0.35 * math.sin(math.pi * (t + 0.5) / T)
+            red_stack[t] = np.clip(base_reflectance * 0.65 / max(pheno, 0.1), 0.02, 0.90)
+            nir_stack[t] = np.clip(base_reflectance * 1.45 * pheno, 0.05, 0.95)
+            green_stack[t] = np.clip(base_reflectance * 0.80, 0.03, 0.90)
+            blue_stack[t] = np.clip(base_reflectance * 0.55, 0.02, 0.85)
+
+            cp = np.full((256, 256), 0.05 + 0.03 * t, dtype=np.float32)
+            if t == 1:
+                # Local transient cloud in scene 1 (columns 10..50, rows 10..50)
+                cp[10:50, 10:50] = 0.88
+                red_stack[t, 10:50, 10:50] = 0.75
+                blue_stack[t, 10:50, 10:50] = 0.80
+                green_stack[t, 10:50, 10:50] = 0.78
+            cloud_prob_stack[t] = cp
+
+        # Cloud scrubbing: mask out high cloud pixels with NaN prior to statistical reduction
+        cloud_mask = cloud_prob_stack > 0.60
+        red_masked = np.where(cloud_mask, np.nan, red_stack)
+        nir_masked = np.where(cloud_mask, np.nan, nir_stack)
+        green_masked = np.where(cloud_mask, np.nan, green_stack)
+        blue_masked = np.where(cloud_mask, np.nan, blue_stack)
+
+        # Apply reduction
+        if red_clean in ("max_ndvi", "greenest_pixel"):
+            best_idx, max_ndvi = select_greenest_pixel_indices(red_stack, nir_stack)
+            reduced_red = np.take_along_axis(red_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+            reduced_green = np.take_along_axis(green_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+            reduced_blue = np.take_along_axis(blue_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+            reduced_nir = np.take_along_axis(nir_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+            single_val = max_ndvi
+        elif red_clean in ("min_cloud", "clearest_pixel"):
+            best_idx, min_cp = select_clearest_pixel_indices(cloud_prob_stack)
+            reduced_red = np.take_along_axis(red_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+            reduced_green = np.take_along_axis(green_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+            reduced_blue = np.take_along_axis(blue_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+            reduced_nir = np.take_along_axis(nir_stack, np.expand_dims(best_idx, axis=0), axis=0).squeeze(axis=0)
+            denom = reduced_nir + reduced_red
+            single_val = (reduced_nir - reduced_red) / np.where(np.abs(denom) < 1e-7, 1e-7, denom)
+        else:
+            reduced_red = apply_temporal_reduction(red_masked, reducer=red_clean, axis=0)
+            reduced_green = apply_temporal_reduction(green_masked, reducer=red_clean, axis=0)
+            reduced_blue = apply_temporal_reduction(blue_masked, reducer=red_clean, axis=0)
+            reduced_nir = apply_temporal_reduction(nir_masked, reducer=red_clean, axis=0)
+            denom = reduced_nir + reduced_red
+            single_val = (reduced_nir - reduced_red) / np.where(np.abs(denom) < 1e-7, 1e-7, denom)
+
+        # Rendering RGBA
+        bands_list = [b.strip().upper() for b in bands.split(",")] if bands else []
+        is_true_color = (
+            len(bands_list) >= 3 and
+            bands_list[0] in ("B04", "RED") and
+            bands_list[1] in ("B03", "GREEN") and
+            bands_list[2] in ("B02", "BLUE")
+        ) or (bands is None and chosen_cmap is None)
+
+        if is_true_color:
+            r_norm = np.clip((reduced_red - 0.02) / (0.45 - 0.02), 0.0, 1.0)
+            g_norm = np.clip((reduced_green - 0.02) / (0.45 - 0.02), 0.0, 1.0)
+            b_norm = np.clip((reduced_blue - 0.02) / (0.45 - 0.02), 0.0, 1.0)
+
+            rgba = np.zeros((256, 256, 4), dtype=np.uint8)
+            rgba[:, :, 0] = (r_norm * 255.0).astype(np.uint8)
+            rgba[:, :, 1] = (g_norm * 255.0).astype(np.uint8)
+            rgba[:, :, 2] = (b_norm * 255.0).astype(np.uint8)
+            rgba[:, :, 3] = 255
+        else:
+            cmap_name = chosen_cmap or "rdylgn"
+            cmap_func = self.get_colormap(cmap_name)
+
+            # Choose array to render
+            if bands and any(b in ("B08", "NIR") for b in bands_list):
+                target_arr = reduced_nir
+            elif bands and any(b in ("B04", "RED") for b in bands_list):
+                target_arr = reduced_red
+            else:
+                target_arr = single_val
+
+            norm_val = np.clip((target_arr - rmin) / (rmax - rmin), 0.0, 1.0)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+            rgba[:, :, 3] = 255
+
+        img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        try:
+            with open(cache_file, "wb") as f:
+                f.write(png_bytes)
+        except Exception as e:
+            logger.warning("Failed to write temporal composite tile cache: %s", e)
+
+        return png_bytes
+
+    def render_temporal_quality_mosaic_tile(
+        self,
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        collection: str = "sentinel-2-l2a",
+        quality_band: str = "NDVI",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        max_cloud_cover_pct: float = 40.0,
+        bands: Optional[str] = None,
+        colormap: Optional[str] = None,
+        rescale: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders dynamic XYZ tile for quality mosaic (greenest-pixel / clearest-pixel)."""
+        q_band_lower = str(quality_band).lower().strip()
+        if q_band_lower in ("ndvi", "greenest", "greenest_pixel", "max_ndvi"):
+            chosen_reducer = "max_ndvi"
+        elif q_band_lower in ("cloud", "cloud_prob", "clearest", "clearest_pixel", "min_cloud", "scl"):
+            chosen_reducer = "min_cloud"
+        else:
+            chosen_reducer = "max_ndvi"
+
+        return self.render_temporal_composite_tile(
+            z=z,
+            x=x,
+            y=y,
+            collection=collection,
+            reducer=chosen_reducer,
+            start_date=start_date,
+            end_date=end_date,
+            max_cloud_cover_pct=max_cloud_cover_pct,
+            bands=bands,
+            colormap=colormap,
+            rescale=rescale,
+            quality_band=quality_band,
+            **kwargs
+        )
+
 
 tile_service = TileService()
+
 
 
 
