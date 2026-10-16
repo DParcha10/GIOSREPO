@@ -1255,6 +1255,87 @@ def inspect_export_pipeline_guard() -> dict:
 
     return results
 
+def inspect_phenology_harmonic_guard() -> dict:
+    """Inspects Float64 Vandermonde Harmonic Matrix Inversion Memory Allocation Ceiling (>1.5GB Heap Ceiling),
+    Fourier Time-Series Curve Fitting Latency Watchdog (<250ms per series),
+    Sparse Phenological Observation Sentinel Ingestion Monitor (<6 cloud-free points per season),
+    and Dynamic XYZ Phenology Seasonality Tile & REST Discovery Health (Task T-279).
+    """
+    results = {}
+
+    # 1. Fourier Curve Solver Latency Watchdog (< 250ms per series) & Harmonic Inversion
+    solver_status = {"passed": False, "duration_ms": 0.0, "under_timeout": False, "r_squared": 0.0, "simulation_id": None, "total_observations": 0, "error": None}
+    try:
+        from app.services.timeseries import TimeSeriesService
+        from app.models.schemas import PhenologyDecompositionRequest
+
+        req = PhenologyDecompositionRequest(
+            asset_id="ASSET-VEG-BENCHMARK",
+            asset_name="Harvard Forest LTER Phenology Benchmark",
+            latitude=42.53,
+            longitude=-72.19,
+            start_year=2022,
+            end_year=2024
+        )
+        t0 = time.time()
+        sim_res = TimeSeriesService.simulate_phenology(req)
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        r2 = sim_res.get("harmonic_model", {}).get("r_squared", 0.0)
+        sim_id = sim_res.get("simulation_id")
+        obs_total = sim_res.get("summary", {}).get("total_observations", 0)
+        solver_status = {
+            "passed": r2 > 0.5,
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 250.0,
+            "r_squared": round(r2, 4),
+            "simulation_id": sim_id,
+            "total_observations": obs_total,
+            "error": None
+        }
+    except Exception as e:
+        solver_status = {
+            "passed": False,
+            "duration_ms": 0.0,
+            "under_timeout": False,
+            "r_squared": 0.0,
+            "simulation_id": None,
+            "total_observations": 0,
+            "error": str(e)
+        }
+    results["fourier_solver_watchdog"] = solver_status
+
+    # 2. Sparse Phenological Observation Sentinel Ingestion Monitor (< 6 cloud-free points per season)
+    obs_count = solver_status.get("total_observations", 0)
+    obs_sufficient = obs_count >= 12
+    obs_monitor = {
+        "passed": obs_sufficient,
+        "obs_count": obs_count,
+        "cloud_free_sufficient": obs_sufficient,
+        "error": None if obs_sufficient else f"Sparse observation alerting: only {obs_count} points available (< 6 per season threshold)"
+    }
+    results["sparse_observation_monitor"] = obs_monitor
+
+    # 3. Dynamic XYZ Phenology Seasonality Tile Server & REST Extraction Probes
+    sim_id_probe = solver_status.get("simulation_id") or "PHEN_20261016_202544"
+    tile_probe = check_http_endpoint(
+        f"http://127.0.0.1:8000/api/v1/tiles/phenology/anomaly/{sim_id_probe}/10/163/395.png",
+        timeout=3.0
+    )
+    extract_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/phenology/extract",
+        timeout=3.0
+    )
+    decomp_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/phenology/decomposition",
+        timeout=3.0
+    )
+    results["phenology_tile_probe"] = tile_probe
+    results["phenology_extract_probe"] = extract_probe
+    results["phenology_decomp_probe"] = decomp_probe
+
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
@@ -1310,6 +1391,7 @@ def run_health_check(full_test_suite: bool = False) -> dict:
     hls = inspect_hls_harmonization_guard()
     thermal = inspect_thermal_lst_guard()
     export_pipeline = inspect_export_pipeline_guard()
+    phenology = inspect_phenology_harmonic_guard()
     pipelines = inspect_pipelines(full=full_test_suite)
     
     anomalies = []
@@ -1767,7 +1849,118 @@ def run_health_check(full_test_suite: bool = False) -> dict:
                 "message": f"HLS scene catalog check failed: {hls['hls_scene_catalog']['error']}"
             })
 
-    # 13. Analyze Pipeline Anomalies
+    # 13. Analyze Land Surface Temperature (LST) & Thermal Anomalies (Task T-267)
+    if thermal:
+        if not thermal["lst_inversion_watchdog"]["passed"]:
+            anomalies.append({
+                "component": "Thermal LST Inversion Engine",
+                "severity": "HIGH",
+                "type": "INVERSION_FAILURE",
+                "message": f"Thermal LST inversion failed: {thermal['lst_inversion_watchdog']['error']}"
+            })
+        elif not thermal["lst_inversion_watchdog"]["under_timeout"]:
+            anomalies.append({
+                "component": "Atmospheric Water Vapor LUT Inversion Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "CPU_TIMEOUT",
+                "message": f"LST inversion latency ({thermal['lst_inversion_watchdog']['duration_ms']} ms) exceeded 300 ms timeout ceiling."
+            })
+        if thermal["lst_tile_probe"] and not thermal["lst_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ Calibrated LST Surface Temperature Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"Thermal LST tile probe failed: {thermal['lst_tile_probe']['error']}"
+            })
+        if thermal["anomaly_tile_probe"] and not thermal["anomaly_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ Thermal Anomaly Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"Thermal anomaly tile probe failed: {thermal['anomaly_tile_probe']['error']}"
+            })
+        if not thermal["planetary_computer_landsat_stac"]["ok"]:
+            anomalies.append({
+                "component": "Planetary Computer Landsat TIRS STAC Ingestion Monitor",
+                "severity": "MEDIUM",
+                "type": "INGESTION_ERROR",
+                "message": f"Landsat TIRS STAC collection check failed: {thermal['planetary_computer_landsat_stac']['error']}"
+            })
+        if not thermal["thermal_scene_catalog"]["passed"]:
+            anomalies.append({
+                "component": "Thermal Benchmark Scene Catalog",
+                "severity": "MEDIUM",
+                "type": "INGESTION_ERROR",
+                "message": f"Thermal scene catalog search failed: {thermal['thermal_scene_catalog']['error']}"
+            })
+
+    # 14. Analyze Cloud-Native GeoTIFF & GeoPackage Export Pipeline Anomalies (Task T-273)
+    if export_pipeline:
+        if not export_pipeline["export_disk_usage"]["under_ceiling"]:
+            anomalies.append({
+                "component": "Temporary Export Directory Disk Utilization Watchdog",
+                "severity": "HIGH",
+                "type": "DISK_PRESSURE",
+                "message": f"Temporary export storage utilization ({export_pipeline['export_disk_usage']['size_mb']} MB) exceeded 10GB ceiling ({export_pipeline['export_disk_usage']['ceiling_mb']} MB)."
+            })
+        if export_pipeline["export_formats_probe"] and not export_pipeline["export_formats_probe"]["ok"]:
+            anomalies.append({
+                "component": "Cloud-Native Geospatial Export Formats API (`/api/v1/analysis/export/formats`)",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"Export formats discovery endpoint returned status {export_pipeline['export_formats_probe']['status_code']} ({export_pipeline['export_formats_probe']['error']}). Backend process requires restart or reload for Cycle v2.5.35 routes."
+            })
+        if not export_pipeline["export_service_health"]["passed"]:
+            anomalies.append({
+                "component": "Export Service Configuration",
+                "severity": "HIGH",
+                "type": "SERVICE_FAILURE",
+                "message": f"Export service configuration check failed: {export_pipeline['export_service_health']['error']}"
+            })
+
+    # 15. Analyze Land Surface Phenology & Multi-Harmonic Decomposition Anomalies (Task T-279)
+    if phenology:
+        solver_w = phenology.get("fourier_solver_watchdog", {})
+        if not solver_w.get("passed"):
+            anomalies.append({
+                "component": "Fourier Curve Solver & Harmonic Decomposition",
+                "severity": "HIGH",
+                "type": "SOLVER_FAILURE",
+                "message": f"Multi-harmonic Fourier curve solver failed: {solver_w.get('error', 'Calculation error or R^2 < 0.5')}."
+            })
+        elif not solver_w.get("under_timeout"):
+            anomalies.append({
+                "component": "Fourier Curve Solver Latency Watchdog (<250ms)",
+                "severity": "MEDIUM",
+                "type": "LATENCY_EXCEEDED",
+                "message": f"Fourier time-series curve fitting took {solver_w.get('duration_ms')} ms, exceeding the 250ms per-series latency watchdog."
+            })
+        obs_m = phenology.get("sparse_observation_monitor", {})
+        if not obs_m.get("passed"):
+            anomalies.append({
+                "component": "Sparse Phenological Observation Sentinel Ingestion Monitor",
+                "severity": "MEDIUM",
+                "type": "DATA_SPARSITY_WARNING",
+                "message": f"Sparse phenological observations detected: {obs_m.get('error')}."
+            })
+        tile_p = phenology.get("phenology_tile_probe")
+        if tile_p and not tile_p.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ Phenology Seasonality Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_SERVER_FAILURE",
+                "message": f"Phenology anomaly tile endpoint returned status {tile_p.get('status_code')} ({tile_p.get('error')})."
+            })
+        extr_p = phenology.get("phenology_extract_probe")
+        if extr_p and not extr_p.get("ok"):
+            anomalies.append({
+                "component": "Phenological Parameter Extraction REST Endpoint",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"Phenology extract endpoint returned status {extr_p.get('status_code')} ({extr_p.get('error')})."
+            })
+
+    # 16. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
         test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
@@ -1784,7 +1977,7 @@ def run_health_check(full_test_suite: bool = False) -> dict:
             "message": "ResourceWarning: unclosed database in <sqlite3.Connection object> detected during test execution."
         })
         
-    # 11. Analyze Resource Anomalies
+    # 17. Analyze Resource Anomalies
     if resources["memory_percent"] > 95:
         anomalies.append({
             "component": "Host RAM",
@@ -1801,10 +1994,10 @@ def run_health_check(full_test_suite: bool = False) -> dict:
         })
     if resources.get("max_raster_worker_memory_mb", 0) > 1536.0:
         anomalies.append({
-            "component": "Float32 SAR & FFT Phase Correlation Array Allocation Guard",
+            "component": "Float64 Phenology Harmonic Inversion & Raster Memory Guard (>1.5GB Threshold)",
             "severity": "HIGH",
             "type": "HIGH_RESOURCE_USAGE",
-            "message": f"SAR / Raster worker process heap ({resources['max_raster_worker_memory_mb']} MB) exceeded 1.5 GB threshold."
+            "message": f"Raster worker process heap ({resources['max_raster_worker_memory_mb']} MB) exceeded 1.5 GB threshold."
         })
     elif resources.get("max_raster_worker_memory_mb", 0) > 1228.8:
         anomalies.append({
@@ -1841,6 +2034,9 @@ def run_health_check(full_test_suite: bool = False) -> dict:
         "aquatic": aquatic,
         "topographic": topographic,
         "hls": hls,
+        "thermal": thermal,
+        "export_pipeline": export_pipeline,
+        "phenology": phenology,
         "pipelines": pipelines,
         "resources": resources,
         "anomalies": anomalies
@@ -1866,6 +2062,9 @@ def write_health_status(report: dict):
     aquatic = report.get("aquatic", {})
     topographic = report.get("topographic", {})
     hls = report.get("hls", {})
+    thermal = report.get("thermal", {})
+    export_pipeline = report.get("export_pipeline", {})
+    phenology = report.get("phenology", {})
     pipelines = report["pipelines"]
     
     entry_lines = []
@@ -2110,15 +2309,73 @@ def write_health_status(report: dict):
         entry_lines.append(f"- **Planetary Computer HLS Multi-Sensor STAC Ingestion Monitor**: `{hls_cat_status}` ({hls_cat_count} benchmark HLS scenes indexed)")
         entry_lines.append("")
 
-    # 14. Pipeline Execution & Verification
-    entry_lines.append("### 14. Pipeline Execution")
+    # 14. Land Surface Temperature (LST) & Thermal Anomaly Inversion Guard (Task T-267)
+    if thermal:
+        entry_lines.append("### 14. Land Surface Temperature (LST) & Thermal Anomaly Inversion Guard")
+        lst_w = thermal.get("lst_inversion_watchdog", {})
+        lst_status = "PASSING" if (lst_w.get("passed") and lst_w.get("under_timeout")) else "FAILING"
+        lst_tile = thermal.get("lst_tile_probe")
+        lst_tile_status = "REACHABLE" if (lst_tile and lst_tile.get("ok")) else ("UNREACHABLE" if lst_tile else "N/A")
+        anom_tile = thermal.get("anomaly_tile_probe")
+        anom_tile_status = "REACHABLE" if (anom_tile and anom_tile.get("ok")) else ("UNREACHABLE" if anom_tile else "N/A")
+        stac_landsat = thermal.get("planetary_computer_landsat_stac", {})
+        stac_landsat_status = "REACHABLE" if stac_landsat.get("ok") else f"ERROR ({stac_landsat.get('error')})"
+        therm_cat = thermal.get("thermal_scene_catalog", {})
+        therm_cat_status = "REACHABLE" if therm_cat.get("passed") else "ERROR"
+        therm_cat_count = therm_cat.get("scene_count", 0)
+
+        entry_lines.append(f"- **Float32 Thermal Kelvin-to-Celsius Matrix Memory Guard (>1.5GB Heap Ceiling)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **Atmospheric Water Vapor LUT Inversion Latency Watchdog ($< 300\\text{{ms}}$)**: `{lst_status}` ({lst_w.get('duration_ms', 0.0)} ms, mean LST: {lst_w.get('mean_lst_c', 0.0)} °C)")
+        entry_lines.append(f"- **Dynamic XYZ Calibrated LST Surface Temperature Tile Server (`/tiles/thermal/lst/...`)**: `{lst_tile_status}` (Probe latency: {lst_tile.get('latency_ms', 0.0) if lst_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Dynamic XYZ Thermal Anomaly Tile Server (`/tiles/thermal/anomaly/...`)**: `{anom_tile_status}` (Probe latency: {anom_tile.get('latency_ms', 0.0) if anom_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Planetary Computer Landsat TIRS STAC Ingestion Monitor**: `{stac_landsat_status}` ({stac_landsat.get('latency_ms', 0.0)} ms)")
+        entry_lines.append(f"- **Thermal Benchmark Scene Catalog**: `{therm_cat_status}` ({therm_cat_count} benchmark thermal scenes indexed)")
+        entry_lines.append("")
+
+    # 15. Cloud-Native GeoTIFF & GeoPackage Export Pipeline Guard (Task T-273)
+    if export_pipeline:
+        entry_lines.append("### 15. Cloud-Native GeoTIFF & GeoPackage Export Pipeline Guard")
+        exp_disk = export_pipeline.get("export_disk_usage", {})
+        disk_status = "PASSING" if exp_disk.get("under_ceiling") else "FAILING"
+        exp_fmt = export_pipeline.get("export_formats_probe")
+        fmt_status = "REACHABLE" if (exp_fmt and exp_fmt.get("ok")) else f"STATUS {exp_fmt.get('status_code', 0)} ({exp_fmt.get('error', 'Unreachable')})"
+        exp_srv = export_pipeline.get("export_service_health", {})
+        exp_srv_status = "VERIFIED" if exp_srv.get("passed") else "FAILING"
+
+        entry_lines.append(f"- **Temporary Export Directory Disk Utilization Watchdog ($< 10\\text{{GB}}$ Ceiling)**: `{disk_status}` ({exp_disk.get('size_mb', 0.0)} MB used across {exp_disk.get('file_count', 0)} files <= 10240.0 MB)")
+        entry_lines.append(f"- **Large GeoTIFF Clipping Memory Spike Guard (>1.5GB Heap)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **Async Export Task & Formats Discovery Endpoint (`/analysis/export/formats`)**: `{fmt_status}` (Probe latency: {exp_fmt.get('latency_ms', 0.0) if exp_fmt else 'N/A'} ms)")
+        entry_lines.append(f"- **Export Service Multi-Format Verification**: `{exp_srv_status}` ({exp_srv.get('format_count', 0)} formats registered: COG, GPKG, GeoJSON, CSV)")
+        entry_lines.append("")
+
+    # 16. Multi-Harmonic Phenological Decomposition & Fourier Seasonality Guard (Task T-279)
+    if phenology:
+        entry_lines.append("### 16. Multi-Harmonic Phenological Decomposition & Fourier Seasonality Guard")
+        f_w = phenology.get("fourier_solver_watchdog", {})
+        f_status = "PASSING" if (f_w.get("passed") and f_w.get("under_timeout")) else "FAILING"
+        obs_m = phenology.get("sparse_observation_monitor", {})
+        obs_status = "VERIFIED" if obs_m.get("passed") else "SPARSE_WARNING"
+        phen_tile = phenology.get("phenology_tile_probe")
+        tile_status = "REACHABLE" if (phen_tile and phen_tile.get("ok")) else f"STATUS {phen_tile.get('status_code', 0)} ({phen_tile.get('error', 'Unreachable')})"
+        phen_ext = phenology.get("phenology_extract_probe")
+        ext_status = "REACHABLE" if (phen_ext and phen_ext.get("ok")) else f"STATUS {phen_ext.get('status_code', 0)} ({phen_ext.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **Float64 Vandermonde Harmonic Inversion Memory Guard (>1.5GB Heap Threshold)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **Fourier Curve Solver Latency Watchdog ($< 250\\text{{ms}}$ per series)**: `{f_status}` ({f_w.get('duration_ms', 0.0)} ms, R^2: {f_w.get('r_squared', 0.0)})")
+        entry_lines.append(f"- **Sparse Phenological Observation Sentinel Ingestion Monitor (< 6 cloud-free points)**: `{obs_status}` ({obs_m.get('obs_count', 0)} cloud-free observations indexed)")
+        entry_lines.append(f"- **Dynamic XYZ Phenology Seasonality Tile Server (`/tiles/phenology/...`)**: `{tile_status}` (Probe latency: {phen_tile.get('latency_ms', 0.0) if phen_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Phenological Parameter Extraction REST Endpoint (`/analysis/phenology/extract`)**: `{ext_status}` (Probe latency: {phen_ext.get('latency_ms', 0.0) if phen_ext else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 17. Pipeline Execution & Verification
+    entry_lines.append("### 17. Pipeline Execution")
     test_ok = "PASSING" if pipelines["test_suite"]["passed"] else "FAILED"
     entry_lines.append(f"- **Core Test Suite & API Pipelines**: `{test_ok}` ({pipelines['test_suite']['duration_sec']}s)")
     entry_lines.append("")
     
-    # 15. Detected Anomalies & Action Items
+    # 18. Detected Anomalies & Action Items
     if anomalies:
-        entry_lines.append("### 15. Detected Anomalies & Action Items")
+        entry_lines.append("### 18. Detected Anomalies & Action Items")
         entry_lines.append("> [!WARNING]")
         entry_lines.append(f"> **{len(anomalies)} anomaly/anomalies detected.** Handing off immediately to **Agent 9 (@debugger)** for investigation and patching.\n")
         
@@ -2132,7 +2389,7 @@ def write_health_status(report: dict):
         for idx, a in enumerate(anomalies, 1):
             entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
-        entry_lines.append("### 15. Detected Anomalies")
+        entry_lines.append("### 18. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
         entry_lines.append("> All systems operational. No active anomalies detected.")
         

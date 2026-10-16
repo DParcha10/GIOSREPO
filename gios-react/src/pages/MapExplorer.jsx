@@ -209,6 +209,8 @@ import GCPQualityModal from '../components/GCPQualityModal';
 import InSarDisplacementModal from '../components/InSarDisplacementModal';
 import ThermalLstModal from '../components/ThermalLstModal';
 import ExportDatasetModal from '../components/ExportDatasetModal';
+import PhenologySeasonalityModal from '../components/PhenologySeasonalityModal';
+import SpectralSharpeningModal from '../components/SpectralSharpeningModal';
 import BYOCStorageModal from '../components/BYOCStorageModal';
 import PointCloudCHMModal from '../components/PointCloudCHMModal';
 import CoRegistrationModal from '../components/CoRegistrationModal';
@@ -364,7 +366,14 @@ import {
   buildHlsNbarTileUrlTemplate,
   buildThermalLstTileUrlTemplate,
   buildThermalAnomalyTileUrlTemplate,
-  THERMAL_BENCHMARK_SCENES
+  THERMAL_BENCHMARK_SCENES,
+  buildPhenologyTileUrl,
+  PhenologyMetric,
+  PHENOLOGY_BENCHMARK_SITES,
+  buildSharpenedTileUrlTemplate,
+  SharpeningMethod,
+  SharpeningIndexTarget,
+  SharpeningQualityRating
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -895,6 +904,51 @@ export default function MapExplorer() {
   // Cycle v2.5.35 Cloud-Native GeoTIFF & GeoPackage Export Studio State (Task T-272)
   const [exportDatasetModalOpen, setExportDatasetModalOpen] = useState(false);
   const [latestExportArtifact, setLatestExportArtifact] = useState(null);
+
+  // Cycle v2.5.36 Multi-Harmonic Land Surface Phenology & Fourier Seasonality State (Task T-278)
+  const [phenologySeasonalityModalOpen, setPhenologySeasonalityModalOpen] = useState(false);
+  const [showPhenologySeasonalityLayer, setShowPhenologySeasonalityLayer] = useState(false);
+  const [phenologySeasonalitySiteId, setPhenologySeasonalitySiteId] = useState('HARVARD_FOREST_LTER_2026');
+  const [phenologySeasonalitySiteName, setPhenologySeasonalitySiteName] = useState('Harvard Forest LTER (Deciduous Broadleaf)');
+  const [phenologySeasonalityMetric, setPhenologySeasonalityMetric] = useState('sos_doy');
+  const [phenologySeasonalityColormap, setPhenologySeasonalityColormap] = useState('viridis');
+  const [phenologySeasonalityOpacity, setPhenologySeasonalityOpacity] = useState(0.85);
+  const [phenologySeasonalityTileUrl, setPhenologySeasonalityTileUrl] = useState('');
+  const [phenologySeasonalitySummary, setPhenologySeasonalitySummary] = useState({
+    sos_doy: 125.0,
+    pos_doy: 200.0,
+    eos_doy: 285.0,
+    los_days: 160.0,
+    seasonal_amplitude: 0.520,
+    base_level: 0.280,
+    peak_level: 0.800,
+    harmonic_rmse: 0.024,
+    r_squared: 0.962,
+    ecosystem_type: 'Deciduous Broadleaf Forest'
+  });
+
+  // Cycle v2.5.37 Multi-Band Super-Resolution Sharpening & Gram-Schmidt Spectral Fusion State (Task T-284)
+  const [spectralSharpeningModalOpen, setSpectralSharpeningModalOpen] = useState(false);
+  const [showSharpenedTileLayer, setShowSharpenedTileLayer] = useState(false);
+  const [sharpenedSceneKey, setSharpenedSceneKey] = useState('SAN_JOAQUIN_AGRICULTURE_2026');
+  const [sharpenedSceneName, setSharpenedSceneName] = useState('San Joaquin Valley Agricultural Corridor');
+  const [sharpenedMethod, setSharpenedMethod] = useState(SharpeningMethod?.GRAM_SCHMIDT || 'gram_schmidt');
+  const [sharpenedTarget, setSharpenedTarget] = useState(SharpeningIndexTarget?.NDMI || 'ndmi');
+  const [sharpenedColormap, setSharpenedColormap] = useState('viridis');
+  const [sharpenedOpacity, setSharpenedOpacity] = useState(0.85);
+  const [sharpenedTileUrl, setSharpenedTileUrl] = useState('');
+  const [sharpenedSummary, setSharpenedSummary] = useState({
+    method: 'gram_schmidt',
+    sam_rad: 0.024,
+    sam_deg: 1.375,
+    ergas: 1.85,
+    uiqi_q4: 0.942,
+    mtf_high_freq_gain: 1.45,
+    radiometric_energy_conservation_ratio: 1.002,
+    rmse: 0.012,
+    quality_rating: SharpeningQualityRating?.EXCELLENT || 'EXCELLENT',
+    preserves_radiometry: true
+  });
 
   // T-79 & T-81 Dense Point Cloud Filtering & Canopy Height Model (CHM) State
   const [pointCloudModalOpen, setPointCloudModalOpen] = useState(false);
@@ -5049,6 +5103,39 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={447}
+              />
+            )}
+
+            {/* Cycle v2.5.36 Multi-Harmonic Land Surface Phenology Dynamic TileLayer (Task T-278) */}
+            {showPhenologySeasonalityLayer && !curtainActive && (
+              <TileLayer 
+                key={`phenology-seasonality-${phenologySeasonalitySiteId}-${phenologySeasonalityMetric}-${phenologySeasonalityColormap}-${phenologySeasonalityOpacity}`}
+                url={phenologySeasonalityTileUrl || buildPhenologyTileUrl({
+                  metric: phenologySeasonalityMetric,
+                  colormap: phenologySeasonalityColormap
+                })}
+                opacity={phenologySeasonalityOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={448}
+              />
+            )}
+
+            {/* Cycle v2.5.37 Multi-Band Super-Resolution Sharpened Dynamic TileLayer (Task T-284) */}
+            {showSharpenedTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`sharpened-tile-${sharpenedSceneKey}-${sharpenedMethod}-${sharpenedTarget}-${sharpenedColormap}-${sharpenedOpacity}`}
+                url={sharpenedTileUrl || buildSharpenedTileUrlTemplate({
+                  method: sharpenedMethod,
+                  target: sharpenedTarget,
+                  colormap: sharpenedColormap
+                })}
+                opacity={sharpenedOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={449}
               />
             )}
 
@@ -10050,6 +10137,191 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* Cycle v2.5.36 Floating Land Surface Phenology & Seasonality HUD Card (Task T-278) */}
+          {showPhenologySeasonalityLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-lime-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[680px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Sprout className="w-4 h-4 text-lime-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[220px]" title={phenologySeasonalitySiteName}>
+                    {phenologySeasonalitySiteName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-lime-500/20 text-lime-300 border border-lime-500/30">
+                    {phenologySeasonalityMetric.replace('_', ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {phenologySeasonalityColormap.toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    R² = {phenologySeasonalitySummary?.r_squared ?? '0.962'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setPhenologySeasonalityModalOpen(true)}
+                    className="px-2 py-1 bg-lime-950 hover:bg-lime-900 border border-lime-500/40 text-lime-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowPhenologySeasonalityLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Phenology Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">SOS:</span>
+                  <span className="text-green-400 font-bold">DOY {Math.round(phenologySeasonalitySummary?.sos_doy ?? 125)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">POS:</span>
+                  <span className="text-yellow-400 font-bold">DOY {Math.round(phenologySeasonalitySummary?.pos_doy ?? 200)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">EOS:</span>
+                  <span className="text-orange-400 font-bold">DOY {Math.round(phenologySeasonalitySummary?.eos_doy ?? 285)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">LOS:</span>
+                  <span className="text-lime-400 font-bold">{Math.round(phenologySeasonalitySummary?.los_days ?? 160)} Days</span>
+                  <span className="text-zinc-500 uppercase ml-1">ΔVI:</span>
+                  <span className="text-emerald-400 font-bold">+{Number(phenologySeasonalitySummary?.seasonal_amplitude ?? 0.52).toFixed(3)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Base:</span>
+                  <span className="text-zinc-300 font-bold">{Number(phenologySeasonalitySummary?.base_level ?? 0.28).toFixed(3)}</span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Metric:</span>
+                  {['sos_doy', 'pos_doy', 'eos_doy', 'los_days', 'seasonal_amplitude'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setPhenologySeasonalityMetric(m)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        phenologySeasonalityMetric === m
+                          ? 'bg-lime-500/30 text-lime-300 border border-lime-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {m.split('_')[0].toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={phenologySeasonalityOpacity}
+                      onChange={(e) => setPhenologySeasonalityOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-lime-500 cursor-pointer"
+                    />
+                    <span className="text-lime-400 font-bold">{Math.round(phenologySeasonalityOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cycle v2.5.37 Floating Multi-Band Super-Resolution Sharpening HUD Card (Task T-284) */}
+          {showSharpenedTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-cyan-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[680px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-cyan-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[200px]" title={sharpenedSceneName}>
+                    {sharpenedSceneName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    {sharpenedTarget.toUpperCase()} (10m)
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                    {sharpenedMethod.replace('_', ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    Q4 = {sharpenedSummary?.uiqi_q4 ?? '0.942'}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {sharpenedSummary?.quality_rating ?? 'EXCELLENT'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setSpectralSharpeningModalOpen(true)}
+                    className="px-2 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowSharpenedTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Sharpened Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">SAM:</span>
+                  <span className="text-cyan-400 font-bold">{Number(sharpenedSummary?.sam_rad ?? 0.024).toFixed(3)} rad ({Number(sharpenedSummary?.sam_deg ?? 1.375).toFixed(2)}°)</span>
+                  <span className="text-zinc-500 uppercase ml-1">ERGAS:</span>
+                  <span className="text-teal-400 font-bold">{Number(sharpenedSummary?.ergas ?? 1.85).toFixed(2)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">MTF Gain:</span>
+                  <span className="text-emerald-400 font-bold">+{Math.round(((sharpenedSummary?.mtf_high_freq_gain ?? 1.45) - 1.0) * 100)}%</span>
+                  <span className="text-zinc-500 uppercase ml-1">Energy Ratio:</span>
+                  <span className="text-purple-400 font-bold">{Number(sharpenedSummary?.radiometric_energy_conservation_ratio ?? 1.002).toFixed(3)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">RMSE:</span>
+                  <span className="text-zinc-300 font-bold">{Number(sharpenedSummary?.rmse ?? 0.012).toFixed(3)}</span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Target:</span>
+                  {['ndmi', 'ndci', 'ndre', 'mndwi', 'nbr'].map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setSharpenedTarget(t)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        sharpenedTarget === t
+                          ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {t.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={sharpenedOpacity}
+                      onChange={(e) => setSharpenedOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-cyan-400 cursor-pointer"
+                    />
+                    <span className="text-cyan-400 font-bold">{Math.round(sharpenedOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -11035,6 +11307,30 @@ export default function MapExplorer() {
               >
                 <Download className="w-3.5 h-3.5 text-teal-400" />
                 <span>Export Studio (v2.5.35)</span>
+              </button>
+
+              {/* Cycle v2.5.36 Land Surface Phenology & Harmonic Seasonality Studio Shortcut (Task T-278) */}
+              <button
+                onClick={() => setPhenologySeasonalityModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-lime-300 hover:text-white hover:bg-lime-500/20 border border-lime-500/30 ${
+                  phenologySeasonalityModalOpen || showPhenologySeasonalityLayer ? 'bg-lime-600 text-white font-extrabold shadow-[0_0_12px_rgba(132,204,22,0.6)]' : ''
+                }`}
+                title="Land Surface Phenology & Harmonic Seasonality Studio, Multi-Harmonic Fourier Decomposition, Transition Milestones (SOS/POS/EOS/LOS) & Seasonality Tiles (Cycle v2.5.36)"
+              >
+                <Sprout className="w-3.5 h-3.5 text-lime-400" />
+                <span>Phenology Studio (v2.5.36)</span>
+              </button>
+
+              {/* Cycle v2.5.37 Multi-Band Super-Resolution Sharpening Studio Shortcut (Task T-284) */}
+              <button
+                onClick={() => setSpectralSharpeningModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  spectralSharpeningModalOpen || showSharpenedTileLayer ? 'bg-cyan-600 text-white font-extrabold shadow-[0_0_12px_rgba(34,211,238,0.6)]' : ''
+                }`}
+                title="Multi-Band Super-Resolution Studio, Gram-Schmidt Orthogonalization, 20m vs 10m Split-Screen Comparison HUD & Dynamic Sharpened Tiles (Cycle v2.5.37)"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Super-Resolution (v2.5.37)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -23185,6 +23481,64 @@ export default function MapExplorer() {
         onApply={(payload) => {
           setLatestExportArtifact(payload);
           setExportDatasetModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.36 Land Surface Phenology & Harmonic Seasonality Studio Modal (Task T-278) */}
+      <PhenologySeasonalityModal
+        isOpen={phenologySeasonalityModalOpen}
+        onClose={() => setPhenologySeasonalityModalOpen(false)}
+        initialSiteKey={phenologySeasonalitySiteId}
+        onApply={(payload) => {
+          setPhenologySeasonalitySiteId(payload.siteId || 'HARVARD_FOREST_LTER_2026');
+          setPhenologySeasonalitySiteName(payload.siteName || 'Harvard Forest LTER (Deciduous Broadleaf)');
+          setPhenologySeasonalityMetric(payload.metric || 'sos_doy');
+          setPhenologySeasonalityColormap(payload.colormap || 'viridis');
+          setPhenologySeasonalityOpacity(payload.opacity ?? 0.85);
+          setPhenologySeasonalityTileUrl(payload.tileUrl || payload.tileUrlTemplate || '');
+          if (payload.summary) {
+            setPhenologySeasonalitySummary(payload.summary);
+          }
+          setShowPhenologySeasonalityLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setPhenologySeasonalityTileUrl(url);
+          if (extra.metric) setPhenologySeasonalityMetric(extra.metric);
+          if (extra.colormap) setPhenologySeasonalityColormap(extra.colormap);
+          if (extra.opacity !== undefined) setPhenologySeasonalityOpacity(extra.opacity);
+          setShowPhenologySeasonalityLayer(true);
+          setPhenologySeasonalityModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.37 Multi-Band Super-Resolution Sharpening Studio Modal (Task T-284) */}
+      <SpectralSharpeningModal
+        isOpen={spectralSharpeningModalOpen}
+        onClose={() => setSpectralSharpeningModalOpen(false)}
+        initialSceneKey={sharpenedSceneKey}
+        onApply={(payload) => {
+          setSharpenedSceneKey(payload.sceneKey || 'SAN_JOAQUIN_AGRICULTURE_2026');
+          setSharpenedSceneName(payload.sceneName || 'San Joaquin Valley Agricultural Corridor');
+          setSharpenedMethod(payload.method || 'gram_schmidt');
+          setSharpenedTarget(payload.target || 'ndmi');
+          setSharpenedColormap(payload.colormap || 'viridis');
+          setSharpenedOpacity(payload.opacity ?? 0.85);
+          setSharpenedTileUrl(payload.tileUrl || payload.tileUrlTemplate || '');
+          if (payload.summary) {
+            setSharpenedSummary(payload.summary);
+          }
+          setShowSharpenedTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setSharpenedTileUrl(url);
+          if (extra.method) setSharpenedMethod(extra.method);
+          if (extra.target) setSharpenedTarget(extra.target);
+          if (extra.colormap) setSharpenedColormap(extra.colormap);
+          if (extra.opacity !== undefined) setSharpenedOpacity(extra.opacity);
+          if (extra.summary) setSharpenedSummary(extra.summary);
+          if (extra.sceneName) setSharpenedSceneName(extra.sceneName);
+          setShowSharpenedTileLayer(true);
+          setSpectralSharpeningModalOpen(false);
         }}
       />
 

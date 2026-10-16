@@ -4050,6 +4050,221 @@ class TestScientificRigor(unittest.TestCase):
         self.assertIn("iface.addVectorLayer", snippet_vector)
         self.assertIn(gpkg_filename, snippet_vector)
 
+    def test_task_t280_phenology_multi_harmonic_scientific_rigor(self):
+        """Task T-280: Continuous Scientific QA: Harmonic Curve Orthogonality Verification,
+        Fourier Energy Invariance (Parseval's Theorem), Phenological Transition Monotonicity
+        (SOS < POS < EOS) & Seasonality Pipeline Regression Triage.
+        """
+        import math
+        import numpy as np
+        from app.models.schemas import (
+            PhenologyMetric,
+            PHENOLOGY_METRICS,
+            PHENOLOGY_METRIC_CONFIGS,
+            PHENOLOGY_BENCHMARK_SITES,
+            normalize_phenology_metric,
+            evaluate_multi_harmonic_curve,
+            extract_phenology_transition_metrics,
+            build_phenology_tile_url,
+            HarmonicFourierTerm,
+            MultiHarmonicFitResult,
+            PhenologyMetricsSummary,
+            PhenologicalCurvePoint,
+        )
+
+        # -------------------------------------------------------------
+        # 1. Fourier Basis Function Orthogonality Verification
+        # -------------------------------------------------------------
+        # Period T = 365.25 days. Basis functions:
+        # phi_0(t) = 1
+        # phi_{k,c}(t) = cos(2*pi*k*t / T)
+        # phi_{k,s}(t) = sin(2*pi*k*t / T)
+        # Inner product: <f, g> = (1/T) * \int_0^T f(t)g(t) dt
+        T = 365.25
+        N = 36525  # Dense uniform grid, dt = T / N
+        t = (np.arange(N) + 0.5) * (T / N)
+        omega = 2.0 * math.pi / T
+
+        # Basis components up to order K = 4
+        phi_0 = np.ones(N)
+        phi_cos = [np.cos(k * omega * t) for k in range(1, 5)]
+        phi_sin = [np.sin(k * omega * t) for k in range(1, 5)]
+
+        # Verify DC component norm: <1, 1> = 1.0
+        norm_0 = np.mean(phi_0 * phi_0)
+        self.assertAlmostEqual(norm_0, 1.0, places=5, msg="DC basis norm must equal 1.0")
+
+        # Verify orthogonality between DC and all harmonic terms: <1, phi_k> = 0.0
+        for k_idx, (cos_k, sin_k) in enumerate(zip(phi_cos, phi_sin), start=1):
+            dc_cos = np.mean(phi_0 * cos_k)
+            dc_sin = np.mean(phi_0 * sin_k)
+            self.assertAlmostEqual(dc_cos, 0.0, places=5, msg=f"DC and cos(k={k_idx}) must be orthogonal")
+            self.assertAlmostEqual(dc_sin, 0.0, places=5, msg=f"DC and sin(k={k_idx}) must be orthogonal")
+
+        # Verify AC harmonic norms: <cos_k, cos_k> = 0.5, <sin_k, sin_k> = 0.5
+        for k_idx, (cos_k, sin_k) in enumerate(zip(phi_cos, phi_sin), start=1):
+            norm_cos = np.mean(cos_k * cos_k)
+            norm_sin = np.mean(sin_k * sin_k)
+            self.assertAlmostEqual(norm_cos, 0.5, places=5, msg=f"cos(k={k_idx}) norm must equal 0.5")
+            self.assertAlmostEqual(norm_sin, 0.5, places=5, msg=f"sin(k={k_idx}) norm must equal 0.5")
+
+        # Verify cross cosine-sine orthogonality: <cos_k, sin_m> = 0.0 for all k, m
+        for k in range(4):
+            for m in range(4):
+                cross = np.mean(phi_cos[k] * phi_sin[m])
+                self.assertAlmostEqual(cross, 0.0, places=5, msg=f"<cos_{k+1}, sin_{m+1}> must be strictly zero")
+
+        # Verify distinct frequency orthogonality: <cos_k, cos_m> = 0 and <sin_k, sin_m> = 0 for k != m
+        for k in range(4):
+            for m in range(k + 1, 4):
+                cos_cross = np.mean(phi_cos[k] * phi_cos[m])
+                sin_cross = np.mean(phi_sin[k] * phi_sin[m])
+                self.assertAlmostEqual(cos_cross, 0.0, places=5, msg=f"<cos_{k+1}, cos_{m+1}> must be zero for k!=m")
+                self.assertAlmostEqual(sin_cross, 0.0, places=5, msg=f"<sin_{k+1}, sin_{m+1}> must be zero for k!=m")
+
+        # -------------------------------------------------------------
+        # 2. Fourier Energy Invariance (Parseval's Identity)
+        # -------------------------------------------------------------
+        # For y(t) = a_0 + sum_{k=1}^K [A_k cos(k w t) + B_k sin(k w t)]
+        # Total Mean Square Energy:
+        # (1/T) \int_0^T [y(t)]^2 dt = a_0^2 + (1/2) * sum_{k=1}^K (A_k^2 + B_k^2)
+        # Periodic Variation Energy (Variance):
+        # Var(y) = (1/T) \int_0^T [y(t) - a_0]^2 dt = (1/2) * sum_{k=1}^K (A_k^2 + B_k^2)
+        a_0 = 0.52
+        harmonics = [
+            {"harmonic_order": 1, "cos_coeff": 0.22, "sin_coeff": -0.14},
+            {"harmonic_order": 2, "cos_coeff": 0.08, "sin_coeff": 0.05},
+            {"harmonic_order": 3, "cos_coeff": -0.04, "sin_coeff": 0.02},
+        ]
+        # Evaluate curve at dense grid points
+        y_eval = np.array([
+            evaluate_multi_harmonic_curve(doy=float(d), intercept=a_0, slope=0.0, harmonics=harmonics)
+            for d in t
+        ])
+
+        # Theoretical Parseval energies
+        harmonic_power = sum(h["cos_coeff"]**2 + h["sin_coeff"]**2 for h in harmonics)
+        theoretical_total_energy = a_0**2 + 0.5 * harmonic_power
+        theoretical_var_energy = 0.5 * harmonic_power
+
+        # Numerical integration
+        numerical_total_energy = float(np.mean(y_eval**2))
+        numerical_var_energy = float(np.mean((y_eval - a_0)**2))
+
+        self.assertAlmostEqual(
+            numerical_total_energy,
+            theoretical_total_energy,
+            places=4,
+            msg="Numerical total energy must equal theoretical Parseval energy"
+        )
+        self.assertAlmostEqual(
+            numerical_var_energy,
+            theoretical_var_energy,
+            places=4,
+            msg="Numerical variance energy must equal (1/2) sum(A_k^2 + B_k^2)"
+        )
+
+        # -------------------------------------------------------------
+        # 3. Phenological Transition Monotonicity (SOS < POS < EOS)
+        # -------------------------------------------------------------
+        # Test across canonical benchmark sites
+        daily_doys = list(range(1, 366))
+        for site_key, site in PHENOLOGY_BENCHMARK_SITES.items():
+            expected_pos = float(site["expected_pos_doy"])
+            expected_sos = float(site["expected_sos_doy"])
+            expected_eos = float(site["expected_eos_doy"])
+            expected_los = float(site["expected_los_days"])
+
+            # Synthesize asymmetric double-harmonic curve reflecting site phenology
+            # Peak near expected_pos, green-up near expected_sos
+            site_fitted = []
+            for d in daily_doys:
+                phase_shift = (d - expected_pos) / 365.25 * 2.0 * math.pi
+                val = 0.25 + 0.45 * (0.5 * (1.0 + math.cos(phase_shift)) + 0.15 * math.cos(2.0 * phase_shift))
+                site_fitted.append(val)
+
+            metrics = extract_phenology_transition_metrics(daily_doys, site_fitted, sos_threshold_pct=0.20)
+
+            # Strict Monotonicity: 1 <= SOS < POS < EOS <= 365
+            self.assertGreaterEqual(metrics["sos_doy"], 1.0)
+            self.assertLess(metrics["sos_doy"], metrics["pos_doy"], f"{site_key}: SOS must strictly precede POS")
+            self.assertLess(metrics["pos_doy"], metrics["eos_doy"], f"{site_key}: POS must strictly precede EOS")
+            self.assertLessEqual(metrics["eos_doy"], 366.0)
+
+            # Season length invariant: LOS = EOS - SOS > 0
+            self.assertAlmostEqual(metrics["los_days"], metrics["eos_doy"] - metrics["sos_doy"], places=1)
+            self.assertGreater(metrics["los_days"], 0.0)
+
+            # Dynamic range invariant: Amplitude = Peak - Base > 0
+            self.assertGreater(metrics["seasonal_amplitude"], 0.0)
+            self.assertAlmostEqual(metrics["seasonal_amplitude"], metrics["peak_level"] - metrics["base_level"], places=3)
+
+        # -------------------------------------------------------------
+        # 4. Chronological Invariance against Unordered DOY Series
+        # -------------------------------------------------------------
+        # Shuffled DOYs and values must yield identical milestone dates
+        import random
+        rng = random.Random(42)
+        shuffled_indices = list(range(len(daily_doys)))
+        rng.shuffle(shuffled_indices)
+        shuffled_doys = [daily_doys[i] for i in shuffled_indices]
+        shuffled_vals = [site_fitted[i] for i in shuffled_indices]
+
+        shuffled_metrics = extract_phenology_transition_metrics(shuffled_doys, shuffled_vals, sos_threshold_pct=0.20)
+        self.assertEqual(shuffled_metrics["sos_doy"], metrics["sos_doy"])
+        self.assertEqual(shuffled_metrics["pos_doy"], metrics["pos_doy"])
+        self.assertEqual(shuffled_metrics["eos_doy"], metrics["eos_doy"])
+        self.assertEqual(shuffled_metrics["los_days"], metrics["los_days"])
+
+        # -------------------------------------------------------------
+        # 5. Multi-Harmonic Least-Squares Inversion Convergence
+        # -------------------------------------------------------------
+        # Verify that increasing harmonic order K=1 -> K=2 -> K=3 strictly reduces
+        # fitting residual sum of squares (RSS) on an asymmetric seasonal signal
+        t_arr = np.array(daily_doys, dtype=np.float64)
+        # Asymmetric seasonal signal: fast spring rise, slow autumn fall
+        # Ground truth: y(t) = 0.35 + 0.30*cos(w(t-195)) + 0.10*cos(2w(t-195)) + 0.05*sin(w(t-195))
+        y_true = 0.35 + 0.30 * np.cos(omega * (t_arr - 195)) + 0.10 * np.cos(2 * omega * (t_arr - 195)) + 0.05 * np.sin(omega * (t_arr - 195))
+        np.random.seed(42)
+        y_obs = y_true + np.random.normal(0, 0.015, size=len(t_arr))
+
+        rss_list = []
+        for K in [1, 2, 3]:
+            # Design matrix: [1, cos(w*t), sin(w*t), ..., cos(K*w*t), sin(K*w*t)]
+            cols = [np.ones_like(t_arr)]
+            for k in range(1, K + 1):
+                cols.append(np.cos(k * omega * t_arr))
+                cols.append(np.sin(k * omega * t_arr))
+            X = np.column_stack(cols)
+            beta, residuals, rank, s = np.linalg.lstsq(X, y_obs, rcond=None)
+            y_pred = X @ beta
+            rss = float(np.sum((y_obs - y_pred)**2))
+            rss_list.append(rss)
+
+        # Monotonic RSS reduction: RSS(K=1) >= RSS(K=2) >= RSS(K=3)
+        self.assertGreater(rss_list[0], rss_list[1], "Harmonic K=2 must fit asymmetric signal better than K=1")
+        self.assertGreaterEqual(rss_list[1], rss_list[2], "Harmonic K=3 must fit with equal or lower RSS than K=2")
+
+        # -------------------------------------------------------------
+        # 6. Edge Cases & Safety Invariants
+        # -------------------------------------------------------------
+        # Zero amplitude / Flat curve
+        flat_doys = [10.0, 50.0, 100.0, 200.0]
+        flat_vals = [0.4, 0.4, 0.4, 0.4]
+        flat_m = extract_phenology_transition_metrics(flat_doys, flat_vals)
+        self.assertEqual(flat_m["seasonal_amplitude"], 0.0)
+        self.assertEqual(flat_m["los_days"], 0.0)
+
+        # Leap year continuity: |y(366) - y(1)| must be small for seasonal continuity
+        y_366 = evaluate_multi_harmonic_curve(doy=366.0, intercept=a_0, harmonics=harmonics)
+        y_1 = evaluate_multi_harmonic_curve(doy=1.0, intercept=a_0, harmonics=harmonics)
+        self.assertLess(abs(y_366 - y_1), 0.05, "Seasonal periodic curve must be approximately continuous across year boundary")
+
+        # Empty inputs
+        empty_m = extract_phenology_transition_metrics([], [])
+        self.assertEqual(empty_m["sos_doy"], 0.0)
+        self.assertEqual(empty_m["los_days"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

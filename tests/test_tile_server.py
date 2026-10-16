@@ -216,6 +216,24 @@ class TestTileServer(unittest.TestCase):
         self.assertEqual(img_fl.size, (256, 256))
         self.assertEqual(img_fl.mode, "RGBA")
 
+    def test_phenology_anomaly_and_seasonality_tile_rendering(self):
+        """Verify dynamic XYZ tile rendering for phenology anomalies and seasonality metrics."""
+        sim_id = "SIM_TEST_TILE_PHENO_01"
+        for metric in ["mad_anomaly_zscore", "baseline_ndvi", "seasonal_amplitude", "phase_angle", "theil_sen_slope", "anomaly_tier"]:
+            tile_bytes = tile_service.render_phenology_anomaly_tile(
+                sim_id=sim_id,
+                z=12,
+                x=1042,
+                y=1628,
+                metric=metric
+            )
+            self.assertIsInstance(tile_bytes, bytes)
+            self.assertGreater(len(tile_bytes), 100)
+            self.assertEqual(tile_bytes[:4], b"\x89PNG")
+            img = Image.open(io.BytesIO(tile_bytes))
+            self.assertEqual(img.size, (256, 256))
+            self.assertEqual(img.mode, "RGBA")
+
 
 if __name__ == "__main__":
     unittest.main()

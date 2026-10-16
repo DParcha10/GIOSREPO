@@ -13409,8 +13409,482 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(format_api_route("analysis_export_formats"), "/api/v1/analysis/export/formats")
         self.assertEqual(format_api_route("analysis_export_formats_short"), "/analysis/export/formats")
 
+    def test_phenology_multi_harmonic_schemas_and_contracts(self):
+        """Verify Cycle v2.5.36 Multi-Harmonic Phenological Decomposition, Fourier Inversion schemas, and API contracts."""
+        from app.models.schemas import (
+            PhenologyMetric,
+            PHENOLOGY_METRICS,
+            PHENOLOGY_METRIC_CONFIGS,
+            PHENOLOGY_BENCHMARK_SITES,
+            normalize_phenology_metric,
+            evaluate_multi_harmonic_curve,
+            extract_phenology_transition_metrics,
+            build_phenology_tile_url,
+            HarmonicFourierTerm,
+            MultiHarmonicFitResult,
+            PhenologyMetricsSummary,
+            PhenologicalCurvePoint,
+            PhenologyAnalysisRequest,
+            PhenologyAnalysisResponse,
+            API_ROUTE_CONTRACTS,
+            format_api_route,
+        )
+
+        # 1. Enums validation
+        self.assertEqual(PhenologyMetric.SOS_DOY.value, "sos_doy")
+        self.assertEqual(PhenologyMetric.POS_DOY.value, "pos_doy")
+        self.assertEqual(PhenologyMetric.EOS_DOY.value, "eos_doy")
+        self.assertEqual(PhenologyMetric.LOS_DAYS.value, "los_days")
+        self.assertEqual(PhenologyMetric.SEASONAL_AMPLITUDE.value, "seasonal_amplitude")
+        self.assertEqual(PhenologyMetric.BASE_LEVEL.value, "base_level")
+        self.assertEqual(PhenologyMetric.HARMONIC_RMSE.value, "harmonic_rmse")
+        self.assertEqual(len(PHENOLOGY_METRICS), 7)
+
+        # 2. Config dictionaries validation
+        self.assertIn("sos_doy", PHENOLOGY_METRIC_CONFIGS)
+        self.assertEqual(PHENOLOGY_METRIC_CONFIGS["sos_doy"]["unit"], "DOY")
+        self.assertEqual(PHENOLOGY_METRIC_CONFIGS["sos_doy"]["colormap"], "viridis")
+        self.assertIn("los_days", PHENOLOGY_METRIC_CONFIGS)
+        self.assertEqual(PHENOLOGY_METRIC_CONFIGS["los_days"]["unit"], "Days")
+        self.assertIn("seasonal_amplitude", PHENOLOGY_METRIC_CONFIGS)
+        self.assertEqual(PHENOLOGY_METRIC_CONFIGS["seasonal_amplitude"]["unit"], "Index Delta")
+        self.assertIn("harmonic_rmse", PHENOLOGY_METRIC_CONFIGS)
+        self.assertEqual(PHENOLOGY_METRIC_CONFIGS["harmonic_rmse"]["colormap"], "magma")
+
+        # 3. Benchmark sites validation
+        self.assertIn("HARVARD_FOREST_LTER_2026", PHENOLOGY_BENCHMARK_SITES)
+        harvard = PHENOLOGY_BENCHMARK_SITES["HARVARD_FOREST_LTER_2026"]
+        self.assertEqual(harvard["site_id"], "HARVARD_FOREST_LTER_2026")
+        self.assertAlmostEqual(harvard["latitude"], 42.5378, places=3)
+        self.assertAlmostEqual(harvard["longitude"], -72.1715, places=3)
+        self.assertEqual(harvard["expected_sos_doy"], 125)
+        self.assertEqual(harvard["expected_pos_doy"], 200)
+        self.assertEqual(harvard["expected_eos_doy"], 285)
+        self.assertEqual(harvard["expected_los_days"], 160)
+
+        self.assertIn("KONZA_PRAIRIE_GRASSLAND_2026", PHENOLOGY_BENCHMARK_SITES)
+        konza = PHENOLOGY_BENCHMARK_SITES["KONZA_PRAIRIE_GRASSLAND_2026"]
+        self.assertEqual(konza["site_id"], "KONZA_PRAIRIE_GRASSLAND_2026")
+        self.assertAlmostEqual(konza["latitude"], 39.0825, places=3)
+        self.assertEqual(konza["expected_sos_doy"], 110)
+
+        self.assertIn("BOISE_RANGELAND_SHRUB_2026", PHENOLOGY_BENCHMARK_SITES)
+        boise = PHENOLOGY_BENCHMARK_SITES["BOISE_RANGELAND_SHRUB_2026"]
+        self.assertEqual(boise["site_id"], "BOISE_RANGELAND_SHRUB_2026")
+        self.assertAlmostEqual(boise["longitude"], -116.7485, places=3)
+        self.assertEqual(boise["expected_sos_doy"], 95)
+
+        # 4. normalize_phenology_metric validation
+        self.assertEqual(normalize_phenology_metric(PhenologyMetric.SOS_DOY), PhenologyMetric.SOS_DOY)
+        self.assertEqual(normalize_phenology_metric("sos_doy"), PhenologyMetric.SOS_DOY)
+        self.assertEqual(normalize_phenology_metric("sos"), PhenologyMetric.SOS_DOY)
+        self.assertEqual(normalize_phenology_metric("start_of_season"), PhenologyMetric.SOS_DOY)
+        self.assertEqual(normalize_phenology_metric("pos_doy"), PhenologyMetric.POS_DOY)
+        self.assertEqual(normalize_phenology_metric("pos"), PhenologyMetric.POS_DOY)
+        self.assertEqual(normalize_phenology_metric("eos_doy"), PhenologyMetric.EOS_DOY)
+        self.assertEqual(normalize_phenology_metric("eos"), PhenologyMetric.EOS_DOY)
+        self.assertEqual(normalize_phenology_metric("los_days"), PhenologyMetric.LOS_DAYS)
+        self.assertEqual(normalize_phenology_metric("los"), PhenologyMetric.LOS_DAYS)
+        self.assertEqual(normalize_phenology_metric("seasonal_amplitude"), PhenologyMetric.SEASONAL_AMPLITUDE)
+        self.assertEqual(normalize_phenology_metric("amplitude"), PhenologyMetric.SEASONAL_AMPLITUDE)
+        self.assertEqual(normalize_phenology_metric("base_level"), PhenologyMetric.BASE_LEVEL)
+        self.assertEqual(normalize_phenology_metric("base"), PhenologyMetric.BASE_LEVEL)
+        self.assertEqual(normalize_phenology_metric("harmonic_rmse"), PhenologyMetric.HARMONIC_RMSE)
+        self.assertEqual(normalize_phenology_metric("rmse"), PhenologyMetric.HARMONIC_RMSE)
+        with self.assertRaises(ValueError):
+            normalize_phenology_metric("invalid_metric_xyz")
+
+        # 5. evaluate_multi_harmonic_curve mathematical verification
+        # At doy=0 with no harmonics: y = a_0
+        val_base = evaluate_multi_harmonic_curve(doy=0, intercept=0.5, slope=0.0)
+        self.assertAlmostEqual(val_base, 0.5)
+
+        # Annual harmonic: A_1=0.2, B_1=0.0 -> at doy=0, cos(0)=1, y=0.5+0.2=0.7
+        val_h1 = evaluate_multi_harmonic_curve(
+            doy=0,
+            intercept=0.5,
+            harmonics=[{"harmonic_order": 1, "cos_coeff": 0.2, "sin_coeff": 0.0}]
+        )
+        self.assertAlmostEqual(val_h1, 0.7)
+
+        # Periodicity check: y(0) == y(365.25)
+        val_period = evaluate_multi_harmonic_curve(
+            doy=365.25,
+            intercept=0.5,
+            harmonics=[{"harmonic_order": 1, "cos_coeff": 0.2, "sin_coeff": 0.1}]
+        )
+        val_period_0 = evaluate_multi_harmonic_curve(
+            doy=0,
+            intercept=0.5,
+            harmonics=[{"harmonic_order": 1, "cos_coeff": 0.2, "sin_coeff": 0.1}]
+        )
+        self.assertAlmostEqual(val_period, val_period_0, places=5)
+
+        # 6. extract_phenology_transition_metrics verification
+        # Synthetic seasonal curve with peak at DOY 200, trough at DOY 20
+        doy_series = list(range(1, 366))
+        # y(d) = 0.30 + 0.40 * 0.5 * (1 - cos(2*pi*(d - 20)/365.25))
+        # trough at d=20 (y=0.30), peak at d=20+182.6=202.6 (y=0.70)
+        fitted_vals = [
+            0.30 + 0.40 * 0.5 * (1.0 - math.cos(2.0 * math.pi * (d - 20) / 365.25))
+            for d in doy_series
+        ]
+        metrics = extract_phenology_transition_metrics(doy_series, fitted_vals, sos_threshold_pct=0.20)
+        self.assertAlmostEqual(metrics["base_level"], 0.30, places=2)
+        self.assertAlmostEqual(metrics["peak_level"], 0.70, places=2)
+        self.assertAlmostEqual(metrics["seasonal_amplitude"], 0.40, places=2)
+        self.assertLess(metrics["sos_doy"], metrics["pos_doy"])
+        self.assertLess(metrics["pos_doy"], metrics["eos_doy"])
+        self.assertAlmostEqual(metrics["los_days"], metrics["eos_doy"] - metrics["sos_doy"], places=2)
+
+        # Empty edge case
+        empty_metrics = extract_phenology_transition_metrics([], [])
+        self.assertEqual(empty_metrics["sos_doy"], 0.0)
+
+        # 7. HarmonicFourierTerm & MultiHarmonicFitResult models
+        term1 = HarmonicFourierTerm(
+            harmonic_order=1,
+            cos_coeff=0.18,
+            sin_coeff=-0.08,
+            amplitude=math.sqrt(0.18**2 + (-0.08)**2),
+            phase_radians=math.atan2(-0.08, 0.18),
+            phase_days=math.atan2(-0.08, 0.18) * 365.25 / (2.0 * math.pi)
+        )
+        term2 = HarmonicFourierTerm(
+            harmonic_order=2,
+            cos_coeff=0.05,
+            sin_coeff=0.02,
+            amplitude=math.sqrt(0.05**2 + 0.02**2),
+            phase_radians=math.atan2(0.02, 0.05),
+            phase_days=math.atan2(0.02, 0.05) * 365.25 / (4.0 * math.pi)
+        )
+        fit_result = MultiHarmonicFitResult(
+            intercept=0.45,
+            slope=0.002,
+            harmonics=[term1, term2],
+            rmse=0.028,
+            r_squared=0.915,
+            formula="y(t) = 0.450 + 0.0020*t + 0.180*cos(omega*t) - 0.080*sin(omega*t) + 0.050*cos(2*omega*t) + 0.020*sin(2*omega*t)"
+        )
+        self.assertEqual(len(fit_result.harmonics), 2)
+        self.assertAlmostEqual(fit_result.r_squared, 0.915)
+
+        # 8. PhenologyMetricsSummary & PhenologicalCurvePoint
+        summary = PhenologyMetricsSummary(
+            sos_doy=125.0,
+            pos_doy=200.0,
+            eos_doy=285.0,
+            los_days=160.0,
+            seasonal_amplitude=0.52,
+            base_level=0.28,
+            peak_level=0.80,
+            harmonic_rmse=0.028,
+            r_squared=0.915,
+            ecosystem_classification="Deciduous Broadleaf Forest"
+        )
+        self.assertEqual(summary.sos_doy, 125.0)
+        self.assertEqual(summary.los_days, 160.0)
+
+        curve_pt = PhenologicalCurvePoint(
+            doy=150.0,
+            fitted_value=0.58,
+            derivative=0.0042
+        )
+        self.assertEqual(curve_pt.doy, 150.0)
+        self.assertEqual(curve_pt.fitted_value, 0.58)
+
+        # 9. PhenologyAnalysisRequest & PhenologyAnalysisResponse
+        req = PhenologyAnalysisRequest(
+            asset_id="HARVARD_FOREST_LTER_2026",
+            index_name="ndvi",
+            latitude=42.5378,
+            longitude=-72.1715,
+            collection="sentinel-2-l2a",
+            start_date="2023-01-01",
+            end_date="2025-12-31",
+            num_harmonics=2,
+            sos_threshold_pct=0.20
+        )
+        self.assertEqual(req.asset_id, "HARVARD_FOREST_LTER_2026")
+        self.assertEqual(req.aoi_name, "HARVARD_FOREST_LTER_2026")
+        self.assertEqual(req.metric, "ndvi")
+        self.assertEqual(req.index_name, "ndvi")
+        self.assertEqual(req.num_harmonics, 2)
+        self.assertEqual(req.harmonic_terms, 2)
+
+        resp = PhenologyAnalysisResponse(
+            asset_id=req.asset_id,
+            site_name="Harvard Forest LTER (Deciduous Broadleaf)",
+            index_name=req.index_name,
+            metrics=summary,
+            harmonic_fit=fit_result,
+            curve_points=[curve_pt],
+            tile_url_template="/api/v1/tiles/phenology/{metric}/{z}/{x}/{y}.png",
+            status="success"
+        )
+        self.assertEqual(resp.asset_id, "HARVARD_FOREST_LTER_2026")
+        self.assertEqual(resp.site_name, "Harvard Forest LTER (Deciduous Broadleaf)")
+        self.assertEqual(resp.status, "success")
+        self.assertAlmostEqual(resp.r_squared, 0.915)
+        self.assertIsNotNone(resp.phenometrics)
+        self.assertEqual(resp.phenometrics.sos_doy, 125)
+
+        # 10. URL Builders & API Route Contracts
+        self.assertEqual(
+            build_phenology_tile_url(PhenologyMetric.SOS_DOY, 10, 163, 395),
+            "/api/v1/tiles/phenology/sos_doy/10/163/395.png"
+        )
+        self.assertEqual(
+            build_phenology_tile_url(PhenologyMetric.LOS_DAYS, 12, 650, 1580, colormap="spectral"),
+            "/api/v1/tiles/phenology/los_days/12/650/1580.png?colormap=spectral"
+        )
+
+        self.assertIn("analysis_phenology_curve", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_phenology_benchmarks", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_phenology_metrics", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_phenology", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_phenology_curve"), "/api/v1/analysis/phenology/curve")
+        self.assertEqual(format_api_route("analysis_phenology_curve_short"), "/analysis/phenology/curve")
+        self.assertEqual(format_api_route("analysis_phenology_benchmarks"), "/api/v1/analysis/phenology/benchmarks")
+        self.assertEqual(format_api_route("analysis_phenology_benchmarks_short"), "/analysis/phenology/benchmarks")
+        self.assertEqual(format_api_route("analysis_phenology_metrics"), "/api/v1/analysis/phenology/metrics")
+        self.assertEqual(format_api_route("analysis_phenology_metrics_short"), "/analysis/phenology/metrics")
+        self.assertEqual(
+            format_api_route("tiles_phenology", metric="sos_doy", z=10, x=163, y=395),
+            "/api/v1/tiles/phenology/sos_doy/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_phenology_short", metric=PhenologyMetric.LOS_DAYS, z=8, x=40, y=98),
+            "/tiles/phenology/los_days/8/40/98.png"
+        )
+
+    def test_spectral_sharpening_schemas_and_contracts(self):
+        """Verify Cycle v2.5.37 Multi-Band Super-Resolution Sharpening Schemas, Models & Route Contracts."""
+        from app.models.schemas import (
+            SharpeningMethod,
+            SharpeningTargetBand,
+            SharpeningGuidanceBand,
+            SharpeningIndexTarget,
+            HPFKernelType,
+            SharpeningQualityRating,
+            SHARPENING_METHOD_CONFIGS,
+            SHARPENING_BAND_CONFIGS,
+            SYNTHETIC_PAN_WEIGHTS,
+            HPF_KERNELS,
+            SHARPENING_BENCHMARK_SCENES,
+            normalize_sharpening_method,
+            calculate_synthetic_panchromatic,
+            calculate_brovey_sharpened_value,
+            calculate_high_pass_injected_value,
+            calculate_spectral_angle_mapper,
+            calculate_ergas,
+            calculate_uiqi_q4,
+            calculate_energy_conservation_ratio,
+            classify_sharpening_quality_rating,
+            build_sharpened_tile_url,
+            build_sharpened_tile_url_template,
+            HighPassFilterConfig,
+            SharpeningQualitySummary,
+            SpectralSharpeningRequest,
+            SpectralSharpeningResponse,
+            SharpeningTileRequestParams,
+            SharpeningMethodsResponse,
+            API_ROUTE_CONTRACTS,
+            format_api_route,
+        )
+
+        # 1. Enums and Configurations
+        self.assertEqual(SharpeningMethod.GRAM_SCHMIDT.value, "gram_schmidt")
+        self.assertEqual(SharpeningMethod.BROVEY.value, "brovey")
+        self.assertEqual(SharpeningMethod.HIGH_PASS_FILTER.value, "high_pass_filter")
+        self.assertEqual(SharpeningMethod.BICUBIC_SPLINE.value, "bicubic_spline")
+
+        self.assertEqual(SharpeningTargetBand.B05.value, "B05")
+        self.assertEqual(SharpeningTargetBand.B11.value, "B11")
+        self.assertEqual(SharpeningGuidanceBand.B08.value, "B08")
+        self.assertEqual(SharpeningIndexTarget.NDMI.value, "ndmi")
+        self.assertEqual(SharpeningIndexTarget.NDCI.value, "ndci")
+        self.assertEqual(HPFKernelType.LAPLACIAN_3X3.value, "laplacian_3x3")
+        self.assertEqual(SharpeningQualityRating.EXCELLENT.value, "EXCELLENT")
+
+        # 2. Config dictionaries
+        self.assertIn("gram_schmidt", SHARPENING_METHOD_CONFIGS)
+        self.assertTrue(SHARPENING_METHOD_CONFIGS["gram_schmidt"]["preserves_radiometry"])
+        self.assertIn("brovey", SHARPENING_METHOD_CONFIGS)
+        self.assertFalse(SHARPENING_METHOD_CONFIGS["brovey"]["preserves_radiometry"])
+
+        self.assertIn("B05", SHARPENING_BAND_CONFIGS)
+        self.assertEqual(SHARPENING_BAND_CONFIGS["B05"]["native_res_m"], 20)
+        self.assertEqual(SHARPENING_BAND_CONFIGS["B05"]["sharpened_res_m"], 10)
+
+        self.assertIn("equal", SYNTHETIC_PAN_WEIGHTS)
+        self.assertIn("laplacian_3x3", HPF_KERNELS)
+        self.assertEqual(len(HPF_KERNELS["laplacian_3x3"]), 3)
+
+        self.assertIn("SAN_JOAQUIN_AGRICULTURE_2026", SHARPENING_BENCHMARK_SCENES)
+        self.assertIn("OREGON_CASCADE_FORESTRY_2026", SHARPENING_BENCHMARK_SCENES)
+
+        # 3. Method Normalization
+        self.assertEqual(normalize_sharpening_method("gram_schmidt"), SharpeningMethod.GRAM_SCHMIDT)
+        self.assertEqual(normalize_sharpening_method("gs"), SharpeningMethod.GRAM_SCHMIDT)
+        self.assertEqual(normalize_sharpening_method("brovey"), SharpeningMethod.BROVEY)
+        self.assertEqual(normalize_sharpening_method("hpf"), SharpeningMethod.HIGH_PASS_FILTER)
+        self.assertEqual(normalize_sharpening_method("bicubic"), SharpeningMethod.BICUBIC_SPLINE)
+        with self.assertRaises(ValueError):
+            normalize_sharpening_method("unknown_method_xyz")
+
+        # 4. Mathematical Helper Functions
+        # Synthetic panchromatic
+        guidance = {"B02": 0.1, "B03": 0.2, "B04": 0.3, "B08": 0.4}
+        pan_val = calculate_synthetic_panchromatic(guidance)
+        self.assertAlmostEqual(pan_val, 0.25, places=4)
+
+        # Brovey fusion
+        brovey_val = calculate_brovey_sharpened_value(low_res_val=0.2, high_res_pan=0.4, low_res_pan=0.2)
+        self.assertAlmostEqual(brovey_val, 0.4, places=4)
+
+        # High-pass filter injection
+        hpf_val = calculate_high_pass_injected_value(low_res_val=0.3, high_freq_delta=0.08, gain=0.75)
+        self.assertAlmostEqual(hpf_val, 0.36, places=4)
+
+        # Spectral Angle Mapper (SAM) vector sequence
+        sam_zero = calculate_spectral_angle_mapper([0.2, 0.3, 0.5], [0.2, 0.3, 0.5])
+        self.assertAlmostEqual(sam_zero, 0.0, places=4)
+
+        sam_ortho = calculate_spectral_angle_mapper([1.0, 0.0], [0.0, 1.0])
+        self.assertAlmostEqual(sam_ortho, math.pi / 2.0, places=4)
+
+        # ERGAS
+        ergas_val = calculate_ergas(
+            rmse_list=[0.01, 0.02],
+            mean_orig_list=[0.2, 0.2],
+            high_res=10.0,
+            low_res=20.0
+        )
+        self.assertGreater(ergas_val, 0.0)
+        self.assertAlmostEqual(ergas_val, 3.9528, places=3)
+
+        # UIQI / Q4
+        q4_identical = calculate_uiqi_q4([0.1, 0.2, 0.3, 0.4], [0.1, 0.2, 0.3, 0.4])
+        self.assertAlmostEqual(q4_identical, 1.0, places=2)
+
+        # Energy conservation ratio
+        ratio = calculate_energy_conservation_ratio([0.2, 0.25, 0.3], [0.201, 0.251, 0.301])
+        self.assertAlmostEqual(ratio, 1.004, places=2)
+
+        # Quality rating classification
+        self.assertEqual(classify_sharpening_quality_rating(0.02, 1.5, 0.95), SharpeningQualityRating.EXCELLENT)
+        self.assertEqual(classify_sharpening_quality_rating(0.04, 2.5, 0.90), SharpeningQualityRating.GOOD)
+        self.assertEqual(classify_sharpening_quality_rating(0.07, 4.5, 0.75), SharpeningQualityRating.ACCEPTABLE)
+        self.assertEqual(classify_sharpening_quality_rating(0.15, 8.0, 0.50), SharpeningQualityRating.DEGRADED)
+
+        # 5. Pydantic Models & Validation
+        hpf_cfg = HighPassFilterConfig(kernel_type=HPFKernelType.HIGH_BOOST_3X3, filter_weight=0.8)
+        self.assertEqual(hpf_cfg.kernel_type, HPFKernelType.HIGH_BOOST_3X3)
+        self.assertAlmostEqual(hpf_cfg.filter_weight, 0.8)
+
+        quality_summary = SharpeningQualitySummary(
+            method=SharpeningMethod.GRAM_SCHMIDT,
+            sam_rad=0.024,
+            sam_deg=1.375,
+            ergas=1.85,
+            uiqi_q4=0.94,
+            mtf_high_freq_gain=1.45,
+            radiometric_energy_conservation_ratio=1.002,
+            rmse=0.012,
+            quality_rating=SharpeningQualityRating.EXCELLENT,
+            preserves_radiometry=True
+        )
+        self.assertEqual(quality_summary.quality_rating, SharpeningQualityRating.EXCELLENT)
+        self.assertTrue(quality_summary.preserves_radiometry)
+
+        req = SpectralSharpeningRequest(
+            aoi_name="San Joaquin Valley Test",
+            collection="sentinel-2-l2a",
+            method="gs",  # string alias handled by validator
+            target_bands=["B05", "B11"],
+            guidance_bands=["B02", "B03", "B04", "B08"],
+            target_index="ndmi",
+            native_resolution_m=20.0,
+            sharpened_resolution_m=10.0
+        )
+        self.assertEqual(req.method, SharpeningMethod.GRAM_SCHMIDT)
+        self.assertEqual(req.target_bands, ["B05", "B11"])
+
+        resp = SpectralSharpeningResponse(
+            request_id="SHARP-TEST-001",
+            aoi_name=req.aoi_name,
+            collection=req.collection,
+            method=req.method,
+            native_resolution_m=20.0,
+            sharpened_resolution_m=10.0,
+            bands_sharpened=["B05", "B11"],
+            quality_summary=quality_summary,
+            tile_url_template="/api/v1/tiles/sharpened/gram_schmidt/{target}/{z}/{x}/{y}.png",
+            derived_indices={"ndmi_10m": "/api/v1/tiles/sharpened/gram_schmidt/ndmi/{z}/{x}/{y}.png"},
+            status="success"
+        )
+        self.assertEqual(resp.request_id, "SHARP-TEST-001")
+        self.assertEqual(resp.status, "success")
+        self.assertIn("ndmi_10m", resp.derived_indices)
+
+        tile_params = SharpeningTileRequestParams(method=SharpeningMethod.BROVEY, target="ndci")
+        self.assertEqual(tile_params.method, SharpeningMethod.BROVEY)
+        self.assertEqual(tile_params.target, "ndci")
+
+        methods_resp = SharpeningMethodsResponse(
+            methods=SHARPENING_METHOD_CONFIGS,
+            benchmark_scenes=SHARPENING_BENCHMARK_SCENES,
+            pan_weights=SYNTHETIC_PAN_WEIGHTS,
+            supported_target_bands=["B05", "B06", "B07", "B8A", "B11", "B12"],
+            supported_guidance_bands=["B02", "B03", "B04", "B08"]
+        )
+        self.assertIn("gram_schmidt", methods_resp.methods)
+
+        # 6. Dynamic Tile URLs & Canonical Route Contracts
+        tile_url = build_sharpened_tile_url("gram_schmidt", "B05", 12, 650, 1580)
+        self.assertEqual(tile_url, "/api/v1/tiles/sharpened/gram_schmidt/b05/12/650/1580.png")
+
+        tile_url_cmap = build_sharpened_tile_url(SharpeningMethod.BROVEY, "ndmi", 14, 2600, 6320, colormap="turbo")
+        self.assertEqual(tile_url_cmap, "/api/v1/tiles/sharpened/brovey/ndmi/14/2600/6320.png?colormap=turbo")
+
+        tmpl = build_sharpened_tile_url_template("high_pass_filter", "ndci")
+        self.assertEqual(tmpl, "/api/v1/tiles/sharpened/high_pass_filter/ndci/{z}/{x}/{y}.png")
+
+        # Route Contracts
+        self.assertIn("analysis_sharpening_sharpen", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_sharpening_methods", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_sharpening_evaluate", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_sharpened", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_sharpened_xyz", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_sharpening_sharpen"), "/api/v1/analysis/sharpening/sharpen")
+        self.assertEqual(format_api_route("analysis_sharpening_sharpen_short"), "/analysis/sharpening/sharpen")
+        self.assertEqual(format_api_route("analysis_sharpening_methods"), "/api/v1/analysis/sharpening/methods")
+        self.assertEqual(format_api_route("analysis_sharpening_methods_short"), "/analysis/sharpening/methods")
+        self.assertEqual(format_api_route("analysis_sharpening_evaluate"), "/api/v1/analysis/sharpening/evaluate")
+        self.assertEqual(format_api_route("analysis_sharpening_evaluate_short"), "/analysis/sharpening/evaluate")
+        self.assertEqual(
+            format_api_route("tiles_sharpened", method="gram_schmidt", target="b05", z=12, x=650, y=1580),
+            "/api/v1/tiles/sharpened/gram_schmidt/b05/12/650/1580.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_sharpened_short", method=SharpeningMethod.BROVEY, target="ndmi", z=10, x=163, y=395),
+            "/tiles/sharpened/brovey/ndmi/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_sharpened_xyz", z=10, x=100, y=200),
+            "/api/v1/tiles/sharpened/10/100/200.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_sharpened_xyz_short", z=10, x=100, y=200),
+            "/tiles/sharpened/10/100/200.png"
+        )
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

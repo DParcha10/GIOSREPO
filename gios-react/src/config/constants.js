@@ -1173,7 +1173,29 @@ export const API_ENDPOINTS = {
   ANALYSIS_THERMAL_ANOMALY: '/api/v1/analysis/thermal/anomaly',
   ANALYSIS_THERMAL_ANOMALY_SHORT: '/analysis/thermal/anomaly',
   TILES_THERMAL_ANOMALY: (collection, itemId, z, x, y) => `/api/v1/tiles/thermal/anomaly/${collection}/${itemId}/${z}/${x}/${y}.png`,
-  TILES_THERMAL_ANOMALY_SHORT: (collection, itemId, z, x, y) => `/tiles/thermal/anomaly/${collection}/${itemId}/${z}/${x}/${y}.png`
+  TILES_THERMAL_ANOMALY_SHORT: (collection, itemId, z, x, y) => `/tiles/thermal/anomaly/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  // Cycle v2.5.37: Multi-Band Super-Resolution Sharpening
+  ANALYSIS_SHARPENING_SHARPEN: '/api/v1/analysis/sharpening/sharpen',
+  ANALYSIS_SHARPENING_SHARPEN_SHORT: '/analysis/sharpening/sharpen',
+  ANALYSIS_SHARPENING_METHODS: '/api/v1/analysis/sharpening/methods',
+  ANALYSIS_SHARPENING_METHODS_SHORT: '/analysis/sharpening/methods',
+  ANALYSIS_SHARPENING_EVALUATE: '/api/v1/analysis/sharpening/evaluate',
+  ANALYSIS_SHARPENING_EVALUATE_SHORT: '/analysis/sharpening/evaluate',
+  TILES_SHARPENED: (method, target, z, x, y) => `/api/v1/tiles/sharpened/${method}/${target}/${z}/${x}/${y}.png`,
+  TILES_SHARPENED_SHORT: (method, target, z, x, y) => `/tiles/sharpened/${method}/${target}/${z}/${x}/${y}.png`,
+  TILES_SHARPENED_XYZ: (z, x, y) => `/api/v1/tiles/sharpened/${z}/${x}/${y}.png`,
+  TILES_SHARPENED_XYZ_SHORT: (z, x, y) => `/tiles/sharpened/${z}/${x}/${y}.png`,
+  // Cycle v2.5.38: Multi-Sensor Cross-Calibration
+  ANALYSIS_CROSS_CALIBRATION_CALIBRATE: '/api/v1/analysis/cross-calibration/calibrate',
+  ANALYSIS_CROSS_CALIBRATION_CALIBRATE_SHORT: '/analysis/cross-calibration/calibrate',
+  ANALYSIS_CROSS_CALIBRATION_MODELS: '/api/v1/analysis/cross-calibration/models',
+  ANALYSIS_CROSS_CALIBRATION_MODELS_SHORT: '/analysis/cross-calibration/models',
+  ANALYSIS_CROSS_CALIBRATION_EVALUATE: '/api/v1/analysis/cross-calibration/evaluate',
+  ANALYSIS_CROSS_CALIBRATION_EVALUATE_SHORT: '/analysis/cross-calibration/evaluate',
+  TILES_CROSS_CALIBRATED: (model, metric, z, x, y) => `/api/v1/tiles/cross-calibrated/${model}/${metric}/${z}/${x}/${y}.png`,
+  TILES_CROSS_CALIBRATED_SHORT: (model, metric, z, x, y) => `/tiles/cross-calibrated/${model}/${metric}/${z}/${x}/${y}.png`,
+  TILES_CROSS_CALIBRATED_XYZ: (z, x, y) => `/api/v1/tiles/cross-calibrated/${z}/${x}/${y}.png`,
+  TILES_CROSS_CALIBRATED_XYZ_SHORT: (z, x, y) => `/tiles/cross-calibrated/${z}/${x}/${y}.png`
 };
 
 /**
@@ -23961,4 +23983,755 @@ export const buildExportStatusUrl = (jobId) => {
 export const buildExportDownloadUrl = (jobId) => {
   return `/api/v1/analysis/export/download/${jobId}`;
 };
+
+// ============================================================================
+// CYCLE v2.5.36: MULTI-HARMONIC PHENOLOGICAL DECOMPOSITION & FOURIER LAND SURFACE PHENOLOGY INVERSION
+// ============================================================================
+
+/**
+ * Supported land surface phenology metrics derived from multi-harmonic Fourier inversion.
+ */
+export const PhenologyMetric = {
+  SOS_DOY: 'sos_doy',                      // Start of Season (Day of Year) green-up threshold
+  POS_DOY: 'pos_doy',                      // Peak of Season (Day of Year) maximum canopy greenness
+  EOS_DOY: 'eos_doy',                      // End of Season (Day of Year) senescence threshold
+  LOS_DAYS: 'los_days',                    // Length of Season (Days): EOS - SOS
+  SEASONAL_AMPLITUDE: 'seasonal_amplitude', // Seasonal greenness dynamic range (Peak - Base)
+  BASE_LEVEL: 'base_level',                // Minimum background winter / dormant season index level
+  HARMONIC_RMSE: 'harmonic_rmse'           // Root mean square error of multi-harmonic Fourier fit
+};
+
+export const PHENOLOGY_METRICS = [
+  PhenologyMetric.SOS_DOY,
+  PhenologyMetric.POS_DOY,
+  PhenologyMetric.EOS_DOY,
+  PhenologyMetric.LOS_DAYS,
+  PhenologyMetric.SEASONAL_AMPLITUDE,
+  PhenologyMetric.BASE_LEVEL,
+  PhenologyMetric.HARMONIC_RMSE
+];
+
+export const PHENOLOGY_METRIC_CONFIGS = {
+  [PhenologyMetric.SOS_DOY]: {
+    metric: 'sos_doy',
+    label: 'Start of Season (SOS)',
+    unit: 'DOY',
+    minVal: 1.0,
+    maxVal: 365.25,
+    colormap: 'viridis',
+    description: 'Start of seasonal green-up transition (Day of Year when index reaches 20% seasonal amplitude or inflection point).'
+  },
+  [PhenologyMetric.POS_DOY]: {
+    metric: 'pos_doy',
+    label: 'Peak of Season (POS)',
+    unit: 'DOY',
+    minVal: 1.0,
+    maxVal: 365.25,
+    colormap: 'viridis',
+    description: 'Peak vegetative maturity and canopy greenness (Day of Year of maximum harmonic curve value).'
+  },
+  [PhenologyMetric.EOS_DOY]: {
+    metric: 'eos_doy',
+    label: 'End of Season (EOS)',
+    unit: 'DOY',
+    minVal: 1.0,
+    maxVal: 365.25,
+    colormap: 'viridis',
+    description: 'End of seasonal senescence and entry into winter dormancy (Day of Year).'
+  },
+  [PhenologyMetric.LOS_DAYS]: {
+    metric: 'los_days',
+    label: 'Length of Season (LOS)',
+    unit: 'Days',
+    minVal: 0.0,
+    maxVal: 365.25,
+    colormap: 'spectral',
+    description: 'Duration of active vegetative growing season in days (EOS - SOS).'
+  },
+  [PhenologyMetric.SEASONAL_AMPLITUDE]: {
+    metric: 'seasonal_amplitude',
+    label: 'Seasonal Amplitude',
+    unit: 'Index Delta',
+    minVal: 0.0,
+    maxVal: 1.0,
+    colormap: 'spectral',
+    description: 'Dynamic range between dormant baseline and peak vegetative greenness (Peak - Base).'
+  },
+  [PhenologyMetric.BASE_LEVEL]: {
+    metric: 'base_level',
+    label: 'Base Dormancy Level',
+    unit: 'Index Value',
+    minVal: -1.0,
+    maxVal: 1.0,
+    colormap: 'viridis',
+    description: 'Baseline background dormant season vegetation index level (minimum fitted harmonic value).'
+  },
+  [PhenologyMetric.HARMONIC_RMSE]: {
+    metric: 'harmonic_rmse',
+    label: 'Harmonic Fit RMSE',
+    unit: 'Index Error',
+    minVal: 0.0,
+    maxVal: 0.5,
+    colormap: 'magma',
+    description: 'Root mean square error between multi-harmonic Fourier curve and cloud-screened satellite observations.'
+  }
+};
+
+export const PHENOLOGY_BENCHMARK_SITES = {
+  HARVARD_FOREST_LTER_2026: {
+    siteId: 'HARVARD_FOREST_LTER_2026',
+    name: 'Harvard Forest LTER (Deciduous Broadleaf)',
+    latitude: 42.5378,
+    longitude: -72.1715,
+    ecosystemType: 'Deciduous Broadleaf Forest',
+    expectedSosDoy: 125,
+    expectedPosDoy: 200,
+    expectedEosDoy: 285,
+    expectedLosDays: 160,
+    expectedAmplitude: 0.52,
+    expectedBaseLevel: 0.28,
+    description: 'Long-term ecological research site in Petersham, MA; classic temperate deciduous phenological green-up and autumn senescence.'
+  },
+  KONZA_PRAIRIE_GRASSLAND_2026: {
+    siteId: 'KONZA_PRAIRIE_GRASSLAND_2026',
+    name: 'Konza Prairie LTER (Tallgrass Prairie)',
+    latitude: 39.0825,
+    longitude: -96.5603,
+    ecosystemType: 'Tallgrass Prairie Grassland',
+    expectedSosDoy: 110,
+    expectedPosDoy: 185,
+    expectedEosDoy: 270,
+    expectedLosDays: 160,
+    expectedAmplitude: 0.44,
+    expectedBaseLevel: 0.22,
+    description: 'Native tallgrass prairie in Manhattan, KS; rapid spring greening following seasonal precipitation.'
+  },
+  BOISE_RANGELAND_SHRUB_2026: {
+    siteId: 'BOISE_RANGELAND_SHRUB_2026',
+    name: 'Reynolds Creek / Boise Rangeland (Sagebrush Shrubland)',
+    latitude: 43.0645,
+    longitude: -116.7485,
+    ecosystemType: 'Semi-Arid Sagebrush Shrubland',
+    expectedSosDoy: 95,
+    expectedPosDoy: 160,
+    expectedEosDoy: 240,
+    expectedLosDays: 145,
+    expectedAmplitude: 0.26,
+    expectedBaseLevel: 0.16,
+    description: 'Intermountain semi-arid shrubland; early spring flush driven by snowmelt, followed by rapid summer soil moisture deficit dormancy.'
+  }
+};
+
+/**
+ * Normalizes string alias or metric value into canonical PhenologyMetric string.
+ * 
+ * @param {string} metric - Metric name or alias
+ * @returns {string} Canonical metric identifier
+ */
+export const normalizePhenologyMetric = (metric) => {
+  if (!metric) return PhenologyMetric.SOS_DOY;
+  const val = String(metric).trim().toLowerCase();
+  const mapping = {
+    sos_doy: PhenologyMetric.SOS_DOY,
+    sos: PhenologyMetric.SOS_DOY,
+    start_of_season: PhenologyMetric.SOS_DOY,
+    pos_doy: PhenologyMetric.POS_DOY,
+    pos: PhenologyMetric.POS_DOY,
+    peak_of_season: PhenologyMetric.POS_DOY,
+    eos_doy: PhenologyMetric.EOS_DOY,
+    eos: PhenologyMetric.EOS_DOY,
+    end_of_season: PhenologyMetric.EOS_DOY,
+    los_days: PhenologyMetric.LOS_DAYS,
+    los: PhenologyMetric.LOS_DAYS,
+    length_of_season: PhenologyMetric.LOS_DAYS,
+    seasonal_amplitude: PhenologyMetric.SEASONAL_AMPLITUDE,
+    amplitude: PhenologyMetric.SEASONAL_AMPLITUDE,
+    base_level: PhenologyMetric.BASE_LEVEL,
+    base: PhenologyMetric.BASE_LEVEL,
+    harmonic_rmse: PhenologyMetric.HARMONIC_RMSE,
+    rmse: PhenologyMetric.HARMONIC_RMSE
+  };
+  return mapping[val] || val;
+};
+
+/**
+ * Evaluates multi-harmonic Fourier equation:
+ * y(t) = a_0 + a_1 * t + sum_{k=1}^K [A_k * cos(2*pi*k*doy/365.25) + B_k * sin(2*pi*k*doy/365.25)]
+ * 
+ * @param {number} doy - Day of Year (1 - 366)
+ * @param {number} intercept - Baseline intercept a_0
+ * @param {number} [slope=0] - Linear slope a_1
+ * @param {Array<Object>} [harmonics=[]] - Array of Fourier harmonic terms [{k, cos_coeff, sin_coeff}]
+ * @param {number} [tYears=0] - Decimal year offset
+ * @returns {number} Evaluated curve value
+ */
+export const evaluateMultiHarmonicCurve = (doy, intercept, slope = 0, harmonics = [], tYears = 0) => {
+  let val = Number(intercept) + Number(slope) * Number(tYears);
+  if (Array.isArray(harmonics) && harmonics.length > 0) {
+    const omega = (2.0 * Math.PI) / 365.25;
+    for (const term of harmonics) {
+      const k = Number(term.harmonic_order || term.k || 1);
+      const ak = Number(term.cos_coeff || term.a_k || term.A_k || 0);
+      const bk = Number(term.sin_coeff || term.b_k || term.B_k || 0);
+      const theta = k * omega * Number(doy);
+      val += ak * Math.cos(theta) + bk * Math.sin(theta);
+    }
+  }
+  return val;
+};
+
+/**
+ * Extracts phenological transition milestone dates (SOS, POS, EOS, LOS) and amplitude from fitted seasonal curve.
+ * 
+ * @param {Array<number>} doySeries - Sequence of Day-of-Year numbers
+ * @param {Array<number>} fittedValues - Sequence of fitted curve values
+ * @param {number} [sosThresholdPct=0.20] - Relative amplitude threshold for SOS/EOS (default 20%)
+ * @returns {Object} Extracted phenology metrics
+ */
+export const extractPhenologyTransitionMetrics = (doySeries, fittedValues, sosThresholdPct = 0.20) => {
+  if (!doySeries || !fittedValues || doySeries.length === 0 || fittedValues.length === 0) {
+    return {
+      sos_doy: 0,
+      pos_doy: 0,
+      eos_doy: 0,
+      los_days: 0,
+      seasonal_amplitude: 0,
+      base_level: 0,
+      peak_level: 0
+    };
+  }
+  // Ensure chronological order by DOY
+  const pairs = doySeries.map((d, i) => ({ doy: Number(d), val: Number(fittedValues[i]) }))
+    .sort((a, b) => a.doy - b.doy);
+  const doys = pairs.map(p => p.doy);
+  const vals = pairs.map(p => p.val);
+
+  let minVal = vals[0];
+  let maxVal = vals[0];
+  for (let i = 1; i < vals.length; i++) {
+    if (vals[i] < minVal) minVal = vals[i];
+    if (vals[i] > maxVal) maxVal = vals[i];
+  }
+  const amp = Math.max(0, maxVal - minVal);
+  const posIdx = vals.indexOf(maxVal);
+  const posDoy = doys[posIdx];
+
+  const threshold = minVal + Number(sosThresholdPct) * amp;
+
+  let sosDoy = doys[0];
+  for (let i = 0; i < posIdx; i++) {
+    if (vals[i] >= threshold) {
+      sosDoy = doys[i];
+      break;
+    }
+  }
+
+  let eosDoy = doys[doys.length - 1];
+  for (let i = posIdx; i < vals.length; i++) {
+    if (vals[i] <= threshold) {
+      eosDoy = doys[i];
+      break;
+    }
+  }
+
+  const losDays = eosDoy >= sosDoy ? eosDoy - sosDoy : (365.25 - sosDoy) + eosDoy;
+
+  return {
+    sos_doy: Number(sosDoy.toFixed(2)),
+    pos_doy: Number(posDoy.toFixed(2)),
+    eos_doy: Number(eosDoy.toFixed(2)),
+    los_days: Number(losDays.toFixed(2)),
+    seasonal_amplitude: Number(amp.toFixed(4)),
+    base_level: Number(minVal.toFixed(4)),
+    peak_level: Number(maxVal.toFixed(4))
+  };
+};
+
+/**
+ * Builds canonical XYZ tile URL for dynamic phenological metric raster tiles.
+ * 
+ * @param {Object} options - Tile URL options
+ * @param {string} options.metric - Phenology metric (sos_doy, pos_doy, eos_doy, los_days, etc.)
+ * @param {number} options.z - Tile zoom level
+ * @param {number} options.x - Tile X coordinate
+ * @param {number} options.y - Tile Y coordinate
+ * @param {string} [options.colormap] - Optional colormap palette
+ * @returns {string} Tile URL
+ */
+export const buildPhenologyTileUrl = ({ metric = PhenologyMetric.SOS_DOY, z = '{z}', x = '{x}', y = '{y}', colormap = null } = {}) => {
+  const normMetric = normalizePhenologyMetric(metric);
+  let url = `/api/v1/tiles/phenology/${normMetric}/${z}/${x}/${y}.png`;
+  if (colormap) {
+    url += `?colormap=${colormap}`;
+  }
+  return url;
+};
+
+// ============================================================================
+// CYCLE v2.5.37: MULTI-BAND SUPER-RESOLUTION SHARPENING, GRAM-SCHMIDT / BROVEY
+// SPECTRAL FUSION & 10M REDEDGE/SWIR DYNAMIC TILES (TASK T-282)
+// ============================================================================
+
+/**
+ * Supported multi-band spectral super-resolution and pan-sharpening algorithms.
+ * @readonly
+ * @enum {string}
+ */
+export const SharpeningMethod = {
+  GRAM_SCHMIDT: 'gram_schmidt',
+  BROVEY: 'brovey',
+  HIGH_PASS_FILTER: 'high_pass_filter',
+  BICUBIC_SPLINE: 'bicubic_spline'
+};
+
+export const SHARPENING_METHODS = Object.values(SharpeningMethod);
+
+/**
+ * Native 20m Sentinel-2 multi-spectral bands eligible for 10m spatial super-resolution.
+ * @readonly
+ * @enum {string}
+ */
+export const SharpeningTargetBand = {
+  B05: 'B05',
+  B06: 'B06',
+  B07: 'B07',
+  B8A: 'B8A',
+  B11: 'B11',
+  B12: 'B12'
+};
+
+export const SHARPENING_TARGET_BANDS = Object.values(SharpeningTargetBand);
+
+/**
+ * Native 10m high-resolution guidance bands providing fine spatial structural frequencies.
+ * @readonly
+ * @enum {string}
+ */
+export const SharpeningGuidanceBand = {
+  B02: 'B02',
+  B03: 'B03',
+  B04: 'B04',
+  B08: 'B08'
+};
+
+export const SHARPENING_GUIDANCE_BANDS = Object.values(SharpeningGuidanceBand);
+
+/**
+ * High-resolution spectral indices derived from sharpened 10m bands.
+ * @readonly
+ * @enum {string}
+ */
+export const SharpeningIndexTarget = {
+  NDMI: 'ndmi',
+  NDCI: 'ndci',
+  NDRE: 'ndre',
+  MNDWI: 'mndwi',
+  NBR: 'nbr',
+  TRUE_COLOR_SHARP: 'true_color_sharp'
+};
+
+export const SHARPENING_INDEX_TARGETS = Object.values(SharpeningIndexTarget);
+
+/**
+ * 2D spatial convolution high-pass filter kernels for high-frequency detail extraction.
+ * @readonly
+ * @enum {string}
+ */
+export const HPFKernelType = {
+  LAPLACIAN_3X3: 'laplacian_3x3',
+  HIGH_BOOST_3X3: 'high_boost_3x3',
+  GAUSSIAN_DIFFERENCE_5X5: 'gaussian_difference_5x5'
+};
+
+export const HPF_KERNEL_TYPES = Object.values(HPFKernelType);
+
+/**
+ * Scientific quality certification tier based on SAM, ERGAS, and UIQI/Q4 metrics.
+ * @readonly
+ * @enum {string}
+ */
+export const SharpeningQualityRating = {
+  EXCELLENT: 'EXCELLENT',
+  GOOD: 'GOOD',
+  ACCEPTABLE: 'ACCEPTABLE',
+  DEGRADED: 'DEGRADED'
+};
+
+export const SHARPENING_METHOD_CONFIGS = {
+  [SharpeningMethod.GRAM_SCHMIDT]: {
+    name: 'Gram-Schmidt Orthogonalization',
+    reference: 'Laben & Brower (2000)',
+    description: 'Simulates low-resolution panchromatic band from guidance bands, applies orthogonal vector projection to eliminate spectral redundancy, and injects 10m high-frequency variance.',
+    preserves_radiometry: true,
+    spatial_detail_gain: 1.45,
+    computational_complexity: 'O(N * K^2)',
+    recommended_for: 'High-precision agricultural RedEdge and canopy chlorophyll mapping.'
+  },
+  [SharpeningMethod.BROVEY]: {
+    name: 'Brovey Color-Normalized Fusion',
+    reference: 'Gillespie et al. (1987)',
+    description: 'Normalizes multi-spectral bands by synthetic low-resolution panchromatic radiance, scaling by 10m guidance panchromatic intensity.',
+    preserves_radiometry: false,
+    spatial_detail_gain: 1.55,
+    computational_complexity: 'O(N * K)',
+    recommended_for: 'Visual interpretation, urban edge enhancement, and false-color composites.'
+  },
+  [SharpeningMethod.HIGH_PASS_FILTER]: {
+    name: 'High-Pass Filter Spatial Detail Injection',
+    reference: 'Chavez et al. (1991)',
+    description: 'Extracts high-frequency spatial edge details using a 2D spatial convolution kernel and injects weighted variance into bicubic upsampled 20m bands.',
+    preserves_radiometry: true,
+    spatial_detail_gain: 1.35,
+    computational_complexity: 'O(N * K * W^2)',
+    recommended_for: 'Topographic boundary sharpening and forestry canopy texture enhancement.'
+  },
+  [SharpeningMethod.BICUBIC_SPLINE]: {
+    name: 'Bicubic Spline Interpolation Baseline',
+    reference: 'Keys (1981)',
+    description: 'Standard continuous cubic convolution resampling from 20m to 10m without panchromatic spatial frequency injection.',
+    preserves_radiometry: true,
+    spatial_detail_gain: 1.00,
+    computational_complexity: 'O(N * K)',
+    recommended_for: 'Control baseline and low-contrast homogeneous landscape verification.'
+  }
+};
+
+export const SHARPENING_BAND_CONFIGS = {
+  B05: { wavelength_nm: 705, native_res_m: 20, sharpened_res_m: 10, domain: 'RedEdge 1', desc: 'Chlorophyll absorption boundary' },
+  B06: { wavelength_nm: 740, native_res_m: 20, sharpened_res_m: 10, domain: 'RedEdge 2', desc: 'Canopy cellular scattering' },
+  B07: { wavelength_nm: 783, native_res_m: 20, sharpened_res_m: 10, domain: 'RedEdge 3', desc: 'Leaf area index inflection' },
+  B8A: { wavelength_nm: 865, native_res_m: 20, sharpened_res_m: 10, domain: 'Narrow NIR', desc: 'Atmospheric water vapor plateau' },
+  B11: { wavelength_nm: 1610, native_res_m: 20, sharpened_res_m: 10, domain: 'SWIR 1', desc: 'Canopy water content and soil moisture' },
+  B12: { wavelength_nm: 2190, native_res_m: 20, sharpened_res_m: 10, domain: 'SWIR 2', desc: 'Clay mineralogy and burn severity' }
+};
+
+export const SYNTHETIC_PAN_WEIGHTS = {
+  equal: { B02: 0.25, B03: 0.25, B04: 0.25, B08: 0.25 },
+  natural_rgb: { B02: 0.15, B03: 0.35, B04: 0.35, B08: 0.15 },
+  vegetation_nir_boost: { B02: 0.10, B03: 0.20, B04: 0.20, B08: 0.50 },
+  swir_optimized: { B02: 0.10, B03: 0.25, B04: 0.35, B08: 0.30 }
+};
+
+export const HPF_KERNELS = {
+  [HPFKernelType.LAPLACIAN_3X3]: [
+    [-1.0, -1.0, -1.0],
+    [-1.0,  8.0, -1.0],
+    [-1.0, -1.0, -1.0]
+  ],
+  [HPFKernelType.HIGH_BOOST_3X3]: [
+    [ 0.0, -1.0,  0.0],
+    [-1.0,  5.0, -1.0],
+    [ 0.0, -1.0,  0.0]
+  ],
+  [HPFKernelType.GAUSSIAN_DIFFERENCE_5X5]: [
+    [-0.05, -0.10, -0.15, -0.10, -0.05],
+    [-0.10, -0.20, -0.30, -0.20, -0.10],
+    [-0.15, -0.30,  3.50, -0.30, -0.15],
+    [-0.10, -0.20, -0.30, -0.20, -0.10],
+    [-0.05, -0.10, -0.15, -0.10, -0.05]
+  ]
+};
+
+export const SHARPENING_BENCHMARK_SCENES = {
+  SAN_JOAQUIN_AGRICULTURE_2026: {
+    name: 'San Joaquin Valley Agricultural Corridor',
+    latitude: 36.3746,
+    longitude: -119.6842,
+    description: 'High-contrast citrus orchards, vineyards, and field crops; ideal for 10m NDCI (B05-B04) RedEdge chlorophyll sharpening.',
+    recommended_method: SharpeningMethod.GRAM_SCHMIDT,
+    target_bands: ['B05', 'B06', 'B07', 'B8A'],
+    expected_sam_rad: 0.024,
+    expected_ergas: 1.85,
+    expected_uiqi: 0.94
+  },
+  OREGON_CASCADE_FORESTRY_2026: {
+    name: 'Oregon Cascade Range Conifer Canopy',
+    latitude: 44.2215,
+    longitude: -122.2543,
+    description: 'Dense Douglas fir and cedar forest canopy; 10m NDMI (B08-B11) SWIR fuel moisture and canopy hydration mapping.',
+    recommended_method: SharpeningMethod.BROVEY,
+    target_bands: ['B11', 'B12', 'B8A'],
+    expected_sam_rad: 0.038,
+    expected_ergas: 2.40,
+    expected_uiqi: 0.91
+  },
+  PARIS_URBAN_HIGH_CONTRAST_2026: {
+    name: 'Paris Metropolitan Urban Fabric',
+    latitude: 48.8566,
+    longitude: 2.3522,
+    description: 'Fine-scale impervious surface, street grid, and Seine riparian boundary resolution with 10m SWIR-1 (B11) urban heat contrast.',
+    recommended_method: SharpeningMethod.HIGH_PASS_FILTER,
+    target_bands: ['B05', 'B11'],
+    expected_sam_rad: 0.032,
+    expected_ergas: 2.15,
+    expected_uiqi: 0.93
+  }
+};
+
+/**
+ * Normalizes string alias or enum into canonical SharpeningMethod.
+ * 
+ * @param {string} method - Method alias or enum
+ * @returns {string} Canonical sharpening method
+ */
+export const normalizeSharpeningMethod = (method) => {
+  if (!method) return SharpeningMethod.GRAM_SCHMIDT;
+  const val = String(method).trim().toLowerCase().replace(/-/g, '_');
+  const mapping = {
+    gram_schmidt: SharpeningMethod.GRAM_SCHMIDT,
+    gs: SharpeningMethod.GRAM_SCHMIDT,
+    gramschmidt: SharpeningMethod.GRAM_SCHMIDT,
+    brovey: SharpeningMethod.BROVEY,
+    color_normalized: SharpeningMethod.BROVEY,
+    cn: SharpeningMethod.BROVEY,
+    high_pass_filter: SharpeningMethod.HIGH_PASS_FILTER,
+    hpf: SharpeningMethod.HIGH_PASS_FILTER,
+    highpass: SharpeningMethod.HIGH_PASS_FILTER,
+    high_pass: SharpeningMethod.HIGH_PASS_FILTER,
+    bicubic_spline: SharpeningMethod.BICUBIC_SPLINE,
+    bicubic: SharpeningMethod.BICUBIC_SPLINE,
+    spline: SharpeningMethod.BICUBIC_SPLINE
+  };
+  return mapping[val] || SharpeningMethod.GRAM_SCHMIDT;
+};
+
+/**
+ * Calculates synthetic high-resolution panchromatic value from 10m guidance bands.
+ * 
+ * @param {Object} guidanceBands - Guidance band map { B02, B03, B04, B08 }
+ * @param {Object} [weights=null] - Optional weighting dictionary
+ * @returns {number} Synthetic panchromatic value
+ */
+export const calculateSyntheticPanchromatic = (guidanceBands, weights = null) => {
+  if (!guidanceBands) return 0.0;
+  const wMap = typeof weights === 'string'
+    ? (SYNTHETIC_PAN_WEIGHTS[weights.toLowerCase()] || SYNTHETIC_PAN_WEIGHTS.equal)
+    : (weights || SYNTHETIC_PAN_WEIGHTS.equal);
+  let totalWeight = 0.0;
+  let weightedSum = 0.0;
+  for (const [band, val] of Object.entries(guidanceBands)) {
+    const w = Number(wMap[band] !== undefined ? wMap[band] : 1.0);
+    weightedSum += Number(val) * w;
+    totalWeight += w;
+  }
+  if (totalWeight <= 0) return 0.0;
+  return Number((weightedSum / totalWeight).toFixed(6));
+};
+
+/**
+ * Calculates Brovey color-normalized ratio fusion value:
+ * rho_sharp = rho_low * (P_high / max(P_low, epsilon))
+ * 
+ * @param {number} lowResVal - Native low resolution band reflectance
+ * @param {number} highResPan - High resolution panchromatic radiance
+ * @param {number} lowResPan - Low resolution panchromatic radiance
+ * @param {number} [epsilon=1e-6] - Small positive denominator floor
+ * @returns {number} Sharpened reflectance value
+ */
+export const calculateBroveySharpenedValue = (lowResVal, highResPan, lowResPan, epsilon = 1e-6) => {
+  const denom = Math.max(Number(lowResPan), Number(epsilon));
+  const ratio = Number(highResPan) / denom;
+  const sharp = Number(lowResVal) * ratio;
+  return Number(Math.max(0.0, sharp).toFixed(6));
+};
+
+/**
+ * Calculates high-pass filter detail injection value:
+ * rho_sharp = max(0.0, rho_low + gain * delta_high_freq)
+ * 
+ * @param {number} lowResVal - Low resolution reflectance
+ * @param {number} highFreqDelta - High frequency detail delta
+ * @param {number} [gain=0.75] - Detail injection gain factor
+ * @returns {number} Sharpened reflectance value
+ */
+export const calculateHighPassInjectedValue = (lowResVal, highFreqDelta, gain = 0.75) => {
+  const sharp = Number(lowResVal) + Number(gain) * Number(highFreqDelta);
+  return Number(Math.max(0.0, sharp).toFixed(6));
+};
+
+/**
+ * Calculates Spectral Angle Mapper (SAM) in radians between original and sharpened multi-band vectors:
+ * SAM = arccos( (u . v) / (||u|| * ||v||) )
+ * 
+ * @param {Array<number>} vecOrig - Original multi-band vector
+ * @param {Array<number>} vecSharp - Sharpened multi-band vector
+ * @returns {number} Spectral Angle Mapper in radians
+ */
+export const calculateSharpeningSam = (vecOrig, vecSharp) => {
+  if (!vecOrig || !vecSharp || vecOrig.length === 0 || vecSharp.length === 0 || vecOrig.length !== vecSharp.length) {
+    return 0.0;
+  }
+  let dot = 0.0;
+  let normUSq = 0.0;
+  let normVSq = 0.0;
+  for (let i = 0; i < vecOrig.length; i++) {
+    const a = Number(vecOrig[i]);
+    const b = Number(vecSharp[i]);
+    dot += a * b;
+    normUSq += a * a;
+    normVSq += b * b;
+  }
+  const denom = Math.sqrt(normUSq) * Math.sqrt(normVSq);
+  if (denom <= 1e-12) return 0.0;
+  const cosTheta = Math.max(-1.0, Math.min(1.0, dot / denom));
+  return Number(Math.acos(cosTheta).toFixed(6));
+};
+
+/**
+ * Calculates dimensionless synthesis relative error (ERGAS):
+ * ERGAS = 100 * (h/l) * sqrt( (1/N) * sum_i (RMSE_i / mean_i)^2 )
+ * 
+ * @param {Array<number>} rmseList - RMSE per band
+ * @param {Array<number>} meanOrigList - Mean reflectance per band
+ * @param {number} [highRes=10.0] - High resolution in meters
+ * @param {number} [lowRes=20.0] - Low resolution in meters
+ * @returns {number} ERGAS metric
+ */
+export const calculateErgas = (rmseList, meanOrigList, highRes = 10.0, lowRes = 20.0) => {
+  if (!rmseList || !meanOrigList || rmseList.length === 0 || rmseList.length !== meanOrigList.length) {
+    return 0.0;
+  }
+  const h = Number(highRes);
+  const l = Number(lowRes);
+  if (l <= 0 || h < 0) return 0.0;
+  const n = rmseList.length;
+  let sumSq = 0.0;
+  for (let i = 0; i < n; i++) {
+    const rmse = Number(rmseList[i]);
+    const meanVal = Math.max(Math.abs(Number(meanOrigList[i])), 1e-6);
+    sumSq += Math.pow(rmse / meanVal, 2);
+  }
+  const ergas = 100.0 * (h / l) * Math.sqrt(sumSq / n);
+  return Number(ergas.toFixed(4));
+};
+
+/**
+ * Calculates Universal Image Quality Index (UIQI / Q4):
+ * Q = 4 * cov(x, y) * x_bar * y_bar / ( (var_x + var_y) * (x_bar^2 + y_bar^2) )
+ * 
+ * @param {Array<number>} origVals - Original band values
+ * @param {Array<number>} sharpVals - Sharpened band values
+ * @returns {number} UIQI Q4 index in [0, 1]
+ */
+export const calculateUiqiQ4 = (origVals, sharpVals) => {
+  if (!origVals || !sharpVals || origVals.length === 0 || origVals.length !== sharpVals.length) {
+    return 1.0;
+  }
+  const n = origVals.length;
+  let sumX = 0.0;
+  let sumY = 0.0;
+  for (let i = 0; i < n; i++) {
+    sumX += Number(origVals[i]);
+    sumY += Number(sharpVals[i]);
+  }
+  const meanX = sumX / n;
+  const meanY = sumY / n;
+
+  let varX = 0.0;
+  let varY = 0.0;
+  let covXY = 0.0;
+  for (let i = 0; i < n; i++) {
+    const dx = Number(origVals[i]) - meanX;
+    const dy = Number(sharpVals[i]) - meanY;
+    varX += dx * dx;
+    varY += dy * dy;
+    covXY += dx * dy;
+  }
+  varX /= n;
+  varY /= n;
+  covXY /= n;
+
+  const denom = (varX + varY) * (meanX * meanX + meanY * meanY);
+  if (denom <= 1e-12) {
+    return (Math.abs(meanX - meanY) < 1e-6 && Math.abs(varX - varY) < 1e-6) ? 1.0 : 0.0;
+  }
+  const q = (4.0 * covXY * meanX * meanY) / denom;
+  return Number(Math.max(0.0, Math.min(1.0, q)).toFixed(4));
+};
+
+/**
+ * Calculates radiometric energy conservation ratio: mean(sharp) / mean(orig).
+ * 
+ * @param {Array<number>} origVals - Original band values
+ * @param {Array<number>} sharpVals - Sharpened band values
+ * @returns {number} Conservation ratio
+ */
+export const calculateEnergyConservationRatio = (origVals, sharpVals) => {
+  if (!origVals || !sharpVals || origVals.length === 0 || sharpVals.length === 0) {
+    return 1.0;
+  }
+  const sumOrig = origVals.reduce((acc, v) => acc + Number(v), 0);
+  const sumSharp = sharpVals.reduce((acc, v) => acc + Number(v), 0);
+  const meanOrig = sumOrig / origVals.length;
+  const meanSharp = sumSharp / sharpVals.length;
+  if (Math.abs(meanOrig) <= 1e-9) return 1.0;
+  return Number((meanSharp / meanOrig).toFixed(4));
+};
+
+/**
+ * Classifies scientific sharpening quality tier based on SAM, ERGAS, and UIQI/Q4 metrics.
+ * 
+ * @param {number} samRad - Spectral Angle Mapper in radians
+ * @param {number} ergas - ERGAS error
+ * @param {number} uiqi - UIQI Q4 score
+ * @returns {string} Sharpening quality tier
+ */
+export const classifySharpeningQualityRating = (samRad, ergas, uiqi) => {
+  const sam = Number(samRad);
+  const e = Number(ergas);
+  const q = Number(uiqi);
+  if (sam <= 0.030 && e <= 2.0 && q >= 0.93) {
+    return SharpeningQualityRating.EXCELLENT;
+  } else if (sam <= 0.050 && e <= 3.5 && q >= 0.85) {
+    return SharpeningQualityRating.GOOD;
+  } else if (sam <= 0.080 && e <= 5.0 && q >= 0.70) {
+    return SharpeningQualityRating.ACCEPTABLE;
+  }
+  return SharpeningQualityRating.DEGRADED;
+};
+
+/**
+ * Builds canonical XYZ tile URL for dynamic sharpened raster tiles.
+ * 
+ * @param {Object} options - Tile options
+ * @param {string} options.method - Sharpening method
+ * @param {string} options.target - Target band or index
+ * @param {number} options.z - Zoom level
+ * @param {number} options.x - Tile X coordinate
+ * @param {number} options.y - Tile Y coordinate
+ * @param {string} [options.colormap] - Colormap palette
+ * @returns {string} Tile URL
+ */
+export const buildSharpenedTileUrl = ({
+  method = SharpeningMethod.GRAM_SCHMIDT,
+  target = 'ndmi',
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  colormap = null
+} = {}) => {
+  const normMethod = normalizeSharpeningMethod(method);
+  const normTarget = String(target).trim().toLowerCase();
+  let url = `/api/v1/tiles/sharpened/${normMethod}/${normTarget}/${z}/${x}/${y}.png`;
+  if (colormap) {
+    url += `?colormap=${colormap}`;
+  }
+  return url;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for sharpened tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile template
+ */
+export const buildSharpenedTileUrlTemplate = ({
+  method = SharpeningMethod.GRAM_SCHMIDT,
+  target = 'ndmi',
+  colormap = null
+} = {}) => {
+  return buildSharpenedTileUrl({ method, target, z: '{z}', x: '{x}', y: '{y}', colormap });
+};
+
+
 

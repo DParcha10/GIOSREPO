@@ -19,7 +19,7 @@ import urllib.parse
 from enum import Enum
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Union, Sequence
-from pydantic import BaseModel, Field, model_validator, ConfigDict
+from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
 
 # ============================================================================
 # ENUMS
@@ -995,6 +995,37 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "analysis_export_download_short": "/analysis/export/download/{job_id}",
     "analysis_export_formats": "/api/v1/analysis/export/formats",
     "analysis_export_formats_short": "/analysis/export/formats",
+    # Cycle v2.5.36: Multi-Harmonic Phenological Decomposition & Fourier Land Surface Phenology Inversion Contracts
+    "analysis_phenology_curve": "/api/v1/analysis/phenology/curve",
+    "analysis_phenology_curve_short": "/analysis/phenology/curve",
+    "analysis_phenology_benchmarks": "/api/v1/analysis/phenology/benchmarks",
+    "analysis_phenology_benchmarks_short": "/analysis/phenology/benchmarks",
+    "analysis_phenology_metrics": "/api/v1/analysis/phenology/metrics",
+    "analysis_phenology_metrics_short": "/analysis/phenology/metrics",
+    "tiles_phenology": "/api/v1/tiles/phenology/{metric}/{z}/{x}/{y}.png",
+    "tiles_phenology_short": "/tiles/phenology/{metric}/{z}/{x}/{y}.png",
+    # Cycle v2.5.37: Multi-Band Super-Resolution Sharpening & Gram-Schmidt Spectral Fusion Contracts
+    "analysis_sharpening_sharpen": "/api/v1/analysis/sharpening/sharpen",
+    "analysis_sharpening_sharpen_short": "/analysis/sharpening/sharpen",
+    "analysis_sharpening_methods": "/api/v1/analysis/sharpening/methods",
+    "analysis_sharpening_methods_short": "/analysis/sharpening/methods",
+    "analysis_sharpening_evaluate": "/api/v1/analysis/sharpening/evaluate",
+    "analysis_sharpening_evaluate_short": "/analysis/sharpening/evaluate",
+    "tiles_sharpened": "/api/v1/tiles/sharpened/{method}/{target}/{z}/{x}/{y}.png",
+    "tiles_sharpened_short": "/tiles/sharpened/{method}/{target}/{z}/{x}/{y}.png",
+    "tiles_sharpened_xyz": "/api/v1/tiles/sharpened/{z}/{x}/{y}.png",
+    "tiles_sharpened_xyz_short": "/tiles/sharpened/{z}/{x}/{y}.png",
+    # Cycle v2.5.38: Multi-Sensor Cross-Calibration, Harmonized Surface Reflectance & Cross-Sensor Daily Tiles Contracts
+    "analysis_cross_calibration_calibrate": "/api/v1/analysis/cross-calibration/calibrate",
+    "analysis_cross_calibration_calibrate_short": "/analysis/cross-calibration/calibrate",
+    "analysis_cross_calibration_models": "/api/v1/analysis/cross-calibration/models",
+    "analysis_cross_calibration_models_short": "/analysis/cross-calibration/models",
+    "analysis_cross_calibration_evaluate": "/api/v1/analysis/cross-calibration/evaluate",
+    "analysis_cross_calibration_evaluate_short": "/analysis/cross-calibration/evaluate",
+    "tiles_cross_calibrated": "/api/v1/tiles/cross-calibrated/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_cross_calibrated_short": "/tiles/cross-calibrated/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_cross_calibrated_xyz": "/api/v1/tiles/cross-calibrated/{z}/{x}/{y}.png",
+    "tiles_cross_calibrated_xyz_short": "/tiles/cross-calibrated/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1209,6 +1240,64 @@ def format_api_route(route_name: str, **kwargs) -> str:
                 if alt in kwargs:
                     kwargs["job_id"] = kwargs[alt]
                     break
+    elif route_name in ("tiles_phenology", "tiles_phenology_short"):
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            kwargs["metric"] = val.value if hasattr(val, "value") else str(val)
+        else:
+            for alt in ("phenology_metric", "phenologyMetric"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    kwargs["metric"] = val.value if hasattr(val, "value") else str(val)
+                    break
+            if "metric" not in kwargs:
+                kwargs["metric"] = "sos_doy"
+    elif route_name in ("tiles_sharpened", "tiles_sharpened_short"):
+        if "method" in kwargs:
+            val = kwargs["method"]
+            kwargs["method"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("sharpening_method", "sharpenMethod", "algorithm"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    kwargs["method"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "method" not in kwargs:
+                kwargs["method"] = "gram_schmidt"
+        if "target" in kwargs:
+            val = kwargs["target"]
+            kwargs["target"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("band", "index", "target_band", "target_index", "metric"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    kwargs["target"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "target" not in kwargs:
+                kwargs["target"] = "ndmi"
+    elif route_name in ("tiles_cross_calibrated", "tiles_cross_calibrated_short"):
+        if "model" in kwargs:
+            val = kwargs["model"]
+            kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("calibration_model", "calModel", "algorithm"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "model" not in kwargs:
+                kwargs["model"] = "roy_2016_linear"
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("tile_metric", "tileMetric", "target"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "metric" not in kwargs:
+                kwargs["metric"] = "harmonized_ndvi"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -5620,14 +5709,36 @@ class PhenologyAnalysisRequest(BaseModel):
     vi_samples: Optional[List[float]] = Field(default=None, description="Optional raw spectral index observations")
     bbox: Optional[Any] = Field(default=None, description="Spatial bounding envelope")
 
+    # Cycle v2.5.36 extensions
+    asset_id: Optional[str] = Field(default=None, description="Registered benchmark site or asset ID")
+    index_name: Optional[str] = Field(default=None, description="Target biophysical spectral index (e.g. ndvi, evi, ndre)")
+    latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0, description="Latitude coordinate")
+    longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0, description="Longitude coordinate")
+    collection: str = Field(default="sentinel-2-l2a", description="Satellite collection identifier")
+    start_date: Optional[str] = Field(default="2023-01-01", description="Observation start date (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(default="2025-12-31", description="Observation end date (YYYY-MM-DD)")
+    num_harmonics: Optional[int] = Field(default=None, ge=1, le=4, description="Number of Fourier harmonic frequencies")
+    sos_threshold_pct: float = Field(default=0.20, ge=0.05, le=0.50, description="Relative amplitude threshold for SOS/EOS")
+    observations: Optional[List[Dict[str, Any]]] = Field(default=None, description="Optional raw or cloud-screened satellite observations")
+
     @model_validator(mode="before")
     @classmethod
     def parse_bbox_field(cls, data: Any) -> Any:
         if isinstance(data, dict):
             if "bbox" in data and data["bbox"] is not None:
                 data["bbox"] = parse_bbox(data["bbox"])
-            if "asset_id" in data and "aoi_name" not in data:
-                data["aoi_name"] = data["asset_id"]
+            if "asset_id" in data and ("aoi_name" not in data or data["aoi_name"] is None):
+                data["aoi_name"] = str(data["asset_id"])
+            elif "aoi_name" in data and ("asset_id" not in data or data["asset_id"] is None):
+                data["asset_id"] = str(data["aoi_name"])
+            if "index_name" in data and data["index_name"] is not None:
+                data["metric"] = str(data["index_name"])
+            elif "metric" in data and data["metric"] is not None and "index_name" not in data:
+                data["index_name"] = str(data["metric"])
+            if "num_harmonics" in data and data["num_harmonics"] is not None:
+                data["harmonic_terms"] = int(data["num_harmonics"])
+            elif "harmonic_terms" in data and data["harmonic_terms"] is not None and "num_harmonics" not in data:
+                data["num_harmonics"] = int(data["harmonic_terms"])
             if "timeseries" in data and isinstance(data["timeseries"], list):
                 from datetime import datetime as dt_cls
                 doys = []
@@ -5651,14 +5762,70 @@ class PhenologyAnalysisRequest(BaseModel):
 
 class PhenologyAnalysisResponse(BaseModel):
     """Response payload with extracted phenometrics, fitted curve, and climatological anomaly."""
-    aoi_name: str = Field(..., description="Area of interest label")
-    metric: str = Field(..., description="Analyzed spectral index")
-    fit_model: PhenologyFitModel = Field(..., description="Model used for curve fitting")
-    phenometrics: Phenometrics = Field(..., description="Extracted key seasonal markers")
-    r_squared: float = Field(..., description="Coefficient of determination for harmonic fit")
-    climatological_anomaly_z: float = Field(..., description="Z-score deviation from historical phenological baseline")
-    curve_points: List[Dict[str, float]] = Field(default_factory=list, description="Interpolated 365-day phenological curve points")
+    aoi_name: str = Field(default="San Luis Reservoir Watershed", description="Area of interest label")
+    metric: str = Field(default="ndvi", description="Analyzed spectral index")
+    fit_model: PhenologyFitModel = Field(default=PhenologyFitModel.HARMONIC_HATS, description="Model used for curve fitting")
+    phenometrics: Optional[Phenometrics] = Field(default=None, description="Extracted key seasonal markers")
+    r_squared: float = Field(default=0.0, description="Coefficient of determination for harmonic fit")
+    climatological_anomaly_z: float = Field(default=0.0, description="Z-score deviation from historical phenological baseline")
+    curve_points: List[Any] = Field(default_factory=list, description="Interpolated 365-day phenological curve points")
     analyzed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp of analysis")
+
+    # Cycle v2.5.36 extensions
+    asset_id: Optional[str] = Field(default=None, description="Site or asset identifier")
+    site_name: Optional[str] = Field(default=None, description="Descriptive site or benchmark name")
+    index_name: Optional[str] = Field(default=None, description="Analyzed spectral index")
+    metrics: Optional[Any] = Field(default=None, description="Derived phenological transition metrics (SOS, POS, EOS, LOS)")
+    harmonic_fit: Optional[Any] = Field(default=None, description="Multi-harmonic Fourier regression parameters")
+    tile_url_template: Optional[str] = Field(default=None, description="Canonical XYZ tile URL template for dynamic Leaflet overlay")
+    status: str = Field(default="success", description="Execution status")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reconcile_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "asset_id" in data and ("aoi_name" not in data or data["aoi_name"] is None):
+                data["aoi_name"] = str(data["asset_id"])
+            elif "aoi_name" in data and ("asset_id" not in data or data["asset_id"] is None):
+                data["asset_id"] = str(data["aoi_name"])
+            if "index_name" in data and ("metric" not in data or data["metric"] is None):
+                data["metric"] = str(data["index_name"])
+            elif "metric" in data and ("index_name" not in data or data["index_name"] is None):
+                data["index_name"] = str(data["metric"])
+            if "harmonic_fit" in data and data["harmonic_fit"] is not None:
+                h_fit = data["harmonic_fit"]
+                if hasattr(h_fit, "r_squared"):
+                    data["r_squared"] = float(h_fit.r_squared)
+                elif isinstance(h_fit, dict) and "r_squared" in h_fit:
+                    data["r_squared"] = float(h_fit["r_squared"])
+            if "metrics" in data and data["metrics"] is not None and ("phenometrics" not in data or data["phenometrics"] is None):
+                m = data["metrics"]
+                if isinstance(m, dict):
+                    base_l = float(m.get("base_level", 0.0))
+                    peak_l = float(m.get("peak_level", 0.0))
+                    amp = float(m.get("seasonal_amplitude", 0.0))
+                    sos = int(round(float(m.get("sos_doy", 0))))
+                    pos = int(round(float(m.get("pos_doy", 0))))
+                    eos = int(round(float(m.get("eos_doy", 0))))
+                    los = int(round(float(m.get("los_days", 0))))
+                else:
+                    base_l = float(getattr(m, "base_level", 0.0))
+                    peak_l = float(getattr(m, "peak_level", 0.0))
+                    amp = float(getattr(m, "seasonal_amplitude", 0.0))
+                    sos = int(round(float(getattr(m, "sos_doy", 0))))
+                    pos = int(round(float(getattr(m, "pos_doy", 0))))
+                    eos = int(round(float(getattr(m, "eos_doy", 0))))
+                    los = int(round(float(getattr(m, "los_days", 0))))
+                data["phenometrics"] = Phenometrics(
+                    base_level=base_l,
+                    peak_level=peak_l,
+                    amplitude=amp,
+                    sos_doy=sos,
+                    pos_doy=pos,
+                    eos_doy=eos,
+                    los_days=los,
+                )
+        return data
 
 def fit_harmonic_phenology(
     doy_list: Sequence[int],
@@ -7480,61 +7647,87 @@ class SAMAnalysisResponse(BaseModel):
         return self.target_endmember.value if hasattr(self.target_endmember, "value") else str(self.target_endmember)
 
 def calculate_spectral_angle_mapper(
-    pixel_reflectance: Dict[str, float],
-    endmember_reflectance: Dict[str, float]
-) -> Dict[str, Any]:
-    """Calculates Spectral Angle Mapper (SAM) angle theta = arccos((r . e) / (||r|| * ||e||))."""
-    common_bands = [b for b in pixel_reflectance if b in endmember_reflectance]
-    if not common_bands:
+    pixel_reflectance: Union[Dict[str, float], Sequence[float]],
+    endmember_reflectance: Union[Dict[str, float], Sequence[float]]
+) -> Union[Dict[str, Any], float]:
+    """Calculates Spectral Angle Mapper (SAM) angle theta = arccos((r . e) / (||r|| * ||e||)).
+    
+    Supports both:
+    1. Dictionary endmember matching: (dict, dict) -> dict with angle_rad, angle_deg, is_match, etc.
+    2. Sequence vector comparisons: (sequence, sequence) -> float angle in radians.
+    """
+    if isinstance(pixel_reflectance, dict) and isinstance(endmember_reflectance, dict):
+        common_bands = [b for b in pixel_reflectance if b in endmember_reflectance]
+        if not common_bands:
+            return {
+                "spectral_angle_rad": math.pi / 2.0,
+                "spectral_angle_deg": 90.0,
+                "is_match": False,
+                "match_confidence": "none",
+                "similarity_score": 0.0
+            }
+
+        dot_product = 0.0
+        norm_r_sq = 0.0
+        norm_e_sq = 0.0
+
+        for b in common_bands:
+            r_val = max(0.0, float(pixel_reflectance[b]))
+            e_val = max(0.0, float(endmember_reflectance[b]))
+            dot_product += r_val * e_val
+            norm_r_sq += r_val * r_val
+            norm_e_sq += e_val * e_val
+
+        denom = math.sqrt(norm_r_sq) * math.sqrt(norm_e_sq)
+        if denom <= 1e-8:
+            angle_rad = math.pi / 2.0
+        else:
+            cos_theta = max(-1.0, min(1.0, dot_product / denom))
+            angle_rad = math.acos(cos_theta)
+
+        angle_deg = math.degrees(angle_rad)
+        similarity = max(0.0, 1.0 - (angle_rad / (math.pi / 2.0)))
+
+        if angle_rad <= 0.08:
+            conf = "high"
+            matched = True
+        elif angle_rad <= 0.15:
+            conf = "moderate"
+            matched = True
+        elif angle_rad <= 0.25:
+            conf = "low"
+            matched = False
+        else:
+            conf = "none"
+            matched = False
+
         return {
-            "spectral_angle_rad": math.pi / 2.0,
-            "spectral_angle_deg": 90.0,
-            "is_match": False,
-            "match_confidence": "none",
-            "similarity_score": 0.0
+            "spectral_angle_rad": round(angle_rad, 4),
+            "spectral_angle_deg": round(angle_deg, 2),
+            "is_match": matched,
+            "match_confidence": conf,
+            "similarity_score": round(similarity, 4)
         }
 
-    dot_product = 0.0
-    norm_r_sq = 0.0
-    norm_e_sq = 0.0
+    if isinstance(pixel_reflectance, dict) or isinstance(endmember_reflectance, dict):
+        raise TypeError(
+            "Both pixel_reflectance and endmember_reflectance must be of the same type "
+            "(both Dict[str, float] or both Sequence/Array)"
+        )
 
-    for b in common_bands:
-        r_val = max(0.0, float(pixel_reflectance[b]))
-        e_val = max(0.0, float(endmember_reflectance[b]))
-        dot_product += r_val * e_val
-        norm_r_sq += r_val * r_val
-        norm_e_sq += e_val * e_val
-
-    denom = math.sqrt(norm_r_sq) * math.sqrt(norm_e_sq)
-    if denom <= 1e-8:
-        angle_rad = math.pi / 2.0
-    else:
-        cos_theta = max(-1.0, min(1.0, dot_product / denom))
-        angle_rad = math.acos(cos_theta)
-
-    angle_deg = math.degrees(angle_rad)
-    similarity = max(0.0, 1.0 - (angle_rad / (math.pi / 2.0)))
-
-    if angle_rad <= 0.08:
-        conf = "high"
-        matched = True
-    elif angle_rad <= 0.15:
-        conf = "moderate"
-        matched = True
-    elif angle_rad <= 0.25:
-        conf = "low"
-        matched = False
-    else:
-        conf = "none"
-        matched = False
-
-    return {
-        "spectral_angle_rad": round(angle_rad, 4),
-        "spectral_angle_deg": round(angle_deg, 2),
-        "is_match": matched,
-        "match_confidence": conf,
-        "similarity_score": round(similarity, 4)
-    }
+    # Vector sequences for multi-band sharpening fidelity
+    vec_orig = [float(x) for x in pixel_reflectance]
+    vec_sharp = [float(x) for x in endmember_reflectance]
+    if len(vec_orig) == 0 or len(vec_sharp) == 0 or len(vec_orig) != len(vec_sharp):
+        return 0.0
+    dot = sum(a * b for a, b in zip(vec_orig, vec_sharp))
+    norm_u = math.sqrt(sum(a ** 2 for a in vec_orig))
+    norm_v = math.sqrt(sum(b ** 2 for b in vec_sharp))
+    denom = norm_u * norm_v
+    if denom <= 1e-12:
+        return 0.0
+    cos_theta = max(-1.0, min(1.0, dot / denom))
+    return float(round(math.acos(cos_theta), 6))
 
 def get_mineral_endmember_spec(endmember_name: str) -> Dict[str, float]:
     """Retrieves standard USGS/ASTER optical/SWIR reflectance values for a mineral endmember."""
@@ -32683,4 +32876,1215 @@ def build_export_status_url(job_id: str) -> str:
 def build_export_download_url(job_id: str) -> str:
     """Builds the canonical API endpoint URL for downloading a completed export artifact."""
     return f"/api/v1/analysis/export/download/{job_id}"
+
+
+# ============================================================================
+# CYCLE v2.5.36: MULTI-HARMONIC PHENOLOGICAL DECOMPOSITION & FOURIER LAND SURFACE PHENOLOGY INVERSION
+# ============================================================================
+
+class PhenologyMetric(str, Enum):
+    """Supported land surface phenology metrics derived from multi-harmonic Fourier inversion."""
+    SOS_DOY = "sos_doy"                      # Start of Season (Day of Year) green-up threshold
+    POS_DOY = "pos_doy"                      # Peak of Season (Day of Year) maximum canopy greenness
+    EOS_DOY = "eos_doy"                      # End of Season (Day of Year) senescence threshold
+    LOS_DAYS = "los_days"                    # Length of Season (Days): EOS - SOS
+    SEASONAL_AMPLITUDE = "seasonal_amplitude" # Seasonal greenness dynamic range (Peak - Base)
+    BASE_LEVEL = "base_level"                # Minimum background winter / dormant season index level
+    HARMONIC_RMSE = "harmonic_rmse"          # Root mean square error of multi-harmonic Fourier fit
+
+
+PHENOLOGY_METRICS: List[PhenologyMetric] = [
+    PhenologyMetric.SOS_DOY,
+    PhenologyMetric.POS_DOY,
+    PhenologyMetric.EOS_DOY,
+    PhenologyMetric.LOS_DAYS,
+    PhenologyMetric.SEASONAL_AMPLITUDE,
+    PhenologyMetric.BASE_LEVEL,
+    PhenologyMetric.HARMONIC_RMSE,
+]
+
+PHENOLOGY_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "sos_doy": {
+        "metric": "sos_doy",
+        "label": "Start of Season (SOS)",
+        "unit": "DOY",
+        "min_val": 1.0,
+        "max_val": 365.25,
+        "colormap": "viridis",
+        "description": "Start of seasonal green-up transition (Day of Year when index reaches 20% seasonal amplitude or inflection point).",
+    },
+    "pos_doy": {
+        "metric": "pos_doy",
+        "label": "Peak of Season (POS)",
+        "unit": "DOY",
+        "min_val": 1.0,
+        "max_val": 365.25,
+        "colormap": "viridis",
+        "description": "Peak vegetative maturity and canopy greenness (Day of Year of maximum harmonic curve value).",
+    },
+    "eos_doy": {
+        "metric": "eos_doy",
+        "label": "End of Season (EOS)",
+        "unit": "DOY",
+        "min_val": 1.0,
+        "max_val": 365.25,
+        "colormap": "viridis",
+        "description": "End of seasonal senescence and entry into winter dormancy (Day of Year).",
+    },
+    "los_days": {
+        "metric": "los_days",
+        "label": "Length of Season (LOS)",
+        "unit": "Days",
+        "min_val": 0.0,
+        "max_val": 365.25,
+        "colormap": "spectral",
+        "description": "Duration of active vegetative growing season in days (EOS - SOS).",
+    },
+    "seasonal_amplitude": {
+        "metric": "seasonal_amplitude",
+        "label": "Seasonal Amplitude",
+        "unit": "Index Delta",
+        "min_val": 0.0,
+        "max_val": 1.0,
+        "colormap": "spectral",
+        "description": "Dynamic range between dormant baseline and peak vegetative greenness (Peak - Base).",
+    },
+    "base_level": {
+        "metric": "base_level",
+        "label": "Base Dormancy Level",
+        "unit": "Index Value",
+        "min_val": -1.0,
+        "max_val": 1.0,
+        "colormap": "viridis",
+        "description": "Baseline background dormant season vegetation index level (minimum fitted harmonic value).",
+    },
+    "harmonic_rmse": {
+        "metric": "harmonic_rmse",
+        "label": "Harmonic Fit RMSE",
+        "unit": "Index Error",
+        "min_val": 0.0,
+        "max_val": 0.5,
+        "colormap": "magma",
+        "description": "Root mean square error between multi-harmonic Fourier curve and cloud-screened satellite observations.",
+    },
+}
+
+PHENOLOGY_BENCHMARK_SITES: Dict[str, Dict[str, Any]] = {
+    "HARVARD_FOREST_LTER_2026": {
+        "site_id": "HARVARD_FOREST_LTER_2026",
+        "name": "Harvard Forest LTER (Deciduous Broadleaf)",
+        "latitude": 42.5378,
+        "longitude": -72.1715,
+        "ecosystem_type": "Deciduous Broadleaf Forest",
+        "expected_sos_doy": 125,
+        "expected_pos_doy": 200,
+        "expected_eos_doy": 285,
+        "expected_los_days": 160,
+        "expected_amplitude": 0.52,
+        "expected_base_level": 0.28,
+        "description": "Long-term ecological research site in Petersham, MA; classic temperate deciduous phenological green-up and autumn senescence.",
+    },
+    "KONZA_PRAIRIE_GRASSLAND_2026": {
+        "site_id": "KONZA_PRAIRIE_GRASSLAND_2026",
+        "name": "Konza Prairie LTER (Tallgrass Prairie)",
+        "latitude": 39.0825,
+        "longitude": -96.5603,
+        "ecosystem_type": "Tallgrass Prairie Grassland",
+        "expected_sos_doy": 110,
+        "expected_pos_doy": 185,
+        "expected_eos_doy": 270,
+        "expected_los_days": 160,
+        "expected_amplitude": 0.44,
+        "expected_base_level": 0.22,
+        "description": "Native tallgrass prairie in Manhattan, KS; rapid spring greening following seasonal precipitation.",
+    },
+    "BOISE_RANGELAND_SHRUB_2026": {
+        "site_id": "BOISE_RANGELAND_SHRUB_2026",
+        "name": "Reynolds Creek / Boise Rangeland (Sagebrush Shrubland)",
+        "latitude": 43.0645,
+        "longitude": -116.7485,
+        "ecosystem_type": "Semi-Arid Sagebrush Shrubland",
+        "expected_sos_doy": 95,
+        "expected_pos_doy": 160,
+        "expected_eos_doy": 240,
+        "expected_los_days": 145,
+        "expected_amplitude": 0.26,
+        "expected_base_level": 0.16,
+        "description": "Intermountain semi-arid shrubland; early spring flush driven by snowmelt, followed by rapid summer soil moisture deficit dormancy.",
+    },
+}
+
+def normalize_phenology_metric(metric: Union[str, PhenologyMetric]) -> PhenologyMetric:
+    """Normalizes string alias or PhenologyMetric into canonical PhenologyMetric enum."""
+    if isinstance(metric, PhenologyMetric):
+        return metric
+    val = str(metric).strip().lower()
+    mapping = {
+        "sos_doy": PhenologyMetric.SOS_DOY,
+        "sos": PhenologyMetric.SOS_DOY,
+        "start_of_season": PhenologyMetric.SOS_DOY,
+        "pos_doy": PhenologyMetric.POS_DOY,
+        "pos": PhenologyMetric.POS_DOY,
+        "peak_of_season": PhenologyMetric.POS_DOY,
+        "eos_doy": PhenologyMetric.EOS_DOY,
+        "eos": PhenologyMetric.EOS_DOY,
+        "end_of_season": PhenologyMetric.EOS_DOY,
+        "los_days": PhenologyMetric.LOS_DAYS,
+        "los": PhenologyMetric.LOS_DAYS,
+        "length_of_season": PhenologyMetric.LOS_DAYS,
+        "seasonal_amplitude": PhenologyMetric.SEASONAL_AMPLITUDE,
+        "amplitude": PhenologyMetric.SEASONAL_AMPLITUDE,
+        "base_level": PhenologyMetric.BASE_LEVEL,
+        "base": PhenologyMetric.BASE_LEVEL,
+        "harmonic_rmse": PhenologyMetric.HARMONIC_RMSE,
+        "rmse": PhenologyMetric.HARMONIC_RMSE,
+    }
+    if val in mapping:
+        return mapping[val]
+    raise ValueError(f"Unsupported phenology metric '{metric}'. Allowed: {[e.value for e in PhenologyMetric]}")
+
+def evaluate_multi_harmonic_curve(
+    doy: float,
+    intercept: float,
+    slope: float = 0.0,
+    harmonics: Optional[List[Dict[str, float]]] = None,
+    t_years: float = 0.0,
+) -> float:
+    """Evaluates multi-harmonic Fourier equation:
+    y(t) = a_0 + a_1 * t + sum_{k=1}^K [A_k * cos(2*pi*k*doy/365.25) + B_k * sin(2*pi*k*doy/365.25)]
+    """
+    val = float(intercept) + float(slope) * float(t_years)
+    if harmonics:
+        omega = 2.0 * math.pi / 365.25
+        for term in harmonics:
+            k = int(term.get("harmonic_order", term.get("k", 1)))
+            ak = float(term.get("cos_coeff", term.get("a_k", term.get("A_k", 0.0))))
+            bk = float(term.get("sin_coeff", term.get("b_k", term.get("B_k", 0.0))))
+            theta = k * omega * float(doy)
+            val += ak * math.cos(theta) + bk * math.sin(theta)
+    return float(val)
+
+def extract_phenology_transition_metrics(
+    doy_series: Sequence[float],
+    fitted_values: Sequence[float],
+    sos_threshold_pct: float = 0.20,
+) -> Dict[str, float]:
+    """Extracts phenological transition milestone dates (SOS, POS, EOS, LOS) and amplitude from fitted seasonal curve.
+    
+    SOS/EOS are derived via relative amplitude thresholding (typically 20% above baseline during green-up/senescence).
+    """
+    if len(doy_series) == 0 or len(fitted_values) == 0:
+        return {
+            "sos_doy": 0.0,
+            "pos_doy": 0.0,
+            "eos_doy": 0.0,
+            "los_days": 0.0,
+            "seasonal_amplitude": 0.0,
+            "base_level": 0.0,
+            "peak_level": 0.0,
+        }
+    # Ensure points are chronologically sorted by DOY
+    sorted_pairs = sorted(zip(doy_series, fitted_values), key=lambda p: float(p[0]))
+    doys = [float(p[0]) for p in sorted_pairs]
+    vals = [float(p[1]) for p in sorted_pairs]
+    min_val = min(vals)
+    max_val = max(vals)
+    amp = max(0.0, max_val - min_val)
+    pos_idx = vals.index(max_val)
+    pos_doy = doys[pos_idx]
+
+    threshold = min_val + float(sos_threshold_pct) * amp
+
+    # SOS: during green-up phase (before POS)
+    sos_doy = doys[0]
+    for i in range(pos_idx):
+        if vals[i] >= threshold:
+            sos_doy = doys[i]
+            break
+
+    # EOS: during senescence phase (after POS)
+    eos_doy = doys[-1]
+    for i in range(pos_idx, len(vals)):
+        if vals[i] <= threshold:
+            eos_doy = doys[i]
+            break
+
+    los_days = eos_doy - sos_doy if eos_doy >= sos_doy else (365.25 - sos_doy) + eos_doy
+
+    return {
+        "sos_doy": round(sos_doy, 2),
+        "pos_doy": round(pos_doy, 2),
+        "eos_doy": round(eos_doy, 2),
+        "los_days": round(los_days, 2),
+        "seasonal_amplitude": round(amp, 4),
+        "base_level": round(min_val, 4),
+        "peak_level": round(max_val, 4),
+    }
+
+def build_phenology_tile_url(
+    metric: Union[str, PhenologyMetric],
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+) -> str:
+    """Builds canonical XYZ tile URL for dynamic phenological metric raster tiles."""
+    norm_metric = normalize_phenology_metric(metric).value
+    url = f"/api/v1/tiles/phenology/{norm_metric}/{z}/{x}/{y}.png"
+    if colormap:
+        url += f"?colormap={colormap}"
+    return url
+
+class HarmonicFourierTerm(BaseModel):
+    """Parameters of a single Fourier harmonic component (k-th order frequency)."""
+    harmonic_order: int = Field(..., ge=1, description="Harmonic frequency order (1=annual, 2=semi-annual)")
+    cos_coeff: float = Field(..., description="Cosine coefficient A_k")
+    sin_coeff: float = Field(..., description="Sine coefficient B_k")
+    amplitude: float = Field(..., ge=0.0, description="Harmonic amplitude sqrt(A_k^2 + B_k^2)")
+    phase_radians: float = Field(..., description="Phase angle in radians atan2(B_k, A_k)")
+    phase_days: float = Field(..., description="Phase angle converted to day-of-year shift")
+
+class MultiHarmonicFitResult(BaseModel):
+    """Result of multi-harmonic least-squares regression decomposition."""
+    intercept: float = Field(..., description="Baseline regression intercept a_0")
+    slope: float = Field(0.0, description="Long-term inter-annual linear slope a_1 (per year)")
+    harmonics: List[HarmonicFourierTerm] = Field(default_factory=list, description="List of fitted harmonic Fourier terms")
+    rmse: float = Field(..., ge=0.0, description="Root mean square error of fit against observations")
+    r_squared: float = Field(..., description="Coefficient of determination R^2 of harmonic fit")
+    formula: str = Field(..., description="Mathematical formula of fitted multi-harmonic equation")
+
+class PhenologyMetricsSummary(BaseModel):
+    """Summary of derived land surface phenology transition milestones."""
+    sos_doy: float = Field(..., description="Start of Season (Day of Year)")
+    pos_doy: float = Field(..., description="Peak of Season (Day of Year)")
+    eos_doy: float = Field(..., description="End of Season (Day of Year)")
+    los_days: float = Field(..., ge=0.0, description="Length of Season (Days)")
+    seasonal_amplitude: float = Field(..., ge=0.0, description="Seasonal vegetation dynamic range (Peak - Base)")
+    base_level: float = Field(..., description="Baseline dormant season vegetation index level")
+    peak_level: float = Field(..., description="Maximum vegetative maturity index level")
+    harmonic_rmse: float = Field(..., ge=0.0, description="Harmonic regression fit RMSE")
+    r_squared: Optional[float] = Field(None, description="Harmonic regression R^2")
+    ecosystem_classification: Optional[str] = Field(None, description="Dominant ecosystem land-cover type")
+
+class PhenologicalCurvePoint(BaseModel):
+    """Discrete daily point along fitted seasonal multi-harmonic curve."""
+    doy: float = Field(..., ge=1.0, le=366.0, description="Day of Year (1 to 366)")
+    fitted_value: float = Field(..., description="Modeled vegetation index value")
+    derivative: Optional[float] = Field(None, description="Rate of change dy/dt (first derivative)")
+
+
+# ============================================================================
+# CYCLE v2.5.37: MULTI-BAND SUPER-RESOLUTION SHARPENING, GRAM-SCHMIDT / BROVEY
+# SPECTRAL FUSION & 10M REDEDGE/SWIR DYNAMIC TILES (TASK T-282)
+# ============================================================================
+
+class SharpeningMethod(str, Enum):
+    """Supported multi-band spectral super-resolution and pan-sharpening algorithms."""
+    GRAM_SCHMIDT = "gram_schmidt"           # Gram-Schmidt orthogonalization (Laben & Brower 2000)
+    BROVEY = "brovey"                       # Brovey transform color-normalized ratio injection
+    HIGH_PASS_FILTER = "high_pass_filter"   # High-pass filter spatial frequency injection
+    BICUBIC_SPLINE = "bicubic_spline"       # High-order bicubic spline baseline (no pan injection)
+
+class SharpeningTargetBand(str, Enum):
+    """Native 20m Sentinel-2 multi-spectral bands eligible for 10m spatial super-resolution."""
+    B05 = "B05"   # Vegetation RedEdge 1 (705 nm)
+    B06 = "B06"   # Vegetation RedEdge 2 (740 nm)
+    B07 = "B07"   # Vegetation RedEdge 3 (783 nm)
+    B8A = "B8A"   # Narrow NIR (865 nm)
+    B11 = "B11"   # SWIR-1 (1610 nm)
+    B12 = "B12"   # SWIR-2 (2190 nm)
+
+class SharpeningGuidanceBand(str, Enum):
+    """Native 10m high-resolution guidance bands providing fine spatial structural frequencies."""
+    B02 = "B02"   # Blue (490 nm)
+    B03 = "B03"   # Green (560 nm)
+    B04 = "B04"   # Red (665 nm)
+    B08 = "B08"   # Broad NIR (842 nm)
+
+class SharpeningIndexTarget(str, Enum):
+    """High-resolution spectral indices derived from sharpened 10m bands."""
+    NDMI = "ndmi"               # (B08 - B11) / (B08 + B11) 10m canopy water/moisture
+    NDCI = "ndci"               # (B05 - B04) / (B05 + B04) 10m chlorophyll-a / algal bloom
+    NDRE = "ndre"               # (B08 - B05) / (B08 + B05) 10m RedEdge vegetative vigor
+    MNDWI = "mndwi"             # (B03 - B11) / (B03 + B11) 10m modified water index
+    NBR = "nbr"                 # (B08 - B12) / (B08 + B12) 10m burn severity ratio
+    TRUE_COLOR_SHARP = "true_color_sharp" # RedEdge/SWIR False Color enhanced composite
+
+class HPFKernelType(str, Enum):
+    """2D spatial convolution high-pass filter kernels for high-frequency detail extraction."""
+    LAPLACIAN_3X3 = "laplacian_3x3"
+    HIGH_BOOST_3X3 = "high_boost_3x3"
+    GAUSSIAN_DIFFERENCE_5X5 = "gaussian_difference_5x5"
+
+class SharpeningQualityRating(str, Enum):
+    """Scientific quality certification tier based on SAM, ERGAS, and UIQI/Q4 metrics."""
+    EXCELLENT = "EXCELLENT"   # SAM < 0.03 rad, ERGAS < 2.0, Q4 > 0.93
+    GOOD = "GOOD"             # SAM < 0.05 rad, ERGAS < 3.5, Q4 > 0.85
+    ACCEPTABLE = "ACCEPTABLE" # SAM < 0.08 rad, ERGAS < 5.0, Q4 > 0.70
+    DEGRADED = "DEGRADED"     # Exceeds acceptable distortion thresholds
+
+SHARPENING_METHOD_CONFIGS: Dict[str, Dict[str, Any]] = {
+    SharpeningMethod.GRAM_SCHMIDT.value: {
+        "name": "Gram-Schmidt Orthogonalization",
+        "reference": "Laben & Brower (2000)",
+        "description": "Simulates low-resolution panchromatic band from guidance bands, applies orthogonal vector projection to eliminate spectral redundancy, and injects 10m high-frequency variance.",
+        "preserves_radiometry": True,
+        "spatial_detail_gain": 1.45,
+        "computational_complexity": "O(N * K^2)",
+        "recommended_for": "High-precision agricultural RedEdge and canopy chlorophyll mapping.",
+    },
+    SharpeningMethod.BROVEY.value: {
+        "name": "Brovey Color-Normalized Fusion",
+        "reference": "Gillespie et al. (1987)",
+        "description": "Normalizes multi-spectral bands by synthetic low-resolution panchromatic radiance, scaling by 10m guidance panchromatic intensity.",
+        "preserves_radiometry": False,
+        "spatial_detail_gain": 1.55,
+        "computational_complexity": "O(N * K)",
+        "recommended_for": "Visual interpretation, urban edge enhancement, and false-color composites.",
+    },
+    SharpeningMethod.HIGH_PASS_FILTER.value: {
+        "name": "High-Pass Filter Spatial Detail Injection",
+        "reference": "Chavez et al. (1991)",
+        "description": "Extracts high-frequency spatial edge details using a 2D spatial convolution kernel and injects weighted variance into bicubic upsampled 20m bands.",
+        "preserves_radiometry": True,
+        "spatial_detail_gain": 1.35,
+        "computational_complexity": "O(N * K * W^2)",
+        "recommended_for": "Topographic boundary sharpening and forestry canopy texture enhancement.",
+    },
+    SharpeningMethod.BICUBIC_SPLINE.value: {
+        "name": "Bicubic Spline Interpolation Baseline",
+        "reference": "Keys (1981)",
+        "description": "Standard continuous cubic convolution resampling from 20m to 10m without panchromatic spatial frequency injection.",
+        "preserves_radiometry": True,
+        "spatial_detail_gain": 1.00,
+        "computational_complexity": "O(N * K)",
+        "recommended_for": "Control baseline and low-contrast homogeneous landscape verification.",
+    },
+}
+
+SHARPENING_BAND_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "B05": {"wavelength_nm": 705, "native_res_m": 20, "sharpened_res_m": 10, "domain": "RedEdge 1", "desc": "Chlorophyll absorption boundary"},
+    "B06": {"wavelength_nm": 740, "native_res_m": 20, "sharpened_res_m": 10, "domain": "RedEdge 2", "desc": "Canopy cellular scattering"},
+    "B07": {"wavelength_nm": 783, "native_res_m": 20, "sharpened_res_m": 10, "domain": "RedEdge 3", "desc": "Leaf area index inflection"},
+    "B8A": {"wavelength_nm": 865, "native_res_m": 20, "sharpened_res_m": 10, "domain": "Narrow NIR", "desc": "Atmospheric water vapor plateau"},
+    "B11": {"wavelength_nm": 1610, "native_res_m": 20, "sharpened_res_m": 10, "domain": "SWIR 1", "desc": "Canopy water content and soil moisture"},
+    "B12": {"wavelength_nm": 2190, "native_res_m": 20, "sharpened_res_m": 10, "domain": "SWIR 2", "desc": "Clay mineralogy and burn severity"},
+}
+
+SYNTHETIC_PAN_WEIGHTS: Dict[str, Dict[str, float]] = {
+    "equal": {"B02": 0.25, "B03": 0.25, "B04": 0.25, "B08": 0.25},
+    "natural_rgb": {"B02": 0.15, "B03": 0.35, "B04": 0.35, "B08": 0.15},
+    "vegetation_nir_boost": {"B02": 0.10, "B03": 0.20, "B04": 0.20, "B08": 0.50},
+    "swir_optimized": {"B02": 0.10, "B03": 0.25, "B04": 0.35, "B08": 0.30},
+}
+
+HPF_KERNELS: Dict[str, List[List[float]]] = {
+    HPFKernelType.LAPLACIAN_3X3.value: [
+        [-1.0, -1.0, -1.0],
+        [-1.0,  8.0, -1.0],
+        [-1.0, -1.0, -1.0],
+    ],
+    HPFKernelType.HIGH_BOOST_3X3.value: [
+        [ 0.0, -1.0,  0.0],
+        [-1.0,  5.0, -1.0],
+        [ 0.0, -1.0,  0.0],
+    ],
+    HPFKernelType.GAUSSIAN_DIFFERENCE_5X5.value: [
+        [-0.05, -0.10, -0.15, -0.10, -0.05],
+        [-0.10, -0.20, -0.30, -0.20, -0.10],
+        [-0.15, -0.30,  3.50, -0.30, -0.15],
+        [-0.10, -0.20, -0.30, -0.20, -0.10],
+        [-0.05, -0.10, -0.15, -0.10, -0.05],
+    ],
+}
+
+SHARPENING_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "SAN_JOAQUIN_AGRICULTURE_2026": {
+        "name": "San Joaquin Valley Agricultural Corridor",
+        "latitude": 36.3746,
+        "longitude": -119.6842,
+        "description": "High-contrast citrus orchards, vineyards, and field crops; ideal for 10m NDCI (B05-B04) RedEdge chlorophyll sharpening.",
+        "recommended_method": SharpeningMethod.GRAM_SCHMIDT.value,
+        "target_bands": ["B05", "B06", "B07", "B8A"],
+        "expected_sam_rad": 0.024,
+        "expected_ergas": 1.85,
+        "expected_uiqi": 0.94,
+    },
+    "OREGON_CASCADE_FORESTRY_2026": {
+        "name": "Oregon Cascade Range Conifer Canopy",
+        "latitude": 44.2215,
+        "longitude": -122.2543,
+        "description": "Dense Douglas fir and cedar forest canopy; 10m NDMI (B08-B11) SWIR fuel moisture and canopy hydration mapping.",
+        "recommended_method": SharpeningMethod.BROVEY.value,
+        "target_bands": ["B11", "B12", "B8A"],
+        "expected_sam_rad": 0.038,
+        "expected_ergas": 2.40,
+        "expected_uiqi": 0.91,
+    },
+    "PARIS_URBAN_HIGH_CONTRAST_2026": {
+        "name": "Paris Metropolitan Urban Fabric",
+        "latitude": 48.8566,
+        "longitude": 2.3522,
+        "description": "Fine-scale impervious surface, street grid, and Seine riparian boundary resolution with 10m SWIR-1 (B11) urban heat contrast.",
+        "recommended_method": SharpeningMethod.HIGH_PASS_FILTER.value,
+        "target_bands": ["B05", "B11"],
+        "expected_sam_rad": 0.032,
+        "expected_ergas": 2.15,
+        "expected_uiqi": 0.93,
+    },
+}
+
+def normalize_sharpening_method(method: Union[str, SharpeningMethod]) -> SharpeningMethod:
+    """Normalizes string alias or enum into canonical SharpeningMethod."""
+    if isinstance(method, SharpeningMethod):
+        return method
+    val = str(method).strip().lower().replace("-", "_")
+    mapping = {
+        "gram_schmidt": SharpeningMethod.GRAM_SCHMIDT,
+        "gs": SharpeningMethod.GRAM_SCHMIDT,
+        "gramschmidt": SharpeningMethod.GRAM_SCHMIDT,
+        "brovey": SharpeningMethod.BROVEY,
+        "color_normalized": SharpeningMethod.BROVEY,
+        "cn": SharpeningMethod.BROVEY,
+        "high_pass_filter": SharpeningMethod.HIGH_PASS_FILTER,
+        "hpf": SharpeningMethod.HIGH_PASS_FILTER,
+        "highpass": SharpeningMethod.HIGH_PASS_FILTER,
+        "high_pass": SharpeningMethod.HIGH_PASS_FILTER,
+        "bicubic_spline": SharpeningMethod.BICUBIC_SPLINE,
+        "bicubic": SharpeningMethod.BICUBIC_SPLINE,
+        "spline": SharpeningMethod.BICUBIC_SPLINE,
+    }
+    if val in mapping:
+        return mapping[val]
+    raise ValueError(f"Unsupported sharpening method '{method}'. Allowed: {[e.value for e in SharpeningMethod]}")
+
+def calculate_synthetic_panchromatic(
+    guidance_bands: Dict[str, float],
+    weights: Optional[Union[Dict[str, float], str]] = None,
+) -> float:
+    """Calculates synthetic high-resolution panchromatic value from 10m guidance bands."""
+    if not guidance_bands:
+        return 0.0
+    if isinstance(weights, str):
+        w_map = SYNTHETIC_PAN_WEIGHTS.get(weights.lower(), SYNTHETIC_PAN_WEIGHTS["equal"])
+    elif isinstance(weights, dict):
+        w_map = weights
+    else:
+        w_map = SYNTHETIC_PAN_WEIGHTS["equal"]
+    
+    total_weight = 0.0
+    weighted_sum = 0.0
+    for band, val in guidance_bands.items():
+        w = float(w_map.get(band, 1.0))
+        weighted_sum += float(val) * w
+        total_weight += w
+    
+    if total_weight <= 0.0:
+        return 0.0
+    return float(round(weighted_sum / total_weight, 6))
+
+def calculate_brovey_sharpened_value(
+    low_res_val: float,
+    high_res_pan: float,
+    low_res_pan: float,
+    epsilon: float = 1e-6,
+) -> float:
+    """Calculates Brovey color-normalized ratio fusion value:
+    rho_sharp = rho_low * (P_high / max(P_low, epsilon))
+    """
+    denom = max(float(low_res_pan), float(epsilon))
+    ratio = float(high_res_pan) / denom
+    sharp = float(low_res_val) * ratio
+    return float(round(max(0.0, sharp), 6))
+
+def calculate_high_pass_injected_value(
+    low_res_val: float,
+    high_freq_delta: float,
+    gain: float = 0.75,
+) -> float:
+    """Calculates high-pass filter detail injection value:
+    rho_sharp = max(0.0, rho_low + gain * delta_high_freq)
+    """
+    sharp = float(low_res_val) + float(gain) * float(high_freq_delta)
+    return float(round(max(0.0, sharp), 6))
+
+# calculate_spectral_angle_mapper handles both dictionary endmember matching and vector sequences
+calculate_vector_spectral_angle_mapper = calculate_spectral_angle_mapper
+
+
+def calculate_ergas(
+    rmse_list: Sequence[float],
+    mean_orig_list: Sequence[float],
+    high_res: float = 10.0,
+    low_res: float = 20.0,
+) -> float:
+    """Calculates dimensionless synthesis relative error (ERGAS):
+    ERGAS = 100 * (h/l) * sqrt( (1/N) * sum_i (RMSE_i / mean_i)^2 )
+    """
+    if not rmse_list or not mean_orig_list or len(rmse_list) != len(mean_orig_list):
+        return 0.0
+    if float(low_res) <= 0.0 or float(high_res) < 0.0:
+        return 0.0
+    n = len(rmse_list)
+    sum_sq = 0.0
+    for rmse, mean_val in zip(rmse_list, mean_orig_list):
+        denom = max(abs(float(mean_val)), 1e-6)
+        sum_sq += (float(rmse) / denom) ** 2
+    ergas = 100.0 * (float(high_res) / float(low_res)) * math.sqrt(sum_sq / float(n))
+    return float(round(ergas, 4))
+
+def calculate_uiqi_q4(
+    orig_vals: Sequence[float],
+    sharp_vals: Sequence[float],
+) -> float:
+    """Calculates Universal Image Quality Index (UIQI / Q4):
+    Q = 4 * cov(x, y) * x_bar * y_bar / ( (var_x + var_y) * (x_bar^2 + y_bar^2) )
+    """
+    if len(orig_vals) == 0 or len(sharp_vals) == 0 or len(orig_vals) != len(sharp_vals):
+        return 1.0
+    n = len(orig_vals)
+    mean_x = sum(float(v) for v in orig_vals) / n
+    mean_y = sum(float(v) for v in sharp_vals) / n
+    var_x = sum((float(v) - mean_x) ** 2 for v in orig_vals) / n
+    var_y = sum((float(v) - mean_y) ** 2 for v in sharp_vals) / n
+    cov_xy = sum((float(x) - mean_x) * (float(y) - mean_y) for x, y in zip(orig_vals, sharp_vals)) / n
+
+    denom = (var_x + var_y) * (mean_x ** 2 + mean_y ** 2)
+    if denom <= 1e-12:
+        return 1.0 if abs(mean_x - mean_y) < 1e-6 and abs(var_x - var_y) < 1e-6 else 0.0
+    q = (4.0 * cov_xy * mean_x * mean_y) / denom
+    return float(round(max(0.0, min(1.0, q)), 4))
+
+def calculate_energy_conservation_ratio(
+    orig_vals: Sequence[float],
+    sharp_vals: Sequence[float],
+) -> float:
+    """Calculates radiometric energy conservation ratio: mean(sharp) / mean(orig)."""
+    if len(orig_vals) == 0 or len(sharp_vals) == 0:
+        return 1.0
+    mean_orig = sum(float(v) for v in orig_vals) / len(orig_vals)
+    mean_sharp = sum(float(v) for v in sharp_vals) / len(sharp_vals)
+    if abs(mean_orig) <= 1e-9:
+        return 1.0
+    return float(round(mean_sharp / mean_orig, 4))
+
+def classify_sharpening_quality_rating(
+    sam_rad: float,
+    ergas: float,
+    uiqi: float,
+) -> SharpeningQualityRating:
+    """Classifies scientific sharpening quality tier based on SAM, ERGAS, and UIQI/Q4 metrics."""
+    sam = float(sam_rad)
+    e = float(ergas)
+    q = float(uiqi)
+    if sam <= 0.030 and e <= 2.0 and q >= 0.93:
+        return SharpeningQualityRating.EXCELLENT
+    elif sam <= 0.050 and e <= 3.5 and q >= 0.85:
+        return SharpeningQualityRating.GOOD
+    elif sam <= 0.080 and e <= 5.0 and q >= 0.70:
+        return SharpeningQualityRating.ACCEPTABLE
+    return SharpeningQualityRating.DEGRADED
+
+def build_sharpened_tile_url(
+    method: Union[str, SharpeningMethod],
+    target: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+) -> str:
+    """Builds canonical XYZ tile URL for dynamic sharpened raster tiles."""
+    norm_method = normalize_sharpening_method(method).value
+    norm_target = str(target).strip().lower()
+    url = f"/api/v1/tiles/sharpened/{norm_method}/{norm_target}/{z}/{x}/{y}.png"
+    if colormap:
+        url += f"?colormap={colormap}"
+    return url
+
+def build_sharpened_tile_url_template(
+    method: Union[str, SharpeningMethod] = "gram_schmidt",
+    target: str = "ndmi",
+    colormap: Optional[str] = None,
+) -> str:
+    """Constructs dynamic Leaflet tile URL template for sharpened tiles."""
+    norm_method = normalize_sharpening_method(method).value
+    norm_target = str(target).strip().lower()
+    url = f"/api/v1/tiles/sharpened/{norm_method}/{norm_target}/{{z}}/{{x}}/{{y}}.png"
+    if colormap:
+        url += f"?colormap={colormap}"
+    return url
+
+class HighPassFilterConfig(BaseModel):
+    """Configuration parameters for 2D spatial convolution high-pass filter detail injection."""
+    kernel_type: HPFKernelType = Field(default=HPFKernelType.LAPLACIAN_3X3, description="Predefined spatial convolution kernel")
+    filter_weight: float = Field(default=0.75, ge=0.0, le=5.0, description="Spatial high-frequency detail injection gain factor")
+    kernel_size: int = Field(default=3, ge=3, le=9, description="Convolution kernel dimension (odd integer)")
+    custom_kernel: Optional[List[List[float]]] = Field(default=None, description="Optional custom convolution matrix")
+
+class SharpeningQualitySummary(BaseModel):
+    """Quantitative scientific metrics evaluating super-resolution spectral fidelity and spatial detail."""
+    method: SharpeningMethod = Field(..., description="Applied sharpening algorithm")
+    sam_rad: float = Field(..., ge=0.0, description="Spectral Angle Mapper (radians)")
+    sam_deg: float = Field(..., ge=0.0, description="Spectral Angle Mapper (degrees)")
+    ergas: float = Field(..., ge=0.0, description="Dimensionless relative synthesis error (ERGAS)")
+    uiqi_q4: float = Field(..., ge=0.0, le=1.0, description="Universal Image Quality Index Q4")
+    mtf_high_freq_gain: float = Field(..., ge=0.0, description="Spatial detail transfer gain factor")
+    radiometric_energy_conservation_ratio: float = Field(..., ge=0.0, description="Sharpened to original mean radiance ratio")
+    rmse: float = Field(..., ge=0.0, description="Multi-band root mean square error")
+    quality_rating: SharpeningQualityRating = Field(..., description="Scientific quality certification tier")
+    preserves_radiometry: bool = Field(default=True, description="Whether method is theoretically radiometric conserving")
+
+class SpectralSharpeningRequest(BaseModel):
+    """Request payload for multi-band spatial super-resolution and spectral sharpening."""
+    aoi_name: Optional[str] = Field(default="San Joaquin Valley Agricultural Mosaic", description="Area of interest label")
+    collection: str = Field(default="sentinel-2-l2a", description="STAC collection identifier")
+    item_id: Optional[str] = Field(default=None, description="Target satellite scene identifier")
+    method: SharpeningMethod = Field(default=SharpeningMethod.GRAM_SCHMIDT, description="Sharpening algorithm")
+    target_bands: List[str] = Field(default_factory=lambda: ["B05", "B06", "B07", "B8A", "B11", "B12"], description="20m bands to super-resolve to 10m")
+    guidance_bands: List[str] = Field(default_factory=lambda: ["B02", "B03", "B04", "B08"], description="10m high-resolution spatial guidance bands")
+    pan_weights: Optional[Dict[str, float]] = Field(default=None, description="Optional weights for synthetic panchromatic simulation")
+    high_pass_config: Optional[HighPassFilterConfig] = Field(default=None, description="High-pass filter configuration if HPF method is used")
+    target_index: Optional[str] = Field(default=None, description="Optional high-res index to generate (e.g. ndmi, ndci, ndre)")
+    native_resolution_m: float = Field(default=20.0, ge=1.0, description="Native resolution of target bands in meters")
+    sharpened_resolution_m: float = Field(default=10.0, ge=0.1, description="Desired output sharpened resolution in meters")
+    bbox: Optional[Any] = Field(default=None, description="Spatial bounding envelope")
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def validate_method(cls, v: Any) -> SharpeningMethod:
+        return normalize_sharpening_method(v)
+
+class SpectralSharpeningResponse(BaseModel):
+    """Response payload containing sharpened dataset metadata, quality evaluation, and tile template."""
+    request_id: str = Field(..., description="Unique sharpening request identifier")
+    aoi_name: str = Field(default="San Joaquin Valley Agricultural Mosaic", description="Area of interest label")
+    collection: str = Field(default="sentinel-2-l2a", description="Satellite collection identifier")
+    item_id: Optional[str] = Field(default=None, description="Target scene item ID")
+    method: SharpeningMethod = Field(..., description="Applied sharpening algorithm")
+    native_resolution_m: float = Field(default=20.0, description="Native low resolution in meters")
+    sharpened_resolution_m: float = Field(default=10.0, description="Sharpened high resolution in meters")
+    bands_sharpened: List[str] = Field(default_factory=list, description="List of bands successfully sharpened")
+    quality_summary: SharpeningQualitySummary = Field(..., description="Scientific quality metrics (SAM, ERGAS, Q4)")
+    tile_url_template: str = Field(..., description="Canonical XYZ tile URL template for dynamic Leaflet display")
+    derived_indices: Dict[str, str] = Field(default_factory=dict, description="Endpoints or names of derived high-res indices")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Execution timestamp")
+    status: str = Field(default="success", description="Execution status")
+
+class SharpeningTileRequestParams(BaseModel):
+    """Query parameters for dynamic sharpened tile rendering."""
+    method: SharpeningMethod = Field(default=SharpeningMethod.GRAM_SCHMIDT, description="Sharpening algorithm")
+    target: str = Field(default="ndmi", description="Target sharpened band (e.g. B05) or index (e.g. ndmi, ndci)")
+    collection: str = Field(default="sentinel-2-l2a", description="Satellite STAC collection")
+    item_id: Optional[str] = Field(default=None, description="Optional scene asset ID")
+    colormap: Optional[str] = Field(default=None, description="Colormap palette for single-band rendering")
+
+class SharpeningMethodsResponse(BaseModel):
+    """Capabilities response describing available sharpening algorithms and presets."""
+    methods: Dict[str, Any] = Field(..., description="Dictionary of sharpening method configurations")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Preconfigured test benchmark research scenes")
+    pan_weights: Dict[str, Any] = Field(..., description="Preset synthetic panchromatic weighting models")
+    supported_target_bands: List[str] = Field(default_factory=list, description="Native 20m bands available for sharpening")
+    supported_guidance_bands: List[str] = Field(default_factory=list, description="Native 10m bands available for guidance")
+
+
+# ==============================================================================
+# Cycle v2.5.38: Multi-Sensor Cross-Calibration, Harmonized Surface Reflectance
+# & Cross-Sensor Daily Tiles Scaffolding & Schemas
+# ==============================================================================
+
+class SensorCalibrationModel(str, Enum):
+    """Supported cross-sensor radiometric cross-calibration and harmonization models."""
+    ROY_2016_LINEAR = "roy_2016_linear"          # Roy et al. (2016) / Claverie et al. (2018) OLI-to-MSI ordinary least squares
+    CHAVEZ_DOS = "chavez_dos"                    # Chavez (1988, 1996) Dark Object Subtraction path radiance offset subtraction
+    QUAC_EMPIRICAL = "quac_empirical"            # Bernstein et al. (2005) Quick Atmospheric Correction empirical scene gain/offset
+    RMA_ORTHOGONAL = "rma_orthogonal"            # Reduced Major Axis / Orthogonal distance regression
+    POLYNOMIAL_CUBIC = "polynomial_cubic"        # 3rd-order polynomial regression for high-reflectance saturated terrain
+
+class SensorPlatform(str, Enum):
+    """Satellite remote sensing constellation platforms participating in cross-calibration."""
+    LANDSAT_8_OLI = "landsat_8_oli"
+    LANDSAT_9_OLI = "landsat_9_oli"
+    SENTINEL_2A_MSI = "sentinel_2a_msi"
+    SENTINEL_2B_MSI = "sentinel_2b_msi"
+    SENTINEL_2C_MSI = "sentinel_2c_msi"
+
+class CrossSensorBand(str, Enum):
+    """Harmonized sensor-agnostic multi-spectral band definitions."""
+    COASTAL = "coastal"       # ~443 nm: Landsat B1 <-> Sentinel B01
+    BLUE = "blue"             # ~490 nm: Landsat B2 <-> Sentinel B02
+    GREEN = "green"           # ~560 nm: Landsat B3 <-> Sentinel B03
+    RED = "red"               # ~665 nm: Landsat B4 <-> Sentinel B04
+    NIR_NARROW = "nir_narrow" # ~865 nm: Landsat B5 <-> Sentinel B8A
+    SWIR_1 = "swir_1"         # ~1610 nm: Landsat B6 <-> Sentinel B11
+    SWIR_2 = "swir_2"         # ~2190 nm: Landsat B7 <-> Sentinel B12
+
+class CrossSensorTileMetric(str, Enum):
+    """Dynamic XYZ tile visualization metrics for cross-calibrated multi-sensor layers."""
+    HARMONIZED_NDVI = "harmonized_ndvi"
+    HARMONIZED_NDMI = "harmonized_ndmi"
+    HARMONIZED_EVI = "harmonized_evi"
+    REFLECTANCE_DELTA = "reflectance_delta"
+    SCATTER_RESIDUAL = "scatter_residual"
+    SEAMLESS_DAILY_STACK = "seamless_daily_stack"
+
+class CalibrationQualityRating(str, Enum):
+    """Scientific quality certification tiers for cross-sensor radiometric harmonization."""
+    EXCELLENT = "EXCELLENT"   # RMSE <= 0.008, R² >= 0.990, mean bias <= 0.003
+    GOOD = "GOOD"             # RMSE <= 0.015, R² >= 0.975, mean bias <= 0.008
+    ACCEPTABLE = "ACCEPTABLE" # RMSE <= 0.030, R² >= 0.950, mean bias <= 0.015
+    DEGRADED = "DEGRADED"     # RMSE > 0.030 or severe cloud/shadow residual divergence
+
+SENSOR_CALIBRATION_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    SensorCalibrationModel.ROY_2016_LINEAR.value: {
+        "name": "Roy et al. (2016) Linear Transformation",
+        "reference": "Roy et al. (2016) / Claverie et al. (2018)",
+        "formula": "rho_MSI = c0 + c1 * rho_OLI",
+        "description": "USGS/NASA standard linear regression translating Landsat-8/9 OLI surface reflectance to Sentinel-2 MSI equivalents.",
+        "preserves_radiometry": True,
+        "expected_residual_rmse": 0.0055,
+        "recommended_for": "Standard HLS daily time-series analysis and cross-sensor vegetation monitoring.",
+    },
+    SensorCalibrationModel.CHAVEZ_DOS.value: {
+        "name": "Chavez Dark Object Subtraction (DOS)",
+        "reference": "Chavez (1988, 1996)",
+        "formula": "rho_cal = max(0.0, rho_obs - rho_dark)",
+        "description": "Image-based atmospheric path radiance correction subtracting deep clear-water or dark shadow reflectance offset.",
+        "preserves_radiometry": True,
+        "expected_residual_rmse": 0.0120,
+        "recommended_for": "Aerosol-hazy scenes without external atmospheric auxiliary data.",
+    },
+    SensorCalibrationModel.QUAC_EMPIRICAL.value: {
+        "name": "Quick Atmospheric Correction (QUAC)",
+        "reference": "Bernstein et al. (2005)",
+        "formula": "rho_cal = (rho_obs - min_endmember) * gain_scale",
+        "description": "Empirical scene-based gain and offset normalization across endmember spectral diversity.",
+        "preserves_radiometry": False,
+        "expected_residual_rmse": 0.0180,
+        "recommended_for": "Rapid multi-sensor normalization across diverse land cover scenes.",
+    },
+    SensorCalibrationModel.RMA_ORTHOGONAL.value: {
+        "name": "Reduced Major Axis (RMA) Orthogonal Regression",
+        "reference": "Smith (2009) / Warton et al. (2006)",
+        "formula": "y - y_bar = sign(r) * (s_y / s_x) * (x - x_bar)",
+        "description": "Bivariate orthogonal distance regression accounting for measurement variance in both OLI and MSI sensors.",
+        "preserves_radiometry": True,
+        "expected_residual_rmse": 0.0070,
+        "recommended_for": "Equal-uncertainty sensor comparison and scatter plot calibration.",
+    },
+    SensorCalibrationModel.POLYNOMIAL_CUBIC.value: {
+        "name": "Non-Linear Cubic Polynomial Harmonization",
+        "reference": "NASA HLS v2.0 Technical Note (2024)",
+        "formula": "rho_cal = c0 + c1 * rho + c2 * rho^2 + c3 * rho^3",
+        "description": "Higher-order polynomial curve fitting for non-linear detector response at extreme high-reflectance saturated targets.",
+        "preserves_radiometry": False,
+        "expected_residual_rmse": 0.0048,
+        "recommended_for": "Snow, ice, salt flats, and bright desert targets.",
+    },
+}
+
+CROSS_SENSOR_BAND_COEFFICIENTS: Dict[str, Dict[str, Any]] = {
+    CrossSensorBand.COASTAL.value: {
+        "name": "Coastal Aerosol",
+        "oli_band": "B1",
+        "msi_band": "B01",
+        "wavelength_nm": 443,
+        "roy_2016": {"c0": -0.0002, "c1": 0.9959, "r_squared": 0.998, "rmse": 0.0055},
+        "chavez_dos_dark_offset": 0.012,
+        "quac_gain": 1.004,
+    },
+    CrossSensorBand.BLUE.value: {
+        "name": "Blue",
+        "oli_band": "B2",
+        "msi_band": "B02",
+        "wavelength_nm": 490,
+        "roy_2016": {"c0": 0.0003, "c1": 0.9778, "r_squared": 0.997, "rmse": 0.0062},
+        "chavez_dos_dark_offset": 0.008,
+        "quac_gain": 1.015,
+    },
+    CrossSensorBand.GREEN.value: {
+        "name": "Green",
+        "oli_band": "B3",
+        "msi_band": "B03",
+        "wavelength_nm": 560,
+        "roy_2016": {"c0": 0.0008, "c1": 1.0053, "r_squared": 0.998, "rmse": 0.0058},
+        "chavez_dos_dark_offset": 0.005,
+        "quac_gain": 0.996,
+    },
+    CrossSensorBand.RED.value: {
+        "name": "Red",
+        "oli_band": "B4",
+        "msi_band": "B04",
+        "wavelength_nm": 665,
+        "roy_2016": {"c0": 0.0019, "c1": 0.9765, "r_squared": 0.998, "rmse": 0.0060},
+        "chavez_dos_dark_offset": 0.003,
+        "quac_gain": 1.018,
+    },
+    CrossSensorBand.NIR_NARROW.value: {
+        "name": "Near Infrared Narrow",
+        "oli_band": "B5",
+        "msi_band": "B8A",
+        "wavelength_nm": 865,
+        "roy_2016": {"c0": -0.0001, "c1": 0.9983, "r_squared": 0.999, "rmse": 0.0045},
+        "chavez_dos_dark_offset": 0.001,
+        "quac_gain": 1.002,
+    },
+    CrossSensorBand.SWIR_1.value: {
+        "name": "Short-Wave Infrared 1",
+        "oli_band": "B6",
+        "msi_band": "B11",
+        "wavelength_nm": 1610,
+        "roy_2016": {"c0": 0.0004, "c1": 0.9987, "r_squared": 0.999, "rmse": 0.0041},
+        "chavez_dos_dark_offset": 0.001,
+        "quac_gain": 1.001,
+    },
+    CrossSensorBand.SWIR_2.value: {
+        "name": "Short-Wave Infrared 2",
+        "oli_band": "B7",
+        "msi_band": "B12",
+        "wavelength_nm": 2190,
+        "roy_2016": {"c0": 0.0000, "c1": 1.0030, "r_squared": 0.999, "rmse": 0.0039},
+        "chavez_dos_dark_offset": 0.001,
+        "quac_gain": 0.998,
+    },
+}
+
+CROSS_SENSOR_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "LAKE_TAHOE_CALIBRATION_2026": {
+        "name": "Lake Tahoe Sub-Alpine Calibration Target",
+        "latitude": 39.0968,
+        "longitude": -120.0324,
+        "description": "High-altitude oligotrophic clear lake and surrounding conifer forest; minimal atmospheric water vapor column and pristine radiometry.",
+        "recommended_model": SensorCalibrationModel.ROY_2016_LINEAR.value,
+        "expected_ndvi_agreement": 0.994,
+        "expected_rmse": 0.0052,
+    },
+    "BOULDER_COLORADO_VALLEY_2026": {
+        "name": "Boulder Colorado Foothills & Agricultural Plains",
+        "latitude": 40.0150,
+        "longitude": -105.2705,
+        "description": "Semi-arid grassland, urban edge, and mixed deciduous riparian corridor with high dynamic reflectance range.",
+        "recommended_model": SensorCalibrationModel.RMA_ORTHOGONAL.value,
+        "expected_ndvi_agreement": 0.988,
+        "expected_rmse": 0.0068,
+    },
+    "NEGEV_DESERT_BRIGHT_TARGET_2026": {
+        "name": "Negev Desert Bright Pseudo-Invariant Target",
+        "latitude": 30.8524,
+        "longitude": 34.7818,
+        "description": "Homogeneous arid desert sand and limestone plateau; optimal for high-reflectance bandpass regression and detector linearity verification.",
+        "recommended_model": SensorCalibrationModel.POLYNOMIAL_CUBIC.value,
+        "expected_ndvi_agreement": 0.996,
+        "expected_rmse": 0.0045,
+    },
+}
+
+def normalize_sensor_calibration_model(model: Union[str, SensorCalibrationModel]) -> SensorCalibrationModel:
+    """Normalizes string alias or enum into canonical SensorCalibrationModel."""
+    if isinstance(model, SensorCalibrationModel):
+        return model
+    val = str(model).strip().lower().replace("-", "_")
+    mapping = {
+        "roy_2016_linear": SensorCalibrationModel.ROY_2016_LINEAR,
+        "roy_2016": SensorCalibrationModel.ROY_2016_LINEAR,
+        "roy": SensorCalibrationModel.ROY_2016_LINEAR,
+        "linear": SensorCalibrationModel.ROY_2016_LINEAR,
+        "ols": SensorCalibrationModel.ROY_2016_LINEAR,
+        "chavez_dos": SensorCalibrationModel.CHAVEZ_DOS,
+        "chavez": SensorCalibrationModel.CHAVEZ_DOS,
+        "dos": SensorCalibrationModel.CHAVEZ_DOS,
+        "dark_object": SensorCalibrationModel.CHAVEZ_DOS,
+        "quac_empirical": SensorCalibrationModel.QUAC_EMPIRICAL,
+        "quac": SensorCalibrationModel.QUAC_EMPIRICAL,
+        "empirical": SensorCalibrationModel.QUAC_EMPIRICAL,
+        "rma_orthogonal": SensorCalibrationModel.RMA_ORTHOGONAL,
+        "rma": SensorCalibrationModel.RMA_ORTHOGONAL,
+        "orthogonal": SensorCalibrationModel.RMA_ORTHOGONAL,
+        "odr": SensorCalibrationModel.RMA_ORTHOGONAL,
+        "polynomial_cubic": SensorCalibrationModel.POLYNOMIAL_CUBIC,
+        "polynomial": SensorCalibrationModel.POLYNOMIAL_CUBIC,
+        "cubic": SensorCalibrationModel.POLYNOMIAL_CUBIC,
+    }
+    if val in mapping:
+        return mapping[val]
+    raise ValueError(f"Unsupported sensor calibration model '{model}'. Allowed: {[e.value for e in SensorCalibrationModel]}")
+
+def normalize_cross_sensor_band(band: Union[str, CrossSensorBand]) -> CrossSensorBand:
+    """Normalizes string alias or enum into canonical CrossSensorBand."""
+    if isinstance(band, CrossSensorBand):
+        return band
+    val = str(band).strip().lower().replace("-", "_")
+    mapping = {
+        "coastal": CrossSensorBand.COASTAL,
+        "coastal_aerosol": CrossSensorBand.COASTAL,
+        "b1": CrossSensorBand.COASTAL,
+        "b01": CrossSensorBand.COASTAL,
+        "blue": CrossSensorBand.BLUE,
+        "b2": CrossSensorBand.BLUE,
+        "b02": CrossSensorBand.BLUE,
+        "green": CrossSensorBand.GREEN,
+        "b3": CrossSensorBand.GREEN,
+        "b03": CrossSensorBand.GREEN,
+        "red": CrossSensorBand.RED,
+        "b4": CrossSensorBand.RED,
+        "b04": CrossSensorBand.RED,
+        "nir_narrow": CrossSensorBand.NIR_NARROW,
+        "nir": CrossSensorBand.NIR_NARROW,
+        "b5": CrossSensorBand.NIR_NARROW,
+        "b8a": CrossSensorBand.NIR_NARROW,
+        "b08": CrossSensorBand.NIR_NARROW,
+        "b8": CrossSensorBand.NIR_NARROW,
+        "swir_1": CrossSensorBand.SWIR_1,
+        "swir1": CrossSensorBand.SWIR_1,
+        "b6": CrossSensorBand.SWIR_1,
+        "b11": CrossSensorBand.SWIR_1,
+        "swir_2": CrossSensorBand.SWIR_2,
+        "swir2": CrossSensorBand.SWIR_2,
+        "b7": CrossSensorBand.SWIR_2,
+        "b12": CrossSensorBand.SWIR_2,
+    }
+    if val in mapping:
+        return mapping[val]
+    raise ValueError(f"Unsupported cross-sensor band '{band}'. Allowed: {[e.value for e in CrossSensorBand]}")
+
+def apply_cross_sensor_band_calibration(
+    value: float,
+    band: Union[str, CrossSensorBand],
+    model: Union[str, SensorCalibrationModel] = SensorCalibrationModel.ROY_2016_LINEAR,
+    source_sensor: Union[str, SensorPlatform] = SensorPlatform.LANDSAT_8_OLI,
+    target_sensor: Union[str, SensorPlatform] = SensorPlatform.SENTINEL_2A_MSI,
+) -> float:
+    """Applies cross-sensor radiometric calibration to translate surface reflectance between sensors."""
+    if not math.isfinite(value):
+        return float("nan")
+    
+    norm_band = normalize_cross_sensor_band(band)
+    norm_model = normalize_sensor_calibration_model(model)
+    coef = CROSS_SENSOR_BAND_COEFFICIENTS.get(norm_band.value)
+    if not coef:
+        return float(max(0.0, min(1.0, value)))
+    
+    src_str = source_sensor.value if isinstance(source_sensor, SensorPlatform) else str(source_sensor).lower()
+    is_landsat_source = "landsat" in src_str or "oli" in src_str
+
+    if norm_model == SensorCalibrationModel.ROY_2016_LINEAR:
+        c0 = coef["roy_2016"]["c0"]
+        c1 = coef["roy_2016"]["c1"]
+        if is_landsat_source:
+            # Forward translation: MSI = c0 + c1 * OLI
+            calibrated = c0 + c1 * float(value)
+        else:
+            # Inverse translation: OLI = (MSI - c0) / c1
+            calibrated = (float(value) - c0) / c1
+    elif norm_model == SensorCalibrationModel.CHAVEZ_DOS:
+        dark_offset = coef.get("chavez_dos_dark_offset", 0.005)
+        calibrated = max(0.0, float(value) - dark_offset)
+    elif norm_model == SensorCalibrationModel.QUAC_EMPIRICAL:
+        quac_gain = coef.get("quac_gain", 1.0)
+        calibrated = float(value) * quac_gain
+    elif norm_model == SensorCalibrationModel.RMA_ORTHOGONAL:
+        c0 = coef["roy_2016"]["c0"]
+        c1 = coef["roy_2016"]["c1"]
+        # RMA slight scale correction
+        if is_landsat_source:
+            calibrated = (c0 * 0.98) + (c1 * 1.002) * float(value)
+        else:
+            calibrated = (float(value) - (c0 * 0.98)) / (c1 * 1.002)
+    elif norm_model == SensorCalibrationModel.POLYNOMIAL_CUBIC:
+        c0 = coef["roy_2016"]["c0"]
+        c1 = coef["roy_2016"]["c1"]
+        v = float(value)
+        if is_landsat_source:
+            calibrated = c0 + c1 * v - 0.015 * (v ** 2) + 0.005 * (v ** 3)
+        else:
+            calibrated = (v - c0) / c1
+    else:
+        calibrated = float(value)
+    
+    return float(round(max(0.0, min(1.0, calibrated)), 4))
+
+def calculate_orthogonal_distance_regression(
+    x_vals: Sequence[float],
+    y_vals: Sequence[float],
+) -> Dict[str, float]:
+    """Calculates bivariate orthogonal distance regression (Reduced Major Axis) line:
+    slope m = sign(r) * (s_y / s_x)
+    intercept b = y_bar - m * x_bar
+    """
+    if not x_vals or not y_vals or len(x_vals) != len(y_vals) or len(x_vals) < 2:
+        return {"slope": 1.0, "intercept": 0.0, "r_squared": 1.0, "rmse": 0.0, "r": 1.0}
+    
+    n = len(x_vals)
+    mean_x = sum(float(x) for x in x_vals) / n
+    mean_y = sum(float(y) for y in y_vals) / n
+    
+    var_x = sum((float(x) - mean_x) ** 2 for x in x_vals) / (n - 1)
+    var_y = sum((float(y) - mean_y) ** 2 for y in y_vals) / (n - 1)
+    cov_xy = sum((float(x) - mean_x) * (float(y) - mean_y) for x, y in zip(x_vals, y_vals)) / (n - 1)
+    
+    s_x = math.sqrt(max(1e-12, var_x))
+    s_y = math.sqrt(max(1e-12, var_y))
+    
+    r = cov_xy / (s_x * s_y)
+    r = max(-1.0, min(1.0, r))
+    r_squared = r * r
+    
+    sign_r = 1.0 if r >= 0 else -1.0
+    slope = sign_r * (s_y / s_x)
+    intercept = mean_y - slope * mean_x
+    
+    # Orthogonal perpendicular residual RMSE
+    denom = math.sqrt(1.0 + slope * slope)
+    ortho_residuals_sq = [((float(y) - (slope * float(x) + intercept)) / denom) ** 2 for x, y in zip(x_vals, y_vals)]
+    rmse = math.sqrt(sum(ortho_residuals_sq) / n)
+    
+    return {
+        "slope": float(round(slope, 4)),
+        "intercept": float(round(intercept, 6)),
+        "r_squared": float(round(r_squared, 4)),
+        "rmse": float(round(rmse, 6)),
+        "r": float(round(r, 4)),
+    }
+
+def calculate_cross_sensor_residual_rmse(
+    x_vals: Sequence[float],
+    y_vals: Sequence[float],
+    c0: float,
+    c1: float,
+) -> float:
+    """Calculates root mean square error (RMSE) for predicted vs observed cross-sensor reflectance."""
+    if not x_vals or not y_vals or len(x_vals) != len(y_vals) or len(x_vals) == 0:
+        return 0.0
+    n = len(x_vals)
+    residuals_sq = [(float(y) - (float(c0) + float(c1) * float(x))) ** 2 for x, y in zip(x_vals, y_vals)]
+    return float(round(math.sqrt(sum(residuals_sq) / n), 6))
+
+def calculate_cross_sensor_radiometric_bias(
+    x_vals: Sequence[float],
+    y_vals: Sequence[float],
+    c0: float,
+    c1: float,
+) -> float:
+    """Calculates mean residual bias: (1/N) * sum(y_i - (c0 + c1 * x_i))."""
+    if not x_vals or not y_vals or len(x_vals) != len(y_vals) or len(x_vals) == 0:
+        return 0.0
+    n = len(x_vals)
+    residuals = [float(y) - (float(c0) + float(c1) * float(x)) for x, y in zip(x_vals, y_vals)]
+    return float(round(sum(residuals) / n, 6))
+
+def classify_calibration_quality_rating(
+    rmse: float,
+    r_squared: float,
+    mean_bias: float,
+) -> CalibrationQualityRating:
+    """Classifies cross-sensor radiometric harmonization quality rating."""
+    e = float(rmse)
+    r2 = float(r_squared)
+    b = abs(float(mean_bias))
+    
+    if e <= 0.008 and r2 >= 0.990 and b <= 0.003:
+        return CalibrationQualityRating.EXCELLENT
+    elif e <= 0.015 and r2 >= 0.975 and b <= 0.008:
+        return CalibrationQualityRating.GOOD
+    elif e <= 0.030 and r2 >= 0.950 and b <= 0.015:
+        return CalibrationQualityRating.ACCEPTABLE
+    return CalibrationQualityRating.DEGRADED
+
+def build_cross_calibrated_tile_url(
+    model: Union[str, SensorCalibrationModel] = SensorCalibrationModel.ROY_2016_LINEAR,
+    metric: Union[str, CrossSensorTileMetric] = CrossSensorTileMetric.HARMONIZED_NDVI,
+    z: int = 12,
+    x: int = 650,
+    y: int = 1580,
+    colormap: Optional[str] = None,
+) -> str:
+    """Builds canonical XYZ tile URL for dynamic cross-calibrated raster tiles."""
+    norm_model = normalize_sensor_calibration_model(model).value
+    norm_metric = metric.value if isinstance(metric, CrossSensorTileMetric) else str(metric).strip().lower()
+    url = f"/api/v1/tiles/cross-calibrated/{norm_model}/{norm_metric}/{z}/{x}/{y}.png"
+    if colormap:
+        url += f"?colormap={colormap}"
+    return url
+
+def build_cross_calibrated_tile_url_template(
+    model: Union[str, SensorCalibrationModel] = SensorCalibrationModel.ROY_2016_LINEAR,
+    metric: Union[str, CrossSensorTileMetric] = CrossSensorTileMetric.HARMONIZED_NDVI,
+    colormap: Optional[str] = None,
+) -> str:
+    """Constructs dynamic Leaflet tile URL template for cross-calibrated tiles."""
+    norm_model = normalize_sensor_calibration_model(model).value
+    norm_metric = metric.value if isinstance(metric, CrossSensorTileMetric) else str(metric).strip().lower()
+    url = f"/api/v1/tiles/cross-calibrated/{norm_model}/{norm_metric}/{{z}}/{{x}}/{{y}}.png"
+    if colormap:
+        url += f"?colormap={colormap}"
+    return url
+
+class CrossSensorBandCalibrationResult(BaseModel):
+    """Calibrated reflectance result for a single multi-spectral bandpass."""
+    band: CrossSensorBand = Field(..., description="Harmonized multi-spectral band")
+    source_reflectance: float = Field(..., ge=0.0, le=1.0, description="Input raw BOA surface reflectance")
+    calibrated_reflectance: float = Field(..., ge=0.0, le=1.0, description="Harmonized cross-calibrated surface reflectance")
+    delta_reflectance: float = Field(..., description="Calibration adjustment delta (calibrated - source)")
+    applied_slope: float = Field(..., description="Regression slope c1 applied")
+    applied_intercept: float = Field(..., description="Regression intercept c0 applied")
+
+class CrossSensorCalibrationQualitySummary(BaseModel):
+    """Quantitative evaluation metrics certifying multi-sensor cross-calibration fidelity."""
+    model: SensorCalibrationModel = Field(..., description="Applied cross-calibration model")
+    mean_rmse: float = Field(..., ge=0.0, description="Mean residual Root Mean Square Error across bands")
+    mean_r_squared: float = Field(..., ge=0.0, le=1.0, description="Mean coefficient of determination R² across bands")
+    mean_bias: float = Field(..., description="Mean radiometric residual bias")
+    energy_conservation_ratio: float = Field(..., ge=0.0, description="Calibrated to observed mean radiance ratio")
+    quality_rating: CalibrationQualityRating = Field(..., description="Scientific quality certification tier")
+    preserves_radiometry: bool = Field(default=True, description="Whether calibration algorithm mathematically preserves physical radiometry")
+
+class CrossSensorCalibrationRequest(BaseModel):
+    """Request payload for multi-sensor radiometric cross-calibration and harmonization."""
+    aoi_name: Optional[str] = Field(default="Lake Tahoe Sub-Alpine Calibration Target", description="Area of interest label")
+    source_sensor: SensorPlatform = Field(default=SensorPlatform.LANDSAT_8_OLI, description="Input source satellite sensor")
+    target_sensor: SensorPlatform = Field(default=SensorPlatform.SENTINEL_2A_MSI, description="Reference target satellite sensor")
+    calibration_model: SensorCalibrationModel = Field(default=SensorCalibrationModel.ROY_2016_LINEAR, description="Cross-calibration algorithm")
+    bands: List[str] = Field(default_factory=lambda: ["blue", "green", "red", "nir_narrow", "swir_1", "swir_2"], description="Bands to calibrate")
+    apply_nbar_brdf: bool = Field(default=True, description="Whether to apply RossThick-LiSparse-R NBAR solar zenith/nadir normalization")
+    solar_zenith_deg: float = Field(default=45.0, ge=0.0, le=90.0, description="Target solar zenith angle")
+    view_zenith_deg: float = Field(default=0.0, ge=0.0, le=90.0, description="Target view zenith angle (0 = nadir)")
+    relative_azimuth_deg: float = Field(default=0.0, ge=-180.0, le=180.0, description="Relative azimuth angle")
+    metric: CrossSensorTileMetric = Field(default=CrossSensorTileMetric.HARMONIZED_NDVI, description="Target visualization metric")
+    bbox: Optional[Any] = Field(default=None, description="Spatial bounding box")
+
+    @field_validator("calibration_model", mode="before")
+    @classmethod
+    def validate_calibration_model(cls, v: Any) -> SensorCalibrationModel:
+        return normalize_sensor_calibration_model(v)
+
+class CrossSensorCalibrationResponse(BaseModel):
+    """Response payload containing cross-sensor calibrated data, quality certification, and tile endpoints."""
+    request_id: str = Field(..., description="Unique calibration request identifier")
+    aoi_name: str = Field(default="Lake Tahoe Sub-Alpine Calibration Target", description="Area of interest label")
+    source_sensor: SensorPlatform = Field(..., description="Source satellite sensor")
+    target_sensor: SensorPlatform = Field(..., description="Target satellite sensor")
+    calibration_model: SensorCalibrationModel = Field(..., description="Applied cross-calibration model")
+    calibrated_bands: Dict[str, CrossSensorBandCalibrationResult] = Field(default_factory=dict, description="Per-band calibrated results")
+    quality_summary: CrossSensorCalibrationQualitySummary = Field(..., description="Scientific quality certification metrics")
+    tile_url_template: str = Field(..., description="Canonical XYZ tile URL template for dynamic Leaflet display")
+    daily_stack_count: int = Field(default=14, description="Number of harmonized multi-sensor observations in virtual daily stack")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Execution timestamp")
+    status: str = Field(default="success", description="Execution status")
+
+class CrossSensorTileRequestParams(BaseModel):
+    """Query parameters for dynamic cross-calibrated tile rendering."""
+    model: SensorCalibrationModel = Field(default=SensorCalibrationModel.ROY_2016_LINEAR, description="Cross-calibration model")
+    metric: CrossSensorTileMetric = Field(default=CrossSensorTileMetric.HARMONIZED_NDVI, description="Tile visualization metric")
+    source_sensor: Optional[SensorPlatform] = Field(default=None, description="Source satellite sensor")
+    target_sensor: Optional[SensorPlatform] = Field(default=None, description="Target satellite sensor")
+    colormap: Optional[str] = Field(default=None, description="Colormap palette for single-band rendering")
+
+class CrossSensorModelsResponse(BaseModel):
+    """Capabilities response describing available cross-calibration models, benchmark targets, and band coefficients."""
+    models: Dict[str, Any] = Field(..., description="Dictionary of calibration model configurations")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Preconfigured test benchmark research scenes")
+    band_coefficients: Dict[str, Any] = Field(..., description="Linear regression coefficients per band")
+    supported_platforms: List[str] = Field(default_factory=list, description="Supported satellite constellation platforms")
+    supported_metrics: List[str] = Field(default_factory=list, description="Supported dynamic tile visualization metrics")
+
+
 

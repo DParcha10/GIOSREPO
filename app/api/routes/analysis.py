@@ -852,7 +852,21 @@ from app.models.schemas import (
     EXPORT_LAYER_CONFIGS,
     EXPORT_BENCHMARK_SCENES,
     build_export_status_url,
-    build_export_download_url
+    build_export_download_url,
+    PhenologyMetric,
+    PHENOLOGY_METRICS,
+    PHENOLOGY_METRIC_CONFIGS,
+    PHENOLOGY_BENCHMARK_SITES,
+    normalize_phenology_metric,
+    evaluate_multi_harmonic_curve,
+    extract_phenology_transition_metrics,
+    build_phenology_tile_url,
+    HarmonicFourierTerm,
+    MultiHarmonicFitResult,
+    PhenologyMetricsSummary,
+    PhenologicalCurvePoint,
+    PhenologyAnalysisRequest,
+    PhenologyAnalysisResponse
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -860,6 +874,7 @@ from app.services.data_acquisition import data_acquisition_service
 from app.services.preprocessing import preprocessing_service
 from app.services.spatial import spatial_service
 from app.services.export_service import export_service
+from app.services.timeseries import timeseries_service
 
 logger = logging.getLogger(__name__)
 
@@ -8671,6 +8686,88 @@ def simulate_phenology_decomposition_endpoint(req: PhenologyDecompositionRequest
     sim_res = simulate_phenology_decomposition(req)
     _store_phenology_simulation(sim_res)
     return PhenologyDecompositionResponse(**sim_res) if isinstance(sim_res, dict) else sim_res
+
+
+# ==============================================================================
+# CYCLE v2.5.36: MULTI-HARMONIC PHENOLOGICAL DECOMPOSITION & FOURIER INVERSION (TASK T-277)
+# ==============================================================================
+
+@router.post("/phenology/curve", response_model=PhenologyAnalysisResponse, response_model_by_alias=False)
+@router.post("/phenology/curve/", response_model=PhenologyAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/phenology/curve", response_model=PhenologyAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@phenology_router.post("/curve", response_model=PhenologyAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_phenology_curve_endpoint(req: PhenologyAnalysisRequest):
+    """Fits multi-harmonic Fourier seasonal regression model and extracts land surface phenology transition milestones.
+    Derives Start of Season (SOS), Peak of Season (POS), End of Season (EOS), and Length of Season (LOS).
+    """
+    return timeseries_service.analyze_phenology_curve(req)
+
+
+@router.get("/phenology/benchmarks")
+@router.get("/phenology/benchmarks/", include_in_schema=False)
+@router.get("/analysis/phenology/benchmarks", include_in_schema=False)
+@phenology_router.get("/benchmarks", include_in_schema=False)
+def get_phenology_benchmarks_endpoint():
+    """Retrieves pre-configured benchmark research sites, supported phenological metrics, and metadata."""
+    return {
+        "status": "success",
+        "benchmarks": PHENOLOGY_BENCHMARK_SITES,
+        "metric_configs": PHENOLOGY_METRIC_CONFIGS,
+        "metrics": [m.value for m in PHENOLOGY_METRICS]
+    }
+
+
+@router.post("/phenology/metrics")
+@router.post("/phenology/metrics/", include_in_schema=False)
+@router.post("/analysis/phenology/metrics", include_in_schema=False)
+@phenology_router.post("/metrics", include_in_schema=False)
+def analyze_phenology_metrics_endpoint(req: PhenologyAnalysisRequest):
+    """Computes and extracts derived phenological milestones (SOS, POS, EOS, LOS) and dynamic range amplitude."""
+    return timeseries_service.extract_phenology_metrics(req)
+
+
+@tiles_router.get("/phenology/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/phenology/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/phenology/tiles/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@phenology_router.get("/tiles/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_phenology_seasonality_tile_endpoint(
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for Land Surface Phenology transition metrics (Cycle v2.5.36)."""
+    try:
+        norm_metric = normalize_phenology_metric(metric).value
+    except Exception as e:
+        try:
+            return get_phenology_anomaly_tile_default(
+                sim_id=metric,
+                z=z,
+                x=x,
+                y=y,
+                colormap=colormap,
+                rescale=rescale
+            )
+        except Exception as inner_e:
+            logger.warning("Phenology seasonality tile fallback to anomaly failed for '%s': %s (original: %s)", metric, inner_e, e)
+            raise HTTPException(status_code=400, detail=str(inner_e or e))
+
+    png_bytes = tile_service.render_phenology_tile(
+        metric=norm_metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-Phenology-{norm_metric}"}
+    )
 
 
 @router.get("/phenology/climatological-mad-anomaly/{simulation_id}", response_model=PhenologyDecompositionResponse, response_model_by_alias=False)

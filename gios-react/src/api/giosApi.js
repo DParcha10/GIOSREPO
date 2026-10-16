@@ -111,7 +111,28 @@ import {
   EXPORT_LAYER_CONFIGS,
   EXPORT_BENCHMARK_SCENES,
   generateQgisIngestionSnippet,
-  buildExportDownloadUrl
+  buildExportDownloadUrl,
+  PHENOLOGY_BENCHMARK_SITES,
+  PHENOLOGY_METRIC_CONFIGS,
+  buildPhenologyTileUrl,
+  SharpeningMethod,
+  SHARPENING_METHODS,
+  SharpeningTargetBand,
+  SHARPENING_TARGET_BANDS,
+  SharpeningGuidanceBand,
+  SHARPENING_GUIDANCE_BANDS,
+  SharpeningIndexTarget,
+  SHARPENING_INDEX_TARGETS,
+  HPFKernelType,
+  HPF_KERNEL_TYPES,
+  SharpeningQualityRating,
+  SHARPENING_METHOD_CONFIGS,
+  SHARPENING_BAND_CONFIGS,
+  SYNTHETIC_PAN_WEIGHTS,
+  HPF_KERNELS,
+  SHARPENING_BENCHMARK_SCENES,
+  normalizeSharpeningMethod,
+  buildSharpenedTileUrlTemplate
 } from '../config/constants.js';
 
 export {
@@ -3564,6 +3585,106 @@ const demoAdapter = async (config) => {
           thermal_anomaly_delta_c: delta,
           uhi_intensity_c: Math.max(0.0, delta),
           severity: classifyThermalAnomalySeverity(delta)
+        };
+      }
+      else if (url.includes('/api/v1/analysis/sharpening/methods') || url.includes('/analysis/sharpening/methods')) {
+        data = {
+          methods: SHARPENING_METHOD_CONFIGS,
+          benchmark_scenes: SHARPENING_BENCHMARK_SCENES,
+          pan_weights: SYNTHETIC_PAN_WEIGHTS,
+          supported_target_bands: SHARPENING_TARGET_BANDS,
+          supported_guidance_bands: SHARPENING_GUIDANCE_BANDS
+        };
+      }
+      else if (url.includes('/api/v1/analysis/sharpening/sharpen') || url.includes('/analysis/sharpening/sharpen')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const method = normalizeSharpeningMethod(parsed.method);
+        const targetBands = parsed.target_bands || ['B05', 'B06', 'B07', 'B8A', 'B11', 'B12'];
+        const reqId = `SHARP-${Date.now()}`;
+        data = {
+          request_id: reqId,
+          aoi_name: parsed.aoi_name || 'San Joaquin Valley Agricultural Mosaic',
+          collection: parsed.collection || 'sentinel-2-l2a',
+          item_id: parsed.item_id || 'S2A_MSIL2A_20260815_T10SEJ',
+          method,
+          native_resolution_m: 20.0,
+          sharpened_resolution_m: 10.0,
+          bands_sharpened: targetBands,
+          quality_summary: {
+            method,
+            sam_rad: 0.024,
+            sam_deg: 1.375,
+            ergas: 1.85,
+            uiqi_q4: 0.94,
+            mtf_high_freq_gain: 1.45,
+            radiometric_energy_conservation_ratio: 1.002,
+            rmse: 0.012,
+            quality_rating: SharpeningQualityRating.EXCELLENT,
+            preserves_radiometry: method !== 'brovey'
+          },
+          tile_url_template: `/api/v1/tiles/sharpened/${method}/{target}/{z}/{x}/{y}.png`,
+          derived_indices: {
+            ndmi_10m: `/api/v1/tiles/sharpened/${method}/ndmi/{z}/{x}/{y}.png`,
+            ndci_10m: `/api/v1/tiles/sharpened/${method}/ndci/{z}/{x}/{y}.png`
+          },
+          processed_at: new Date().toISOString(),
+          status: 'success'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/sharpening/evaluate') || url.includes('/analysis/sharpening/evaluate')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const method = normalizeSharpeningMethod(parsed.method);
+        data = {
+          method,
+          sam_rad: 0.024,
+          sam_deg: 1.375,
+          ergas: 1.85,
+          uiqi_q4: 0.94,
+          mtf_high_freq_gain: 1.45,
+          radiometric_energy_conservation_ratio: 1.002,
+          rmse: 0.012,
+          quality_rating: SharpeningQualityRating.EXCELLENT,
+          preserves_radiometry: method !== 'brovey'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/phenology/benchmarks') || url.includes('/analysis/phenology/benchmarks')) {
+        data = {
+          benchmark_sites: PHENOLOGY_BENCHMARK_SITES,
+          metrics: PHENOLOGY_METRIC_CONFIGS
+        };
+      }
+      else if (url.includes('/api/v1/analysis/phenology/curve') || url.includes('/analysis/phenology/curve')) {
+        data = {
+          aoi_name: 'San Joaquin Valley Agricultural Mosaic',
+          metric: 'ndvi',
+          fit_model: 'harmonic_hats',
+          r_squared: 0.92,
+          phenometrics: {
+            sos_doy: 110,
+            pos_doy: 190,
+            eos_doy: 275,
+            los_days: 165,
+            seasonal_amplitude: 0.48,
+            base_level: 0.22,
+            peak_level: 0.70
+          },
+          curve_points: [],
+          status: 'success'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/phenology/metrics') || url.includes('/analysis/phenology/metrics')) {
+        data = {
+          sos_doy: 110,
+          pos_doy: 190,
+          eos_doy: 275,
+          los_days: 165,
+          seasonal_amplitude: 0.48,
+          base_level: 0.22,
+          peak_level: 0.70,
+          harmonic_rmse: 0.018,
+          r_squared: 0.92
         };
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
@@ -8998,6 +9119,91 @@ export const fetchExportFormats = async () => {
   return response.data;
 };
 
+/**
+ * Fetches multi-harmonic phenology decomposition and fitted seasonal curve.
+ * 
+ * @param {Object} [params={}] - Phenology analysis request parameters
+ * @returns {Promise<Object>} Phenology analysis response with metrics and curve points
+ */
+export const fetchPhenologyCurve = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/phenology/curve', params);
+  return response.data;
+};
+
+/**
+ * Fetches pre-configured benchmark phenological research sites.
+ * 
+ * @returns {Promise<Object>} Benchmark sites dictionary and metadata
+ */
+export const fetchPhenologyBenchmarks = async () => {
+  const response = await giosApi.get('/api/v1/analysis/phenology/benchmarks');
+  return response.data;
+};
+
+/**
+ * Computes or retrieves derived phenological milestone metrics (SOS, POS, EOS, LOS).
+ * 
+ * @param {Object} [params={}] - Phenology metrics request parameters
+ * @returns {Promise<Object>} Phenological metrics summary
+ */
+export const fetchPhenologyMetrics = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/phenology/metrics', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for phenological metric raster tiles.
+ * 
+ * @param {Object} [options={}] - Options (metric, colormap)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getPhenologyTileUrlTemplate = (options = {}) => {
+  return buildPhenologyTileUrl(options);
+};
+
+/**
+ * Fetches available spectral sharpening methods, benchmark research scenes, and configuration options.
+ * 
+ * @returns {Promise<Object>} Methods, benchmark scenes, and supported bands
+ */
+export const fetchSharpeningMethods = async () => {
+  const response = await giosApi.get('/api/v1/analysis/sharpening/methods');
+  return response.data;
+};
+
+/**
+ * Submits a spectral super-resolution / pan-sharpening request.
+ * 
+ * @param {Object} [params={}] - Sharpening request parameters
+ * @returns {Promise<Object>} Sharpened dataset response with quality metrics and tile template
+ */
+export const requestSpectralSharpening = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/sharpening/sharpen', params);
+  return response.data;
+};
+
+/**
+ * Evaluates sharpening quality metrics (SAM, ERGAS, Q4) for a given algorithm and band combination.
+ * 
+ * @param {Object} [params={}] - Evaluation request parameters
+ * @returns {Promise<Object>} Quantitative quality summary
+ */
+export const evaluateSharpeningQuality = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/sharpening/evaluate', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for sharpened raster tiles.
+ * 
+ * @param {Object} [options={}] - Options (method, target, colormap)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getSharpenedTileUrlTemplate = (options = {}) => {
+  return buildSharpenedTileUrlTemplate(options);
+};
+
+
 export {
   InSARDeformationHazardTier,
   INSAR_HAZARD_CONFIGS,
@@ -9296,7 +9502,42 @@ export {
   generateQgisIngestionSnippet,
   formatExportJobFilename,
   buildExportStatusUrl,
-  buildExportDownloadUrl
+  buildExportDownloadUrl,
+  PhenologyMetric,
+  PHENOLOGY_METRICS,
+  PHENOLOGY_METRIC_CONFIGS,
+  PHENOLOGY_BENCHMARK_SITES,
+  normalizePhenologyMetric,
+  evaluateMultiHarmonicCurve,
+  extractPhenologyTransitionMetrics,
+  buildPhenologyTileUrl,
+  SharpeningMethod,
+  SHARPENING_METHODS,
+  SharpeningTargetBand,
+  SHARPENING_TARGET_BANDS,
+  SharpeningGuidanceBand,
+  SHARPENING_GUIDANCE_BANDS,
+  SharpeningIndexTarget,
+  SHARPENING_INDEX_TARGETS,
+  HPFKernelType,
+  HPF_KERNEL_TYPES,
+  SharpeningQualityRating,
+  SHARPENING_METHOD_CONFIGS,
+  SHARPENING_BAND_CONFIGS,
+  SYNTHETIC_PAN_WEIGHTS,
+  HPF_KERNELS,
+  SHARPENING_BENCHMARK_SCENES,
+  normalizeSharpeningMethod,
+  calculateSyntheticPanchromatic,
+  calculateBroveySharpenedValue,
+  calculateHighPassInjectedValue,
+  calculateSharpeningSam,
+  calculateErgas,
+  calculateUiqiQ4,
+  calculateEnergyConservationRatio,
+  classifySharpeningQualityRating,
+  buildSharpenedTileUrl,
+  buildSharpenedTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;
