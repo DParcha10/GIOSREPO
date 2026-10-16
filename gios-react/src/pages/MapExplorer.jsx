@@ -207,12 +207,14 @@ import GeotechnicalSensorModal from '../components/GeotechnicalSensorModal';
 import TilePreloadModal from '../components/TilePreloadModal';
 import GCPQualityModal from '../components/GCPQualityModal';
 import InSarDisplacementModal from '../components/InSarDisplacementModal';
-import ThermalLSTModal from '../components/ThermalLSTModal';
+import ThermalLstModal from '../components/ThermalLstModal';
+import ExportDatasetModal from '../components/ExportDatasetModal';
 import BYOCStorageModal from '../components/BYOCStorageModal';
 import PointCloudCHMModal from '../components/PointCloudCHMModal';
 import CoRegistrationModal from '../components/CoRegistrationModal';
 import AquaticQualityModal from '../components/AquaticQualityModal';
 import TopographicCorrectionModal from '../components/TopographicCorrectionModal';
+import HlsHarmonizationModal from '../components/HlsHarmonizationModal';
 import BiophysicalHazardsModal from '../components/BiophysicalHazardsModal';
 import GeotechnicalHazardsModal from '../components/GeotechnicalHazardsModal';
 import EnvironmentalDiagnosticsModal from '../components/EnvironmentalDiagnosticsModal';
@@ -357,7 +359,12 @@ import {
   EUTROPHICATION_TIER_CONFIGS,
   AQUATIC_BENCHMARK_SCENES,
   buildTopographicTileUrlTemplate,
-  buildTopographicIlluminationTileUrlTemplate
+  buildTopographicIlluminationTileUrlTemplate,
+  buildHlsTileUrlTemplate,
+  buildHlsNbarTileUrlTemplate,
+  buildThermalLstTileUrlTemplate,
+  buildThermalAnomalyTileUrlTemplate,
+  THERMAL_BENCHMARK_SCENES
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -809,28 +816,85 @@ export default function MapExplorer() {
   const [aquaticWhoAlert, setAquaticWhoAlert] = useState('High Public Health Hazard');
 
   // Cycle v2.5.32 Topographic Solar Illumination Correction & SCS+C Studio State (Task T-254)
-  const [topographicModalOpen, setTopographicModalOpen] = useState(false);
-  const [showTopographicTileLayer, setShowTopographicTileLayer] = useState(false);
-  const [showTopographicIlluminationLayer, setShowTopographicIlluminationLayer] = useState(false);
-  const [topographicSceneId, setTopographicSceneId] = useState('S2A_MSIL2A_20260815T185921_T10TEK');
-  const [topographicCollection, setTopographicCollection] = useState('sentinel-2-l2a');
-  const [topographicMethod, setTopographicMethod] = useState('scs_c');
-  const [topographicMetric, setTopographicMetric] = useState('corrected_reflectance');
-  const [topographicColormap, setTopographicColormap] = useState('spectral');
-  const [topographicOpacity, setTopographicOpacity] = useState(0.85);
-  const [topographicRescale, setTopographicRescale] = useState('0.0,0.5');
-  const [topographicSolarZenith, setTopographicSolarZenith] = useState(34.2);
-  const [topographicSolarAzimuth, setTopographicSolarAzimuth] = useState(148.5);
-  const [topographicCFactor, setTopographicCFactor] = useState(0.08);
-  const [topographicMinnaertK, setTopographicMinnaertK] = useState(0.68);
-  const [topographicTileUrlTemplate, setTopographicTileUrlTemplate] = useState('');
-  const [topographicIlluminationTileUrlTemplate, setTopographicIlluminationTileUrlTemplate] = useState('');
-  const [, setTopographicAnalysisId] = useState('TOPO-LIVE');
-  const [topographicMeanCosI, setTopographicMeanCosI] = useState(0.7842);
-  const [topographicSunlitPct, setTopographicSunlitPct] = useState(82.5);
-  const [topographicShadedPct, setTopographicShadedPct] = useState(12.8);
-  const [topographicSelfShadowPct, setTopographicSelfShadowPct] = useState(4.7);
-  const [topographicVarianceReductionPct, setTopographicVarianceReductionPct] = useState(41.8);
+  const [topoSCSCModalOpen, setTopoSCSCModalOpen] = useState(false);
+  const [showTopoSCSCTileLayer, setShowTopoSCSCTileLayer] = useState(false);
+  const [showTopoSCSCIlluminationLayer, setShowTopoSCSCIlluminationLayer] = useState(false);
+  const [topoSCSCSceneId, setTopoSCSCSceneId] = useState('S2A_MSIL2A_20260815T185921_T10TEK');
+  const [topoSCSCCollection, setTopoSCSCCollection] = useState('sentinel-2-l2a');
+  const [topoSCSCMethod, setTopoSCSCMethod] = useState('scs_c');
+  const [topoSCSCMetric, setTopoSCSCMetric] = useState('corrected_reflectance');
+  const [topoSCSCColormap, setTopoSCSCColormap] = useState('spectral');
+  const [topoSCSCOpacity, setTopoSCSCOpacity] = useState(0.85);
+  const [topoSCSCRescale, setTopoSCSCRescale] = useState('0.0,0.5');
+  const [topoSCSCSolarZenith, setTopoSCSCSolarZenith] = useState(34.2);
+  const [topoSCSCSolarAzimuth, setTopoSCSCSolarAzimuth] = useState(148.5);
+  const [topoSCSCCFactor, setTopoSCSCCFactor] = useState(0.08);
+  const [topoSCSCMinnaertK, setTopoSCSCMinnaertK] = useState(0.68);
+  const [topoSCSCTileUrlTemplate, setTopoSCSCTileUrlTemplate] = useState('');
+  const [topoSCSCIlluminationTileUrlTemplate, setTopoSCSCIlluminationTileUrlTemplate] = useState('');
+  const [, setTopoSCSCAnalysisId] = useState('TOPO-LIVE');
+  const [topoSCSCMeanCosI, setTopoSCSCMeanCosI] = useState(0.7842);
+  const [topoSCSCSunlitPct, setTopoSCSCSunlitPct] = useState(82.5);
+  const [topoSCSCShadedPct, setTopoSCSCShadedPct] = useState(12.8);
+  const [topoSCSCSelfShadowPct, setTopoSCSCSelfShadowPct] = useState(4.7);
+  const [topoSCSCVarianceReductionPct, setTopoSCSCVarianceReductionPct] = useState(41.8);
+
+  // Cycle v2.5.33 Harmonized Landsat Sentinel-2 (HLS) Harmonization Studio State (Task T-260)
+  const [hlsHarmonizationModalOpen, setHlsHarmonizationModalOpen] = useState(false);
+  const [showHlsTileLayer, setShowHlsTileLayer] = useState(false);
+  const [showHlsNbarLayer, setShowHlsNbarLayer] = useState(false);
+  const [hlsSceneId, setHlsSceneId] = useState('LC09_L2SP_044034_20260718_02_T1');
+  const [hlsCollection, setHlsCollection] = useState('landsat-c2-l2');
+  const [hlsSensor, setHlsSensor] = useState('landsat_oli');
+  const [, setHlsTargetSensor] = useState('sentinel_msi');
+  const [hlsMgrsTile, setHlsMgrsTile] = useState('10TFK');
+  const [hlsStage, setHlsStage] = useState('harmonized');
+  const [hlsMetric, setHlsMetric] = useState('harmonized_reflectance');
+  const [hlsColormap, setHlsColormap] = useState('spectral');
+  const [hlsOpacity, setHlsOpacity] = useState(0.85);
+  const [hlsRescale, setHlsRescale] = useState('0.0,0.5');
+  const [hlsSolarZenith, setHlsSolarZenith] = useState(28.5);
+  const [hlsSolarAzimuth, setHlsSolarAzimuth] = useState(134.2);
+  const [hlsViewZenith, setHlsViewZenith] = useState(4.8);
+  const [hlsViewAzimuth, setHlsViewAzimuth] = useState(102.5);
+  const [hlsRelativeAzimuth, setHlsRelativeAzimuth] = useState(31.7);
+  const [hlsTargetSolarZenith, setHlsTargetSolarZenith] = useState(45.0);
+  const [, setHlsTargetViewZenith] = useState(0.0);
+  const [hlsTileUrlTemplate, setHlsTileUrlTemplate] = useState('');
+  const [hlsNbarTileUrlTemplate, setHlsNbarTileUrlTemplate] = useState('');
+  const [, setHlsAnalysisId] = useState('HLS-LIVE');
+  const [hlsMeanAdjustmentFactor, setHlsMeanAdjustmentFactor] = useState(0.942);
+  const [hlsCrossSensorRmse, setHlsCrossSensorRmse] = useState(0.0054);
+  const [hlsMeanVolumetricKernel, setHlsMeanVolumetricKernel] = useState(-0.038);
+  const [hlsMeanGeometricKernel, setHlsMeanGeometricKernel] = useState(-0.842);
+
+  // Cycle v2.5.34 Land Surface Temperature (LST) & Thermal Anomaly Studio State (Task T-266)
+  const [thermalLstModalOpen, setThermalLstModalOpen] = useState(false);
+  const [showThermalLstTileLayer, setShowThermalLstTileLayer] = useState(false);
+  const [showThermalAnomalyTileLayer, setShowThermalAnomalyTileLayer] = useState(false);
+  const [thermalLstSceneId, setThermalLstSceneId] = useState('LC09_L2SP_039037_20260715_02_T1');
+  const [thermalLstCollection, setThermalLstCollection] = useState('landsat-c2-l2');
+  const [thermalLstSensor, setThermalLstSensor] = useState('landsat_tirs');
+  const [thermalLstMethod, setThermalLstMethod] = useState('radiative_transfer_equation');
+  const [thermalLstMetric, setThermalLstMetric] = useState('lst_celsius');
+  const [thermalLstColormap, setThermalLstColormap] = useState('turbo');
+  const [thermalLstOpacity, setThermalLstOpacity] = useState(0.85);
+  const [thermalLstRescale, setThermalLstRescale] = useState('15.0,55.0');
+  const [thermalLstAmbientBaselineTempC, setThermalLstAmbientBaselineTempC] = useState(34.0);
+  const [thermalLstTileUrlTemplate, setThermalLstTileUrlTemplate] = useState('');
+  const [thermalAnomalyTileUrlTemplate, setThermalAnomalyTileUrlTemplate] = useState('');
+  const [thermalLstMeanTempC, setThermalLstMeanTempC] = useState(48.5);
+  const [thermalLstMeanBrightnessTempC, setThermalLstMeanBrightnessTempC] = useState(45.2);
+  const [thermalLstMeanEmissivity, setThermalLstMeanEmissivity] = useState(0.972);
+  const [thermalLstMeanFvc, setThermalLstMeanFvc] = useState(0.18);
+  const [thermalLstAnomalyDeltaC, setThermalLstAnomalyDeltaC] = useState(14.5);
+  const [thermalLstUhiIntensityC, setThermalLstUhiIntensityC] = useState(14.5);
+  const [thermalLstSeverity, setThermalLstSeverity] = useState('severe_thermal_anomaly');
+  const [thermalLstBenchmarkName, setThermalLstBenchmarkName] = useState('Salton Sea Geothermal Field, California');
+
+  // Cycle v2.5.35 Cloud-Native GeoTIFF & GeoPackage Export Studio State (Task T-272)
+  const [exportDatasetModalOpen, setExportDatasetModalOpen] = useState(false);
+  const [latestExportArtifact, setLatestExportArtifact] = useState(null);
 
   // T-79 & T-81 Dense Point Cloud Filtering & Canopy Height Model (CHM) State
   const [pointCloudModalOpen, setPointCloudModalOpen] = useState(false);
@@ -4871,22 +4935,22 @@ export default function MapExplorer() {
             )}
 
             {/* Cycle v2.5.32 Topographic Solar Illumination & SCS+C Corrected TileLayer (Task T-254) */}
-            {showTopographicTileLayer && !curtainActive && (
+            {showTopoSCSCTileLayer && !curtainActive && (
               <TileLayer 
-                key={`topo-corrected-${topographicSceneId}-${topographicMethod}-${topographicMetric}-${topographicColormap}-${topographicOpacity}-${topographicRescale}`}
-                url={topographicTileUrlTemplate || buildTopographicTileUrlTemplate({
-                  collection: topographicCollection,
-                  itemId: topographicSceneId,
-                  method: topographicMethod,
-                  metric: topographicMetric,
-                  solarZenith: topographicSolarZenith,
-                  solarAzimuth: topographicSolarAzimuth,
-                  cFactor: topographicCFactor,
-                  minnaertK: topographicMinnaertK,
-                  colormap: topographicColormap,
-                  rescale: topographicRescale
+                key={`topo-corrected-${topoSCSCSceneId}-${topoSCSCMethod}-${topoSCSCMetric}-${topoSCSCColormap}-${topoSCSCOpacity}-${topoSCSCRescale}`}
+                url={topoSCSCTileUrlTemplate || buildTopographicTileUrlTemplate({
+                  collection: topoSCSCCollection,
+                  itemId: topoSCSCSceneId,
+                  method: topoSCSCMethod,
+                  metric: topoSCSCMetric,
+                  solarZenith: topoSCSCSolarZenith,
+                  solarAzimuth: topoSCSCSolarAzimuth,
+                  cFactor: topoSCSCCFactor,
+                  minnaertK: topoSCSCMinnaertK,
+                  colormap: topoSCSCColormap,
+                  rescale: topoSCSCRescale
                 })}
-                opacity={topographicOpacity}
+                opacity={topoSCSCOpacity}
                 maxNativeZoom={18}
                 maxZoom={22}
                 keepBuffer={4}
@@ -4895,20 +4959,96 @@ export default function MapExplorer() {
             )}
 
             {/* Cycle v2.5.32 Topographic Solar Incidence Hillshade TileLayer (Task T-254) */}
-            {showTopographicIlluminationLayer && !curtainActive && (
+            {showTopoSCSCIlluminationLayer && !curtainActive && (
               <TileLayer 
-                key={`topo-illumination-${topographicSceneId}-${topographicSolarZenith}-${topographicSolarAzimuth}-${topographicOpacity}`}
-                url={topographicIlluminationTileUrlTemplate || buildTopographicIlluminationTileUrlTemplate({
-                  collection: topographicCollection,
-                  itemId: topographicSceneId,
-                  solarZenith: topographicSolarZenith,
-                  solarAzimuth: topographicSolarAzimuth
+                key={`topo-illumination-${topoSCSCSceneId}-${topoSCSCSolarZenith}-${topoSCSCSolarAzimuth}-${topoSCSCOpacity}`}
+                url={topoSCSCIlluminationTileUrlTemplate || buildTopographicIlluminationTileUrlTemplate({
+                  collection: topoSCSCCollection,
+                  itemId: topoSCSCSceneId,
+                  solarZenith: topoSCSCSolarZenith,
+                  solarAzimuth: topoSCSCSolarAzimuth
                 })}
-                opacity={Math.min(1.0, topographicOpacity + 0.1)}
+                opacity={Math.min(1.0, topoSCSCOpacity + 0.1)}
                 maxNativeZoom={18}
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={443}
+              />
+            )}
+
+            {/* Cycle v2.5.33 Harmonized Landsat Sentinel-2 (HLS) Dynamic TileLayer (Task T-260) */}
+            {showHlsTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`hls-harmonized-${hlsSceneId}-${hlsStage}-${hlsMetric}-${hlsColormap}-${hlsOpacity}-${hlsRescale}`}
+                url={hlsTileUrlTemplate || buildHlsTileUrlTemplate({
+                  collection: hlsCollection,
+                  itemId: hlsSceneId,
+                  metric: hlsMetric,
+                  stage: hlsStage,
+                  sensor: hlsSensor,
+                  colormap: hlsColormap,
+                  rescale: hlsRescale
+                })}
+                opacity={hlsOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={444}
+              />
+            )}
+
+            {/* Cycle v2.5.33 Nadir BRDF-Adjusted Reflectance (NBAR) TileLayer (Task T-260) */}
+            {showHlsNbarLayer && !curtainActive && (
+              <TileLayer 
+                key={`hls-nbar-${hlsSceneId}-${hlsTargetSolarZenith}-${hlsOpacity}`}
+                url={hlsNbarTileUrlTemplate || buildHlsNbarTileUrlTemplate({
+                  collection: hlsCollection,
+                  itemId: hlsSceneId,
+                  targetSolarZenith: hlsTargetSolarZenith
+                })}
+                opacity={Math.min(1.0, hlsOpacity + 0.1)}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={445}
+              />
+            )}
+
+            {/* Cycle v2.5.34 Land Surface Temperature (LST) Dynamic TileLayer (Task T-266) */}
+            {showThermalLstTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`thermal-lst-${thermalLstSceneId}-${thermalLstMethod}-${thermalLstMetric}-${thermalLstColormap}-${thermalLstOpacity}-${thermalLstRescale}`}
+                url={thermalLstTileUrlTemplate || buildThermalLstTileUrlTemplate({
+                  collection: thermalLstCollection,
+                  itemId: thermalLstSceneId,
+                  metric: thermalLstMetric,
+                  method: thermalLstMethod,
+                  colormap: thermalLstColormap,
+                  rescale: thermalLstRescale
+                })}
+                opacity={thermalLstOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={446}
+              />
+            )}
+
+            {/* Cycle v2.5.34 Thermal Anomaly (Delta T) Dynamic TileLayer (Task T-266) */}
+            {showThermalAnomalyTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`thermal-anomaly-${thermalLstSceneId}-${thermalLstAmbientBaselineTempC}-${thermalLstColormap}-${thermalLstOpacity}`}
+                url={thermalAnomalyTileUrlTemplate || buildThermalAnomalyTileUrlTemplate({
+                  collection: thermalLstCollection,
+                  itemId: thermalLstSceneId,
+                  ambientBaselineTempC: thermalLstAmbientBaselineTempC,
+                  colormap: thermalLstColormap
+                })}
+                opacity={thermalLstOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={447}
               />
             )}
 
@@ -9539,30 +9679,30 @@ export default function MapExplorer() {
           )}
 
           {/* Cycle v2.5.32 Floating Topographic Solar Illumination & SCS+C HUD Card (Task T-254) */}
-          {showTopographicTileLayer && (
+          {showTopoSCSCTileLayer && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-amber-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[600px]">
               <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
                 <div className="flex items-center gap-2">
                   <Sun className="w-4 h-4 text-amber-400 animate-spin-slow" />
                   <span className="font-bold text-white tracking-wide truncate max-w-[220px]">
-                    Topographic SCS+C: {topographicSceneId}
+                    Topographic SCS+C: {topoSCSCSceneId}
                   </span>
                   <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    {topographicMethod.toUpperCase()}
+                    {topoSCSCMethod.toUpperCase()}
                   </span>
                   <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                    {topographicMetric.replace('_', ' ').toUpperCase()}
+                    {topoSCSCMetric.replace('_', ' ').toUpperCase()}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={() => setTopographicModalOpen(true)}
+                    onClick={() => setTopoSCSCModalOpen(true)}
                     className="px-2 py-1 bg-amber-950 hover:bg-amber-900 border border-amber-500/40 text-amber-300 rounded text-[10px] font-bold uppercase transition-all"
                   >
                     Adjust
                   </button>
                   <button
-                    onClick={() => setShowTopographicTileLayer(false)}
+                    onClick={() => setShowTopoSCSCTileLayer(false)}
                     className="text-slate-400 hover:text-white"
                     title="Dismiss Topographic Correction Layer"
                   >
@@ -9575,15 +9715,15 @@ export default function MapExplorer() {
               <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-zinc-500 uppercase">cos(i):</span>
-                  <span className="text-amber-400 font-bold">{topographicMeanCosI.toFixed(3)}</span>
+                  <span className="text-amber-400 font-bold">{topoSCSCMeanCosI.toFixed(3)}</span>
                   <span className="text-zinc-500 uppercase ml-1">Sunlit:</span>
-                  <span className="text-emerald-400 font-bold">{topographicSunlitPct}%</span>
+                  <span className="text-emerald-400 font-bold">{topoSCSCSunlitPct}%</span>
                   <span className="text-zinc-500 uppercase ml-1">Shaded:</span>
-                  <span className="text-amber-400 font-bold">{topographicShadedPct}%</span>
+                  <span className="text-amber-400 font-bold">{topoSCSCShadedPct}%</span>
                   <span className="text-zinc-500 uppercase ml-1">Self-Shadow:</span>
-                  <span className="text-rose-400 font-bold">{topographicSelfShadowPct}%</span>
+                  <span className="text-rose-400 font-bold">{topoSCSCSelfShadowPct}%</span>
                   <span className="text-zinc-500 uppercase ml-1">Var Reduction:</span>
-                  <span className="text-cyan-400 font-bold">-{topographicVarianceReductionPct}%</span>
+                  <span className="text-cyan-400 font-bold">-{topoSCSCVarianceReductionPct}%</span>
                 </div>
               </div>
 
@@ -9594,9 +9734,9 @@ export default function MapExplorer() {
                   {['scs_c', 'c_correction', 'minnaert', 'cosine', 'none'].map((m) => (
                     <button
                       key={m}
-                      onClick={() => setTopographicMethod(m)}
+                      onClick={() => setTopoSCSCMethod(m)}
                       className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
-                        topographicMethod === m
+                        topoSCSCMethod === m
                           ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50'
                           : 'text-zinc-400 hover:text-white'
                       }`}
@@ -9610,8 +9750,8 @@ export default function MapExplorer() {
                   <label className="flex items-center gap-1 text-[10px] cursor-pointer select-none">
                     <input
                       type="checkbox"
-                      checked={showTopographicIlluminationLayer}
-                      onChange={(e) => setShowTopographicIlluminationLayer(e.target.checked)}
+                      checked={showTopoSCSCIlluminationLayer}
+                      onChange={(e) => setShowTopoSCSCIlluminationLayer(e.target.checked)}
                       className="w-3.5 h-3.5 rounded accent-amber-500"
                     />
                     <span>Hillshade Overlay</span>
@@ -9624,13 +9764,288 @@ export default function MapExplorer() {
                       min="0.1"
                       max="1.0"
                       step="0.05"
-                      value={topographicOpacity}
-                      onChange={(e) => setTopographicOpacity(parseFloat(e.target.value))}
+                      value={topoSCSCOpacity}
+                      onChange={(e) => setTopoSCSCOpacity(parseFloat(e.target.value))}
                       className="w-20 accent-amber-500 cursor-pointer"
                     />
-                    <span className="text-amber-400 font-bold">{Math.round(topographicOpacity * 100)}%</span>
+                    <span className="text-amber-400 font-bold">{Math.round(topoSCSCOpacity * 100)}%</span>
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cycle v2.5.33 Floating Harmonized Landsat Sentinel-2 (HLS) HUD Card (Task T-260) */}
+          {showHlsTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-indigo-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[640px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Satellite className="w-4 h-4 text-indigo-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[220px]">
+                    HLS Harmonized: {hlsSceneId}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    {hlsSensor === 'landsat_oli' ? 'OLI → MSI' : hlsSensor === 'sentinel_msi' ? 'MSI → OLI' : 'HLS'}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                    {hlsStage.toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    {hlsMetric.replace('_', ' ').toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setHlsHarmonizationModalOpen(true)}
+                    className="px-2 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowHlsTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss HLS Harmonization Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">MGRS:</span>
+                  <span className="text-white font-bold">{hlsMgrsTile}</span>
+                  <span className="text-zinc-500 uppercase ml-1">NBAR c:</span>
+                  <span className="text-emerald-400 font-bold">{hlsMeanAdjustmentFactor.toFixed(3)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">RMSE:</span>
+                  <span className="text-teal-400 font-bold">{hlsCrossSensorRmse.toFixed(4)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">θs:</span>
+                  <span className="text-amber-400 font-bold">{hlsSolarZenith}°</span>
+                  <span className="text-zinc-500 uppercase ml-1">ϕs:</span>
+                  <span className="text-amber-400 font-bold">{hlsSolarAzimuth}°</span>
+                  <span className="text-zinc-500 uppercase ml-1">θv:</span>
+                  <span className="text-cyan-400 font-bold">{hlsViewZenith}°</span>
+                  <span className="text-zinc-500 uppercase ml-1">ϕv:</span>
+                  <span className="text-cyan-400 font-bold">{hlsViewAzimuth}°</span>
+                  <span className="text-zinc-500 uppercase ml-1">ϕ:</span>
+                  <span className="text-indigo-400 font-bold">{hlsRelativeAzimuth}°</span>
+                  <span className="text-zinc-500 uppercase ml-1">k_vol:</span>
+                  <span className="text-cyan-400 font-bold">{hlsMeanVolumetricKernel.toFixed(3)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">k_geo:</span>
+                  <span className="text-rose-400 font-bold">{hlsMeanGeometricKernel.toFixed(3)}</span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Stage:</span>
+                  {['harmonized', 'nbar', 'spectral_adjusted', 'raw'].map((stg) => (
+                    <button
+                      key={stg}
+                      onClick={() => setHlsStage(stg)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        hlsStage === stg
+                          ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {stg === 'spectral_adjusted' ? 'Bandpass' : stg}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1 text-[10px] cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={showHlsNbarLayer}
+                      onChange={(e) => setShowHlsNbarLayer(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded accent-indigo-500"
+                    />
+                    <span>NBAR Overlay</span>
+                  </label>
+
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={hlsOpacity}
+                      onChange={(e) => setHlsOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-indigo-500 cursor-pointer"
+                    />
+                    <span className="text-indigo-400 font-bold">{Math.round(hlsOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cycle v2.5.34 Floating Land Surface Temperature (LST) & Thermal Anomaly HUD Card (Task T-266) */}
+          {(showThermalLstTileLayer || showThermalAnomalyTileLayer) && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-rose-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[660px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Flame className="w-4 h-4 text-rose-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[200px]" title={thermalLstBenchmarkName}>
+                    {thermalLstBenchmarkName}: {thermalLstSceneId}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                    {thermalLstSensor === 'landsat_tirs' ? 'TIRS B10' : 'SLSTR S8/S9'}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    {thermalLstMethod === 'radiative_transfer_equation' ? 'RTE' : thermalLstMethod.toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    {thermalLstColormap.toUpperCase()}
+                  </span>
+                  <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
+                    thermalLstAnomalyDeltaC >= 10.0
+                      ? 'bg-rose-950 text-rose-300 border border-rose-600'
+                      : thermalLstAnomalyDeltaC >= 6.0
+                      ? 'bg-orange-950 text-orange-300 border border-orange-600'
+                      : thermalLstAnomalyDeltaC >= 3.5
+                      ? 'bg-amber-950 text-amber-300 border border-amber-600'
+                      : 'bg-emerald-950 text-emerald-300 border border-emerald-600'
+                  }`}>
+                    {thermalLstSeverity.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setThermalLstModalOpen(true)}
+                    className="px-2 py-1 bg-rose-950 hover:bg-rose-900 border border-rose-500/40 text-rose-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowThermalLstTileLayer(false);
+                      setShowThermalAnomalyTileLayer(false);
+                    }}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Thermal LST Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">Mean LST:</span>
+                  <span className="text-rose-400 font-bold">{thermalLstMeanTempC.toFixed(1)}°C</span>
+                  <span className="text-zinc-500 uppercase ml-1">Baseline:</span>
+                  <span className="text-white font-bold">{thermalLstAmbientBaselineTempC.toFixed(1)}°C</span>
+                  <span className="text-zinc-500 uppercase ml-1">ΔT:</span>
+                  <span className={`font-bold ${thermalLstAnomalyDeltaC >= 3.5 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    +{thermalLstAnomalyDeltaC.toFixed(1)}°C
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Tb:</span>
+                  <span className="text-amber-400 font-bold">{thermalLstMeanBrightnessTempC.toFixed(1)}°C</span>
+                  <span className="text-zinc-500 uppercase ml-1">ε:</span>
+                  <span className="text-teal-400 font-bold">{thermalLstMeanEmissivity.toFixed(3)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">FVC:</span>
+                  <span className="text-emerald-400 font-bold">{Math.round(thermalLstMeanFvc * 100)}%</span>
+                  <span className="text-zinc-500 uppercase ml-1">SUHI:</span>
+                  <span className="text-amber-300 font-bold">+{thermalLstUhiIntensityC.toFixed(1)}°C</span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Layer:</span>
+                  <button
+                    onClick={() => {
+                      setShowThermalLstTileLayer(true);
+                      setShowThermalAnomalyTileLayer(false);
+                    }}
+                    className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                      showThermalLstTileLayer && !showThermalAnomalyTileLayer
+                        ? 'bg-rose-500/30 text-rose-300 border border-rose-500/50'
+                        : 'text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    LST (°C)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowThermalLstTileLayer(false);
+                      setShowThermalAnomalyTileLayer(true);
+                    }}
+                    className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                      showThermalAnomalyTileLayer
+                        ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50'
+                        : 'text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    Anomaly (ΔT)
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={thermalLstOpacity}
+                      onChange={(e) => setThermalLstOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-rose-500 cursor-pointer"
+                    />
+                    <span className="text-rose-400 font-bold">{Math.round(thermalLstOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cycle v2.5.35 Completed Geospatial Export HUD Card (Task T-272) */}
+          {latestExportArtifact && (
+            <div className="absolute top-20 right-6 z-[920] glass-panel px-4 py-3 rounded-xl border-teal-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2 w-80 font-mono text-xs">
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                <div className="flex items-center gap-2">
+                  <Download className="w-4 h-4 text-teal-400" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[190px]" title={latestExportArtifact.filename}>
+                    {latestExportArtifact.filename}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setLatestExportArtifact(null)}
+                  className="text-zinc-500 hover:text-white"
+                  title="Dismiss Export Card"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                <span>{latestExportArtifact.format?.toUpperCase()} • {latestExportArtifact.crs}</span>
+                <span className="text-teal-300 font-bold">{latestExportArtifact.resolutionM}m</span>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <a
+                  href={latestExportArtifact.downloadUrl}
+                  download={latestExportArtifact.filename}
+                  className="flex-1 py-1.5 bg-teal-500 hover:bg-teal-400 text-black font-bold text-center rounded text-[11px] uppercase transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download</span>
+                </a>
+                <button
+                  onClick={() => setExportDatasetModalOpen(true)}
+                  className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-teal-300 rounded text-[11px] font-bold border border-zinc-700"
+                  title="Re-open Export Studio"
+                >
+                  Details
+                </button>
               </div>
             </div>
           )}
@@ -10576,14 +10991,50 @@ export default function MapExplorer() {
 
               {/* Cycle v2.5.32 Topographic Solar Illumination & SCS+C Studio Shortcut (Task T-254) */}
               <button
-                onClick={() => setTopographicModalOpen(true)}
+                onClick={() => setTopoSCSCModalOpen(true)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-amber-300 hover:text-white hover:bg-amber-500/20 border border-amber-500/30 ${
-                  topographicModalOpen || showTopographicTileLayer ? 'bg-amber-600 text-white font-extrabold shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
+                  topoSCSCModalOpen || showTopoSCSCTileLayer ? 'bg-amber-600 text-white font-extrabold shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
                 }`}
                 title="Topographic Solar Illumination Studio, SCS+C Inversion, Slope-Aspect Hillshade & Empirical C-Correction (Cycle v2.5.32)"
               >
                 <Sun className="w-3.5 h-3.5 text-amber-400" />
                 <span>Topographic SCS+C (v2.5.32)</span>
+              </button>
+
+              {/* Cycle v2.5.33 Harmonized Landsat Sentinel-2 (HLS) Harmonization Studio Shortcut (Task T-260) */}
+              <button
+                onClick={() => setHlsHarmonizationModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-indigo-300 hover:text-white hover:bg-indigo-500/20 border border-indigo-500/30 ${
+                  hlsHarmonizationModalOpen || showHlsTileLayer ? 'bg-indigo-600 text-white font-extrabold shadow-[0_0_12px_rgba(99,102,241,0.6)]' : ''
+                }`}
+                title="Harmonized Landsat Sentinel-2 (HLS) Studio, Nadir BRDF-Adjusted Reflectance (RossThick-LiSparse-R NBAR) & Cross-Sensor Spectral Harmonization (Cycle v2.5.33)"
+              >
+                <Satellite className="w-3.5 h-3.5 text-indigo-400" />
+                <span>HLS Harmonization (v2.5.33)</span>
+              </button>
+
+              {/* Cycle v2.5.34 Land Surface Temperature (LST) & Thermal Anomaly Studio Shortcut (Task T-266) */}
+              <button
+                onClick={() => setThermalLstModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-rose-300 hover:text-white hover:bg-rose-500/20 border border-rose-500/30 ${
+                  thermalLstModalOpen || showThermalLstTileLayer || showThermalAnomalyTileLayer ? 'bg-rose-600 text-white font-extrabold shadow-[0_0_12px_rgba(244,63,94,0.6)]' : ''
+                }`}
+                title="Land Surface Temperature (LST) & Thermal Anomaly Studio, Radiative Transfer Equation (RTE), Sobrino Emissivity & Heat Island Hazard Tiers (Cycle v2.5.34)"
+              >
+                <Flame className="w-3.5 h-3.5 text-rose-400" />
+                <span>Thermal LST (v2.5.34)</span>
+              </button>
+
+              {/* Cycle v2.5.35 Cloud-Native GeoTIFF & GeoPackage Export Studio Shortcut (Task T-272) */}
+              <button
+                onClick={() => setExportDatasetModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-teal-300 hover:text-white hover:bg-teal-500/20 border border-teal-500/30 ${
+                  exportDatasetModalOpen || latestExportArtifact ? 'bg-teal-600 text-white font-extrabold shadow-[0_0_12px_rgba(20,184,166,0.6)]' : ''
+                }`}
+                title="Geospatial Export Studio: Cloud-Native GeoTIFF (COG), OGC GeoPackage, Multi-Spectral Subsetting & Enterprise GIS Interoperability (Cycle v2.5.35)"
+              >
+                <Download className="w-3.5 h-3.5 text-teal-400" />
+                <span>Export Studio (v2.5.35)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -21939,16 +22390,61 @@ export default function MapExplorer() {
         initialPairId={insarPairId}
       />
 
-      {/* Thermal Land Surface Temperature (LST) Modal (T-74/T-76) */}
-      <ThermalLSTModal
-        isOpen={lstModalOpen}
-        onClose={() => setLstModalOpen(false)}
-        onApplyTileLayer={(url) => {
-          handleApplyTileLayer(url, { layerType: 'lst' });
+      {/* Cycle v2.5.34 Land Surface Temperature (LST) & Thermal Anomaly Studio (Task T-266) */}
+      <ThermalLstModal
+        isOpen={thermalLstModalOpen || lstModalOpen}
+        onClose={() => {
+          setThermalLstModalOpen(false);
           setLstModalOpen(false);
         }}
-        initialCollection={lstCollection}
-        initialItemId={lstItemId}
+        onApply={(payload) => {
+          setThermalLstSceneId(payload.sceneId || 'LC09_L2SP_039037_20260715_02_T1');
+          setThermalLstCollection(payload.collection || 'landsat-c2-l2');
+          setThermalLstSensor(payload.sensor || 'landsat_tirs');
+          setThermalLstMethod(payload.method || 'radiative_transfer_equation');
+          setThermalLstMetric(payload.metric || 'lst_celsius');
+          setThermalLstColormap(payload.colormap || 'turbo');
+          setThermalLstOpacity(payload.opacity ?? 0.85);
+          if (payload.rescale) {
+            setThermalLstRescale(Array.isArray(payload.rescale) ? `${payload.rescale[0]},${payload.rescale[1]}` : String(payload.rescale));
+          }
+          setThermalLstAmbientBaselineTempC(payload.ambientBaselineTempC ?? 34.0);
+          setThermalLstTileUrlTemplate(payload.lstTileUrlTemplate || payload.tileUrlTemplate || '');
+          setThermalAnomalyTileUrlTemplate(payload.anomalyTileUrlTemplate || '');
+          if (payload.benchmarkName) {
+            setThermalLstBenchmarkName(payload.benchmarkName);
+          }
+          if (payload.summary) {
+            setThermalLstMeanTempC(payload.summary.mean_lst_c ?? 48.5);
+            setThermalLstMeanBrightnessTempC(payload.summary.mean_brightness_temp_c ?? 45.2);
+            setThermalLstMeanEmissivity(payload.summary.mean_emissivity ?? 0.972);
+            setThermalLstMeanFvc(payload.summary.mean_fvc ?? 0.18);
+            setThermalLstAnomalyDeltaC(payload.summary.thermal_anomaly_delta_c ?? 14.5);
+            setThermalLstUhiIntensityC(payload.summary.uhi_intensity_c ?? 14.5);
+            setThermalLstSeverity(payload.summary.severity ?? 'severe_thermal_anomaly');
+          }
+          if (payload.layerMode === 'anomaly') {
+            setShowThermalAnomalyTileLayer(true);
+            setShowThermalLstTileLayer(false);
+          } else {
+            setShowThermalLstTileLayer(true);
+            setShowThermalAnomalyTileLayer(false);
+          }
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          handleApplyTileLayer(url, { layerType: 'lst', ...extra });
+          setShowThermalLstTileLayer(true);
+          setThermalLstModalOpen(false);
+          setLstModalOpen(false);
+        }}
+        onLaunchCurtain={({ referenceSceneId: rId, colormap: cm }) => {
+          setThermalLstSceneId(rId);
+          if (cm) setThermalLstColormap(cm);
+          setSwipeComparisonMode('pre_vs_post');
+          setCurtainActive(true);
+        }}
+        initialCollection={thermalLstCollection}
+        initialItemId={thermalLstSceneId}
       />
 
       {/* Sub-Pixel Geometric Co-Registration (Cycle v2.5.30, Task T-242) */}
@@ -22023,34 +22519,74 @@ export default function MapExplorer() {
 
       {/* Topographic Solar Illumination & SCS+C Correction Studio (Cycle v2.5.32, Task T-254) */}
       <TopographicCorrectionModal
-        isOpen={topographicModalOpen}
-        onClose={() => setTopographicModalOpen(false)}
+        isOpen={topoSCSCModalOpen}
+        onClose={() => setTopoSCSCModalOpen(false)}
         onApply={(payload) => {
-          setTopographicAnalysisId(payload.analysisId || `TOPO-${Date.now()}`);
-          setTopographicSceneId(payload.sceneId || 'S2A_MSIL2A_20260815T185921_T10TEK');
-          setTopographicCollection(payload.collection || 'sentinel-2-l2a');
-          setTopographicMethod(payload.method || 'scs_c');
-          setTopographicMetric(payload.metric || 'corrected_reflectance');
-          setTopographicColormap(payload.colormap || 'spectral');
-          setTopographicOpacity(payload.opacity ?? 0.85);
-          setTopographicRescale(payload.rescale || '0.0,0.5');
-          setTopographicSolarZenith(payload.solarZenith ?? 34.2);
-          setTopographicSolarAzimuth(payload.solarAzimuth ?? 148.5);
-          setTopographicCFactor(payload.cFactor ?? 0.08);
-          setTopographicMinnaertK(payload.minnaertK ?? 0.68);
-          setTopographicTileUrlTemplate(payload.tileUrlTemplate || '');
-          setTopographicIlluminationTileUrlTemplate(payload.illuminationTileUrlTemplate || '');
+          setTopoSCSCAnalysisId(payload.analysisId || `TOPO-${Date.now()}`);
+          setTopoSCSCSceneId(payload.sceneId || 'S2A_MSIL2A_20260815T185921_T10TEK');
+          setTopoSCSCCollection(payload.collection || 'sentinel-2-l2a');
+          setTopoSCSCMethod(payload.method || 'scs_c');
+          setTopoSCSCMetric(payload.metric || 'corrected_reflectance');
+          setTopoSCSCColormap(payload.colormap || 'spectral');
+          setTopoSCSCOpacity(payload.opacity ?? 0.85);
+          setTopoSCSCRescale(payload.rescale || '0.0,0.5');
+          setTopoSCSCSolarZenith(payload.solarZenith ?? 34.2);
+          setTopoSCSCSolarAzimuth(payload.solarAzimuth ?? 148.5);
+          setTopoSCSCCFactor(payload.cFactor ?? 0.08);
+          setTopoSCSCMinnaertK(payload.minnaertK ?? 0.68);
+          setTopoSCSCTileUrlTemplate(payload.tileUrlTemplate || '');
+          setTopoSCSCIlluminationTileUrlTemplate(payload.illuminationTileUrlTemplate || '');
           if (payload.summary) {
-            setTopographicMeanCosI(payload.summary.mean_cos_i ?? 0.7842);
-            setTopographicSunlitPct(payload.summary.sunlit_pixel_pct ?? 82.5);
-            setTopographicShadedPct(payload.summary.shaded_pixel_pct ?? 12.8);
-            setTopographicSelfShadowPct(payload.summary.self_shadow_pixel_pct ?? 4.7);
-            setTopographicVarianceReductionPct(payload.summary.radiance_std_reduction_pct ?? 41.8);
+            setTopoSCSCMeanCosI(payload.summary.mean_cos_i ?? 0.7842);
+            setTopoSCSCSunlitPct(payload.summary.sunlit_pixel_pct ?? 82.5);
+            setTopoSCSCShadedPct(payload.summary.shaded_pixel_pct ?? 12.8);
+            setTopoSCSCSelfShadowPct(payload.summary.self_shadow_pixel_pct ?? 4.7);
+            setTopoSCSCVarianceReductionPct(payload.summary.radiance_std_reduction_pct ?? 41.8);
           }
-          setShowTopographicTileLayer(true);
+          setShowTopoSCSCTileLayer(true);
         }}
         onLaunchCurtain={({ referenceSceneId: rId }) => {
-          setTopographicSceneId(rId);
+          setTopoSCSCSceneId(rId);
+          setSwipeComparisonMode('pre_vs_post');
+          setCurtainActive(true);
+        }}
+      />
+
+      {/* Harmonized Landsat Sentinel-2 (HLS) Harmonization Studio (Cycle v2.5.33, Task T-260) */}
+      <HlsHarmonizationModal
+        isOpen={hlsHarmonizationModalOpen}
+        onClose={() => setHlsHarmonizationModalOpen(false)}
+        onApply={(payload) => {
+          setHlsAnalysisId(payload.analysisId || `HLS-${Date.now()}`);
+          setHlsSceneId(payload.sceneId || 'LC09_L2SP_044034_20260718_02_T1');
+          setHlsCollection(payload.collection || 'landsat-c2-l2');
+          setHlsSensor(payload.sensor || 'landsat_oli');
+          setHlsTargetSensor(payload.targetSensor || 'sentinel_msi');
+          setHlsMgrsTile(payload.mgrsTile || '10TFK');
+          setHlsStage(payload.stage || 'harmonized');
+          setHlsMetric(payload.metric || 'harmonized_reflectance');
+          setHlsColormap(payload.colormap || 'spectral');
+          setHlsOpacity(payload.opacity ?? 0.85);
+          setHlsRescale(payload.rescale || '0.0,0.5');
+          setHlsSolarZenith(payload.solarZenith ?? 28.5);
+          setHlsSolarAzimuth(payload.solarAzimuth ?? 134.2);
+          setHlsViewZenith(payload.viewZenith ?? 4.8);
+          setHlsViewAzimuth(payload.viewAzimuth ?? 102.5);
+          setHlsRelativeAzimuth(payload.relativeAzimuth ?? 31.7);
+          setHlsTargetSolarZenith(payload.targetSolarZenith ?? 45.0);
+          setHlsTargetViewZenith(payload.targetViewZenith ?? 0.0);
+          setHlsTileUrlTemplate(payload.tileUrlTemplate || '');
+          setHlsNbarTileUrlTemplate(payload.nbarTileUrlTemplate || '');
+          if (payload.summary) {
+            setHlsMeanAdjustmentFactor(payload.summary.mean_brdf_adjustment_factor ?? 0.942);
+            setHlsCrossSensorRmse(payload.summary.cross_sensor_rmse ?? 0.0054);
+            setHlsMeanVolumetricKernel(payload.summary.mean_volumetric_kernel ?? -0.038);
+            setHlsMeanGeometricKernel(payload.summary.mean_geometric_kernel ?? -0.842);
+          }
+          setShowHlsTileLayer(true);
+        }}
+        onLaunchCurtain={({ referenceSceneId: rId }) => {
+          setHlsSceneId(rId);
           setSwipeComparisonMode('pre_vs_post');
           setCurtainActive(true);
         }}
@@ -22632,6 +23168,23 @@ export default function MapExplorer() {
           setSarMeanVhDb(payload.meanVhDb ?? -18.4);
           setSarRatioDb(payload.ratioDb ?? -6.6);
           setShowSarRadarLayer(true);
+        }}
+      />
+
+      {/* T-270/T-272: Cloud-Native GeoTIFF & GeoPackage Export Studio Modal (Cycle v2.5.35) */}
+      <ExportDatasetModal
+        isOpen={exportDatasetModalOpen}
+        onClose={() => setExportDatasetModalOpen(false)}
+        currentBbox={
+          customPolygonVertices.length >= 3 
+            ? bboxFromPoints(customPolygonVertices) 
+            : (selectedEvent ? [selectedEvent.lng - 0.04, selectedEvent.lat - 0.04, selectedEvent.lng + 0.04, selectedEvent.lat + 0.04] : [-122.52, 37.70, -122.35, 37.85])
+        }
+        initialCollection="sentinel-2-l2a"
+        initialItemId={selectedEvent?.id || 'S2A_MSIL2A_20260715T184921_T10SEJ'}
+        onApply={(payload) => {
+          setLatestExportArtifact(payload);
+          setExportDatasetModalOpen(false);
         }}
       />
 

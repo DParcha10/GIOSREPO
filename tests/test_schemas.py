@@ -1115,7 +1115,57 @@ from app.models.schemas import (
     TopographicTileRequestParams,
     build_topographic_tile_url,
     build_topographic_tile_url_template,
-    build_topographic_illumination_tile_url_template
+    build_topographic_illumination_tile_url_template,
+    # Cycle v2.5.33: Harmonized Landsat Sentinel-2 (HLS) Principles, NBAR & Cross-Sensor Harmonization Contracts
+    HlsSensorType,
+    BrdfKernelModel,
+    HlsHarmonizationStage,
+    HlsMetric,
+    HLS_BANDPASS_COEFFICIENTS,
+    HLS_BRDF_SPECTRAL_PARAMETERS,
+    HLS_BENCHMARK_SCENES,
+    calculate_rossthick_volumetric_kernel,
+    calculate_lisparse_geometric_kernel,
+    calculate_nbar_brdf_factor,
+    apply_nbar_normalization,
+    apply_cross_sensor_bandpass_adjustment,
+    apply_hls_harmonization,
+    BrdfGeometryParameters,
+    SpectralBandpassCoefficients,
+    HlsHarmonizationConfig,
+    HlsHarmonizationAnalysisRequest,
+    HlsHarmonizationSummary,
+    HlsHarmonizationAnalysisResponse,
+    HlsTileRequestParams,
+    build_hls_tile_url,
+    build_hls_tile_url_template,
+    build_hls_nbar_tile_url_template,
+    # Cycle v2.5.34: Land Surface Temperature (LST), Split-Window & Radiative Transfer Equation (RTE) Contracts
+    ThermalSensorType,
+    LstAlgorithmModel,
+    ThermalAnomalySeverity,
+    ThermalMetric,
+    THERMAL_CALIBRATION_COEFFICIENTS,
+    THERMAL_EMISSIVITY_ENDMEMBERS,
+    THERMAL_BENCHMARK_SCENES,
+    calculate_fractional_vegetation_cover,
+    calculate_sobrino_land_surface_emissivity,
+    calculate_planck_radiance,
+    calculate_planck_brightness_temperature,
+    calculate_rte_surface_temperature,
+    calculate_artis_carnahan_lst,
+    calculate_smw_lst,
+    classify_thermal_anomaly_severity,
+    apply_lst_inversion,
+    ThermalAtmosphericParameters,
+    ThermalEmissivityConfig,
+    ThermalLstAnalysisRequest,
+    ThermalAnomalySummary,
+    ThermalLstAnalysisResponse,
+    ThermalLstTileRequestParams,
+    build_thermal_lst_tile_url,
+    build_thermal_lst_tile_url_template,
+    build_thermal_anomaly_tile_url_template
 )
 from app.config import settings
 
@@ -12687,6 +12737,677 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             format_api_route("tiles_topographic_illumination_short", collection="sentinel-2-l2a", item_id="S2A_SHASTA", z=12, x=654, y=1482),
             "/tiles/topographic/illumination/sentinel-2-l2a/S2A_SHASTA/12/654/1482.png"
         )
+
+    def test_task_t258_harmonized_landsat_sentinel2_hls_and_nbar_contracts(self):
+        """Task T-258 Verification: Harmonized Landsat Sentinel-2 (HLS) Schemas, NBAR RossThick-LiSparse-R & Bandpass Contracts."""
+        # 1. Enums verification
+        self.assertEqual(HlsSensorType.LANDSAT_OLI.value, "landsat_oli")
+        self.assertEqual(HlsSensorType.SENTINEL_MSI.value, "sentinel_msi")
+        self.assertEqual(HlsSensorType.HARMONIZED_HLS.value, "harmonized_hls")
+
+        self.assertEqual(BrdfKernelModel.ROSSTHICK_LISPARSE_R.value, "rossthick_lisparse_r")
+        self.assertEqual(BrdfKernelModel.NONE.value, "none")
+        self.assertEqual(BrdfKernelModel.LAMBERTIAN.value, "lambertian")
+
+        self.assertEqual(HlsHarmonizationStage.RAW.value, "raw")
+        self.assertEqual(HlsHarmonizationStage.NBAR.value, "nbar")
+        self.assertEqual(HlsHarmonizationStage.SPECTRAL_ADJUSTED.value, "spectral_adjusted")
+        self.assertEqual(HlsHarmonizationStage.HARMONIZED.value, "harmonized")
+
+        self.assertEqual(HlsMetric.HARMONIZED_REFLECTANCE.value, "harmonized_reflectance")
+        self.assertEqual(HlsMetric.NBAR_REFLECTANCE.value, "nbar_reflectance")
+        self.assertEqual(HlsMetric.BRDF_ADJUSTMENT_FACTOR.value, "brdf_adjustment_factor")
+        self.assertEqual(HlsMetric.VOLUMETRIC_KERNEL.value, "volumetric_kernel")
+        self.assertEqual(HlsMetric.GEOMETRIC_KERNEL.value, "geometric_kernel")
+
+        # 2. RossThick Volumetric Kernel Invariants
+        # Invariant 2.1: Helmholtz reciprocity k_vol(ts, tv, phi) == k_vol(tv, ts, phi)
+        k_vol_forward = calculate_rossthick_volumetric_kernel(solar_zenith_deg=35.0, view_zenith_deg=15.0, relative_azimuth_deg=45.0)
+        k_vol_reverse = calculate_rossthick_volumetric_kernel(solar_zenith_deg=15.0, view_zenith_deg=35.0, relative_azimuth_deg=45.0)
+        self.assertAlmostEqual(k_vol_forward, k_vol_reverse, places=6)
+
+        # Invariant 2.2: Nadir-zenith illumination evaluates to 0.0
+        k_vol_nadir = calculate_rossthick_volumetric_kernel(solar_zenith_deg=0.0, view_zenith_deg=0.0, relative_azimuth_deg=0.0)
+        self.assertAlmostEqual(k_vol_nadir, 0.0, places=6)
+
+        # 3. LiSparse-R Geometric Kernel Invariants
+        # Invariant 3.1: Helmholtz reciprocity k_geo(ts, tv, phi) == k_geo(tv, ts, phi)
+        k_geo_forward = calculate_lisparse_geometric_kernel(solar_zenith_deg=35.0, view_zenith_deg=15.0, relative_azimuth_deg=45.0)
+        k_geo_reverse = calculate_lisparse_geometric_kernel(solar_zenith_deg=15.0, view_zenith_deg=35.0, relative_azimuth_deg=45.0)
+        self.assertAlmostEqual(k_geo_forward, k_geo_reverse, places=6)
+
+        # Invariant 3.2: Nadir-zenith evaluates to 0.0
+        k_geo_nadir = calculate_lisparse_geometric_kernel(solar_zenith_deg=0.0, view_zenith_deg=0.0, relative_azimuth_deg=0.0)
+        self.assertAlmostEqual(k_geo_nadir, 0.0, places=6)
+
+        # 4. NBAR c-factor scaling and positivity
+        # Standard target: solar_zenith=45 deg, view_zenith=0 deg
+        c_red = calculate_nbar_brdf_factor(solar_zenith_deg=30.0, view_zenith_deg=5.0, relative_azimuth_deg=30.0, target_solar_zenith_deg=45.0, target_view_zenith_deg=0.0, band="red")
+        self.assertGreater(c_red, 0.5)
+        self.assertLess(c_red, 1.5)
+
+        # Identity when observation equals target
+        c_identity = calculate_nbar_brdf_factor(solar_zenith_deg=45.0, view_zenith_deg=0.0, relative_azimuth_deg=0.0, target_solar_zenith_deg=45.0, target_view_zenith_deg=0.0, band="red")
+        self.assertAlmostEqual(c_identity, 1.0, places=5)
+
+        # NBAR surface reflectance positivity constraint
+        rho_nbar = apply_nbar_normalization(reflectance=0.18, solar_zenith_deg=30.0, view_zenith_deg=5.0, relative_azimuth_deg=30.0, band="red")
+        self.assertGreaterEqual(rho_nbar, 0.0)
+
+        # 5. Cross-Sensor Spectral Bandpass Adjustment (Claverie et al. 2018)
+        # All 7 optical bands linear transformation OLI -> MSI
+        for b in ("coastal", "blue", "green", "red", "nir", "swir1", "swir2"):
+            coef = HLS_BANDPASS_COEFFICIENTS[b]
+            oli_ref = 0.20
+            expected_msi = coef["c0"] + coef["c1"] * oli_ref
+            actual_msi = apply_cross_sensor_bandpass_adjustment(oli_ref, b, source_sensor="landsat_oli", target_sensor="sentinel_msi")
+            self.assertAlmostEqual(actual_msi, expected_msi, places=5)
+            self.assertGreaterEqual(actual_msi, 0.0)
+
+        # Inverse transformation MSI -> OLI
+        msi_ref = 0.20
+        actual_oli = apply_cross_sensor_bandpass_adjustment(msi_ref, "red", source_sensor="sentinel_msi", target_sensor="landsat_oli")
+        self.assertAlmostEqual(actual_oli, (msi_ref - HLS_BANDPASS_COEFFICIENTS["red"]["c0"]) / HLS_BANDPASS_COEFFICIENTS["red"]["c1"], places=5)
+
+        # Same-sensor identity
+        self.assertEqual(apply_cross_sensor_bandpass_adjustment(0.20, "red", "sentinel_msi", "sentinel_msi"), 0.20)
+
+        # 6. Full Harmonization Pipeline (NBAR + Bandpass)
+        rho_harm = apply_hls_harmonization(
+            reflectance=0.20,
+            band="red",
+            solar_zenith_deg=30.0,
+            view_zenith_deg=5.0,
+            relative_azimuth_deg=35.0,
+            source_sensor="landsat_oli",
+            target_sensor="sentinel_msi",
+            apply_bandpass=True
+        )
+        self.assertGreater(rho_harm, 0.0)
+        self.assertLess(rho_harm, 0.40)
+
+        # 7. Benchmark Scenes
+        self.assertIn("MGRS_10TFK_SAN_FRANCISCO_2026", HLS_BENCHMARK_SCENES)
+        self.assertIn("MGRS_14TPP_SALINA_KANSAS_2026", HLS_BENCHMARK_SCENES)
+        self.assertIn("MGRS_32UMU_MUNICH_BAVARIA_2026", HLS_BENCHMARK_SCENES)
+        sf_scene = HLS_BENCHMARK_SCENES["MGRS_10TFK_SAN_FRANCISCO_2026"]
+        self.assertEqual(sf_scene["mgrs_tile"], "10TFK")
+        self.assertEqual(sf_scene["target_solar_zenith_deg"], 45.0)
+
+        # 8. Pydantic Models Validation
+        geom = BrdfGeometryParameters(
+            solar_zenith_deg=28.5,
+            solar_azimuth_deg=134.2,
+            view_zenith_deg=4.8,
+            view_azimuth_deg=102.5
+        )
+        self.assertAlmostEqual(geom.relative_azimuth_deg, 31.7, places=1)
+
+        cfg = HlsHarmonizationConfig(
+            source_sensor=HlsSensorType.LANDSAT_OLI,
+            target_sensor=HlsSensorType.SENTINEL_MSI,
+            brdf_model=BrdfKernelModel.ROSSTHICK_LISPARSE_R,
+            apply_bandpass_adjustment=True
+        )
+        self.assertEqual(cfg.source_sensor, "landsat_oli")
+
+        req = HlsHarmonizationAnalysisRequest(
+            scene_id="LC09_L2SP_044034_20260718_02_T1",
+            sensor=HlsSensorType.LANDSAT_OLI,
+            collection="landsat-c2-l2",
+            mgrs_tile="10TFK",
+            geometry=geom,
+            config=cfg
+        )
+        self.assertEqual(req.scene_id, "LC09_L2SP_044034_20260718_02_T1")
+
+        summary = HlsHarmonizationSummary(
+            source_sensor="landsat_oli",
+            target_sensor="sentinel_msi",
+            mgrs_tile="10TFK",
+            bands_processed=["blue", "green", "red", "nir", "swir1", "swir2"],
+            mean_brdf_adjustment_factor=0.942,
+            mean_source_reflectance=0.185,
+            mean_nbar_reflectance=0.174,
+            mean_harmonized_reflectance=0.171,
+            cross_sensor_rmse=0.0054,
+            mean_volumetric_kernel=-0.038,
+            mean_geometric_kernel=-0.842
+        )
+        self.assertLess(summary.cross_sensor_rmse, 0.015)
+
+        resp = HlsHarmonizationAnalysisResponse(
+            analysis_id="HLS-ANA-20261016-01",
+            scene_id="LC09_L2SP_044034_20260718_02_T1",
+            mgrs_tile="10TFK",
+            source_sensor="landsat_oli",
+            target_sensor="sentinel_msi",
+            geometry=geom,
+            config=cfg,
+            summary=summary,
+            tile_url_template="/api/v1/tiles/hls/landsat-c2-l2/LC09_L2SP_044034_20260718_02_T1/{z}/{x}/{y}.png?stage=harmonized",
+            nbar_tile_url_template="/api/v1/tiles/hls/nbar/landsat-c2-l2/LC09_L2SP_044034_20260718_02_T1/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.analysis_id, "HLS-ANA-20261016-01")
+        self.assertEqual(resp.status, "completed")
+
+        tile_params = HlsTileRequestParams(
+            z=10, x=163, y=395,
+            collection="landsat-c2-l2",
+            item_id="LC09_L2SP_044034_20260718_02_T1",
+            metric=HlsMetric.HARMONIZED_REFLECTANCE,
+            stage=HlsHarmonizationStage.HARMONIZED
+        )
+        self.assertEqual(tile_params.metric, "harmonized_reflectance")
+
+        # 9. Dynamic Tile URL Builders
+        tile_url = build_hls_tile_url(
+            collection="landsat-c2-l2",
+            item_id="LC09_L2SP_044034_20260718_02_T1",
+            z=10, x=163, y=395,
+            metric="harmonized_reflectance",
+            stage="harmonized"
+        )
+        self.assertIn("/api/v1/tiles/hls/landsat-c2-l2/LC09_L2SP_044034_20260718_02_T1/10/163/395.png", tile_url)
+
+        tmpl_url = build_hls_tile_url_template(
+            collection="landsat-c2-l2",
+            item_id="LC09_L2SP_044034_20260718_02_T1",
+            metric="harmonized_reflectance",
+            stage="harmonized"
+        )
+        self.assertIn("/api/v1/tiles/hls/landsat-c2-l2/LC09_L2SP_044034_20260718_02_T1/{z}/{x}/{y}.png", tmpl_url)
+
+        nbar_tmpl = build_hls_nbar_tile_url_template(
+            collection="landsat-c2-l2",
+            item_id="LC09_L2SP_044034_20260718_02_T1"
+        )
+        self.assertIn("/api/v1/tiles/hls/nbar/landsat-c2-l2/LC09_L2SP_044034_20260718_02_T1/{z}/{x}/{y}.png", nbar_tmpl)
+
+        # 10. Canonical Route Contracts
+        self.assertEqual(format_api_route("analysis_hls_harmonization"), "/api/v1/analysis/hls/harmonization")
+        self.assertEqual(format_api_route("analysis_hls_harmonization_short"), "/analysis/hls/harmonization")
+        self.assertEqual(format_api_route("analysis_hls_brdf_geometry"), "/api/v1/analysis/hls/brdf-geometry")
+        self.assertEqual(format_api_route("analysis_hls_brdf_geometry_short"), "/analysis/hls/brdf-geometry")
+        self.assertEqual(format_api_route("analysis_hls_bandpass"), "/api/v1/analysis/hls/bandpass")
+        self.assertEqual(format_api_route("analysis_hls_bandpass_short"), "/analysis/hls/bandpass")
+        self.assertEqual(
+            format_api_route("tiles_hls", collection="landsat-c2-l2", item_id="LC09_123", z=10, x=163, y=395),
+            "/api/v1/tiles/hls/landsat-c2-l2/LC09_123/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_hls_short", collection="landsat-c2-l2", item_id="LC09_123", z=10, x=163, y=395),
+            "/tiles/hls/landsat-c2-l2/LC09_123/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_hls_nbar", collection="landsat-c2-l2", item_id="LC09_123", z=10, x=163, y=395),
+            "/api/v1/tiles/hls/nbar/landsat-c2-l2/LC09_123/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_hls_nbar_short", collection="landsat-c2-l2", item_id="LC09_123", z=10, x=163, y=395),
+            "/tiles/hls/nbar/landsat-c2-l2/LC09_123/10/163/395.png"
+        )
+
+    def test_task_t264_land_surface_temperature_and_radiative_transfer_contracts(self):
+        """Verify Task T-264 Land Surface Temperature (LST), Radiative Transfer Equation (RTE), FVC, Sobrino LSE & Anomaly Contracts."""
+        # 1. Enums Verification
+        self.assertEqual(ThermalSensorType.LANDSAT_TIRS.value, "landsat_tirs")
+        self.assertEqual(ThermalSensorType.SENTINEL3_SLSTR.value, "sentinel3_slstr")
+        self.assertEqual(ThermalSensorType.MODIS_THERMAL.value, "modis_thermal")
+        self.assertEqual(ThermalSensorType.ECOSTRESS.value, "ecostress")
+
+        self.assertEqual(LstAlgorithmModel.RADIATIVE_TRANSFER_EQUATION.value, "radiative_transfer_equation")
+        self.assertEqual(LstAlgorithmModel.SPLIT_WINDOW.value, "split_window")
+        self.assertEqual(LstAlgorithmModel.STATISTICAL_MONO_WINDOW.value, "statistical_mono_window")
+        self.assertEqual(LstAlgorithmModel.ARTIS_CARNAHAN_SINGLE_CHANNEL.value, "artis_carnahan_single_channel")
+        self.assertEqual(LstAlgorithmModel.MONO_WINDOW.value, "mono_window")
+
+        self.assertEqual(ThermalAnomalySeverity.NOMINAL.value, "nominal")
+        self.assertEqual(ThermalAnomalySeverity.MILD_THERMAL_ANOMALY.value, "mild_thermal_anomaly")
+        self.assertEqual(ThermalAnomalySeverity.MODERATE_THERMAL_ANOMALY.value, "moderate_thermal_anomaly")
+        self.assertEqual(ThermalAnomalySeverity.SEVERE_THERMAL_ANOMALY.value, "severe_thermal_anomaly")
+        self.assertEqual(ThermalAnomalySeverity.EXTREME_WILDFIRE_HOTSPOT.value, "extreme_wildfire_hotspot")
+
+        self.assertEqual(ThermalMetric.LST_CELSIUS.value, "lst_celsius")
+        self.assertEqual(ThermalMetric.LST_KELVIN.value, "lst_kelvin")
+        self.assertEqual(ThermalMetric.BRIGHTNESS_TEMPERATURE.value, "brightness_temperature")
+        self.assertEqual(ThermalMetric.LAND_SURFACE_EMISSIVITY.value, "land_surface_emissivity")
+        self.assertEqual(ThermalMetric.FRACTIONAL_VEGETATION_COVER.value, "fractional_vegetation_cover")
+        self.assertEqual(ThermalMetric.THERMAL_ANOMALY_DELTA.value, "thermal_anomaly_delta")
+        self.assertEqual(ThermalMetric.UHI_INTENSITY.value, "uhi_intensity")
+
+        # 2. Calibration Coefficients & Benchmark Scenes
+        self.assertIn("landsat_8_tirs_b10", THERMAL_CALIBRATION_COEFFICIENTS)
+        self.assertIn("landsat_9_tirs_b10", THERMAL_CALIBRATION_COEFFICIENTS)
+        self.assertIn("sentinel_3_slstr_s8", THERMAL_CALIBRATION_COEFFICIENTS)
+        self.assertIn("sentinel_3_slstr_s9", THERMAL_CALIBRATION_COEFFICIENTS)
+        l8_cal = THERMAL_CALIBRATION_COEFFICIENTS["landsat_8_tirs_b10"]
+        self.assertAlmostEqual(l8_cal["k1"], 774.8853, places=3)
+        self.assertAlmostEqual(l8_cal["k2"], 1321.0789, places=3)
+        self.assertAlmostEqual(l8_cal["wavelength_um"], 10.895, places=3)
+        l9_cal = THERMAL_CALIBRATION_COEFFICIENTS["landsat_9_tirs_b10"]
+        self.assertAlmostEqual(l9_cal["k1"], 799.0284, places=3)
+        self.assertAlmostEqual(l9_cal["k2"], 1329.2405, places=3)
+        self.assertAlmostEqual(l9_cal["wavelength_um"], 10.895, places=3)
+
+        self.assertIn("water", THERMAL_EMISSIVITY_ENDMEMBERS)
+        self.assertIn("soil", THERMAL_EMISSIVITY_ENDMEMBERS)
+        self.assertIn("vegetation", THERMAL_EMISSIVITY_ENDMEMBERS)
+        self.assertEqual(THERMAL_EMISSIVITY_ENDMEMBERS["water"]["emissivity_water"], 0.995)
+        self.assertEqual(THERMAL_EMISSIVITY_ENDMEMBERS["soil"]["emissivity_soil"], 0.970)
+        self.assertEqual(THERMAL_EMISSIVITY_ENDMEMBERS["vegetation"]["emissivity_veg"], 0.990)
+
+        self.assertIn("SALTON_SEA_GEOTHERMAL_2026", THERMAL_BENCHMARK_SCENES)
+        self.assertIn("PHOENIX_URBAN_HEAT_ISLAND_2026", THERMAL_BENCHMARK_SCENES)
+        self.assertIn("MT_ST_HELENS_VOLCANO_2026", THERMAL_BENCHMARK_SCENES)
+
+        # 3. Fractional Vegetation Cover (FVC) Math & Bounds
+        self.assertEqual(calculate_fractional_vegetation_cover(0.10, ndvi_soil=0.20, ndvi_veg=0.86), 0.0)
+        self.assertEqual(calculate_fractional_vegetation_cover(0.20, ndvi_soil=0.20, ndvi_veg=0.86), 0.0)
+        self.assertEqual(calculate_fractional_vegetation_cover(0.86, ndvi_soil=0.20, ndvi_veg=0.86), 1.0)
+        self.assertEqual(calculate_fractional_vegetation_cover(0.95, ndvi_soil=0.20, ndvi_veg=0.86), 1.0)
+        # Midpoint: (0.53 - 0.20) / (0.86 - 0.20) = 0.33 / 0.66 = 0.5 -> squared = 0.25
+        self.assertAlmostEqual(calculate_fractional_vegetation_cover(0.53, ndvi_soil=0.20, ndvi_veg=0.86), 0.25, places=4)
+
+        # 4. Sobrino Land Surface Emissivity (LSE) Thresholds & Cavity Roughness
+        # Pure water (NDVI < 0)
+        self.assertEqual(calculate_sobrino_land_surface_emissivity(-0.15, 0.0), 0.995)
+        # Pure bare soil (NDVI <= ndvi_soil)
+        self.assertEqual(calculate_sobrino_land_surface_emissivity(0.15, 0.0), 0.970)
+        # Pure dense vegetation (NDVI >= ndvi_veg)
+        self.assertEqual(calculate_sobrino_land_surface_emissivity(0.92, 1.0), 0.990)
+        # Mixed pixel with cavity effect: eps_s*(1-fv) + eps_v*fv + d_eps
+        eps_mixed = calculate_sobrino_land_surface_emissivity(0.53, 0.25)
+        self.assertGreater(eps_mixed, 0.970)
+        self.assertLess(eps_mixed, 0.995)
+
+        # 5. Planck Inversion & Radiance Reciprocity (B(T) and T_b(B(T)))
+        k1 = 774.8853
+        k2 = 1321.0789
+        test_temp_k = 300.15
+        rad = calculate_planck_radiance(test_temp_k, k1=k1, k2=k2)
+        tb_reciprocal = calculate_planck_brightness_temperature(rad, k1=k1, k2=k2)
+        self.assertAlmostEqual(tb_reciprocal, test_temp_k, places=3)
+
+        # 6. Radiative Transfer Equation (RTE) kinetic temperature retrieval
+        # Forward simulation of TOA radiance: L_toa = tau*eps*B(Ts) + Lup + tau*(1-eps)*Ldown
+        ts_ground = 308.15  # 35.0 C
+        eps_ground = 0.982
+        tau_atm = 0.88
+        l_up = 1.35
+        l_down = 2.40
+        b_ground = calculate_planck_radiance(ts_ground, k1=k1, k2=k2)
+        l_toa = tau_atm * eps_ground * b_ground + l_up + tau_atm * (1.0 - eps_ground) * l_down
+        ts_retrieved = calculate_rte_surface_temperature(l_toa, eps_ground, tau=tau_atm, l_up=l_up, l_down=l_down, k1=k1, k2=k2)
+        self.assertAlmostEqual(ts_retrieved, ts_ground, delta=0.05)
+
+        # 7. Artis & Carnahan Single-Channel Scaling & Statistical Mono-Window (SMW)
+        # For unit emissivity, kinetic T_s == brightness T_b
+        self.assertAlmostEqual(calculate_artis_carnahan_lst(300.0, 1.0), 300.0, places=3)
+        # When emissivity < 1, kinetic temperature is higher than brightness temperature
+        self.assertGreater(calculate_artis_carnahan_lst(300.0, 0.96), 300.0)
+
+        # SMW retrieval
+        ts_smw = calculate_smw_lst(300.0, 0.98, water_vapor_g_cm2=1.5)
+        self.assertGreater(ts_smw, 290.0)
+        self.assertLess(ts_smw, 315.0)
+
+        # 8. Thermal Anomaly Classification & Unified Inversion
+        self.assertEqual(classify_thermal_anomaly_severity(0.5), ThermalAnomalySeverity.NOMINAL)
+        self.assertEqual(classify_thermal_anomaly_severity(2.0), ThermalAnomalySeverity.MILD_THERMAL_ANOMALY)
+        self.assertEqual(classify_thermal_anomaly_severity(4.0), ThermalAnomalySeverity.MODERATE_THERMAL_ANOMALY)
+        self.assertEqual(classify_thermal_anomaly_severity(7.0), ThermalAnomalySeverity.SEVERE_THERMAL_ANOMALY)
+        self.assertEqual(classify_thermal_anomaly_severity(12.0), ThermalAnomalySeverity.EXTREME_WILDFIRE_HOTSPOT)
+
+        inv_res = apply_lst_inversion(
+            radiance_or_tb=305.15,
+            ndvi=0.65,
+            method=LstAlgorithmModel.RADIATIVE_TRANSFER_EQUATION,
+            sensor=ThermalSensorType.LANDSAT_TIRS,
+            ambient_baseline_temp_c=25.0
+        )
+        self.assertIn("lst_celsius", inv_res)
+        self.assertIn("brightness_temperature_c", inv_res)
+        self.assertIn("thermal_anomaly_delta_c", inv_res)
+        self.assertIn("emissivity", inv_res)
+        self.assertIn("severity", inv_res)
+        self.assertGreater(inv_res["lst_celsius"], 25.0)
+
+        # 9. Pydantic Models Validation
+        atm_params = ThermalAtmosphericParameters(
+            transmittance=0.92,
+            upwelling_radiance=1.20,
+            downwelling_radiance=2.10,
+            water_vapor_g_cm2=1.5
+        )
+        self.assertEqual(atm_params.transmittance, 0.92)
+
+        emiss_cfg = ThermalEmissivityConfig(
+            ndvi_soil=0.20,
+            ndvi_veg=0.86,
+            emissivity_soil=0.970,
+            emissivity_veg=0.990,
+            emissivity_water=0.995,
+            cavity_factor=0.55
+        )
+        self.assertEqual(emiss_cfg.cavity_factor, 0.55)
+
+        lst_req = ThermalLstAnalysisRequest(
+            scene_id="LC09_L2SP_039037_20260715_02_T1",
+            sensor=ThermalSensorType.LANDSAT_TIRS,
+            collection="landsat-c2-l2",
+            method=LstAlgorithmModel.RADIATIVE_TRANSFER_EQUATION,
+            ambient_baseline_temp_c=25.0,
+            atmospheric_params=atm_params,
+            emissivity_config=emiss_cfg
+        )
+        self.assertEqual(lst_req.scene_id, "LC09_L2SP_039037_20260715_02_T1")
+
+        summary = ThermalAnomalySummary(
+            sensor="landsat_tirs",
+            method="radiative_transfer_equation",
+            mean_lst_c=32.4,
+            min_lst_c=21.2,
+            max_lst_c=48.6,
+            mean_brightness_temp_c=29.8,
+            mean_emissivity=0.982,
+            mean_fvc=0.45,
+            ambient_baseline_temp_c=25.0,
+            mean_thermal_anomaly_delta_c=7.4,
+            max_thermal_anomaly_delta_c=23.6,
+            uhi_intensity_c=7.4,
+            dominant_severity=ThermalAnomalySeverity.SEVERE_THERMAL_ANOMALY,
+            hotspot_pixel_count=1240,
+            hotspot_area_ha=111.6
+        )
+        self.assertEqual(summary.dominant_severity, ThermalAnomalySeverity.SEVERE_THERMAL_ANOMALY)
+        self.assertEqual(summary.hotspot_pixel_count, 1240)
+
+        resp = ThermalLstAnalysisResponse(
+            analysis_id="LST-ANA-20261016-01",
+            scene_id="LC09_L2SP_039037_20260715_02_T1",
+            sensor="landsat_tirs",
+            method="radiative_transfer_equation",
+            summary=summary,
+            tile_url_template="/api/v1/tiles/thermal/lst/landsat-c2-l2/LC09_L2SP_039037_20260715_02_T1/{z}/{x}/{y}.png",
+            anomaly_tile_url_template="/api/v1/tiles/thermal/anomaly/landsat-c2-l2/LC09_L2SP_039037_20260715_02_T1/{z}/{x}/{y}.png?ambient_baseline_temp_c=25.0"
+        )
+        self.assertEqual(resp.analysis_id, "LST-ANA-20261016-01")
+        self.assertEqual(resp.status, "completed")
+
+        tile_params = ThermalLstTileRequestParams(
+            z=10,
+            x=163,
+            y=395,
+            collection="landsat-c2-l2",
+            item_id="LC09_L2SP_039037_20260715_02_T1",
+            metric=ThermalMetric.LST_CELSIUS,
+            method=LstAlgorithmModel.RADIATIVE_TRANSFER_EQUATION
+        )
+        self.assertEqual(tile_params.z, 10)
+        self.assertEqual(tile_params.metric, "lst_celsius")
+
+        # 10. Dynamic Tile URL Builders & Canonical Route Contracts
+        tile_url = build_thermal_lst_tile_url(
+            collection="landsat-c2-l2",
+            item_id="LC09_L2SP_039037_20260715_02_T1",
+            z=10,
+            x=163,
+            y=395,
+            metric="lst_celsius",
+            method="radiative_transfer_equation",
+            colormap="inferno"
+        )
+        self.assertIn("/api/v1/tiles/thermal/lst/landsat-c2-l2/LC09_L2SP_039037_20260715_02_T1/10/163/395.png", tile_url)
+        self.assertIn("colormap=inferno", tile_url)
+
+        tmpl_lst = build_thermal_lst_tile_url_template(
+            collection="landsat-c2-l2",
+            item_id="LC09_L2SP_039037_20260715_02_T1",
+            metric="lst_celsius",
+            method="radiative_transfer_equation"
+        )
+        self.assertIn("/api/v1/tiles/thermal/lst/landsat-c2-l2/LC09_L2SP_039037_20260715_02_T1/{z}/{x}/{y}.png", tmpl_lst)
+
+        tmpl_anomaly = build_thermal_anomaly_tile_url_template(
+            collection="landsat-c2-l2",
+            item_id="LC09_L2SP_039037_20260715_02_T1",
+            ambient_baseline_temp_c=25.0
+        )
+        self.assertIn("/api/v1/tiles/thermal/anomaly/landsat-c2-l2/LC09_L2SP_039037_20260715_02_T1/{z}/{x}/{y}.png", tmpl_anomaly)
+        self.assertIn("ambient_baseline_temp_c=25.0", tmpl_anomaly)
+
+        self.assertEqual(format_api_route("analysis_thermal_lst"), "/api/v1/analysis/thermal/lst")
+        self.assertEqual(format_api_route("analysis_thermal_lst_short"), "/analysis/thermal/lst")
+        self.assertEqual(format_api_route("analysis_thermal_emissivity"), "/api/v1/analysis/thermal/emissivity")
+        self.assertEqual(format_api_route("analysis_thermal_emissivity_short"), "/analysis/thermal/emissivity")
+        self.assertEqual(format_api_route("analysis_thermal_anomaly"), "/api/v1/analysis/thermal/anomaly")
+        self.assertEqual(format_api_route("analysis_thermal_anomaly_short"), "/analysis/thermal/anomaly")
+        self.assertEqual(
+            format_api_route("tiles_thermal_anomaly", collection="landsat-c2-l2", item_id="LC09_123", z=10, x=163, y=395),
+            "/api/v1/tiles/thermal/anomaly/landsat-c2-l2/LC09_123/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_thermal_anomaly_short", collection="landsat-c2-l2", item_id="LC09_123", z=10, x=163, y=395),
+            "/tiles/thermal/anomaly/landsat-c2-l2/LC09_123/10/163/395.png"
+        )
+
+    def test_export_pipeline_schemas_and_contracts(self):
+        """Verify Cycle v2.5.35 Cloud-Native GeoTIFF & GeoPackage export pipeline schemas, models, and contracts."""
+        from app.models.schemas import (
+            ExportFormat,
+            ExportJobStatus,
+            ExportCrs,
+            ExportLayerType,
+            EXPORT_FORMAT_CONFIGS,
+            EXPORT_CRS_CONFIGS,
+            EXPORT_LAYER_CONFIGS,
+            EXPORT_BENCHMARK_SCENES,
+            normalize_export_format,
+            determine_utm_epsg,
+            bbox_to_geojson_polygon,
+            calculate_affine_transform_matrix,
+            generate_qgis_ingestion_snippet,
+            format_export_job_filename,
+            ExportBoundingBox,
+            ExportBandSelection,
+            ExportJobRequest,
+            ExportArtifactMetadata,
+            ExportJobStatusResponse,
+            build_export_status_url,
+            build_export_download_url,
+            API_ROUTE_CONTRACTS,
+            format_api_route,
+        )
+
+        # 1. Enums validation
+        self.assertEqual(ExportFormat.GEOTIFF_COG.value, "geotiff_cog")
+        self.assertEqual(ExportFormat.GEOPACKAGE.value, "geopackage")
+        self.assertEqual(ExportFormat.GEOJSON_VECTOR.value, "geojson_vector")
+        self.assertEqual(ExportFormat.CSV_SUMMARY.value, "csv_summary")
+
+        self.assertEqual(ExportJobStatus.QUEUED.value, "queued")
+        self.assertEqual(ExportJobStatus.PROCESSING.value, "processing")
+        self.assertEqual(ExportJobStatus.COMPLETED.value, "completed")
+        self.assertEqual(ExportJobStatus.FAILED.value, "failed")
+
+        self.assertEqual(ExportCrs.EPSG_4326.value, "EPSG:4326")
+        self.assertEqual(ExportCrs.EPSG_3857.value, "EPSG:3857")
+        self.assertEqual(ExportCrs.AUTO_UTM.value, "AUTO_UTM")
+
+        self.assertEqual(ExportLayerType.SURFACE_REFLECTANCE.value, "surface_reflectance")
+        self.assertEqual(ExportLayerType.SPECTRAL_INDEX.value, "spectral_index")
+        self.assertEqual(ExportLayerType.THERMAL_LST.value, "thermal_lst")
+        self.assertEqual(ExportLayerType.SAR_BACKSCATTER.value, "sar_backscatter")
+        self.assertEqual(ExportLayerType.INSAR_VELOCITY.value, "insar_velocity")
+        self.assertEqual(ExportLayerType.DEM_ELEVATION.value, "dem_elevation")
+        self.assertEqual(ExportLayerType.HAZARD_CONTOUR.value, "hazard_contour")
+
+        # 2. Config dictionaries validation
+        self.assertIn("geotiff_cog", EXPORT_FORMAT_CONFIGS)
+        self.assertEqual(EXPORT_FORMAT_CONFIGS["geotiff_cog"]["extension"], ".tif")
+        self.assertTrue(EXPORT_FORMAT_CONFIGS["geotiff_cog"]["is_raster"])
+        self.assertIn("geopackage", EXPORT_FORMAT_CONFIGS)
+        self.assertEqual(EXPORT_FORMAT_CONFIGS["geopackage"]["extension"], ".gpkg")
+        self.assertFalse(EXPORT_FORMAT_CONFIGS["geopackage"]["is_raster"])
+
+        self.assertIn("EPSG:4326", EXPORT_CRS_CONFIGS)
+        self.assertEqual(EXPORT_CRS_CONFIGS["EPSG:4326"]["unit"], "degree")
+        self.assertIn("AUTO_UTM", EXPORT_CRS_CONFIGS)
+
+        self.assertIn("surface_reflectance", EXPORT_LAYER_CONFIGS)
+        self.assertEqual(EXPORT_LAYER_CONFIGS["surface_reflectance"]["default_format"], "geotiff_cog")
+        self.assertIn("hazard_contour", EXPORT_LAYER_CONFIGS)
+        self.assertEqual(EXPORT_LAYER_CONFIGS["hazard_contour"]["default_format"], "geopackage")
+
+        self.assertIn("SAN_FRANCISCO_BAY_EXPORT_2026", EXPORT_BENCHMARK_SCENES)
+        self.assertEqual(len(EXPORT_BENCHMARK_SCENES["SAN_FRANCISCO_BAY_EXPORT_2026"]["bbox"]), 4)
+
+        # 3. Format normalization & alias resolution
+        self.assertEqual(normalize_export_format("geotiff_cog"), ExportFormat.GEOTIFF_COG)
+        self.assertEqual(normalize_export_format("geotiff"), ExportFormat.GEOTIFF_COG)
+        self.assertEqual(normalize_export_format("cog"), ExportFormat.GEOTIFF_COG)
+        self.assertEqual(normalize_export_format("tif"), ExportFormat.GEOTIFF_COG)
+        self.assertEqual(normalize_export_format("tiff"), ExportFormat.GEOTIFF_COG)
+        self.assertEqual(normalize_export_format("geopackage"), ExportFormat.GEOPACKAGE)
+        self.assertEqual(normalize_export_format("gpkg"), ExportFormat.GEOPACKAGE)
+        self.assertEqual(normalize_export_format("geojson_vector"), ExportFormat.GEOJSON_VECTOR)
+        self.assertEqual(normalize_export_format("geojson"), ExportFormat.GEOJSON_VECTOR)
+        self.assertEqual(normalize_export_format("csv_summary"), ExportFormat.CSV_SUMMARY)
+        self.assertEqual(normalize_export_format("csv"), ExportFormat.CSV_SUMMARY)
+        with self.assertRaises(ValueError):
+            normalize_export_format("unsupported_format_xyz")
+
+        # 4. UTM zone calculation & spatial math
+        self.assertEqual(determine_utm_epsg(-122.4, 37.8), "EPSG:32610")  # SF Bay / Northern Hemisphere
+        self.assertEqual(determine_utm_epsg(-44.2, -20.1), "EPSG:32723")  # Brazil / Southern Hemisphere
+        self.assertEqual(determine_utm_epsg(15.0, 50.0), "EPSG:32633")    # Central Europe
+        self.assertEqual(determine_utm_epsg(-180.0, 0.0), "EPSG:32601")   # West date line boundary
+        self.assertEqual(determine_utm_epsg(180.0, 0.0), "EPSG:32660")    # East date line boundary
+
+        # 5. RFC 7946 Polygon geometry generation
+        poly = bbox_to_geojson_polygon(-122.5, 37.7, -122.3, 37.9)
+        self.assertEqual(poly["type"], "Polygon")
+        self.assertEqual(len(poly["coordinates"]), 1)
+        coords = poly["coordinates"][0]
+        self.assertEqual(len(coords), 5)  # Closed loop (5 vertices for a 4-corner box)
+        self.assertEqual(coords[0], coords[4])  # First and last vertices match
+        self.assertEqual(coords[0], [-122.5, 37.7])  # SW
+        self.assertEqual(coords[1], [-122.3, 37.7])  # SE
+        self.assertEqual(coords[2], [-122.3, 37.9])  # NE
+        self.assertEqual(coords[3], [-122.5, 37.9])  # NW
+
+        # 6. Affine transform matrix
+        affine = calculate_affine_transform_matrix(-122.5, 37.9, 0.0001, 0.0001)
+        self.assertEqual(affine, [0.0001, 0.0, -122.5, 0.0, -0.0001, 37.9])
+
+        # 7. QGIS Ingestion snippet generator
+        qgis_raster = generate_qgis_ingestion_snippet("output.tif", "geotiff_cog", "EPSG:4326")
+        self.assertIn("addRasterLayer", qgis_raster)
+        self.assertIn("gdalinfo", qgis_raster)
+
+        qgis_vector = generate_qgis_ingestion_snippet("hazard.gpkg", "geopackage", "EPSG:32610")
+        self.assertIn("addVectorLayer", qgis_vector)
+        self.assertIn("ogr", qgis_vector)
+
+        qgis_csv = generate_qgis_ingestion_snippet("stats.csv", "csv_summary", "EPSG:4326")
+        self.assertIn("delimitedtext", qgis_csv)
+
+        # 8. Filename formatting
+        fname1 = format_export_job_filename("sentinel-2-l2a", "surface_reflectance", "geotiff_cog", timestamp_str="20261016_120000")
+        self.assertEqual(fname1, "gios_sentinel-2-l2a_surface_reflectance_20261016_120000.tif")
+
+        fname2 = format_export_job_filename("landsat-c2-l2", "thermal_lst", "geotiff_cog", item_id="LC09_123", timestamp_str="20261016_120000")
+        self.assertEqual(fname2, "gios_landsat-c2-l2_LC09_123_thermal_lst_20261016_120000.tif")
+
+        fname3 = format_export_job_filename("sentinel-1-rtc", "hazard_contour", "geopackage", timestamp_str="20261016_120000")
+        self.assertEqual(fname3, "gios_sentinel-1-rtc_hazard_contour_20261016_120000.gpkg")
+
+        # 9. ExportBoundingBox validation & helpers
+        bbox = ExportBoundingBox(min_lon=-122.5, min_lat=37.7, max_lon=-122.3, max_lat=37.9)
+        self.assertEqual(bbox.as_tuple(), (-122.5, 37.7, -122.3, 37.9))
+        self.assertAlmostEqual(bbox.center()[0], -122.4, places=4)
+        self.assertAlmostEqual(bbox.center()[1], 37.8, places=4)
+        self.assertGreater(bbox.calculate_approx_area_km2(), 0.0)
+        self.assertEqual(bbox.get_utm_epsg(), "EPSG:32610")
+        self.assertEqual(bbox.to_geojson_polygon()["type"], "Polygon")
+
+        # Flexible bounding box inputs (list/tuple & alias dict)
+        bbox_list = ExportBoundingBox([-122.5, 37.7, -122.3, 37.9])
+        self.assertEqual(bbox_list.min_lon, -122.5)
+        bbox_dict = ExportBoundingBox({"west": -122.5, "south": 37.7, "east": -122.3, "north": 37.9})
+        self.assertEqual(bbox_dict.max_lat, 37.9)
+
+        with self.assertRaises(ValueError):
+            ExportBoundingBox(min_lon=10.0, min_lat=20.0, max_lon=5.0, max_lat=25.0)  # min_lon > max_lon
+
+        with self.assertRaises(ValueError):
+            ExportBoundingBox(min_lon=10.0, min_lat=30.0, max_lon=15.0, max_lat=20.0)  # min_lat > max_lat
+
+        # 10. ExportJobRequest validation
+        req = ExportJobRequest(
+            bbox=[-122.52, 37.70, -122.35, 37.85],
+            format="geotiff",
+            layer_type="surface_reflectance",
+            collection="sentinel-2-l2a",
+            target_crs="EPSG:4326",
+            resolution_m=10.0,
+            band_selection=ExportBandSelection(bands=["B02", "B03", "B04", "B08"])
+        )
+        self.assertEqual(req.aoi_bbox.min_lon, -122.52)
+        self.assertEqual(req.format, ExportFormat.GEOTIFF_COG)
+        self.assertEqual(req.layer_type, ExportLayerType.SURFACE_REFLECTANCE)
+        self.assertEqual(len(req.band_selection.bands), 4)
+
+        # 11. ExportArtifactMetadata & ExportJobStatusResponse
+        artifact = ExportArtifactMetadata(
+            filename="gios_sentinel_2_l2a_surface_reflectance_20261016_120000.tif",
+            format="geotiff_cog",
+            mime_type="image/tiff; application=geotiff",
+            file_size_bytes=8388608,
+            crs="EPSG:4326",
+            width_px=1512,
+            height_px=1670,
+            band_count=4,
+            affine_transform=[0.00008983, 0.0, -122.52, 0.0, -0.00008983, 37.85],
+            bbox=(-122.52, 37.70, -122.35, 37.85),
+            checksum_sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            qgis_instructions=generate_qgis_ingestion_snippet("output.tif", "geotiff_cog", "EPSG:4326")
+        )
+        self.assertEqual(artifact.file_size_bytes, 8388608)
+        self.assertEqual(artifact.band_count, 4)
+
+        status_resp = ExportJobStatusResponse(
+            job_id="EXP-JOB-20261016-001",
+            status=ExportJobStatus.COMPLETED,
+            progress_pct=100.0,
+            message="Export generated successfully",
+            request=req,
+            artifact=artifact,
+            download_url="/api/v1/analysis/export/download/EXP-JOB-20261016-001",
+            execution_time_seconds=12.4
+        )
+        self.assertEqual(status_resp.status, "completed")
+        self.assertEqual(status_resp.progress_pct, 100.0)
+        self.assertIsNotNone(status_resp.artifact)
+
+        # 12. URL builders & API Route Contracts
+        self.assertEqual(build_export_status_url("EXP-01"), "/api/v1/analysis/export/status/EXP-01")
+        self.assertEqual(build_export_download_url("EXP-01"), "/api/v1/analysis/export/download/EXP-01")
+
+        self.assertIn("analysis_export_request", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_export_status", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_export_download", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_export_formats", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_export_request"), "/api/v1/analysis/export/request")
+        self.assertEqual(format_api_route("analysis_export_request_short"), "/analysis/export/request")
+        self.assertEqual(format_api_route("analysis_export_status", job_id="EXP-01"), "/api/v1/analysis/export/status/EXP-01")
+        self.assertEqual(format_api_route("analysis_export_status_short", id="EXP-01"), "/analysis/export/status/EXP-01")
+        self.assertEqual(format_api_route("analysis_export_download", export_id="EXP-01"), "/api/v1/analysis/export/download/EXP-01")
+        self.assertEqual(format_api_route("analysis_export_download_short", jobId="EXP-01"), "/analysis/export/download/EXP-01")
+        self.assertEqual(format_api_route("analysis_export_formats"), "/api/v1/analysis/export/formats")
+        self.assertEqual(format_api_route("analysis_export_formats_short"), "/analysis/export/formats")
 
 if __name__ == "__main__":
     unittest.main()

@@ -3865,6 +3865,76 @@ class TestGIOSApi(unittest.TestCase):
             self.assertEqual(res_t.headers.get("content-type"), "image/png")
             self.assertTrue(res_t.content.startswith(b"\x89PNG\r\n\x1a\n"))
 
+    def test_task_t256_topographic_solar_illumination_and_tiles_api(self):
+        """Cycle v2.5.32 (Task T-256): Topographic Solar Illumination Correction, SCS+C Inversion & Dynamic Tile Endpoints."""
+        # 1. POST /api/v1/analysis/topographic/correction (SCS+C method)
+        payload = {
+            "scene_id": "MT_SHASTA_VOLCANO_2026",
+            "collection": "sentinel-2-l2a",
+            "dem_collection": "cop-dem-glo-30",
+            "method": "scs_c",
+            "config": {
+                "c_factor": 0.08,
+                "minnaert_k": 0.65,
+                "cos_i_min": 0.05,
+                "mask_self_shadow": True,
+                "mask_water": True
+            }
+        }
+        res_corr = self.client.post("/api/v1/analysis/topographic/correction", json=payload)
+        self.assertEqual(res_corr.status_code, 200, res_corr.text)
+        data_corr = res_corr.json()
+        self.assertEqual(data_corr["status"], "completed")
+        self.assertEqual(data_corr["scene_id"], "MT_SHASTA_VOLCANO_2026")
+        self.assertEqual(data_corr["method"], "scs_c")
+        self.assertIn("solar_geometry", data_corr)
+        self.assertIn("summary", data_corr)
+        self.assertIn("tile_url_template", data_corr)
+        self.assertIn("illumination_tile_url_template", data_corr)
+        self.assertGreater(data_corr["summary"]["radiance_std_reduction_pct"], 0.0)
+        self.assertIn("B04", data_corr["summary"]["estimated_c_factors"])
+
+        # Unversioned route alias
+        res_alias = self.client.post("/analysis/topographic/correction", json=payload)
+        self.assertEqual(res_alias.status_code, 200)
+
+        # 2. Solar Ephemeris Geometry Endpoints (GET and POST)
+        res_geom_get = self.client.get("/api/v1/analysis/topographic/solar-geometry?scene_id=MT_SHASTA_VOLCANO_2026")
+        self.assertEqual(res_geom_get.status_code, 200)
+        geom_data = res_geom_get.json()
+        self.assertAlmostEqual(geom_data["solar_zenith_deg"], 34.2, places=1)
+        self.assertAlmostEqual(geom_data["solar_azimuth_deg"], 148.5, places=1)
+        self.assertAlmostEqual(geom_data["solar_elevation_deg"], 55.8, places=1)
+
+        res_geom_post = self.client.post("/api/v1/analysis/topographic/solar-geometry", json={"scene_id": "SWISS_ALPS_VALAIS_2026"})
+        self.assertEqual(res_geom_post.status_code, 200)
+        swiss_geom = res_geom_post.json()
+        self.assertAlmostEqual(swiss_geom["solar_zenith_deg"], 45.1, places=1)
+
+        # 3. Available Benchmark & Candidate Scenes Endpoint
+        res_scenes = self.client.get("/api/v1/analysis/topographic/scenes")
+        self.assertEqual(res_scenes.status_code, 200)
+        scenes_data = res_scenes.json()
+        self.assertEqual(scenes_data["status"], "success")
+        self.assertGreaterEqual(scenes_data["total"], 3)
+        benchmark_keys = [s.get("benchmark_key") for s in scenes_data["scenes"]]
+        self.assertIn("MT_SHASTA_VOLCANO_2026", benchmark_keys)
+
+        # 4. Dynamic XYZ Topographic Tile Streaming Endpoints
+        tile_urls = [
+            "/api/v1/tiles/topographic/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png?method=scs_c&metric=corrected_reflectance",
+            "/api/v1/tiles/topographic/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png?method=c_correction&metric=difference",
+            "/api/v1/tiles/topographic/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png?method=minnaert&metric=illumination_condition",
+            "/api/v1/tiles/topographic/illumination/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png",
+            "/tiles/topographic/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png",
+            "/tiles/topographic/illumination/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png"
+        ]
+        for t_url in tile_urls:
+            r = self.client.get(t_url)
+            self.assertEqual(r.status_code, 200, f"Failed tile endpoint: {t_url}")
+            self.assertEqual(r.headers.get("content-type"), "image/png")
+            self.assertTrue(r.content.startswith(b"\x89PNG\r\n\x1a\n"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1734,26 +1734,206 @@ class TileService:
     def render_thermal_lst_tile(
         self,
         collection: str = "landsat-c2-l2",
-        item_id: str = "lst",
-        z: int = 0,
-        x: int = 0,
-        y: int = 0,
-        colormap: str = "turbo",
-        rescale: Optional[str] = "15.0,45.0",
-        method: Optional[str] = "single_channel"
+        item_id: str = "LC09_L2SP_039037_20260715_02_T1",
+        z: Union[int, str] = 0,
+        x: Union[int, str] = 0,
+        y: Union[int, str] = 0,
+        metric: str = "lst_celsius",
+        method: str = "radiative_transfer_equation",
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None,
+        ambient_baseline_temp_c: Optional[float] = None,
+        tau: Optional[float] = None,
+        water_vapor_g_cm2: Optional[float] = None,
+        sensor: Optional[str] = None,
+        **kwargs
     ) -> bytes:
-        """Renders 256x256 RGBA tile for Land Surface Temperature (LST) thermal layer."""
-        clean_cmap = colormap or "turbo"
-        clean_rescale = rescale or "15.0,45.0"
-        return self.render_tile(
-            collection=collection or "landsat-c2-l2",
-            item_id=item_id or "lst",
+        """Renders 256x256 RGBA PNG tile for Land Surface Temperature (LST) and thermal anomalies.
+
+        Supported metrics:
+            - lst_celsius / lst / surface_temperature: Kinetic LST in Celsius
+            - lst_kelvin: Kinetic LST in Kelvin
+            - brightness_temperature / tb: At-sensor top-of-atmosphere brightness temperature
+            - land_surface_emissivity / emissivity / lse: Narrow-band surface emissivity (0.85-1.0)
+            - fractional_vegetation_cover / fvc: Fractional vegetation cover (0.0-1.0)
+            - thermal_anomaly_delta / delta_t / anomaly: Temperature departure Delta T = T_s - T_ambient
+            - uhi_intensity / uhi: Surface Urban Heat Island intensity
+
+        Colormaps: turbo, magma, thermal, inferno, viridis, spectral, rdylgn.
+        Caches rendered tiles on disk under .cache/tiles/thermal/.
+        """
+        import os
+        import io
+        import hashlib
+        from PIL import Image
+
+        z_i, x_i, y_i = int(z), int(x), int(y)
+        col_clean = str(collection or "landsat-c2-l2").lower().strip()
+        item_clean = str(item_id or "LC09_L2SP_039037_20260715_02_T1").strip()
+        met_clean = str(metric or "lst_celsius").lower().strip()
+        m_clean = str(method or "radiative_transfer_equation").lower().strip()
+        cmap_str = str(colormap or "default").lower().strip()
+        rescale_str = str(rescale or "default").strip()
+        base_str = str(round(float(ambient_baseline_temp_c), 2)) if ambient_baseline_temp_c is not None else "auto"
+
+        # 1. Check disk cache under .cache/tiles/thermal/ and TILE_CACHE_DIR/thermal/
+        cache_key = f"thermal_lst_{col_clean}_{item_clean}_{m_clean}_{met_clean}_{cmap_str}_{rescale_str}_{base_str}_{z_i}_{x_i}_{y_i}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        thermal_cache_dir = os.path.join(TILE_CACHE_DIR, "thermal")
+        dot_cache_dir = os.path.join(".cache", "tiles", "thermal")
+        for d in (thermal_cache_dir, dot_cache_dir):
+            try:
+                os.makedirs(d, exist_ok=True)
+            except Exception:
+                pass
+
+        for d in (thermal_cache_dir, dot_cache_dir):
+            cf = os.path.join(d, f"{cache_hash}.png")
+            if os.path.exists(cf) and os.path.getsize(cf) > 100:
+                try:
+                    with open(cf, "rb") as f:
+                        return f.read()
+                except Exception:
+                    pass
+
+        # 2. Acquire thermal data cube and compute LST inversion
+        bbox = self.tile_to_bbox(z_i, x_i, y_i)
+        try:
+            from app.services.data_acquisition import data_acquisition_service
+            from app.services.indices import index_service
+
+            resolved_sensor = sensor or ("sentinel3_slstr" if "sentinel" in col_clean or "slstr" in col_clean else "landsat_tirs")
+            ds, meta = data_acquisition_service.load_thermal_data_cube(
+                scene_id=item_clean,
+                collection=col_clean,
+                sensor=resolved_sensor,
+                bbox=bbox,
+                grid_size=256,
+                ambient_baseline_temp_c=ambient_baseline_temp_c,
+                tau=tau,
+                water_vapor_g_cm2=water_vapor_g_cm2
+            )
+
+            resolved_ambient = float(ambient_baseline_temp_c if ambient_baseline_temp_c is not None else meta.get("ambient_baseline_temp_c", 25.0))
+            resolved_tau = float(tau if tau is not None else meta.get("atmospheric_transmittance", 0.92))
+            resolved_wv = float(water_vapor_g_cm2 if water_vapor_g_cm2 is not None else meta.get("water_vapor_g_cm2", 1.5))
+
+            inversion = index_service.compute_thermal_lst_inversion(
+                bands=ds,
+                sensor=meta.get("sensor", resolved_sensor),
+                method=m_clean,
+                ambient_baseline_temp_c=resolved_ambient,
+                tau=resolved_tau,
+                water_vapor_g_cm2=resolved_wv
+            )
+            rasters = inversion["rasters"]
+        except Exception as e:
+            logger.warning("Thermal LST cube acquisition fallback for tile (%s,%s,%s): %s", z_i, x_i, y_i, e)
+            return self.render_tile(
+                collection=col_clean,
+                item_id=item_clean,
+                z=z_i,
+                x=x_i,
+                y=y_i,
+                index="lst",
+                colormap=colormap or "turbo",
+                rescale=rescale or "15.0,45.0"
+            )
+
+        # 3. Select requested metric raster and default color ramps
+        if met_clean in ("lst_celsius", "lst", "surface_temperature", "temperature"):
+            data_arr = rasters["lst_celsius"]
+            cmap_name = colormap or "magma"
+            def_bounds = (15.0, 48.0)
+        elif met_clean in ("lst_kelvin",):
+            data_arr = rasters["lst_kelvin"]
+            cmap_name = colormap or "magma"
+            def_bounds = (288.15, 321.15)
+        elif met_clean in ("brightness_temperature", "tb", "brightness_temp", "bt"):
+            data_arr = rasters["brightness_temperature_c"]
+            cmap_name = colormap or "inferno"
+            def_bounds = (15.0, 48.0)
+        elif met_clean in ("land_surface_emissivity", "emissivity", "lse"):
+            data_arr = rasters["emissivity"]
+            cmap_name = colormap or "spectral"
+            def_bounds = (0.90, 1.00)
+        elif met_clean in ("fractional_vegetation_cover", "fvc"):
+            data_arr = rasters["fvc"]
+            cmap_name = colormap or "rdylgn"
+            def_bounds = (0.0, 1.0)
+        elif met_clean in ("thermal_anomaly_delta", "delta_t", "anomaly"):
+            data_arr = rasters["thermal_anomaly_delta"]
+            cmap_name = colormap or "turbo"
+            def_bounds = (0.0, 15.0)
+        elif met_clean in ("uhi_intensity", "uhi"):
+            data_arr = rasters["uhi_intensity"]
+            cmap_name = colormap or "magma"
+            def_bounds = (0.0, 10.0)
+        else:
+            data_arr = rasters.get(met_clean, rasters["lst_celsius"])
+            cmap_name = colormap or "magma"
+            def_bounds = (15.0, 48.0)
+
+        # 4. Rescale contrast stretch bounds
+        if rescale:
+            try:
+                if isinstance(rescale, (list, tuple)) and len(rescale) == 2:
+                    min_v, max_v = float(rescale[0]), float(rescale[1])
+                else:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+            except Exception:
+                min_v, max_v = def_bounds
+        else:
+            min_v, max_v = def_bounds
+
+        denom = max(1e-6, max_v - min_v)
+        norm_arr = np.clip((data_arr - min_v) / denom, 0.0, 1.0)
+
+        # 5. Apply colormap ramp
+        cmap_func = self.get_colormap(cmap_name)
+        rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        # 6. Encode RGBA PNG and write to cache
+        img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        for d in (thermal_cache_dir, dot_cache_dir):
+            try:
+                cf = os.path.join(d, f"{cache_hash}.png")
+                with open(cf, "wb") as f:
+                    f.write(png_bytes)
+            except Exception as e:
+                logger.warning("Failed to write thermal LST tile cache to %s: %s", d, e)
+
+        return png_bytes
+
+    def render_thermal_anomaly_tile(
+        self,
+        collection: str = "landsat-c2-l2",
+        item_id: str = "LC09_L2SP_039037_20260715_02_T1",
+        z: Union[int, str] = 0,
+        x: Union[int, str] = 0,
+        y: Union[int, str] = 0,
+        ambient_baseline_temp_c: float = 25.0,
+        colormap: Optional[str] = "turbo",
+        rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile for thermal anomaly temperature departure (Delta T)."""
+        return self.render_thermal_lst_tile(
+            collection=collection,
+            item_id=item_id,
             z=z,
             x=x,
             y=y,
-            index="lst",
-            colormap=clean_cmap,
-            rescale=clean_rescale
+            metric="thermal_anomaly_delta",
+            colormap=colormap or "turbo",
+            rescale=rescale or "0.0,15.0",
+            ambient_baseline_temp_c=ambient_baseline_temp_c,
+            **kwargs
         )
 
     def render_insar_tile(
@@ -5161,8 +5341,488 @@ class TileService:
 
         return png_bytes
 
+    def render_topographic_correction_tile(
+        self,
+        collection: str = "sentinel-2-l2a",
+        item_id: str = "S2A_MSIL2A_20260815_MT_SHASTA",
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        method: str = "c_correction",
+        metric: str = "corrected_reflectance",
+        solar_zenith: Optional[float] = None,
+        solar_azimuth: Optional[float] = None,
+        c_factor: Optional[float] = None,
+        minnaert_k: Optional[float] = None,
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile for topographically normalized imagery and solar illumination metrics.
+
+        Metrics supported:
+            - corrected_reflectance / reflectance / rgb / true_color: Topographically normalized RGB composite
+            - cos_incidence / cos_i: Local incidence cosine cos(i) in [-1.0, 1.0]
+            - illumination / hillshade: Analytical Lambertian hillshade in [0, 255]
+            - illumination_condition / condition: Categorical terrain illumination mask (sunlit, shaded, self_shadow)
+            - difference / diff: Mean absolute difference |L_corrected - L_raw|
+            - ratio: Mean correction ratio L_corrected / L_raw
+            - Individual band names ('B02', 'B03', 'B04', 'B08', 'B11', 'B12')
+        """
+        import os
+        import io
+        import hashlib
+        from PIL import Image
+        from app.services.data_acquisition import data_acquisition_service
+        from app.services.indices import index_service
+
+        z_i, x_i, y_i = int(z), int(x), int(y)
+        col_clean = str(collection or "sentinel-2-l2a").lower().strip()
+        item_clean = str(item_id or "MT_SHASTA_VOLCANO_2026").strip()
+        m_clean = str(method or "c_correction").lower().strip()
+        met_clean = str(metric or "corrected_reflectance").lower().strip()
+
+        sz_str = str(round(float(solar_zenith), 2)) if solar_zenith is not None else "meta"
+        sa_str = str(round(float(solar_azimuth), 2)) if solar_azimuth is not None else "meta"
+        c_str = str(round(float(c_factor), 4)) if c_factor is not None else "auto"
+        k_str = str(round(float(minnaert_k), 4)) if minnaert_k is not None else "auto"
+        cmap_str = str(colormap or "default").lower().strip()
+        rescale_str = str(rescale or "default").strip()
+
+        cache_key = f"topo_{col_clean}_{item_clean}_{m_clean}_{met_clean}_{sz_str}_{sa_str}_{c_str}_{k_str}_{cmap_str}_{rescale_str}_{z_i}_{x_i}_{y_i}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        topo_cache_dir = os.path.join(TILE_CACHE_DIR, "topographic")
+        os.makedirs(topo_cache_dir, exist_ok=True)
+        cache_file = os.path.join(topo_cache_dir, f"{cache_hash}.png")
+
+        if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
+            try:
+                with open(cache_file, "rb") as f:
+                    return f.read()
+            except Exception:
+                pass
+
+        bbox = self.tile_to_bbox(z_i, x_i, y_i)
+        ds, meta = data_acquisition_service.load_topographic_data_cube(
+            scene_id=item_clean,
+            bbox=bbox,
+            collection=col_clean,
+            grid_size=256,
+            solar_zenith_override=float(solar_zenith) if solar_zenith is not None else None,
+            solar_azimuth_override=float(solar_azimuth) if solar_azimuth is not None else None
+        )
+
+        inversion = index_service.compute_topographic_correction_inversion(
+            bands=ds,
+            solar_zenith_deg=float(meta["solar_zenith_deg"]),
+            solar_azimuth_deg=float(meta["solar_azimuth_deg"]),
+            method=m_clean,
+            c_factor=float(c_factor) if c_factor is not None else None,
+            minnaert_k=float(minnaert_k) if minnaert_k is not None else None
+        )
+
+        rgba = np.zeros((256, 256, 4), dtype=np.uint8)
+
+        if met_clean in ("corrected_reflectance", "reflectance", "rgb", "true_color"):
+            # Multi-spectral RGB natural composite
+            r_band = inversion["corrected_bands"].get("B04", inversion["corrected_bands"].get("red"))
+            g_band = inversion["corrected_bands"].get("B03", inversion["corrected_bands"].get("green"))
+            b_band = inversion["corrected_bands"].get("B02", inversion["corrected_bands"].get("blue"))
+
+            if r_band is not None and g_band is not None and b_band is not None:
+                # Contrast stretch [0.0, 0.32] to [0, 255]
+                r_byte = np.clip(r_band * (255.0 / 0.30), 0.0, 255.0).astype(np.uint8)
+                g_byte = np.clip(g_band * (255.0 / 0.30), 0.0, 255.0).astype(np.uint8)
+                b_byte = np.clip(b_band * (255.0 / 0.30), 0.0, 255.0).astype(np.uint8)
+                rgba[:, :, 0] = r_byte
+                rgba[:, :, 1] = g_byte
+                rgba[:, :, 2] = b_byte
+                rgba[:, :, 3] = 255
+            else:
+                # Fallback to analytical hillshade if bands missing
+                v = np.clip(inversion["illumination"], 0.0, 255.0).astype(np.uint8)
+                rgba[:, :, 0] = v
+                rgba[:, :, 1] = v
+                rgba[:, :, 2] = v
+                rgba[:, :, 3] = 255
+
+        elif met_clean in ("cos_incidence", "cos_i"):
+            arr = inversion["cos_incidence"]
+            cmap_name = colormap or "greys"
+            def_bounds = (-0.1, 1.0)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+
+            norm_arr = np.clip((arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("illumination", "hillshade"):
+            v = np.clip(inversion["illumination"], 0.0, 255.0).astype(np.uint8)
+            rgba[:, :, 0] = v
+            rgba[:, :, 1] = v
+            rgba[:, :, 2] = v
+            rgba[:, :, 3] = 255
+
+        elif met_clean in ("illumination_condition", "condition"):
+            cond = inversion["illumination_condition"]
+            # 0: self_shadow -> dark navy
+            # 1: shaded -> amber/slate
+            # 2: sunlit -> vibrant emerald
+            rgba[cond == 0] = [30, 41, 59, 240]
+            rgba[cond == 1] = [217, 119, 6, 230]
+            rgba[cond == 2] = [16, 185, 129, 240]
+
+        elif met_clean in ("difference", "diff"):
+            arr = inversion["difference"]
+            cmap_name = colormap or "magma"
+            def_bounds = (0.0, 0.12)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+
+            norm_arr = np.clip((arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("ratio",):
+            arr = inversion["ratio"]
+            cmap_name = colormap or "turbo"
+            def_bounds = (0.5, 2.0)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+
+            norm_arr = np.clip((arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        else:
+            # Single spectral band
+            band_arr = inversion["corrected_bands"].get(met_clean.upper(), inversion["corrected_bands"].get(met_clean, inversion["cos_incidence"]))
+            cmap_name = colormap or "spectral"
+            norm_arr = np.clip(band_arr / 0.40, 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        try:
+            with open(cache_file, "wb") as f:
+                f.write(png_bytes)
+        except Exception as e:
+            logger.warning("Failed to write topographic tile cache: %s", e)
+
+        return png_bytes
+
+    def render_topographic_illumination_tile(
+        self,
+        collection: str = "sentinel-2-l2a",
+        item_id: str = "S2A_MSIL2A_20260815_MT_SHASTA",
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        solar_zenith: Optional[float] = None,
+        solar_azimuth: Optional[float] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile for topographic local incidence cos(i) hillshade."""
+        return self.render_topographic_correction_tile(
+            collection=collection,
+            item_id=item_id,
+            z=z,
+            x=x,
+            y=y,
+            method="none",
+            metric="illumination",
+            solar_zenith=solar_zenith,
+            solar_azimuth=solar_azimuth,
+            **kwargs
+        )
+
+    def render_hls_tile(
+        self,
+        collection: str = "landsat-c2-l2",
+        item_id: str = "LC09_L2SP_044034_20260718_02_T1",
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        metric: str = "harmonized_reflectance",
+        stage: str = "harmonized",
+        sensor: Optional[str] = None,
+        target_solar_zenith: Optional[float] = None,
+        target_view_zenith: Optional[float] = None,
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile for Harmonized Landsat Sentinel-2 (HLS) surface reflectance.
+        
+        Metrics:
+            - harmonized_reflectance / rgb / true_color: True color RGB of fully harmonized surface reflectance
+            - nbar_reflectance: True color RGB of Nadir BRDF-Adjusted Reflectance (NBAR)
+            - brdf_adjustment_factor / brdf_factor: Spatial / spectral BRDF c-factor
+            - volumetric_kernel / k_vol: RossThick volumetric kernel
+            - geometric_kernel / k_geo: LiSparse-R geometric kernel
+            - bandpass_difference / diff: Cross-sensor spectral bandpass delta
+            - ndvi: Harmonized NDVI
+            - evi: Harmonized EVI
+            - Individual band names ('blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'B02', 'B04', etc.)
+        """
+        import os
+        import io
+        import hashlib
+        from PIL import Image
+        from app.services.data_acquisition import data_acquisition_service
+        from app.services.indices import index_service
+
+        z_i, x_i, y_i = int(z), int(x), int(y)
+        col_clean = str(collection or "landsat-c2-l2").lower().strip()
+        item_clean = str(item_id or "MGRS_10TFK_SAN_FRANCISCO_2026").strip()
+        met_clean = str(metric or "harmonized_reflectance").lower().strip()
+        stg_clean = str(stage or "harmonized").lower().strip()
+        sens_clean = str(sensor or ("sentinel_msi" if "sentinel" in col_clean else "landsat_oli")).lower().strip()
+
+        sz_str = str(round(float(target_solar_zenith), 2)) if target_solar_zenith is not None else "default"
+        vz_str = str(round(float(target_view_zenith), 2)) if target_view_zenith is not None else "default"
+        cmap_str = str(colormap or "default").lower().strip()
+        rescale_str = str(rescale or "default").strip()
+
+        cache_key = f"hls_{col_clean}_{item_clean}_{sens_clean}_{stg_clean}_{met_clean}_{sz_str}_{vz_str}_{cmap_str}_{rescale_str}_{z_i}_{x_i}_{y_i}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        hls_cache_dir = os.path.join(TILE_CACHE_DIR, "hls")
+        os.makedirs(hls_cache_dir, exist_ok=True)
+        cache_file = os.path.join(hls_cache_dir, f"{cache_hash}.png")
+
+        if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
+            try:
+                with open(cache_file, "rb") as f:
+                    return f.read()
+            except Exception:
+                pass
+
+        bbox = self.tile_to_bbox(z_i, x_i, y_i)
+        ds, meta = data_acquisition_service.load_hls_data_cube(
+            scene_id=item_clean,
+            collection=col_clean,
+            sensor=sens_clean,
+            bbox=bbox,
+            grid_size=256
+        )
+
+        apply_bp = (stg_clean == "harmonized")
+        tgt_sens = "sentinel_msi" if sens_clean in ("landsat_oli", "landsat", "oli", "landsat-c2-l2") else "harmonized_hls"
+
+        inversion = index_service.compute_hls_harmonization(
+            bands=ds,
+            solar_zenith_deg=float(meta["solar_zenith_deg"]),
+            solar_azimuth_deg=float(meta["solar_azimuth_deg"]),
+            view_zenith_deg=float(meta["view_zenith_deg"]),
+            view_azimuth_deg=float(meta["view_azimuth_deg"]),
+            target_solar_zenith_deg=float(target_solar_zenith if target_solar_zenith is not None else meta.get("target_solar_zenith_deg", 45.0)),
+            target_view_zenith_deg=float(target_view_zenith if target_view_zenith is not None else meta.get("target_view_zenith_deg", 0.0)),
+            source_sensor=sens_clean,
+            target_sensor=tgt_sens,
+            apply_bandpass=apply_bp
+        )
+
+        rgba = np.zeros((256, 256, 4), dtype=np.uint8)
+
+        # Select band container based on stage/metric
+        if stg_clean == "source":
+            band_dict = inversion["source_bands"]
+        elif stg_clean == "nbar" or met_clean == "nbar_reflectance":
+            band_dict = inversion["nbar_bands"]
+        else:
+            band_dict = inversion["harmonized_bands"]
+
+        if met_clean in ("harmonized_reflectance", "reflectance", "rgb", "true_color", "nbar_reflectance"):
+            r_band = band_dict.get("red", band_dict.get("B04", band_dict.get("B4")))
+            g_band = band_dict.get("green", band_dict.get("B03", band_dict.get("B3")))
+            b_band = band_dict.get("blue", band_dict.get("B02", band_dict.get("B2")))
+
+            if r_band is not None and g_band is not None and b_band is not None:
+                r_byte = np.clip(r_band * (255.0 / 0.30), 0.0, 255.0).astype(np.uint8)
+                g_byte = np.clip(g_band * (255.0 / 0.30), 0.0, 255.0).astype(np.uint8)
+                b_byte = np.clip(b_band * (255.0 / 0.30), 0.0, 255.0).astype(np.uint8)
+                rgba[:, :, 0] = r_byte
+                rgba[:, :, 1] = g_byte
+                rgba[:, :, 2] = b_byte
+                rgba[:, :, 3] = 255
+            else:
+                rgba[:, :, 0] = 128
+                rgba[:, :, 1] = 128
+                rgba[:, :, 2] = 128
+                rgba[:, :, 3] = 255
+
+        elif met_clean in ("brdf_adjustment_factor", "brdf_factor", "c_factor"):
+            mean_c = inversion["summary"]["mean_brdf_adjustment_factor"]
+            c_arr = np.full((256, 256), mean_c, dtype=np.float32)
+            cmap_name = colormap or "turbo"
+            def_bounds = (0.7, 1.3)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+            norm_arr = np.clip((c_arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("volumetric_kernel", "k_vol"):
+            k_val = inversion["summary"]["mean_volumetric_kernel"]
+            k_arr = np.full((256, 256), k_val, dtype=np.float32)
+            cmap_name = colormap or "viridis"
+            def_bounds = (-0.15, 0.45)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+            norm_arr = np.clip((k_arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("geometric_kernel", "k_geo"):
+            k_val = inversion["summary"]["mean_geometric_kernel"]
+            k_arr = np.full((256, 256), k_val, dtype=np.float32)
+            cmap_name = colormap or "magma"
+            def_bounds = (-0.25, 0.25)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+            norm_arr = np.clip((k_arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("bandpass_difference", "diff", "difference"):
+            diff_arr = inversion["diagnostic_layers"]["bandpass_difference"]
+            cmap_name = colormap or "coolwarm"
+            def_bounds = (-0.02, 0.02)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+            norm_arr = np.clip((diff_arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("ndvi",):
+            ndvi_arr = inversion["diagnostic_layers"]["ndvi"]
+            cmap_name = colormap or "rdylgn"
+            def_bounds = (-0.1, 0.85)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+            norm_arr = np.clip((ndvi_arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("evi",):
+            evi_arr = inversion["diagnostic_layers"]["evi"]
+            cmap_name = colormap or "rdylgn"
+            def_bounds = (0.0, 0.8)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+            norm_arr = np.clip((evi_arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        else:
+            # Single spectral band
+            b_arr = band_dict.get(met_clean, band_dict.get(met_clean.upper(), band_dict.get("red")))
+            if b_arr is None:
+                b_arr = np.zeros((256, 256), dtype=np.float32)
+            cmap_name = colormap or "spectral"
+            norm_arr = np.clip(b_arr / 0.35, 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        try:
+            with open(cache_file, "wb") as f:
+                f.write(png_bytes)
+        except Exception as e:
+            logger.warning("Failed to write HLS tile cache: %s", e)
+
+        return png_bytes
+
+    def render_hls_nbar_tile(
+        self,
+        collection: str = "landsat-c2-l2",
+        item_id: str = "LC09_L2SP_044034_20260718_02_T1",
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        target_solar_zenith: Optional[float] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders 256x256 RGBA PNG tile for Nadir BRDF-Adjusted Reflectance (NBAR)."""
+        return self.render_hls_tile(
+            collection=collection,
+            item_id=item_id,
+            z=z,
+            x=x,
+            y=y,
+            metric="nbar_reflectance",
+            stage="nbar",
+            target_solar_zenith=target_solar_zenith,
+            **kwargs
+        )
+
 
 tile_service = TileService()
+
+
 
 
 

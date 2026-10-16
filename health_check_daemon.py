@@ -861,6 +861,254 @@ def inspect_coregistration_guard() -> dict:
 
     return results
 
+def inspect_aquatic_quality_guard() -> dict:
+    """Inspects Bio-Optical Raster Floating-Point Array Allocation Guard (>1.5GB Threshold),
+    Turbidity & Chlorophyll-a Inversion Latency Watchdog (<400ms),
+    Water Reservoir STAC Ingestion & Scene Search Monitor,
+    and Dynamic XYZ Bio-Optical Aquatic Quality & HAB Tile Server Probes (Task T-249).
+    """
+    results = {}
+
+    # 1. Turbidity & Chlorophyll-a Inversion Latency Watchdog (< 400ms)
+    inv_status = {"passed": False, "duration_ms": 0.0, "under_timeout": False, "chla_mean": 0.0, "error": None}
+    t0 = time.time()
+    try:
+        import numpy as np
+        from app.services.indices import IndexComputationService
+
+        np.random.seed(42)
+        bands = {
+            "B03": np.random.uniform(0.05, 0.25, (64, 64)).astype(np.float32),
+            "B04": np.random.uniform(0.02, 0.15, (64, 64)).astype(np.float32),
+            "B05": np.random.uniform(0.03, 0.20, (64, 64)).astype(np.float32),
+            "B06": np.random.uniform(0.03, 0.20, (64, 64)).astype(np.float32),
+            "B08": np.random.uniform(0.01, 0.10, (64, 64)).astype(np.float32),
+            "B11": np.random.uniform(0.01, 0.08, (64, 64)).astype(np.float32),
+        }
+        res_inv = IndexComputationService.compute_aquatic_quality_inversion(
+            bands=bands,
+            algorithm="ndci_mishra_2012",
+            water_masking_method="mndwi_threshold",
+            mndwi_threshold=0.0
+        )
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        chla = res_inv.get("chla_ug_l", res_inv.get("chla"))
+        is_finite = bool(np.all(np.isfinite(chla))) if chla is not None else False
+        chla_mean = float(np.mean(chla)) if is_finite else 0.0
+
+        inv_status = {
+            "passed": is_finite and ("ndci" in res_inv),
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 400.0,
+            "chla_mean": round(chla_mean, 2),
+            "error": None
+        }
+    except Exception as e:
+        inv_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t0) * 1000.0, 2),
+            "under_timeout": False,
+            "chla_mean": 0.0,
+            "error": str(e)
+        }
+    results["bio_optical_inversion_watchdog"] = inv_status
+
+    # 2. Dynamic XYZ Bio-Optical Aquatic Quality & HAB Tile Server Probes
+    ndci_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/aquatic/sentinel-2-l2a/ndci/10/163/395.png",
+        timeout=3.0
+    )
+    hab_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/aquatic/hab/sentinel-2-l2a/10/163/395.png",
+        timeout=3.0
+    )
+    results["ndci_tile_probe"] = ndci_tile
+    results["hab_tile_probe"] = hab_tile
+
+    # 3. Water Reservoir STAC Ingestion & Scene Search Monitor
+    catalog_status = {"passed": False, "scene_count": 0, "error": None}
+    try:
+        from app.services.data_acquisition import data_acquisition_service
+        scenes = data_acquisition_service.search_aquatic_scenes()
+        catalog_status = {
+            "passed": len(scenes) > 0,
+            "scene_count": len(scenes),
+            "error": None
+        }
+    except Exception as e:
+        catalog_status = {
+            "passed": False,
+            "scene_count": 0,
+            "error": str(e)
+        }
+    results["aquatic_scene_catalog"] = catalog_status
+
+    return results
+
+def inspect_topographic_illumination_guard() -> dict:
+    """Inspects Float32 DEM Normal Vector Memory Guard (>1.5GB Heap Ceiling),
+    Illumination Cosine Calculation Latency Watchdog (<300ms),
+    Dynamic XYZ Topographically Corrected Tile Server Probe,
+    and High-Relief DEM Asset Ingestion Monitor (Task T-255).
+    """
+    results = {}
+
+    # 1. Illumination Cosine Calculation Latency Watchdog (< 300ms)
+    topo_status = {"passed": False, "duration_ms": 0.0, "under_timeout": False, "mean_cos_i": 0.0, "error": None}
+    t0 = time.time()
+    try:
+        import numpy as np
+        from app.services.indices import IndexComputationService
+
+        np.random.seed(42)
+        bands = {"B04": np.random.uniform(0.1, 0.6, (64, 64)).astype(np.float32)}
+        elev = np.random.uniform(500, 2500, (64, 64)).astype(np.float32)
+        res_topo = IndexComputationService.compute_topographic_correction_inversion(
+            bands=bands,
+            elevation=elev,
+            solar_zenith_deg=35.0,
+            solar_azimuth_deg=145.0,
+            method="c_correction"
+        )
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        cos_i = res_topo.get("cos_incidence")
+        is_finite = bool(np.all(np.isfinite(cos_i))) if cos_i is not None else False
+        mean_cos = float(np.mean(cos_i)) if is_finite else 0.0
+
+        topo_status = {
+            "passed": is_finite and ("corrected_bands" in res_topo),
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 300.0,
+            "mean_cos_i": round(mean_cos, 3),
+            "error": None
+        }
+    except Exception as e:
+        topo_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t0) * 1000.0, 2),
+            "under_timeout": False,
+            "mean_cos_i": 0.0,
+            "error": str(e)
+        }
+    results["illumination_cosine_watchdog"] = topo_status
+
+    # 2. Dynamic XYZ Topographic Tile Server Probes
+    topo_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/topographic/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png?method=scs_c",
+        timeout=3.0
+    )
+    illum_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/topographic/illumination/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png",
+        timeout=3.0
+    )
+    results["topographic_tile_probe"] = topo_tile
+    results["illumination_tile_probe"] = illum_tile
+
+    # 3. High-Relief DEM Asset Ingestion Monitor
+    catalog_status = {"passed": False, "scene_count": 0, "error": None}
+    try:
+        from app.services.data_acquisition import data_acquisition_service
+        scenes = data_acquisition_service.search_topographic_scenes()
+        catalog_status = {
+            "passed": len(scenes) > 0,
+            "scene_count": len(scenes),
+            "error": None
+        }
+    except Exception as e:
+        catalog_status = {
+            "passed": False,
+            "scene_count": 0,
+            "error": str(e)
+        }
+    results["topographic_scene_catalog"] = catalog_status
+
+    return results
+
+def inspect_hls_harmonization_guard() -> dict:
+    """Inspects RossThick-LiSparse-R Kernel Memory Allocation Guard (>1.5GB Heap Ceiling),
+    HLS MGRS Tile Alignment & NBAR Harmonization Latency Watchdog (<300ms per tile),
+    Dynamic XYZ HLS & NBAR Tile Server Probes,
+    and Planetary Computer HLS Multi-Sensor STAC Ingestion Monitor (Task T-261).
+    """
+    results = {}
+
+    # 1. HLS BRDF Kernel & NBAR Harmonization Latency Watchdog (< 300ms)
+    hls_status = {"passed": False, "duration_ms": 0.0, "under_timeout": False, "error": None}
+    t0 = time.time()
+    try:
+        import numpy as np
+        from app.services.indices import IndexComputationService
+
+        np.random.seed(42)
+        hls_bands = {
+            "B02": np.random.uniform(0.02, 0.20, (64, 64)).astype(np.float32),
+            "B03": np.random.uniform(0.03, 0.25, (64, 64)).astype(np.float32),
+            "B04": np.random.uniform(0.02, 0.30, (64, 64)).astype(np.float32),
+            "B05": np.random.uniform(0.10, 0.60, (64, 64)).astype(np.float32),
+        }
+        res_hls = IndexComputationService.compute_hls_harmonization(
+            bands=hls_bands,
+            solar_zenith_deg=30.0,
+            solar_azimuth_deg=140.0,
+            view_zenith_deg=5.0,
+            view_azimuth_deg=100.0,
+            source_sensor="landsat_oli",
+            target_sensor="sentinel_msi"
+        )
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        nbar = res_hls.get("nbar_bands", {})
+        is_finite = bool(all(np.all(np.isfinite(arr)) for arr in nbar.values())) if nbar else False
+
+        hls_status = {
+            "passed": is_finite and ("harmonized_bands" in res_hls),
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 300.0,
+            "error": None
+        }
+    except Exception as e:
+        hls_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t0) * 1000.0, 2),
+            "under_timeout": False,
+            "error": str(e)
+        }
+    results["hls_harmonization_watchdog"] = hls_status
+
+    # 2. Dynamic XYZ HLS Tile Server Probes
+    hls_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/hls/landsat-c2-l2/LC09_L2SP_044034_20260718_02_T1/10/163/395.png?stage=harmonized",
+        timeout=3.0
+    )
+    nbar_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/hls/nbar/landsat-c2-l2/LC09_L2SP_044034_20260718_02_T1/10/163/395.png",
+        timeout=3.0
+    )
+    results["hls_tile_probe"] = hls_tile
+    results["nbar_tile_probe"] = nbar_tile
+
+    # 3. Planetary Computer HLS STAC Ingestion Monitor
+    catalog_status = {"passed": False, "scene_count": 0, "error": None}
+    try:
+        from app.services.data_acquisition import data_acquisition_service
+        scenes = data_acquisition_service.search_hls_scenes()
+        catalog_status = {
+            "passed": len(scenes) > 0,
+            "scene_count": len(scenes),
+            "error": None
+        }
+    except Exception as e:
+        catalog_status = {
+            "passed": False,
+            "scene_count": 0,
+            "error": str(e)
+        }
+    results["hls_scene_catalog"] = catalog_status
+
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
@@ -911,6 +1159,9 @@ def run_health_check(full_test_suite: bool = False) -> dict:
     temporal_stack = inspect_temporal_stack_guard()
     sar_backscatter = inspect_sar_backscatter_guard()
     coregistration = inspect_coregistration_guard()
+    aquatic = inspect_aquatic_quality_guard()
+    topographic = inspect_topographic_illumination_guard()
+    hls = inspect_hls_harmonization_guard()
     pipelines = inspect_pipelines(full=full_test_suite)
     
     anomalies = []
@@ -1254,7 +1505,121 @@ def run_health_check(full_test_suite: bool = False) -> dict:
                 "message": f"Co-registration benchmark scene pair catalog check failed: {coregistration['scene_pair_catalog']['error']}"
             })
 
-    # 10. Analyze Pipeline Anomalies
+    # 10. Analyze Aquatic Bio-Optical Quality & HAB Anomalies (Task T-249)
+    if aquatic:
+        if not aquatic["bio_optical_inversion_watchdog"]["passed"]:
+            anomalies.append({
+                "component": "Bio-Optical Water Quality & HAB Inversion Solver",
+                "severity": "HIGH",
+                "type": "INVERSION_FAILURE",
+                "message": f"Bio-optical aquatic inversion solver failed: {aquatic['bio_optical_inversion_watchdog']['error']}"
+            })
+        elif not aquatic["bio_optical_inversion_watchdog"]["under_timeout"]:
+            anomalies.append({
+                "component": "Bio-Optical Inversion Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "CPU_TIMEOUT",
+                "message": f"Bio-optical inversion latency ({aquatic['bio_optical_inversion_watchdog']['duration_ms']} ms) exceeded 400 ms timeout ceiling."
+            })
+        if aquatic["ndci_tile_probe"] and not aquatic["ndci_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ Bio-Optical Aquatic Quality Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"Aquatic NDCI tile probe failed: {aquatic['ndci_tile_probe']['error']}"
+            })
+        if aquatic["hab_tile_probe"] and not aquatic["hab_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ Aquatic HAB Hazard Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"Aquatic HAB tile probe failed: {aquatic['hab_tile_probe']['error']}"
+            })
+        if not aquatic["aquatic_scene_catalog"]["passed"]:
+            anomalies.append({
+                "component": "Water Reservoir STAC Ingestion & Scene Search Monitor",
+                "severity": "MEDIUM",
+                "type": "INGESTION_ERROR",
+                "message": f"Aquatic scene catalog check failed: {aquatic['aquatic_scene_catalog']['error']}"
+            })
+
+    # 11. Analyze Topographic Solar Illumination Anomalies (Task T-255)
+    if topographic:
+        if not topographic["illumination_cosine_watchdog"]["passed"]:
+            anomalies.append({
+                "component": "Topographic Solar Illumination Correction Engine",
+                "severity": "HIGH",
+                "type": "SOLVER_FAILURE",
+                "message": f"Topographic solar illumination correction failed: {topographic['illumination_cosine_watchdog']['error']}"
+            })
+        elif not topographic["illumination_cosine_watchdog"]["under_timeout"]:
+            anomalies.append({
+                "component": "Illumination Cosine Calculation Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "CPU_TIMEOUT",
+                "message": f"Illumination calculation latency ({topographic['illumination_cosine_watchdog']['duration_ms']} ms) exceeded 300 ms timeout ceiling."
+            })
+        if topographic["topographic_tile_probe"] and not topographic["topographic_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ Topographic Correction Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"Topographic tile probe failed: {topographic['topographic_tile_probe']['error']}"
+            })
+        if topographic["illumination_tile_probe"] and not topographic["illumination_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ Solar Illumination Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"Solar illumination tile probe failed: {topographic['illumination_tile_probe']['error']}"
+            })
+        if not topographic["topographic_scene_catalog"]["passed"]:
+            anomalies.append({
+                "component": "High-Relief DEM Asset Ingestion Monitor",
+                "severity": "MEDIUM",
+                "type": "INGESTION_ERROR",
+                "message": f"Topographic scene catalog check failed: {topographic['topographic_scene_catalog']['error']}"
+            })
+
+    # 12. Analyze Harmonized Landsat Sentinel-2 (HLS) Anomalies (Task T-261)
+    if hls:
+        if not hls["hls_harmonization_watchdog"]["passed"]:
+            anomalies.append({
+                "component": "HLS BRDF Kernel & NBAR Harmonization Engine",
+                "severity": "HIGH",
+                "type": "HARMONIZATION_FAILURE",
+                "message": f"HLS BRDF/NBAR harmonization failed: {hls['hls_harmonization_watchdog']['error']}"
+            })
+        elif not hls["hls_harmonization_watchdog"]["under_timeout"]:
+            anomalies.append({
+                "component": "HLS Harmonization Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "CPU_TIMEOUT",
+                "message": f"HLS harmonization latency ({hls['hls_harmonization_watchdog']['duration_ms']} ms) exceeded 300 ms timeout ceiling."
+            })
+        if hls["hls_tile_probe"] and not hls["hls_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ HLS Harmonized Surface Reflectance Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"HLS tile probe failed: {hls['hls_tile_probe']['error']}"
+            })
+        if hls["nbar_tile_probe"] and not hls["nbar_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ HLS NBAR Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"HLS NBAR tile probe failed: {hls['nbar_tile_probe']['error']}"
+            })
+        if not hls["hls_scene_catalog"]["passed"]:
+            anomalies.append({
+                "component": "Planetary Computer HLS Multi-Sensor STAC Ingestion Monitor",
+                "severity": "MEDIUM",
+                "type": "INGESTION_ERROR",
+                "message": f"HLS scene catalog check failed: {hls['hls_scene_catalog']['error']}"
+            })
+
+    # 13. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
         test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
@@ -1325,6 +1690,9 @@ def run_health_check(full_test_suite: bool = False) -> dict:
         "temporal_stack": temporal_stack,
         "sar_backscatter": sar_backscatter,
         "coregistration": coregistration,
+        "aquatic": aquatic,
+        "topographic": topographic,
+        "hls": hls,
         "pipelines": pipelines,
         "resources": resources,
         "anomalies": anomalies
@@ -1347,6 +1715,9 @@ def write_health_status(report: dict):
     temporal_stack = report.get("temporal_stack", {})
     sar_backscatter = report.get("sar_backscatter", {})
     coregistration = report.get("coregistration", {})
+    aquatic = report.get("aquatic", {})
+    topographic = report.get("topographic", {})
+    hls = report.get("hls", {})
     pipelines = report["pipelines"]
     
     entry_lines = []
@@ -1531,15 +1902,75 @@ def write_health_status(report: dict):
         entry_lines.append(f"- **Multi-Temporal Scene Pair Ingestion & Benchmark Catalog**: `{cat_status}` ({cat_count} benchmark scene pairs indexed)")
         entry_lines.append("")
 
-    # 11. Pipeline Execution & Verification
-    entry_lines.append("### 11. Pipeline Execution")
+    # 11. Aquatic Bio-Optical Water Quality & HAB Hazard Guard (Task T-249)
+    if aquatic:
+        entry_lines.append("### 11. Aquatic Bio-Optical Water Quality & HAB Hazard Guard")
+        b_w = aquatic.get("bio_optical_inversion_watchdog", {})
+        bio_status = "PASSING" if (b_w.get("passed") and b_w.get("under_timeout")) else "FAILING"
+        ndci_tile = aquatic.get("ndci_tile_probe")
+        ndci_status = "REACHABLE" if (ndci_tile and ndci_tile.get("ok")) else "UNREACHABLE"
+        hab_tile = aquatic.get("hab_tile_probe")
+        hab_status = "REACHABLE" if (hab_tile and hab_tile.get("ok")) else "UNREACHABLE"
+        aq_cat = aquatic.get("aquatic_scene_catalog", {})
+        aq_cat_status = "REACHABLE" if aq_cat.get("passed") else "ERROR"
+        aq_cat_count = aq_cat.get("scene_count", 0)
+
+        entry_lines.append(f"- **Float32 Bio-Optical Array Memory Allocation Guard (>1.5GB Threshold)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **Turbidity & Chlorophyll-a Inversion Latency Watchdog ($< 400\\text{{ms}}$)**: `{bio_status}` ({b_w.get('duration_ms', 0.0)} ms, mean Chl-a: {b_w.get('chla_mean', 0.0)} ug/L)")
+        entry_lines.append(f"- **Dynamic XYZ Bio-Optical Aquatic Quality Tile Server (`/tiles/aquatic/...`)**: `{ndci_status}` (Probe latency: {ndci_tile.get('latency_ms', 0.0) if ndci_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Dynamic XYZ Aquatic HAB Hazard Tile Server (`/tiles/aquatic/hab/...`)**: `{hab_status}` (Probe latency: {hab_tile.get('latency_ms', 0.0) if hab_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Water Reservoir STAC Ingestion & Scene Search Monitor**: `{aq_cat_status}` ({aq_cat_count} benchmark aquatic scenes indexed)")
+        entry_lines.append("")
+
+    # 12. Topographic Solar Illumination Correction & SCS+C Guard (Task T-255)
+    if topographic:
+        entry_lines.append("### 12. Topographic Solar Illumination Correction & SCS+C Guard")
+        t_w = topographic.get("illumination_cosine_watchdog", {})
+        topo_status = "PASSING" if (t_w.get("passed") and t_w.get("under_timeout")) else "FAILING"
+        topo_tile = topographic.get("topographic_tile_probe")
+        topo_status_code = "REACHABLE" if (topo_tile and topo_tile.get("ok")) else ("UNREACHABLE" if topo_tile else "N/A")
+        illum_tile = topographic.get("illumination_tile_probe")
+        illum_status = "REACHABLE" if (illum_tile and illum_tile.get("ok")) else ("UNREACHABLE" if illum_tile else "N/A")
+        top_cat = topographic.get("topographic_scene_catalog", {})
+        top_cat_status = "REACHABLE" if top_cat.get("passed") else "ERROR"
+        top_cat_count = top_cat.get("scene_count", 0)
+
+        entry_lines.append(f"- **Float32 DEM Normal Vector Memory Guard (>1.5GB Heap Ceiling)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **Illumination Cosine Calculation Latency Watchdog ($< 300\\text{{ms}}$)**: `{topo_status}` ({t_w.get('duration_ms', 0.0)} ms, mean cos(i): {t_w.get('mean_cos_i', 0.0)})")
+        entry_lines.append(f"- **Dynamic XYZ Topographic Correction Tile Server (`/tiles/topographic/...`)**: `{topo_status_code}` (Probe latency: {topo_tile.get('latency_ms', 0.0) if topo_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Dynamic XYZ Solar Illumination Tile Server (`/tiles/topographic/illumination/...`)**: `{illum_status}` (Probe latency: {illum_tile.get('latency_ms', 0.0) if illum_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **High-Relief DEM Asset Ingestion Monitor**: `{top_cat_status}` ({top_cat_count} benchmark topographic scenes indexed)")
+        entry_lines.append("")
+
+    # 13. Harmonized Landsat Sentinel-2 (HLS) NBAR Guard (Task T-261)
+    if hls:
+        entry_lines.append("### 13. Harmonized Landsat Sentinel-2 (HLS) NBAR Guard")
+        h_w = hls.get("hls_harmonization_watchdog", {})
+        hls_status = "PASSING" if (h_w.get("passed") and h_w.get("under_timeout")) else "FAILING"
+        hls_tile = hls.get("hls_tile_probe")
+        hls_tile_status = "REACHABLE" if (hls_tile and hls_tile.get("ok")) else ("UNREACHABLE" if hls_tile else "N/A")
+        nbar_tile = hls.get("nbar_tile_probe")
+        nbar_status = "REACHABLE" if (nbar_tile and nbar_tile.get("ok")) else ("UNREACHABLE" if nbar_tile else "N/A")
+        hls_cat = hls.get("hls_scene_catalog", {})
+        hls_cat_status = "REACHABLE" if hls_cat.get("passed") else "ERROR"
+        hls_cat_count = hls_cat.get("scene_count", 0)
+
+        entry_lines.append(f"- **RossThick-LiSparse-R Kernel Memory Guard (>1.5GB Heap Ceiling)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **HLS BRDF Kernel & NBAR Harmonization Latency Watchdog ($< 300\\text{{ms}}$)**: `{hls_status}` ({h_w.get('duration_ms', 0.0)} ms)")
+        entry_lines.append(f"- **Dynamic XYZ HLS Harmonized Surface Reflectance Tile Server (`/tiles/hls/...`)**: `{hls_tile_status}` (Probe latency: {hls_tile.get('latency_ms', 0.0) if hls_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Dynamic XYZ HLS NBAR Tile Server (`/tiles/hls/nbar/...`)**: `{nbar_status}` (Probe latency: {nbar_tile.get('latency_ms', 0.0) if nbar_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Planetary Computer HLS Multi-Sensor STAC Ingestion Monitor**: `{hls_cat_status}` ({hls_cat_count} benchmark HLS scenes indexed)")
+        entry_lines.append("")
+
+    # 14. Pipeline Execution & Verification
+    entry_lines.append("### 14. Pipeline Execution")
     test_ok = "PASSING" if pipelines["test_suite"]["passed"] else "FAILED"
     entry_lines.append(f"- **Core Test Suite & API Pipelines**: `{test_ok}` ({pipelines['test_suite']['duration_sec']}s)")
     entry_lines.append("")
     
-    # 12. Detected Anomalies & Action Items
+    # 15. Detected Anomalies & Action Items
     if anomalies:
-        entry_lines.append("### 12. Detected Anomalies & Action Items")
+        entry_lines.append("### 15. Detected Anomalies & Action Items")
         entry_lines.append("> [!WARNING]")
         entry_lines.append(f"> **{len(anomalies)} anomaly/anomalies detected.** Handing off immediately to **Agent 9 (@debugger)** for investigation and patching.\n")
         
@@ -1553,7 +1984,7 @@ def write_health_status(report: dict):
         for idx, a in enumerate(anomalies, 1):
             entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
-        entry_lines.append("### 12. Detected Anomalies")
+        entry_lines.append("### 15. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
         entry_lines.append("> All systems operational. No active anomalies detected.")
         

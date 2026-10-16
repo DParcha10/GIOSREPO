@@ -1,9 +1,8 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
-  X, Sun, Mountain, Compass, Sliders, Check, AlertTriangle,
-  Activity, Eye, Split, Copy, CheckCircle2, Info, Layers,
-  RefreshCw, Sparkles, ShieldCheck, ArrowRight, Gauge,
-  HelpCircle, ChevronRight
+  X, Sun, Mountain, Compass, Sliders, Check,
+  Activity, Split, Copy, CheckCircle2, Layers,
+  RefreshCw
 } from 'lucide-react';
 import {
   fetchTopographicCorrectionAnalysis,
@@ -11,7 +10,6 @@ import {
 } from '../api/giosApi';
 import {
   TopographicCorrectionMethod,
-  IlluminationCondition,
   TOPOGRAPHIC_METRICS,
   TOPOGRAPHIC_METHOD_CONFIGS,
   TOPOGRAPHIC_BENCHMARK_SCENES,
@@ -59,19 +57,21 @@ export default function TopographicCorrectionModal({
 
   // Benchmark Scene Selection
   const [selectedBenchmarkKey, setSelectedBenchmarkKey] = useState(initialSceneKey);
-  const benchmarkKeys = Object.keys(TOPOGRAPHIC_BENCHMARK_SCENES || {});
-  const activeBenchmark = (TOPOGRAPHIC_BENCHMARK_SCENES && TOPOGRAPHIC_BENCHMARK_SCENES[selectedBenchmarkKey])
-    || (benchmarkKeys.length > 0 ? TOPOGRAPHIC_BENCHMARK_SCENES[benchmarkKeys[0]] : {
-      scene_id: 'S2A_MSIL2A_20260815T185921_T10TEK',
-      name: 'Mount Shasta Stratovolcano (Cascade Range, CA)',
-      collection: 'sentinel-2-l2a',
-      dem_collection: 'cop-dem-glo-30',
-      solar_zenith_deg: 34.2,
-      solar_azimuth_deg: 148.5,
-      solar_elevation_deg: 55.8,
-      typical_c_factors: { B02: 0.12, B03: 0.09, B04: 0.08, B08: 0.06, B11: 0.04 },
-      typical_minnaert_k: { B02: 0.58, B03: 0.62, B04: 0.65, B08: 0.72, B11: 0.78 }
-    });
+  const benchmarkKeys = useMemo(() => Object.keys(TOPOGRAPHIC_BENCHMARK_SCENES || {}), []);
+  const activeBenchmark = useMemo(() => {
+    return (TOPOGRAPHIC_BENCHMARK_SCENES && TOPOGRAPHIC_BENCHMARK_SCENES[selectedBenchmarkKey])
+      || (benchmarkKeys.length > 0 ? TOPOGRAPHIC_BENCHMARK_SCENES[benchmarkKeys[0]] : {
+        scene_id: 'S2A_MSIL2A_20260815T185921_T10TEK',
+        name: 'Mount Shasta Stratovolcano (Cascade Range, CA)',
+        collection: 'sentinel-2-l2a',
+        dem_collection: 'cop-dem-glo-30',
+        solar_zenith_deg: 34.2,
+        solar_azimuth_deg: 148.5,
+        solar_elevation_deg: 55.8,
+        typical_c_factors: { B02: 0.12, B03: 0.09, B04: 0.08, B08: 0.06, B11: 0.04 },
+        typical_minnaert_k: { B02: 0.58, B03: 0.62, B04: 0.65, B08: 0.72, B11: 0.78 }
+      });
+  }, [selectedBenchmarkKey, benchmarkKeys]);
 
   // Scene & Collection Settings
   const [sceneId, setSceneId] = useState(activeBenchmark.scene_id);
@@ -104,6 +104,15 @@ export default function TopographicCorrectionModal({
   const [probeB04Red, setProbeB04Red] = useState(0.076);
   const [probeB08NIR, setProbeB08NIR] = useState(0.245);
   const [probeB11SWIR, setProbeB11SWIR] = useState(0.142);
+
+  // Map band key to state setter for interactive probe
+  const probeSetters = useMemo(() => ({
+    B02: setProbeB02Blue,
+    B03: setProbeB03Green,
+    B04: setProbeB04Red,
+    B08: setProbeB08NIR,
+    B11: setProbeB11SWIR
+  }), []);
 
   // Server Analysis State
   const [executing, setExecuting] = useState(false);
@@ -929,7 +938,20 @@ export default function TopographicCorrectionModal({
                             <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
                             {item.name}
                           </td>
-                          <td className="p-3 text-zinc-400">{item.raw.toFixed(4)}</td>
+                          <td className="p-3 text-zinc-400">
+                            <input
+                              type="number"
+                              min="0.001"
+                              max="1.0"
+                              step="0.005"
+                              value={item.raw}
+                              onChange={(e) => {
+                                const setter = probeSetters[bandKey];
+                                if (setter) setter(parseFloat(e.target.value) || 0.001);
+                              }}
+                              className="w-20 bg-zinc-950 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-white font-mono focus:border-amber-400 focus:outline-none"
+                            />
+                          </td>
                           <td className="p-3 font-bold text-amber-300">{item.corrected.toFixed(4)}</td>
                           <td className="p-3">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${

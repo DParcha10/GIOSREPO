@@ -1153,7 +1153,27 @@ export const API_ENDPOINTS = {
   TILES_TOPOGRAPHIC_CORRECTION: (collection, itemId, z, x, y) => `/api/v1/tiles/topographic/${collection}/${itemId}/${z}/${x}/${y}.png`,
   TILES_TOPOGRAPHIC_CORRECTION_SHORT: (collection, itemId, z, x, y) => `/tiles/topographic/${collection}/${itemId}/${z}/${x}/${y}.png`,
   TILES_TOPOGRAPHIC_ILLUMINATION: (collection, itemId, z, x, y) => `/api/v1/tiles/topographic/illumination/${collection}/${itemId}/${z}/${x}/${y}.png`,
-  TILES_TOPOGRAPHIC_ILLUMINATION_SHORT: (collection, itemId, z, x, y) => `/tiles/topographic/illumination/${collection}/${itemId}/${z}/${x}/${y}.png`
+  TILES_TOPOGRAPHIC_ILLUMINATION_SHORT: (collection, itemId, z, x, y) => `/tiles/topographic/illumination/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  // Cycle v2.5.33: Harmonized Landsat Sentinel-2 (HLS) Principles, NBAR & Cross-Sensor Harmonization Contracts
+  ANALYSIS_HLS_HARMONIZATION: '/api/v1/analysis/hls/harmonization',
+  ANALYSIS_HLS_HARMONIZATION_SHORT: '/analysis/hls/harmonization',
+  ANALYSIS_HLS_BRDF_GEOMETRY: '/api/v1/analysis/hls/brdf-geometry',
+  ANALYSIS_HLS_BRDF_GEOMETRY_SHORT: '/analysis/hls/brdf-geometry',
+  ANALYSIS_HLS_BANDPASS: '/api/v1/analysis/hls/bandpass',
+  ANALYSIS_HLS_BANDPASS_SHORT: '/analysis/hls/bandpass',
+  TILES_HLS: (collection, itemId, z, x, y) => `/api/v1/tiles/hls/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  TILES_HLS_SHORT: (collection, itemId, z, x, y) => `/tiles/hls/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  TILES_HLS_NBAR: (collection, itemId, z, x, y) => `/api/v1/tiles/hls/nbar/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  TILES_HLS_NBAR_SHORT: (collection, itemId, z, x, y) => `/tiles/hls/nbar/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  // Cycle v2.5.34: Land Surface Temperature (LST) Physics, Split-Window / RTE & Thermal Anomaly Inversion Contracts
+  ANALYSIS_THERMAL_LST: '/api/v1/analysis/thermal/lst',
+  ANALYSIS_THERMAL_LST_SHORT: '/analysis/thermal/lst',
+  ANALYSIS_THERMAL_EMISSIVITY: '/api/v1/analysis/thermal/emissivity',
+  ANALYSIS_THERMAL_EMISSIVITY_SHORT: '/analysis/thermal/emissivity',
+  ANALYSIS_THERMAL_ANOMALY: '/api/v1/analysis/thermal/anomaly',
+  ANALYSIS_THERMAL_ANOMALY_SHORT: '/analysis/thermal/anomaly',
+  TILES_THERMAL_ANOMALY: (collection, itemId, z, x, y) => `/api/v1/tiles/thermal/anomaly/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  TILES_THERMAL_ANOMALY_SHORT: (collection, itemId, z, x, y) => `/tiles/thermal/anomaly/${collection}/${itemId}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1481,6 +1501,26 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         return endpoint(
           params.collection || 'sentinel-2-l2a',
           params.itemId || params.item_id || params.scene_id || params.sceneId || 'S2A_MSIL2A_20260815_MT_SHASTA',
+          params.z,
+          params.x,
+          params.y
+        );
+      case 'TILES_HLS':
+      case 'TILES_HLS_SHORT':
+      case 'TILES_HLS_NBAR':
+      case 'TILES_HLS_NBAR_SHORT':
+        return endpoint(
+          params.collection || 'landsat-c2-l2',
+          params.itemId || params.item_id || params.scene_id || params.sceneId || 'LC09_L2SP_044034_20260718_02_T1',
+          params.z,
+          params.x,
+          params.y
+        );
+      case 'TILES_THERMAL_ANOMALY':
+      case 'TILES_THERMAL_ANOMALY_SHORT':
+        return endpoint(
+          params.collection || 'landsat-c2-l2',
+          params.itemId || params.item_id || params.scene_id || params.sceneId || 'LC09_L2SP_039037_20260715_02_T1',
           params.z,
           params.x,
           params.y
@@ -22533,8 +22573,1392 @@ export const buildTopographicIlluminationTileUrlTemplate = (options = {}) => {
   return params.length > 0 ? `${base}?${params.join('&')}` : base;
 };
 
+// ==============================================================================
+// Cycle v2.5.33: Harmonized Landsat Sentinel-2 (HLS) Principles, NBAR & Cross-Sensor Harmonization Models
+// ==============================================================================
+
+/**
+ * Satellite optical sensors harmonized within the HLS processing framework.
+ */
+export const HlsSensorType = {
+  LANDSAT_OLI: 'landsat_oli',          // Landsat-8/9 Operational Land Imager (OLI)
+  SENTINEL_MSI: 'sentinel_msi',        // Sentinel-2A/2B Multi-Spectral Instrument (MSI)
+  HARMONIZED_HLS: 'harmonized_hls'    // Fully cross-sensor harmonized NBAR surface reflectance
+};
+export const HLS_SENSOR_TYPES = HlsSensorType;
+
+/**
+ * Semi-empirical BRDF kernel models for Nadir BRDF-Adjusted Reflectance (NBAR).
+ */
+export const BrdfKernelModel = {
+  ROSSTHICK_LISPARSE_R: 'rossthick_lisparse_r', // Standard HLS Roujean/Wanner RossThick volumetric + LiSparse-R geometric
+  NONE: 'none',                                  // Unadjusted observed surface reflectance (directional BOA)
+  LAMBERTIAN: 'lambertian'                      // Isotropic Lambertian model without directional kernel corrections
+};
+export const BRDF_KERNEL_MODEL_TYPES = BrdfKernelModel;
+
+// Augment existing BRDF_KERNEL_MODELS array with enum properties for dual object/array access
+BRDF_KERNEL_MODELS.ROSSTHICK_LISPARSE_R = 'rossthick_lisparse_r';
+BRDF_KERNEL_MODELS.NONE = 'none';
+BRDF_KERNEL_MODELS.LAMBERTIAN = 'lambertian';
+
+/**
+ * Processing stages of Harmonized Landsat Sentinel-2 reflectance.
+ */
+export const HlsHarmonizationStage = {
+  RAW: 'raw',                              // Raw top-of-canopy / surface reflectance (BOA)
+  NBAR: 'nbar',                            // Nadir BRDF-Adjusted Reflectance (normalized to theta_v=0, theta_s=45)
+  SPECTRAL_ADJUSTED: 'spectral_adjusted',  // Spectral bandpass adjusted reflectance
+  HARMONIZED: 'harmonized'                // Fully harmonized (NBAR + cross-sensor bandpass adjusted)
+};
+export const HLS_HARMONIZATION_STAGES = HlsHarmonizationStage;
+
+/**
+ * Raster metrics produced by Harmonized Landsat Sentinel-2 pipelines.
+ */
+export const HlsMetric = {
+  HARMONIZED_REFLECTANCE: 'harmonized_reflectance', // Fully harmonized surface reflectance (MSI-equivalent NBAR)
+  NBAR_REFLECTANCE: 'nbar_reflectance',             // Nadir BRDF-Adjusted Reflectance
+  BRDF_ADJUSTMENT_FACTOR: 'brdf_adjustment_factor', // Ratio c = rho(target) / rho(observed)
+  VOLUMETRIC_KERNEL: 'volumetric_kernel',           // RossThick volumetric kernel k_vol
+  GEOMETRIC_KERNEL: 'geometric_kernel',             // LiSparse-R geometric kernel k_geo
+  BANDPASS_DIFFERENCE: 'bandpass_difference',       // Delta rho = rho_MSI - rho_OLI
+  NDVI: 'ndvi',                                     // Normalized Difference Vegetation Index from harmonized bands
+  EVI: 'evi'                                       // Enhanced Vegetation Index from harmonized bands
+};
+export const HLS_METRICS = HlsMetric;
+
+/**
+ * Claverie et al. (2018) Table 1 linear transformation coefficients: rho_MSI = c0 + c1 * rho_OLI
+ */
+export const HLS_BANDPASS_COEFFICIENTS = {
+  coastal: { c0: -0.0002, c1: 0.9959, r_squared: 0.998, rmse: 0.0055, oli_band: 'B1', msi_band: 'B01', name: 'Coastal Aerosol' },
+  blue: { c0: 0.0003, c1: 0.9778, r_squared: 0.997, rmse: 0.0062, oli_band: 'B2', msi_band: 'B02', name: 'Blue' },
+  green: { c0: 0.0008, c1: 1.0053, r_squared: 0.998, rmse: 0.0058, oli_band: 'B3', msi_band: 'B03', name: 'Green' },
+  red: { c0: 0.0019, c1: 0.9765, r_squared: 0.998, rmse: 0.0060, oli_band: 'B4', msi_band: 'B04', name: 'Red' },
+  nir: { c0: -0.0001, c1: 0.9983, r_squared: 0.999, rmse: 0.0045, oli_band: 'B5', msi_band: 'B8A', name: 'Near Infrared' },
+  swir1: { c0: 0.0004, c1: 0.9987, r_squared: 0.999, rmse: 0.0041, oli_band: 'B6', msi_band: 'B11', name: 'Short-Wave Infrared 1' },
+  swir2: { c0: 0.0000, c1: 1.0030, r_squared: 0.999, rmse: 0.0039, oli_band: 'B7', msi_band: 'B12', name: 'Short-Wave Infrared 2' },
+  // Band code aliases
+  B01: { c0: -0.0002, c1: 0.9959, r_squared: 0.998, rmse: 0.0055, oli_band: 'B1', msi_band: 'B01', name: 'Coastal Aerosol' },
+  B02: { c0: 0.0003, c1: 0.9778, r_squared: 0.997, rmse: 0.0062, oli_band: 'B2', msi_band: 'B02', name: 'Blue' },
+  B03: { c0: 0.0008, c1: 1.0053, r_squared: 0.998, rmse: 0.0058, oli_band: 'B3', msi_band: 'B03', name: 'Green' },
+  B04: { c0: 0.0019, c1: 0.9765, r_squared: 0.998, rmse: 0.0060, oli_band: 'B4', msi_band: 'B04', name: 'Red' },
+  B05: { c0: -0.0001, c1: 0.9983, r_squared: 0.999, rmse: 0.0045, oli_band: 'B5', msi_band: 'B8A', name: 'Near Infrared' },
+  B06: { c0: 0.0004, c1: 0.9987, r_squared: 0.999, rmse: 0.0041, oli_band: 'B6', msi_band: 'B11', name: 'Short-Wave Infrared 1' },
+  B07: { c0: 0.0000, c1: 1.0030, r_squared: 0.999, rmse: 0.0039, oli_band: 'B7', msi_band: 'B12', name: 'Short-Wave Infrared 2' },
+  B08: { c0: -0.0001, c1: 0.9983, r_squared: 0.999, rmse: 0.0045, oli_band: 'B5', msi_band: 'B8A', name: 'Near Infrared Broad' },
+  B8A: { c0: -0.0001, c1: 0.9983, r_squared: 0.999, rmse: 0.0045, oli_band: 'B5', msi_band: 'B8A', name: 'Near Infrared Narrow' },
+  B11: { c0: 0.0004, c1: 0.9987, r_squared: 0.999, rmse: 0.0041, oli_band: 'B6', msi_band: 'B11', name: 'Short-Wave Infrared 1' },
+  B12: { c0: 0.0000, c1: 1.0030, r_squared: 0.999, rmse: 0.0039, oli_band: 'B7', msi_band: 'B12', name: 'Short-Wave Infrared 2' }
+};
+
+/**
+ * Fixed global BRDF spectral shape coefficients (Roy et al., 2016; Claverie et al., 2018)
+ */
+export const HLS_BRDF_SPECTRAL_PARAMETERS = {
+  coastal: { f_iso: 0.0774, f_vol: 0.0372, f_geo: 0.0079 },
+  blue: { f_iso: 0.0774, f_vol: 0.0372, f_geo: 0.0079 },
+  green: { f_iso: 0.1306, f_vol: 0.0580, f_geo: 0.0178 },
+  red: { f_iso: 0.1690, f_vol: 0.0574, f_geo: 0.0227 },
+  nir: { f_iso: 0.3093, f_vol: 0.1535, f_geo: 0.0330 },
+  swir1: { f_iso: 0.3430, f_vol: 0.1154, f_geo: 0.0453 },
+  swir2: { f_iso: 0.2658, f_vol: 0.0639, f_geo: 0.0387 },
+  default: { f_iso: 1.0000, f_vol: 0.5000, f_geo: 0.1000 },
+  // Band code aliases
+  B01: { f_iso: 0.0774, f_vol: 0.0372, f_geo: 0.0079 },
+  B02: { f_iso: 0.0774, f_vol: 0.0372, f_geo: 0.0079 },
+  B03: { f_iso: 0.1306, f_vol: 0.0580, f_geo: 0.0178 },
+  B04: { f_iso: 0.1690, f_vol: 0.0574, f_geo: 0.0227 },
+  B05: { f_iso: 0.3093, f_vol: 0.1535, f_geo: 0.0330 },
+  B08: { f_iso: 0.3093, f_vol: 0.1535, f_geo: 0.0330 },
+  B8A: { f_iso: 0.3093, f_vol: 0.1535, f_geo: 0.0330 },
+  B11: { f_iso: 0.3430, f_vol: 0.1154, f_geo: 0.0453 },
+  B12: { f_iso: 0.2658, f_vol: 0.0639, f_geo: 0.0387 }
+};
+
+/**
+ * Calibrated HLS Benchmark Scenes across canonical MGRS tiles.
+ */
+export const HLS_BENCHMARK_SCENES = {
+  MGRS_10TFK_SAN_FRANCISCO_2026: {
+    id: 'MGRS_10TFK_SAN_FRANCISCO_2026',
+    name: 'San Francisco Bay Area, California',
+    mgrs_tile: '10TFK',
+    description: 'MGRS 10TFK coastal urban and agricultural transition zone with Sentinel-2 MSI and Landsat-9 OLI overlap.',
+    landsat_scene_id: 'LC09_L2SP_044034_20260718_02_T1',
+    sentinel_scene_id: 'S2A_MSIL2A_20260719T184921_N0500_R113_T10TFK',
+    center: [37.7749, -122.4194],
+    mean_solar_zenith_deg: 28.5,
+    mean_solar_azimuth_deg: 134.2,
+    mean_view_zenith_deg: 4.8,
+    mean_view_azimuth_deg: 102.5,
+    target_solar_zenith_deg: 45.0,
+    target_view_zenith_deg: 0.0
+  },
+  MGRS_14TPP_SALINA_KANSAS_2026: {
+    id: 'MGRS_14TPP_SALINA_KANSAS_2026',
+    name: 'Salina Agricultural Transect, Kansas',
+    mgrs_tile: '14TPP',
+    description: 'MGRS 14TPP Great Plains agricultural cropland optimal for BRDF anisotropy characterization and cross-sensor normalization.',
+    landsat_scene_id: 'LC08_L2SP_029033_20260802_02_T1',
+    sentinel_scene_id: 'S2B_MSIL2A_20260803T170029_N0500_R069_T14TPP',
+    center: [38.8403, -97.6114],
+    mean_solar_zenith_deg: 31.2,
+    mean_solar_azimuth_deg: 141.0,
+    mean_view_zenith_deg: 6.2,
+    mean_view_azimuth_deg: 98.4,
+    target_solar_zenith_deg: 45.0,
+    target_view_zenith_deg: 0.0
+  },
+  MGRS_32UMU_MUNICH_BAVARIA_2026: {
+    id: 'MGRS_32UMU_MUNICH_BAVARIA_2026',
+    name: 'Munich & Bavarian Foreland, Germany',
+    mgrs_tile: '32UMU',
+    description: 'MGRS 32UMU Central European temperate agricultural and mixed forest canopy cross-sensor validation zone.',
+    landsat_scene_id: 'LC09_L2SP_193026_20260625_02_T1',
+    sentinel_scene_id: 'S2A_MSIL2A_20260626T101031_N0500_R022_T32UMU',
+    center: [48.1351, 11.5820],
+    mean_solar_zenith_deg: 26.8,
+    mean_solar_azimuth_deg: 152.3,
+    mean_view_zenith_deg: 5.1,
+    mean_view_azimuth_deg: 105.7,
+    target_solar_zenith_deg: 45.0,
+    target_view_zenith_deg: 0.0
+  }
+};
+
+/**
+ * Standard default geometry parameters for HLS BRDF normalization.
+ */
+export const DEFAULT_HLS_GEOMETRY = {
+  solar_zenith_deg: 30.0,
+  solar_azimuth_deg: 135.0,
+  view_zenith_deg: 5.0,
+  view_azimuth_deg: 100.0,
+  relative_azimuth_deg: 35.0,
+  target_solar_zenith_deg: 45.0,
+  target_view_zenith_deg: 0.0
+};
+
+/**
+ * Calculates the RossThick volumetric scattering BRDF kernel (Roujean et al. 1992, Wanner et al. 1995).
+ * 
+ * @param {number} solarZenithDeg - Solar zenith angle theta_s in degrees
+ * @param {number} viewZenithDeg - Sensor view zenith angle theta_v in degrees
+ * @param {number} relativeAzimuthDeg - Relative azimuth angle phi in degrees
+ * @returns {number} RossThick volumetric kernel k_vol
+ */
+export const calculateRossThickVolumetricKernel = (solarZenithDeg, viewZenithDeg, relativeAzimuthDeg) => {
+  const ts = (Math.max(0.0, Math.min(89.5, Number(solarZenithDeg))) * Math.PI) / 180.0;
+  const tv = (Math.max(0.0, Math.min(89.5, Number(viewZenithDeg))) * Math.PI) / 180.0;
+  const phi = (Number(relativeAzimuthDeg) * Math.PI) / 180.0;
+
+  const cosXi = Math.max(-1.0, Math.min(1.0, Math.cos(ts) * Math.cos(tv) + Math.sin(ts) * Math.sin(tv) * Math.cos(phi)));
+  const xi = Math.acos(cosXi);
+
+  const denom = Math.cos(ts) + Math.cos(tv);
+  if (denom <= 1e-7) return 0.0;
+  const numer = (Math.PI / 2.0 - xi) * cosXi + Math.sin(xi);
+  return (numer / denom) - (Math.PI / 4.0);
+};
+
+/**
+ * Calculates the LiSparse-R reciprocal geometric shadow-casting BRDF kernel (Wanner et al. 1995).
+ * 
+ * @param {number} solarZenithDeg - Solar zenith angle theta_s in degrees
+ * @param {number} viewZenithDeg - Sensor view zenith angle theta_v in degrees
+ * @param {number} relativeAzimuthDeg - Relative azimuth angle phi in degrees
+ * @param {number} [crownRatio=1.0] - Crown shape ratio b/r
+ * @param {number} [shapeRatio=2.0] - Tree height-to-crown ratio h/b
+ * @returns {number} LiSparse-R geometric kernel k_geo
+ */
+export const calculateLiSparseGeometricKernel = (
+  solarZenithDeg,
+  viewZenithDeg,
+  relativeAzimuthDeg,
+  crownRatio = 1.0,
+  shapeRatio = 2.0
+) => {
+  const ts = (Math.max(0.0, Math.min(89.5, Number(solarZenithDeg))) * Math.PI) / 180.0;
+  const tv = (Math.max(0.0, Math.min(89.5, Number(viewZenithDeg))) * Math.PI) / 180.0;
+  const phi = (Number(relativeAzimuthDeg) * Math.PI) / 180.0;
+
+  const br = Math.max(1e-4, Number(crownRatio));
+  const hb = Math.max(1e-4, Number(shapeRatio));
+
+  const tanTsPrime = br * Math.tan(ts);
+  const tanTvPrime = br * Math.tan(tv);
+
+  const tsPrime = Math.atan(tanTsPrime);
+  const tvPrime = Math.atan(tanTvPrime);
+
+  const cosTsPrime = Math.cos(tsPrime);
+  const cosTvPrime = Math.cos(tvPrime);
+  const sinTsPrime = Math.sin(tsPrime);
+  const sinTvPrime = Math.sin(tvPrime);
+
+  const cosXiPrime = Math.max(-1.0, Math.min(1.0, cosTsPrime * cosTvPrime + sinTsPrime * sinTvPrime * Math.cos(phi)));
+
+  const secTsPrime = 1.0 / Math.max(1e-6, cosTsPrime);
+  const secTvPrime = 1.0 / Math.max(1e-6, cosTvPrime);
+
+  const dSq = tanTsPrime ** 2 + tanTvPrime ** 2 - 2.0 * tanTsPrime * tanTvPrime * Math.cos(phi);
+
+  const term = Math.sqrt(Math.max(0.0, dSq + (tanTsPrime * tanTvPrime * Math.sin(phi)) ** 2));
+  const cosT = Math.max(-1.0, Math.min(1.0, (hb * term) / (secTsPrime + secTvPrime)));
+  const t = Math.acos(cosT);
+
+  const overlap = (1.0 / Math.PI) * (t - Math.sin(t) * Math.cos(t)) * (secTsPrime + secTvPrime);
+  const kGeo = overlap - secTsPrime - secTvPrime + 0.5 * (1.0 + cosXiPrime) * secTsPrime * secTvPrime;
+  return kGeo;
+};
+
+/**
+ * Calculates the Nadir BRDF-Adjusted Reflectance (NBAR) scaling factor c = rho_target / rho_observed.
+ * 
+ * @param {number} solarZenithDeg - Observed solar zenith angle
+ * @param {number} viewZenithDeg - Observed sensor view zenith angle
+ * @param {number} relativeAzimuthDeg - Observed relative azimuth angle
+ * @param {number} [targetSolarZenithDeg=45.0] - Target solar zenith angle
+ * @param {number} [targetViewZenithDeg=0.0] - Target view zenith angle
+ * @param {string} [band='red'] - Spectral band name or code
+ * @param {number|null} [fIso=null] - Optional f_iso parameter override
+ * @param {number|null} [fVol=null] - Optional f_vol parameter override
+ * @param {number|null} [fGeo=null] - Optional f_geo parameter override
+ * @returns {number} NBAR scaling factor c
+ */
+export const calculateNbarBrdfFactor = (
+  solarZenithDeg,
+  viewZenithDeg,
+  relativeAzimuthDeg,
+  targetSolarZenithDeg = 45.0,
+  targetViewZenithDeg = 0.0,
+  band = 'red',
+  fIso = null,
+  fVol = null,
+  fGeo = null
+) => {
+  const bKey = String(band).toLowerCase();
+  const spec = HLS_BRDF_SPECTRAL_PARAMETERS[bKey] || HLS_BRDF_SPECTRAL_PARAMETERS[String(band).toUpperCase()] || HLS_BRDF_SPECTRAL_PARAMETERS.default;
+  const iso = fIso !== null && fIso !== undefined ? Number(fIso) : spec.f_iso;
+  const vol = fVol !== null && fVol !== undefined ? Number(fVol) : spec.f_vol;
+  const geo = fGeo !== null && fGeo !== undefined ? Number(fGeo) : spec.f_geo;
+
+  const kVolObs = calculateRossThickVolumetricKernel(solarZenithDeg, viewZenithDeg, relativeAzimuthDeg);
+  const kGeoObs = calculateLiSparseGeometricKernel(solarZenithDeg, viewZenithDeg, relativeAzimuthDeg);
+  const rhoObs = iso + vol * kVolObs + geo * kGeoObs;
+
+  const kVolTgt = calculateRossThickVolumetricKernel(targetSolarZenithDeg, targetViewZenithDeg, 0.0);
+  const kGeoTgt = calculateLiSparseGeometricKernel(targetSolarZenithDeg, targetViewZenithDeg, 0.0);
+  const rhoTgt = iso + vol * kVolTgt + geo * kGeoTgt;
+
+  if (rhoObs <= 1e-6) return 1.0;
+  const cBrdf = rhoTgt / rhoObs;
+  return Math.max(0.5, Math.min(2.0, cBrdf));
+};
+
+/**
+ * Applies semi-empirical RossThick-LiSparse-R NBAR normalization to observed surface reflectance.
+ * 
+ * @param {number} reflectance - Observed surface reflectance
+ * @param {number} solarZenithDeg - Solar zenith angle in degrees
+ * @param {number} viewZenithDeg - Sensor view zenith angle in degrees
+ * @param {number} relativeAzimuthDeg - Relative azimuth angle in degrees
+ * @param {number} [targetSolarZenithDeg=45.0] - Target solar zenith in degrees
+ * @param {number} [targetViewZenithDeg=0.0] - Target view zenith in degrees
+ * @param {string} [band='red'] - Spectral band designation
+ * @returns {number} NBAR normalized reflectance
+ */
+export const applyNbarNormalization = (
+  reflectance,
+  solarZenithDeg,
+  viewZenithDeg,
+  relativeAzimuthDeg,
+  targetSolarZenithDeg = 45.0,
+  targetViewZenithDeg = 0.0,
+  band = 'red'
+) => {
+  if (typeof reflectance !== 'number' || isNaN(reflectance)) return NaN;
+  const cFactor = calculateNbarBrdfFactor(
+    solarZenithDeg,
+    viewZenithDeg,
+    relativeAzimuthDeg,
+    targetSolarZenithDeg,
+    targetViewZenithDeg,
+    band
+  );
+  return Math.max(0.0, reflectance * cFactor);
+};
+
+/**
+ * Applies cross-sensor spectral bandpass adjustment (Claverie et al. 2018).
+ * 
+ * @param {number} reflectance - Input surface reflectance
+ * @param {string} band - Spectral band key
+ * @param {string} [sourceSensor='landsat_oli'] - Source sensor type
+ * @param {string} [targetSensor='sentinel_msi'] - Target sensor type
+ * @returns {number} Spectrally adjusted reflectance
+ */
+export const applyCrossSensorBandpassAdjustment = (
+  reflectance,
+  band,
+  sourceSensor = 'landsat_oli',
+  targetSensor = 'sentinel_msi'
+) => {
+  if (typeof reflectance !== 'number' || isNaN(reflectance)) return NaN;
+
+  const src = typeof sourceSensor === 'object' && sourceSensor?.value ? sourceSensor.value : String(sourceSensor).toLowerCase();
+  const tgt = typeof targetSensor === 'object' && targetSensor?.value ? targetSensor.value : String(targetSensor).toLowerCase();
+
+  if (src === tgt || (src === 'landsat_oli' && tgt === 'landsat_oli') || (src === 'sentinel_msi' && tgt === 'sentinel_msi')) {
+    return Math.max(0.0, reflectance);
+  }
+
+  const bKey = String(band).toLowerCase();
+  const coef = HLS_BANDPASS_COEFFICIENTS[bKey] || HLS_BANDPASS_COEFFICIENTS[String(band).toUpperCase()];
+
+  if (!coef) return Math.max(0.0, reflectance);
+
+  const { c0, c1 } = coef;
+  let rhoAdj = reflectance;
+
+  if (src === 'landsat_oli' && (tgt === 'sentinel_msi' || tgt === 'harmonized_hls')) {
+    rhoAdj = c0 + c1 * reflectance;
+  } else if (src === 'sentinel_msi' && tgt === 'landsat_oli') {
+    rhoAdj = Math.abs(c1) > 1e-6 ? (reflectance - c0) / c1 : reflectance;
+  }
+
+  return Math.max(0.0, rhoAdj);
+};
+
+/**
+ * Executes full Harmonized Landsat Sentinel-2 (HLS) transformation (NBAR + Bandpass adjustment).
+ * 
+ * @param {number} reflectance - Observed surface reflectance
+ * @param {string} band - Spectral band identifier
+ * @param {number} solarZenithDeg - Solar zenith angle
+ * @param {number} viewZenithDeg - View zenith angle
+ * @param {number} relativeAzimuthDeg - Relative azimuth angle
+ * @param {string} [sourceSensor='landsat_oli'] - Source sensor
+ * @param {string} [targetSensor='sentinel_msi'] - Target sensor
+ * @param {number} [targetSolarZenithDeg=45.0] - Target solar zenith
+ * @param {number} [targetViewZenithDeg=0.0] - Target view zenith
+ * @param {boolean} [applyBandpass=true] - Whether to apply spectral bandpass adjustment
+ * @returns {number} Fully harmonized surface reflectance
+ */
+export const applyHlsHarmonization = (
+  reflectance,
+  band,
+  solarZenithDeg,
+  viewZenithDeg,
+  relativeAzimuthDeg,
+  sourceSensor = 'landsat_oli',
+  targetSensor = 'sentinel_msi',
+  targetSolarZenithDeg = 45.0,
+  targetViewZenithDeg = 0.0,
+  applyBandpass = true
+) => {
+  if (typeof reflectance !== 'number' || isNaN(reflectance)) return NaN;
+
+  const rhoNbar = applyNbarNormalization(
+    reflectance,
+    solarZenithDeg,
+    viewZenithDeg,
+    relativeAzimuthDeg,
+    targetSolarZenithDeg,
+    targetViewZenithDeg,
+    band
+  );
+
+  if (applyBandpass) {
+    return applyCrossSensorBandpassAdjustment(rhoNbar, band, sourceSensor, targetSensor);
+  }
+  return rhoNbar;
+};
+
+/**
+ * Builds dynamic XYZ tile streaming URL for Harmonized Landsat Sentinel-2 imagery.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Dynamic XYZ tile URL
+ */
+export const buildHlsTileUrl = (options = {}) => {
+  const {
+    collection = 'landsat-c2-l2',
+    itemId = 'LC09_L2SP_044034_20260718_02_T1',
+    z = 0,
+    x = 0,
+    y = 0,
+    metric = 'harmonized_reflectance',
+    stage = 'harmonized',
+    sensor = null,
+    targetSolarZenith = null,
+    colormap = null,
+    rescale = null
+  } = options;
+
+  const metStr = typeof metric === 'object' && metric?.value ? metric.value : String(metric).toLowerCase();
+  const stgStr = typeof stage === 'object' && stage?.value ? stage.value : String(stage).toLowerCase();
+  const base = `/api/v1/tiles/hls/${collection}/${itemId}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (metStr !== 'harmonized_reflectance') params.push(`metric=${metStr}`);
+  if (stgStr !== 'harmonized') params.push(`stage=${stgStr}`);
+  if (sensor) {
+    const sStr = typeof sensor === 'object' && sensor?.value ? sensor.value : String(sensor).toLowerCase();
+    params.push(`sensor=${sStr}`);
+  }
+  if (targetSolarZenith !== null && targetSolarZenith !== undefined && Number(targetSolarZenith) !== 45.0) {
+    params.push(`target_solar_zenith=${targetSolarZenith}`);
+  }
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) {
+    const rStr = Array.isArray(rescale) ? `${rescale[0]},${rescale[1]}` : String(rescale);
+    params.push(`rescale=${rStr}`);
+  }
+
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for Harmonized Landsat Sentinel-2 raster tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildHlsTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'landsat-c2-l2',
+    itemId = 'LC09_L2SP_044034_20260718_02_T1',
+    metric = 'harmonized_reflectance',
+    stage = 'harmonized',
+    sensor = null,
+    colormap = null,
+    rescale = null
+  } = options;
+
+  const metStr = typeof metric === 'object' && metric?.value ? metric.value : String(metric).toLowerCase();
+  const stgStr = typeof stage === 'object' && stage?.value ? stage.value : String(stage).toLowerCase();
+  const base = `/api/v1/tiles/hls/${collection}/${itemId}/{z}/{x}/{y}.png`;
+  const params = [];
+  if (metStr !== 'harmonized_reflectance') params.push(`metric=${metStr}`);
+  if (stgStr !== 'harmonized') params.push(`stage=${stgStr}`);
+  if (sensor) {
+    const sStr = typeof sensor === 'object' && sensor?.value ? sensor.value : String(sensor).toLowerCase();
+    params.push(`sensor=${sStr}`);
+  }
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) {
+    const rStr = Array.isArray(rescale) ? `${rescale[0]},${rescale[1]}` : String(rescale);
+    params.push(`rescale=${rStr}`);
+  }
+
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for NBAR normalized surface reflectance tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildHlsNbarTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'landsat-c2-l2',
+    itemId = 'LC09_L2SP_044034_20260718_02_T1',
+    targetSolarZenith = null
+  } = options;
+
+  const base = `/api/v1/tiles/hls/nbar/${collection}/${itemId}/{z}/{x}/{y}.png`;
+  const params = [];
+  if (targetSolarZenith !== null && targetSolarZenith !== undefined && Number(targetSolarZenith) !== 45.0) {
+    params.push(`target_solar_zenith=${targetSolarZenith}`);
+  }
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
 
 
+// ============================================================================
+// CYCLE v2.5.34 (TASK T-264): LAND SURFACE TEMPERATURE (LST) PHYSICS,
+// SPLIT-WINDOW & RADIATIVE TRANSFER EQUATION (RTE), FRACTIONAL VEGETATION
+// COVER (FVC), LAND SURFACE EMISSIVITY (LSE) & THERMAL ANOMALY INVERSION
+// ============================================================================
 
+/**
+ * Calibrated thermal infrared sensor platforms.
+ */
+export const ThermalSensorType = {
+  LANDSAT_TIRS: 'landsat_tirs',       // Landsat 8/9 TIRS Band 10 & Band 11
+  SENTINEL3_SLSTR: 'sentinel3_slstr', // Sentinel-3 SLSTR S8 & S9 split-window
+  MODIS_THERMAL: 'modis_thermal',     // Terra/Aqua MODIS Band 31/32
+  ECOSTRESS: 'ecostress'              // ISS ECOSTRESS 5-band thermal infrared
+};
+export const THERMAL_SENSOR_TYPES = ThermalSensorType;
 
+/**
+ * Radiometric Land Surface Temperature retrieval algorithm models.
+ */
+export const LstAlgorithmModel = {
+  STATISTICAL_MONO_WINDOW: 'statistical_mono_window',         // SMW (Ermida et al., 2020)
+  RADIATIVE_TRANSFER_EQUATION: 'radiative_transfer_equation', // RTE single-channel (Sobrino et al., 2004)
+  SPLIT_WINDOW: 'split_window',                               // Dual-band split-window (Jimenez-Munoz et al., 2014)
+  ARTIS_CARNAHAN_SINGLE_CHANNEL: 'artis_carnahan_single_channel', // Artis & Carnahan (1982) Planck inversion
+  MONO_WINDOW: 'mono_window'                                 // Qin et al. (2001) mono-window
+};
+export const LST_ALGORITHM_MODELS = LstAlgorithmModel;
+
+/**
+ * Thermal hazard and temperature anomaly classification tiers.
+ */
+export const ThermalAnomalySeverity = {
+  NOMINAL: 'nominal',                                 // Delta T < 1.5 C (within seasonal ambient norm)
+  MILD_THERMAL_ANOMALY: 'mild_thermal_anomaly',       // 1.5 C <= Delta T < 3.5 C (minor thermal elevation)
+  MODERATE_THERMAL_ANOMALY: 'moderate_thermal_anomaly', // 3.5 C <= Delta T < 6.0 C (significant geothermal/industrial flux)
+  SEVERE_THERMAL_ANOMALY: 'severe_thermal_anomaly',   // 6.0 C <= Delta T < 10.0 C (intense heat island / subsurface smolder)
+  EXTREME_WILDFIRE_HOTSPOT: 'extreme_wildfire_hotspot' // Delta T >= 10.0 C (active flame front or volcanic eruption)
+};
+export const THERMAL_ANOMALY_SEVERITIES = ThermalAnomalySeverity;
+
+/**
+ * Analytical metrics derived from thermal infrared inversion.
+ */
+export const ThermalMetric = {
+  LST_CELSIUS: 'lst_celsius',                         // Kinetic Land Surface Temperature in Celsius
+  LST_KELVIN: 'lst_kelvin',                           // Kinetic Land Surface Temperature in Kelvin
+  BRIGHTNESS_TEMPERATURE: 'brightness_temperature',   // At-sensor Top-Of-Atmosphere brightness temperature in Celsius
+  LAND_SURFACE_EMISSIVITY: 'land_surface_emissivity', // Narrow-band surface emissivity (0.85 - 1.0)
+  FRACTIONAL_VEGETATION_COVER: 'fractional_vegetation_cover', // Fractional vegetation cover FVC (0.0 - 1.0)
+  THERMAL_ANOMALY_DELTA: 'thermal_anomaly_delta',     // Temperature delta Delta T = T_s - T_ambient in Celsius
+  UHI_INTENSITY: 'uhi_intensity'                     // Surface Urban Heat Island intensity relative to rural baseline
+};
+export const THERMAL_METRICS = ThermalMetric;
+
+/**
+ * Thermal Sensor Calibration & Planck Inversion Coefficients
+ */
+export const THERMAL_CALIBRATION_COEFFICIENTS = {
+  landsat_8_tirs_b10: {
+    k1: 774.8853,
+    k2: 1321.0789,
+    wavelength_um: 10.895,
+    bandwidth_um: 0.59,
+    radiance_mult: 0.0003342,
+    radiance_add: 0.10000,
+    sensor: 'landsat_tirs',
+    band: 'B10'
+  },
+  landsat_8_tirs_b11: {
+    k1: 480.8883,
+    k2: 1201.1442,
+    wavelength_um: 12.005,
+    bandwidth_um: 1.01,
+    radiance_mult: 0.0003342,
+    radiance_add: 0.10000,
+    sensor: 'landsat_tirs',
+    band: 'B11'
+  },
+  landsat_9_tirs_b10: {
+    k1: 799.0284,
+    k2: 1329.2405,
+    wavelength_um: 10.895,
+    bandwidth_um: 0.59,
+    radiance_mult: 0.0003342,
+    radiance_add: 0.10000,
+    sensor: 'landsat_tirs',
+    band: 'B10'
+  },
+  landsat_9_tirs_b11: {
+    k1: 499.0152,
+    k2: 1210.1548,
+    wavelength_um: 12.005,
+    bandwidth_um: 1.01,
+    radiance_mult: 0.0003342,
+    radiance_add: 0.10000,
+    sensor: 'landsat_tirs',
+    band: 'B11'
+  },
+  sentinel_3_slstr_s8: {
+    k1: 606.12,
+    k2: 1308.20,
+    wavelength_um: 10.85,
+    sensor: 'sentinel3_slstr',
+    band: 'S8'
+  },
+  sentinel_3_slstr_s9: {
+    k1: 450.45,
+    k2: 1198.30,
+    wavelength_um: 12.00,
+    sensor: 'sentinel3_slstr',
+    band: 'S9'
+  }
+};
+
+/**
+ * Empirical Land Surface Emissivity Endmembers (Sobrino et al., 2004)
+ */
+export const THERMAL_EMISSIVITY_ENDMEMBERS = {
+  soil: { ndvi_soil: 0.20, emissivity_soil: 0.970 },
+  vegetation: { ndvi_veg: 0.86, emissivity_veg: 0.990 },
+  water: { emissivity_water: 0.995 },
+  urban_impervious: { emissivity_urban: 0.962 },
+  cavity_geometrical_factor: 0.55
+};
+
+/**
+ * Calibrated Thermal Benchmark Scenes
+ */
+export const THERMAL_BENCHMARK_SCENES = {
+  SALTON_SEA_GEOTHERMAL_2026: {
+    id: 'SALTON_SEA_GEOTHERMAL_2026',
+    name: 'Salton Sea Geothermal Field, California',
+    description: 'Geothermal mud volcanoes and obsidian butte thermal anomaly field in Imperial Valley.',
+    landsat_scene_id: 'LC09_L2SP_039037_20260715_02_T1',
+    center: [33.2014, -115.6258],
+    ambient_baseline_temp_c: 34.0,
+    expected_mean_lst_c: 48.5,
+    expected_anomaly_severity: 'severe_thermal_anomaly',
+    atmospheric_transmittance: 0.91,
+    water_vapor_g_cm2: 1.8
+  },
+  PHOENIX_URBAN_HEAT_ISLAND_2026: {
+    id: 'PHOENIX_URBAN_HEAT_ISLAND_2026',
+    name: 'Phoenix Metropolitan Core, Arizona',
+    description: 'Severe summer urban heat island with high impervious asphalt and concrete thermal storage.',
+    landsat_scene_id: 'LC09_L2SP_037037_20260712_02_T1',
+    center: [33.4484, -112.0740],
+    ambient_baseline_temp_c: 43.0,
+    expected_mean_lst_c: 52.8,
+    expected_anomaly_severity: 'severe_thermal_anomaly',
+    atmospheric_transmittance: 0.93,
+    water_vapor_g_cm2: 1.2
+  },
+  MT_ST_HELENS_VOLCANO_2026: {
+    id: 'MT_ST_HELENS_VOLCANO_2026',
+    name: 'Mount St. Helens Crater & Lava Dome, Washington',
+    description: 'Active volcanic lava dome thermal flux and hydrothermal crater venting.',
+    landsat_scene_id: 'LC08_L2SP_046028_20260802_02_T1',
+    center: [46.1914, -122.1956],
+    ambient_baseline_temp_c: 18.0,
+    expected_mean_lst_c: 31.4,
+    expected_anomaly_severity: 'extreme_wildfire_hotspot',
+    atmospheric_transmittance: 0.89,
+    water_vapor_g_cm2: 1.4
+  }
+};
+
+/**
+ * Calculates Fractional Vegetation Cover (FVC / F_v) using Carlson & Ripley (1997) / Sobrino et al. (2004).
+ * 
+ * @param {number} ndvi - Normalized Difference Vegetation Index
+ * @param {number} [ndviSoil=0.20] - Bare soil NDVI threshold
+ * @param {number} [ndviVeg=0.86] - Full vegetation canopy NDVI threshold
+ * @returns {number} Fractional vegetation cover bounded in [0.0, 1.0]
+ */
+export const calculateSobrinoFractionalVegetationCover = (ndvi, ndviSoil = 0.20, ndviVeg = 0.86) => {
+  if (typeof ndvi !== 'number' || !isFinite(ndvi)) return 0.0;
+  if (ndvi <= ndviSoil) return 0.0;
+  if (ndvi >= ndviVeg) return 1.0;
+  const denom = ndviVeg - ndviSoil;
+  if (denom <= 0.0) return 0.0;
+  const fvc = ((ndvi - ndviSoil) / denom) ** 2;
+  return Math.max(0.0, Math.min(1.0, Math.round(fvc * 10000) / 10000));
+};
+
+/**
+ * Derives narrow-band Land Surface Emissivity (LSE / epsilon) using Sobrino et al. (2004) NDVI threshold method.
+ * 
+ * @param {number} ndvi - Normalized Difference Vegetation Index
+ * @param {number} fvc - Fractional vegetation cover
+ * @param {number} [epsSoil=0.970] - Bare soil narrow-band emissivity
+ * @param {number} [epsVeg=0.990] - Full vegetation narrow-band emissivity
+ * @param {number} [epsWater=0.995] - Open water emissivity
+ * @param {number} [cavityFactor=0.55] - Geometrical cavity factor F
+ * @returns {number} Surface emissivity bounded in [0.85, 1.00]
+ */
+export const calculateSobrinoLandSurfaceEmissivity = (
+  ndvi,
+  fvc,
+  epsSoil = 0.970,
+  epsVeg = 0.990,
+  epsWater = 0.995,
+  cavityFactor = 0.55
+) => {
+  if (typeof ndvi !== 'number' || !isFinite(ndvi)) return epsSoil;
+  if (ndvi < 0.0) return epsWater;
+  if (ndvi < 0.20) return epsSoil;
+  if (ndvi > 0.86) return epsVeg;
+
+  const fv = Math.max(0.0, Math.min(1.0, fvc));
+  const dEps = (1.0 - epsSoil) * (1.0 - fv) * cavityFactor * epsVeg;
+  const eps = epsVeg * fv + epsSoil * (1.0 - fv) + dEps;
+  return Math.max(0.85, Math.min(1.0, Math.round(eps * 10000) / 10000));
+};
+
+/**
+ * Calculates spectral blackbody radiance B(T) via Planck's Law in W/(m^2*sr*um).
+ * 
+ * @param {number} temperatureK - Temperature in Kelvin
+ * @param {number} [k1=774.8853] - Planck calibration constant K1
+ * @param {number} [k2=1321.0789] - Planck calibration constant K2
+ * @returns {number} Blackbody radiance in W/(m^2*sr*um)
+ */
+export const calculatePlanckRadiance = (temperatureK, k1 = 774.8853, k2 = 1321.0789) => {
+  if (temperatureK <= 0.0) return 0.0;
+  const val = k2 / Math.max(1.0, temperatureK);
+  if (val > 700.0) return 0.0;
+  return k1 / (Math.exp(val) - 1.0);
+};
+
+/**
+ * Inverts Planck's law to derive top-of-atmosphere brightness temperature T_b in Kelvin.
+ * 
+ * @param {number} radiance - Spectral radiance in W/(m^2*sr*um)
+ * @param {number} [k1=774.8853] - Planck constant K1
+ * @param {number} [k2=1321.0789] - Planck constant K2
+ * @returns {number} Brightness temperature in Kelvin
+ */
+export const calculatePlanckBrightnessTemperature = (radiance, k1 = 774.8853, k2 = 1321.0789) => {
+  const rad = Math.max(1e-7, Number(radiance));
+  const ratio = (k1 / rad) + 1.0;
+  if (ratio <= 1.0) return 273.15;
+  const tbK = k2 / Math.log(ratio);
+  // Physical sub-zero calibration floor safety: Tb >= 173.15 K (Tc >= -100.0 °C)
+  return Math.round(Math.max(173.15, tbK) * 100) / 100;
+};
+
+/**
+ * Derives kinetic Land Surface Temperature T_s in Kelvin via Radiative Transfer Equation (RTE) inversion.
+ * 
+ * @param {number} radianceToa - Top-of-atmosphere radiance
+ * @param {number} emissivity - Surface emissivity
+ * @param {number} [tau=0.92] - Atmospheric transmittance
+ * @param {number} [lUp=1.20] - Upwelling radiance
+ * @param {number} [lDown=2.10] - Downwelling radiance
+ * @param {number} [k1=774.8853] - Planck constant K1
+ * @param {number} [k2=1321.0789] - Planck constant K2
+ * @returns {number} Kinetic temperature in Kelvin
+ */
+export const calculateRteSurfaceTemperature = (
+  radianceToa,
+  emissivity,
+  tau = 0.92,
+  lUp = 1.20,
+  lDown = 2.10,
+  k1 = 774.8853,
+  k2 = 1321.0789
+) => {
+  const eps = Math.max(0.85, Math.min(1.0, Number(emissivity)));
+  const t = Math.max(0.10, Math.min(1.0, Number(tau)));
+  const denom = t * eps;
+
+  const numerator = radianceToa - lUp - t * (1.0 - eps) * lDown;
+  const bTs = Math.max(1e-7, numerator / denom);
+
+  const ratio = (k1 / bTs) + 1.0;
+  if (ratio <= 1.0) return 273.15;
+  const tsK = k2 / Math.log(ratio);
+  // Physical sub-zero calibration floor safety: Ts >= 173.15 K (Tc >= -100.0 °C)
+  return Math.round(Math.max(173.15, tsK) * 100) / 100;
+};
+
+/**
+ * Derives kinetic Land Surface Temperature T_s in Kelvin using Artis & Carnahan (1982) single-channel equation.
+ * 
+ * @param {number} brightnessTempK - Brightness temperature in Kelvin
+ * @param {number} emissivity - Surface emissivity
+ * @param {number} [wavelengthUm=10.895] - Central wavelength in micrometers
+ * @returns {number} Kinetic temperature in Kelvin
+ */
+export const calculateArtisCarnahanLst = (brightnessTempK, emissivity, wavelengthUm = 10.895) => {
+  const tb = Math.max(1.0, Number(brightnessTempK));
+  const eps = Math.max(0.85, Math.min(1.0, Number(emissivity)));
+  const rho = 14380.0;
+  const denom = 1.0 + ((wavelengthUm * tb) / rho) * Math.log(eps);
+  if (denom <= 0.0) return Math.round(Math.max(173.15, tb) * 100) / 100;
+  return Math.round(Math.max(173.15, tb / denom) * 100) / 100;
+};
+
+/**
+ * Derives kinetic Land Surface Temperature using Statistical Mono-Window (SMW) algorithm (Ermida et al., 2020).
+ * 
+ * @param {number} brightnessTempK - Brightness temperature in Kelvin
+ * @param {number} emissivity - Surface emissivity
+ * @param {number} [waterVaporGCm2=1.5] - Total column water vapor in g/cm^2
+ * @param {string} [sensor='landsat_tirs'] - Sensor platform
+ * @returns {number} Kinetic temperature in Kelvin
+ */
+export const calculateSmwLst = (
+  brightnessTempK,
+  emissivity,
+  waterVaporGCm2 = 1.5,
+  sensor = 'landsat_tirs' // eslint-disable-line no-unused-vars
+) => {
+  const tb = Math.max(1.0, Number(brightnessTempK));
+  const eps = Math.max(0.85, Math.min(1.0, Number(emissivity)));
+  const w = Math.max(0.0, Number(waterVaporGCm2));
+
+  const aCoef = 0.975 + 0.005 * w;
+  const bCoef = -0.50 - 0.20 * w;
+  const cCoef = 1.20 - 0.10 * w;
+
+  const tsK = aCoef * (tb / eps) + bCoef * (1.0 / eps) + cCoef;
+  // Physical sub-zero calibration floor safety: Ts >= 173.15 K (Tc >= -100.0 °C)
+  return Math.round(Math.max(173.15, tsK) * 100) / 100;
+};
+
+/**
+ * Classifies temperature difference Delta T = T_s - T_ambient into operational severity tiers.
+ * 
+ * @param {number} deltaTC - Temperature departure in Celsius
+ * @returns {string} Severity tier key
+ */
+export const classifyThermalAnomalySeverity = (deltaTC) => {
+  const val = Number(deltaTC);
+  if (val >= 10.0) return ThermalAnomalySeverity.EXTREME_WILDFIRE_HOTSPOT;
+  if (val >= 6.0) return ThermalAnomalySeverity.SEVERE_THERMAL_ANOMALY;
+  if (val >= 3.5) return ThermalAnomalySeverity.MODERATE_THERMAL_ANOMALY;
+  if (val >= 1.5) return ThermalAnomalySeverity.MILD_THERMAL_ANOMALY;
+  return ThermalAnomalySeverity.NOMINAL;
+};
+
+/**
+ * Unified end-to-end evaluation executing FVC derivation, Sobrino LSE estimation, and LST inversion.
+ * 
+ * @param {Object} params - Inversion parameters
+ * @returns {Object} Comprehensive evaluation summary
+ */
+export const applyLstInversion = (params = {}) => {
+  const {
+    radianceOrTb = 305.0,
+    ndvi = 0.45,
+    method = LstAlgorithmModel.RADIATIVE_TRANSFER_EQUATION,
+    sensor = ThermalSensorType.LANDSAT_TIRS,
+    ambientBaselineTempC = 25.0,
+    tau = 0.92,
+    lUp = 1.20,
+    lDown = 2.10,
+    waterVaporGCm2 = 1.5,
+    epsSoil = 0.970,
+    epsVeg = 0.990
+  } = params;
+
+  const fvc = calculateSobrinoFractionalVegetationCover(ndvi);
+  const eps = calculateSobrinoLandSurfaceEmissivity(ndvi, fvc, epsSoil, epsVeg);
+
+  const cal = THERMAL_CALIBRATION_COEFFICIENTS.landsat_9_tirs_b10;
+  const k1 = cal.k1;
+  const k2 = cal.k2;
+  const wave = cal.wavelength_um;
+
+  let tbK;
+  let tsK;
+
+  const mStr = String(method).toLowerCase();
+  if (mStr === 'radiative_transfer_equation' || mStr === 'rte') {
+    const rad = radianceOrTb > 150.0 ? calculatePlanckRadiance(radianceOrTb, k1, k2) : radianceOrTb;
+    tbK = calculatePlanckBrightnessTemperature(rad, k1, k2);
+    tsK = calculateRteSurfaceTemperature(rad, eps, tau, lUp, lDown, k1, k2);
+  } else if (mStr === 'statistical_mono_window' || mStr === 'smw') {
+    tbK = radianceOrTb > 150.0 ? radianceOrTb : calculatePlanckBrightnessTemperature(radianceOrTb, k1, k2);
+    tsK = calculateSmwLst(tbK, eps, waterVaporGCm2, sensor);
+  } else {
+    tbK = radianceOrTb > 150.0 ? radianceOrTb : calculatePlanckBrightnessTemperature(radianceOrTb, k1, k2);
+    tsK = calculateArtisCarnahanLst(tbK, eps, wave);
+  }
+
+  const tsC = Math.round((tsK - 273.15) * 100) / 100;
+  const tbC = Math.round((tbK - 273.15) * 100) / 100;
+  const deltaT = Math.round((tsC - ambientBaselineTempC) * 100) / 100;
+  const uhiIntensity = Math.max(0.0, deltaT);
+  const severity = classifyThermalAnomalySeverity(deltaT);
+
+  return {
+    lst_celsius: tsC,
+    lst_kelvin: tsK,
+    brightness_temperature_c: tbC,
+    brightness_temperature_k: tbK,
+    emissivity: eps,
+    fvc,
+    thermal_anomaly_delta_c: deltaT,
+    uhi_intensity_c: uhiIntensity,
+    severity,
+    method: mStr,
+    sensor: String(sensor).toLowerCase()
+  };
+};
+
+/**
+ * Builds a dynamic XYZ tile streaming URL for Land Surface Temperature imagery.
+ * 
+ * @param {Object} [options={}] - Tile options
+ * @returns {string} XYZ tile URL
+ */
+export const buildThermalLstTileUrl = (options = {}) => {
+  const {
+    collection = 'landsat-c2-l2',
+    itemId = 'LC09_L2SP_039037_20260715_02_T1',
+    z = 0,
+    x = 0,
+    y = 0,
+    metric = 'lst_celsius',
+    method = 'radiative_transfer_equation',
+    colormap = null,
+    rescale = null,
+    ambientBaselineTempC = null
+  } = options;
+
+  const base = `/api/v1/tiles/thermal/lst/${collection}/${itemId}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (metric && metric !== 'lst_celsius') params.push(`metric=${metric}`);
+  if (method && method !== 'radiative_transfer_equation') params.push(`method=${method}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) {
+    const rStr = Array.isArray(rescale) ? `${rescale[0]},${rescale[1]}` : String(rescale);
+    params.push(`rescale=${rStr}`);
+  }
+  if (ambientBaselineTempC !== null && ambientBaselineTempC !== undefined) {
+    params.push(`ambient_baseline_temp_c=${ambientBaselineTempC}`);
+  }
+
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for kinetic Land Surface Temperature raster tiles.
+ * 
+ * @param {Object} [options={}] - Template options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildThermalLstTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'landsat-c2-l2',
+    itemId = 'LC09_L2SP_039037_20260715_02_T1',
+    metric = 'lst_celsius',
+    method = 'radiative_transfer_equation',
+    colormap = null,
+    rescale = null
+  } = options;
+
+  const base = `/api/v1/tiles/thermal/lst/${collection}/${itemId}/{z}/{x}/{y}.png`;
+  const params = [];
+  if (metric && metric !== 'lst_celsius') params.push(`metric=${metric}`);
+  if (method && method !== 'radiative_transfer_equation') params.push(`method=${method}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) {
+    const rStr = Array.isArray(rescale) ? `${rescale[0]},${rescale[1]}` : String(rescale);
+    params.push(`rescale=${rStr}`);
+  }
+
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for thermal anomaly departure tiles (Delta T).
+ * 
+ * @param {Object} [options={}] - Template options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildThermalAnomalyTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'landsat-c2-l2',
+    itemId = 'LC09_L2SP_039037_20260715_02_T1',
+    ambientBaselineTempC = 25.0,
+    colormap = 'turbo'
+  } = options;
+
+  const base = `/api/v1/tiles/thermal/anomaly/${collection}/${itemId}/{z}/{x}/{y}.png`;
+  const params = [`ambient_baseline_temp_c=${ambientBaselineTempC}`];
+  if (colormap) params.push(`colormap=${colormap}`);
+  return `${base}?${params.join('&')}`;
+};
+
+// ============================================================================
+// CYCLE v2.5.35: CLOUD-NATIVE GEOTIFF & GEOPACKAGE EXPORT PIPELINE CONSTANTS
+// ============================================================================
+
+/**
+ * Supported output formats for geospatial raster and vector data export.
+ */
+export const ExportFormat = {
+  GEOTIFF_COG: 'geotiff_cog',
+  GEOPACKAGE: 'geopackage',
+  GEOJSON_VECTOR: 'geojson_vector',
+  CSV_SUMMARY: 'csv_summary'
+};
+
+export const EXPORT_FORMATS = [
+  ExportFormat.GEOTIFF_COG,
+  ExportFormat.GEOPACKAGE,
+  ExportFormat.GEOJSON_VECTOR,
+  ExportFormat.CSV_SUMMARY
+];
+
+/**
+ * Lifecycle status states for asynchronous spatial export processing.
+ */
+export const ExportJobStatus = {
+  QUEUED: 'queued',
+  PROCESSING: 'processing',
+  COMPLETED: 'completed',
+  FAILED: 'failed'
+};
+
+export const EXPORT_JOB_STATUSES = [
+  ExportJobStatus.QUEUED,
+  ExportJobStatus.PROCESSING,
+  ExportJobStatus.COMPLETED,
+  ExportJobStatus.FAILED
+];
+
+/**
+ * Supported coordinate reference systems for geospatial export.
+ */
+export const ExportCrs = {
+  EPSG_4326: 'EPSG:4326',
+  EPSG_3857: 'EPSG:3857',
+  AUTO_UTM: 'AUTO_UTM'
+};
+
+export const EXPORT_CRS_OPTIONS = [
+  ExportCrs.EPSG_4326,
+  ExportCrs.EPSG_3857,
+  ExportCrs.AUTO_UTM
+];
+
+/**
+ * Geospatial analytical layer types eligible for clipping and export.
+ */
+export const ExportLayerType = {
+  SURFACE_REFLECTANCE: 'surface_reflectance',
+  SPECTRAL_INDEX: 'spectral_index',
+  THERMAL_LST: 'thermal_lst',
+  SAR_BACKSCATTER: 'sar_backscatter',
+  INSAR_VELOCITY: 'insar_velocity',
+  DEM_ELEVATION: 'dem_elevation',
+  HAZARD_CONTOUR: 'hazard_contour'
+};
+
+export const EXPORT_LAYER_TYPES = [
+  ExportLayerType.SURFACE_REFLECTANCE,
+  ExportLayerType.SPECTRAL_INDEX,
+  ExportLayerType.THERMAL_LST,
+  ExportLayerType.SAR_BACKSCATTER,
+  ExportLayerType.INSAR_VELOCITY,
+  ExportLayerType.DEM_ELEVATION,
+  ExportLayerType.HAZARD_CONTOUR
+];
+
+/**
+ * Detailed export format configuration, extensions, and MIME types.
+ */
+export const EXPORT_FORMAT_CONFIGS = {
+  [ExportFormat.GEOTIFF_COG]: {
+    format: 'geotiff_cog',
+    label: 'Cloud-Optimized GeoTIFF (COG)',
+    extension: '.tif',
+    mimeType: 'image/tiff; application=geotiff',
+    supportsBands: true,
+    isRaster: true,
+    description: 'Pyramidal tiled GeoTIFF with internal overviews for enterprise GIS and cloud streaming.'
+  },
+  [ExportFormat.GEOPACKAGE]: {
+    format: 'geopackage',
+    label: 'OGC GeoPackage (GPKG)',
+    extension: '.gpkg',
+    mimeType: 'application/geopackage+sqlite3',
+    supportsBands: false,
+    isRaster: false,
+    description: 'Open standard SQLite-based container for geospatial features, contours, and attributes.'
+  },
+  [ExportFormat.GEOJSON_VECTOR]: {
+    format: 'geojson_vector',
+    label: 'GeoJSON Feature Collection',
+    extension: '.geojson',
+    mimeType: 'application/geo+json',
+    supportsBands: false,
+    isRaster: false,
+    description: 'RFC 7946 compliant vector geometry polygons and metadata attributes.'
+  },
+  [ExportFormat.CSV_SUMMARY]: {
+    format: 'csv_summary',
+    label: 'Tabular Zonal Statistics CSV',
+    extension: '.csv',
+    mimeType: 'text/csv',
+    supportsBands: true,
+    isRaster: false,
+    description: 'Tabular metrics, histograms, percentiles, and coordinate bounding metrics.'
+  }
+};
+
+/**
+ * Coordinate Reference System specifications and unit definitions.
+ */
+export const EXPORT_CRS_CONFIGS = {
+  [ExportCrs.EPSG_4326]: {
+    crs: 'EPSG:4326',
+    label: 'WGS 84 (Geographic Degrees)',
+    description: 'World Geodetic System 1984 ellipsoidal coordinates (latitude/longitude).',
+    unit: 'degree'
+  },
+  [ExportCrs.EPSG_3857]: {
+    crs: 'EPSG:3857',
+    label: 'WGS 84 / Pseudo-Mercator (Web Mercator)',
+    description: 'Spherical Mercator projected coordinate system used by web maps.',
+    unit: 'meter'
+  },
+  [ExportCrs.AUTO_UTM]: {
+    crs: 'AUTO_UTM',
+    label: 'Auto-Determined Local UTM Zone',
+    description: 'Optimal Universal Transverse Mercator projection minimizing conformal distortion.',
+    unit: 'meter'
+  }
+};
+
+/**
+ * Layer export presets, default bands, and recommended formats.
+ */
+export const EXPORT_LAYER_CONFIGS = {
+  [ExportLayerType.SURFACE_REFLECTANCE]: {
+    layerType: 'surface_reflectance',
+    label: 'Surface Reflectance (Multi-Band)',
+    defaultBands: ['B02', 'B03', 'B04', 'B08'],
+    defaultFormat: ExportFormat.GEOTIFF_COG
+  },
+  [ExportLayerType.SPECTRAL_INDEX]: {
+    layerType: 'spectral_index',
+    label: 'Biophysical Spectral Index (NDVI/NDWI/NBR)',
+    defaultBands: ['ndvi'],
+    defaultFormat: ExportFormat.GEOTIFF_COG
+  },
+  [ExportLayerType.THERMAL_LST]: {
+    layerType: 'thermal_lst',
+    label: 'Kinetic Land Surface Temperature (LST)',
+    defaultBands: ['lst_celsius'],
+    defaultFormat: ExportFormat.GEOTIFF_COG
+  },
+  [ExportLayerType.SAR_BACKSCATTER]: {
+    layerType: 'sar_backscatter',
+    label: 'SAR Backscatter (VV/VH Amplitude & Ratio)',
+    defaultBands: ['vv', 'vh'],
+    defaultFormat: ExportFormat.GEOTIFF_COG
+  },
+  [ExportLayerType.INSAR_VELOCITY]: {
+    layerType: 'insar_velocity',
+    label: 'InSAR Persistent Scatterer Deformation Velocity',
+    defaultBands: ['velocity_mm_yr'],
+    defaultFormat: ExportFormat.GEOTIFF_COG
+  },
+  [ExportLayerType.DEM_ELEVATION]: {
+    layerType: 'dem_elevation',
+    label: 'Copernicus 30m Digital Elevation Model',
+    defaultBands: ['elevation_m'],
+    defaultFormat: ExportFormat.GEOTIFF_COG
+  },
+  [ExportLayerType.HAZARD_CONTOUR]: {
+    layerType: 'hazard_contour',
+    label: 'Vectorized Hazard Exposure Polygons',
+    defaultBands: ['severity_tier'],
+    defaultFormat: ExportFormat.GEOPACKAGE
+  }
+};
+
+/**
+ * Benchmark scenes for Geospatial Export Studio validation.
+ */
+export const EXPORT_BENCHMARK_SCENES = {
+  SAN_FRANCISCO_BAY_EXPORT_2026: {
+    sceneName: 'San Francisco Bay Optical & Chlorophyll Survey',
+    bbox: [-122.52, 37.70, -122.35, 37.85],
+    collection: 'sentinel-2-l2a',
+    layerType: 'surface_reflectance',
+    format: 'geotiff_cog',
+    targetCrs: 'EPSG:4326',
+    resolutionM: 10.0
+  },
+  SALTON_SEA_THERMAL_EXPORT_2026: {
+    sceneName: 'Salton Sea Geothermal & LST Surface Survey',
+    bbox: [-116.05, 33.15, -115.75, 33.45],
+    collection: 'landsat-c2-l2',
+    layerType: 'thermal_lst',
+    format: 'geotiff_cog',
+    targetCrs: 'AUTO_UTM',
+    resolutionM: 30.0
+  },
+  TAILINGS_DAM_HAZARD_EXPORT_2026: {
+    sceneName: 'Tailings Dam Liquefaction & Flownet Risk Exposure',
+    bbox: [-44.25, -20.15, -44.10, -20.00],
+    collection: 'sentinel-1-rtc',
+    layerType: 'hazard_contour',
+    format: 'geopackage',
+    targetCrs: 'EPSG:4326',
+    resolutionM: 10.0
+  }
+};
+
+/**
+ * Normalizes format string aliases into canonical ExportFormat string.
+ * 
+ * @param {string} fmt - Format string or alias
+ * @returns {string} Canonical export format string
+ */
+export const normalizeExportFormat = (fmt) => {
+  if (!fmt) return ExportFormat.GEOTIFF_COG;
+  const val = String(fmt).trim().toLowerCase();
+  const mapping = {
+    geotiff_cog: ExportFormat.GEOTIFF_COG,
+    geotiff: ExportFormat.GEOTIFF_COG,
+    cog: ExportFormat.GEOTIFF_COG,
+    tif: ExportFormat.GEOTIFF_COG,
+    tiff: ExportFormat.GEOTIFF_COG,
+    geopackage: ExportFormat.GEOPACKAGE,
+    gpkg: ExportFormat.GEOPACKAGE,
+    geojson_vector: ExportFormat.GEOJSON_VECTOR,
+    geojson: ExportFormat.GEOJSON_VECTOR,
+    json: ExportFormat.GEOJSON_VECTOR,
+    csv_summary: ExportFormat.CSV_SUMMARY,
+    csv: ExportFormat.CSV_SUMMARY
+  };
+  return mapping[val] || ExportFormat.GEOTIFF_COG;
+};
+
+/**
+ * Determines the standard EPSG code for the Universal Transverse Mercator (UTM) zone.
+ * 
+ * @param {number} lon - Longitude in degrees
+ * @param {number} lat - Latitude in degrees
+ * @returns {string} EPSG code (e.g. 'EPSG:32610')
+ */
+export const determineUtmEpsg = (lon, lat) => {
+  const lonVal = Math.max(-180.0, Math.min(180.0, Number(lon)));
+  const latVal = Math.max(-80.0, Math.min(84.0, Number(lat)));
+  let zone = Math.floor((lonVal + 180.0) / 6.0) + 1;
+  if (zone > 60) zone = 60;
+  const epsgCode = latVal >= 0 ? 32600 + zone : 32700 + zone;
+  return `EPSG:${epsgCode}`;
+};
+
+/**
+ * Generates an RFC 7946 compliant GeoJSON Polygon geometry from a bounding box with counter-clockwise winding order.
+ * 
+ * @param {number} minLon - Western longitude
+ * @param {number} minLat - Southern latitude
+ * @param {number} maxLon - Eastern longitude
+ * @param {number} maxLat - Northern latitude
+ * @returns {Object} GeoJSON Polygon geometry object
+ */
+export const bboxToGeoJsonPolygon = (minLon, minLat, maxLon, maxLat) => {
+  return {
+    type: 'Polygon',
+    coordinates: [
+      [
+        [Number(Number(minLon).toFixed(6)), Number(Number(minLat).toFixed(6))],
+        [Number(Number(maxLon).toFixed(6)), Number(Number(minLat).toFixed(6))],
+        [Number(Number(maxLon).toFixed(6)), Number(Number(maxLat).toFixed(6))],
+        [Number(Number(minLon).toFixed(6)), Number(Number(maxLat).toFixed(6))],
+        [Number(Number(minLon).toFixed(6)), Number(Number(minLat).toFixed(6))]
+      ]
+    ]
+  };
+};
+
+/**
+ * Calculates the approximate geographical surface area of a bounding box in square kilometers.
+ * 
+ * @param {number} minLon - Western longitude
+ * @param {number} minLat - Southern latitude
+ * @param {number} maxLon - Eastern longitude
+ * @param {number} maxLat - Northern latitude
+ * @returns {number} Approximate area in km2
+ */
+export const calculateBboxAreaKm2 = (minLon, minLat, maxLon, maxLat) => {
+  const centerLat = (Number(minLat) + Number(maxLat)) / 2.0;
+  const degLatKm = 111.32;
+  const degLonKm = 111.32 * Math.cos((centerLat * Math.PI) / 180.0);
+  const deltaLat = Math.abs(Number(maxLat) - Number(minLat));
+  const deltaLon = Math.abs(Number(maxLon) - Number(minLon));
+  return Math.round(deltaLat * degLatKm * deltaLon * degLonKm * 10000) / 10000;
+};
+
+/**
+ * Calculates GDAL 6-parameter affine georeferencing transform matrix [a, b, c, d, e, f].
+ * 
+ * @param {number} minLon - Upper-left origin longitude
+ * @param {number} maxLat - Upper-left origin latitude
+ * @param {number} resX - Pixel resolution width
+ * @param {number} resY - Pixel resolution height
+ * @returns {number[]} 6-element affine matrix
+ */
+export const calculateAffineTransformMatrix = (minLon, maxLat, resX, resY) => {
+  return [Number(resX), 0.0, Number(minLon), 0.0, -Math.abs(Number(resY)), Number(maxLat)];
+};
+
+/**
+ * Generates PyQGIS and GDAL console command snippets for enterprise GIS ingestion.
+ * 
+ * @param {string} filename - Exported filename
+ * @param {string} formatType - Format identifier
+ * @param {string} crs - Target CRS string
+ * @returns {string} QGIS Python console instructions
+ */
+export const generateQgisIngestionSnippet = (filename, formatType, crs) => {
+  const fmt = String(formatType).toLowerCase();
+  if (fmt.includes('geopackage') || fmt.includes('gpkg')) {
+    return `# PyQGIS ingestion:\nlayer = iface.addVectorLayer('${filename}', '${filename}', 'ogr')\n# Target CRS: ${crs}`;
+  } else if (fmt.includes('geojson') || fmt.includes('vector')) {
+    return `# PyQGIS ingestion:\nlayer = iface.addVectorLayer('${filename}', '${filename}', 'ogr')\n# Target CRS: ${crs}`;
+  } else if (fmt.includes('csv')) {
+    return `# PyQGIS Delimited Text:\nuri = 'file:///${filename}?delimiter=,&xField=lon&yField=lat&crs=${crs}'\nlayer = iface.addVectorLayer(uri, '${filename}', 'delimitedtext')`;
+  } else {
+    return `# PyQGIS ingestion:\nlayer = iface.addRasterLayer('${filename}', '${filename}')\n# Target CRS: ${crs}\n# GDAL verification: gdalinfo ${filename}`;
+  }
+};
+
+/**
+ * Generates standardized canonical file basenames for asynchronous export artifacts.
+ * 
+ * @param {string} collection - Dataset collection
+ * @param {string} layerType - Export layer type
+ * @param {string} formatType - Export format
+ * @param {string} [itemId=null] - Scene/item ID
+ * @param {string} [timestampStr=null] - Timestamp suffix
+ * @returns {string} Formatted filename
+ */
+export const formatExportJobFilename = (
+  collection,
+  layerType,
+  formatType,
+  itemId = null,
+  timestampStr = null
+) => {
+  const fmtEnum = normalizeExportFormat(formatType);
+  const ext = EXPORT_FORMAT_CONFIGS[fmtEnum]?.extension || '.tif';
+  const colClean = String(collection).replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().trim();
+  const layClean = String(layerType).replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().trim();
+  const ts = timestampStr || new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
+  if (itemId) {
+    const itemClean = String(itemId).replace(/[^a-zA-Z0-9_-]/g, '_').trim();
+    return `gios_${colClean}_${itemClean}_${layClean}_${ts}${ext}`;
+  }
+  return `gios_${colClean}_${layClean}_${ts}${ext}`;
+};
+
+/**
+ * Builds the canonical API endpoint URL for polling export job status.
+ * 
+ * @param {string} jobId - Unique export job ID
+ * @returns {string} API endpoint URL
+ */
+export const buildExportStatusUrl = (jobId) => {
+  return `/api/v1/analysis/export/status/${jobId}`;
+};
+
+/**
+ * Builds the canonical API endpoint URL for downloading a completed export artifact.
+ * 
+ * @param {string} jobId - Unique export job ID
+ * @returns {string} API endpoint URL
+ */
+export const buildExportDownloadUrl = (jobId) => {
+  return `/api/v1/analysis/export/download/${jobId}`;
+};
 

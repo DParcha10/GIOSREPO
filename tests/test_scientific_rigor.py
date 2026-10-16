@@ -3622,6 +3622,330 @@ class TestScientificRigor(unittest.TestCase):
         self.assertEqual(tahoe_inv["summary"]["bloom_risk_level"], "low")
         self.assertFalse(tahoe_inv["summary"]["floating_scum_detected"])
 
+    def test_task_t256_topographic_solar_illumination_and_scs_c_scientific_rigor(self):
+        """Task T-256 Scientific Rigor & Mathematical Invariant Verification (Cycle v2.5.32):
+        Topographic Solar Illumination Correction, SCS+C Canopy Inversion & Dynamic Terrain Tiles:
+        1. Local incidence cosine bounds cos(i) in [-1.0, 1.0] across all solar/slope/aspect angles.
+        2. Normal incidence invariance (cos(i) == 1.0 when slope == zenith and aspect == azimuth).
+        3. Flat terrain radiance conservation (alpha == 0 -> cos(i) == cos(theta_s) -> correction factor == 1.0).
+        4. Empirical C-factor non-negativity and bounds c in [0.001, 1.0] from OLS linear regression.
+        5. Deep cast-shadow rejection (cos(i) <= 0.0 -> no division-by-zero, zeroed reflectance).
+        6. Horn 3x3 finite-difference surface normal gradient invariants on planar geometries.
+        7. SCS+C canopy adjustment vs standard C-correction ((cos_sz * cos_slope + c)/(cos_i + c) vs (cos_sz + c)/(cos_i + c)).
+        8. High-relief benchmark scene multi-band inversion (MT_SHASTA_VOLCANO_2026, SWISS_ALPS_VALAIS_2026, SIERRA_NEVADA_YOSEMITE_2026).
+        9. Dynamic XYZ tile rendering (corrected reflectance and illumination hillshade in 256x256 RGBA PNG).
+        """
+        import io
+        from PIL import Image
+        from app.services.indices import IndexComputationService
+        from app.services.data_acquisition import data_acquisition_service
+        from app.services.tile_service import tile_service
+        from app.models.schemas import (
+            calculate_local_incidence_cosine,
+            calculate_c_correction_factor,
+            calculate_minnaert_correction,
+            calculate_scs_c_correction,
+            classify_illumination_condition,
+            apply_topographic_correction,
+            estimate_c_factor_from_linear_regression,
+            TopographicCorrectionMethod,
+            IlluminationCondition,
+            TOPOGRAPHIC_BENCHMARK_SCENES
+        )
+
+        # -----------------------------------------------------------------
+        # 1. Local Incidence Cosine Bounds & Geometric Invariants
+        # -----------------------------------------------------------------
+        # Formula: cos(i) = cos(theta_s) * cos(alpha) + sin(theta_s) * sin(alpha) * cos(phi_s - beta)
+        zenith_angles = [0.0, 15.0, 30.0, 45.0, 60.0, 75.0, 89.0]
+        azimuth_angles = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+        slope_angles = [0.0, 10.0, 25.0, 45.0, 60.0, 80.0, 90.0]
+        aspect_angles = [-1.0, 0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+
+        for sz in zenith_angles:
+            for sa in azimuth_angles:
+                for sl in slope_angles:
+                    for asp in aspect_angles:
+                        cos_i = calculate_local_incidence_cosine(sz, sa, sl, asp)
+                        self.assertGreaterEqual(cos_i, -1.0, f"cos(i) out of lower bound for sz={sz}, sl={sl}, asp={asp}")
+                        self.assertLessEqual(cos_i, 1.0, f"cos(i) out of upper bound for sz={sz}, sl={sl}, asp={asp}")
+
+        # Normal incidence invariance: When slope angle matches zenith and aspect matches azimuth,
+        # the mountain face is perpendicular to the solar ray, so cos(i) == 1.0.
+        for sz in [15.0, 30.0, 45.0, 60.0]:
+            for sa in [45.0, 120.0, 210.0]:
+                cos_i_normal = calculate_local_incidence_cosine(sz, sa, sz, sa)
+                self.assertAlmostEqual(cos_i_normal, 1.0, places=4, msg=f"Normal incidence must equal 1.0 at sz={sz}, sa={sa}")
+
+        # Flat terrain invariance: When slope == 0, cos(i) == cos(theta_s) regardless of solar azimuth.
+        for sz in [0.0, 25.0, 45.0, 65.0]:
+            cos_i_flat = calculate_local_incidence_cosine(sz, 140.0, 0.0, -1.0)
+            expected_flat = math.cos(math.radians(sz))
+            self.assertAlmostEqual(cos_i_flat, expected_flat, places=4)
+
+        # Opposite aspect invariance: Slope facing directly away from solar azimuth (beta = phi_s + 180).
+        for sz in [10.0, 30.0, 45.0]:
+            cos_i_opp = calculate_local_incidence_cosine(sz, 90.0, sz, 270.0)
+            expected_opp = math.cos(math.radians(2.0 * sz))
+            self.assertAlmostEqual(cos_i_opp, expected_opp, places=4)
+
+        # -----------------------------------------------------------------
+        # 2. Radiance Conservation & Correction Factor Invariants
+        # -----------------------------------------------------------------
+        # Invariant 2a: Flat terrain conservation of radiance (alpha = 0 -> factor = 1.0)
+        for sz in [20.0, 40.0, 60.0]:
+            cos_sz = math.cos(math.radians(sz))
+            # C-Correction factor on flat terrain: (cos_sz + c) / (cos_sz + c) == 1.0
+            c_factor = calculate_c_correction_factor(cos_sz, sz, c_factor=0.08)
+            self.assertAlmostEqual(c_factor, 1.0, places=4)
+
+            # SCS+C factor on flat terrain: (cos_sz * cos(0) + c) / (cos_sz + c) == 1.0
+            scs_c_factor = calculate_scs_c_correction(cos_sz, 0.0, sz, c_factor=0.08)
+            self.assertAlmostEqual(scs_c_factor, 1.0, places=4)
+
+            # Radiance unchanged on flat ground
+            rad_orig = 0.25
+            rad_corr = apply_topographic_correction(rad_orig, cos_sz, 0.0, sz, method="scs_c", c_factor=0.08)
+            self.assertAlmostEqual(rad_corr, rad_orig, places=4)
+
+        # Invariant 2b: Empirical C parameter non-negativity and finite bounds [0.001, 1.0]
+        synthetic_cos_i = [0.2, 0.35, 0.5, 0.65, 0.8, 0.95]
+        synthetic_rad = [0.05 + 0.25 * ci for ci in synthetic_cos_i]
+        c_estimated = estimate_c_factor_from_linear_regression(synthetic_rad, synthetic_cos_i)
+        expected_c = 0.05 / 0.25  # b / m = 0.2
+        self.assertAlmostEqual(c_estimated, expected_c, places=3)
+        self.assertGreaterEqual(c_estimated, 0.001)
+        self.assertLessEqual(c_estimated, 1.0)
+
+        # Invariant 2c: Degenerate regression fallback to default_c
+        c_flat = estimate_c_factor_from_linear_regression([0.2] * 6, [0.5] * 6, default_c=0.08)
+        self.assertEqual(c_flat, 0.08)
+
+        # Invariant 2d: Deep cast-shadow rejection (cos(i) <= 0 -> 0.0 when mask_self_shadow=True)
+        rad_shadow = apply_topographic_correction(0.20, -0.45, 60.0, 45.0, method="c_correction", mask_self_shadow=True)
+        self.assertEqual(rad_shadow, 0.0)
+
+        # -----------------------------------------------------------------
+        # 3. Horn 3x3 Surface Normal Gradient & Aspect Invariants
+        # -----------------------------------------------------------------
+        # Invariant 3a: Horizontal flat plane
+        flat_grid = np.ones((16, 16), dtype=np.float32) * 1250.0
+        slope_flat, aspect_flat, normal_flat = PreprocessingService.compute_dem_slope_aspect_arrays(flat_grid)
+        self.assertTrue(np.all(slope_flat[2:-2, 2:-2] < 1e-4), "Flat elevation must yield zero slope")
+        self.assertTrue(np.all(aspect_flat[2:-2, 2:-2] == -1.0), "Flat elevation must yield aspect -1.0")
+        self.assertTrue(np.allclose(normal_flat[2:-2, 2:-2], [0, 0, 1], atol=1e-4), "Flat normal must be (0, 0, 1)")
+
+        # Invariant 3b: Planar ramp with known slope (rise = 30m, run = 30m -> 45 deg slope, downhill West = 270 deg)
+        ramp_x = np.arange(16, dtype=np.float32) * 30.0
+        ramp_grid = np.tile(ramp_x, (16, 1))
+        slope_ramp, aspect_ramp, normal_ramp = PreprocessingService.compute_dem_slope_aspect_arrays(ramp_grid, cell_size_x=30.0, cell_size_y=30.0)
+        self.assertTrue(np.allclose(slope_ramp[2:-2, 2:-2], 45.0, atol=1e-2), "30m rise / 30m run must yield 45 deg slope")
+        self.assertTrue(np.allclose(aspect_ramp[2:-2, 2:-2], 270.0, atol=1e-2), "Eastward rise must yield West downhill aspect (270 deg)")
+
+        # -----------------------------------------------------------------
+        # 4. SCS+C Canopy Adjustment vs Standard C-Correction
+        # -----------------------------------------------------------------
+        # In rugged terrain, standard C-Correction tends to over-correct steep sunlit slopes because
+        # it neglects the reduction of canopy area projection. SCS+C introduces cos(alpha):
+        # SCS+C factor: (cos_sz * cos_alpha + c) / (cos_i + c)
+        # C-Correction factor: (cos_sz + c) / (cos_i + c)
+        # On sloping terrain (alpha > 0), cos(alpha) < 1.0, so SCS+C factor < C-Correction factor on sunlit slopes.
+        sz_test = 35.0
+        slope_test = 40.0
+        cos_i_test = 0.85
+        f_c_corr = calculate_c_correction_factor(cos_i_test, sz_test, c_factor=0.08)
+        f_scs_c = calculate_scs_c_correction(cos_i_test, slope_test, sz_test, c_factor=0.08)
+        self.assertLess(f_scs_c, f_c_corr, "SCS+C factor must be strictly less than C-Correction on steep sunlit canopy")
+        self.assertGreater(f_scs_c, 0.0)
+
+        # -----------------------------------------------------------------
+        # 5. Illumination Condition Classification Invariants
+        # -----------------------------------------------------------------
+        self.assertEqual(classify_illumination_condition(-0.25), IlluminationCondition.SELF_SHADOW)
+        self.assertEqual(classify_illumination_condition(0.0), IlluminationCondition.SELF_SHADOW)
+        self.assertEqual(classify_illumination_condition(0.12), IlluminationCondition.SHADED)
+        self.assertEqual(classify_illumination_condition(0.65), IlluminationCondition.SUNLIT)
+
+        # -----------------------------------------------------------------
+        # 6. Benchmark High-Relief Scene Data Cube & Inversion Verification
+        # -----------------------------------------------------------------
+        # Mount Shasta Volcano (High-relief composite stratovolcano, California)
+        shasta_cube, meta_shasta = data_acquisition_service.load_topographic_data_cube("MT_SHASTA_VOLCANO_2026")
+        self.assertIn("elevation", shasta_cube.data_vars)
+        self.assertIn("slope", shasta_cube.data_vars)
+        self.assertIn("aspect", shasta_cube.data_vars)
+        self.assertIn("B04", shasta_cube.data_vars)
+        self.assertIn("B08", shasta_cube.data_vars)
+
+        shasta_inv = IndexComputationService.compute_topographic_correction_inversion(
+            bands=shasta_cube,
+            solar_zenith_deg=meta_shasta["solar_zenith_deg"],
+            solar_azimuth_deg=meta_shasta["solar_azimuth_deg"],
+            method="scs_c"
+        )
+        s_shasta = shasta_inv["summary"]
+        self.assertIn("radiance_std_reduction_pct", s_shasta)
+        self.assertGreater(s_shasta["radiance_std_reduction_pct"], 0.0, "Topographic correction must reduce variance across rugged terrain")
+        total_illum_pct = s_shasta["sunlit_pixel_pct"] + s_shasta["shaded_pixel_pct"] + s_shasta["self_shadow_pixel_pct"]
+        self.assertAlmostEqual(total_illum_pct, 100.0, places=1, msg="Illumination percentages must sum to 100%")
+
+        # Swiss Alps Valais (Extreme alpine topography, Matterhorn region)
+        swiss_cube, meta_swiss = data_acquisition_service.load_topographic_data_cube("SWISS_ALPS_VALAIS_2026")
+        swiss_inv = IndexComputationService.compute_topographic_correction_inversion(
+            bands=swiss_cube,
+            solar_zenith_deg=meta_swiss["solar_zenith_deg"],
+            solar_azimuth_deg=meta_swiss["solar_azimuth_deg"],
+            method="c_correction"
+        )
+        s_swiss = swiss_inv["summary"]
+        self.assertGreater(s_swiss["radiance_std_reduction_pct"], 0.0)
+
+        # -----------------------------------------------------------------
+        # 7. Dynamic XYZ Topographic Tile Server Invariants
+        # -----------------------------------------------------------------
+        # 7a: Dynamic Corrected Reflectance Tile (SCS+C)
+        tile_scs_c = tile_service.render_topographic_correction_tile(
+            collection="sentinel-2-l2a",
+            item_id="MT_SHASTA_VOLCANO_2026",
+            z=10, x=163, y=395,
+            method="scs_c",
+            metric="corrected_reflectance"
+        )
+        self.assertTrue(tile_scs_c.startswith(b"\x89PNG\r\n\x1a\n"), "Corrected reflectance tile must be valid PNG")
+        img_scs_c = Image.open(io.BytesIO(tile_scs_c))
+        self.assertEqual(img_scs_c.size, (256, 256), "Tile dimensions must be 256x256")
+        self.assertEqual(img_scs_c.mode, "RGBA", "Tile format must be 4-channel RGBA")
+
+        # 7b: Dynamic Illumination Hillshade Tile (Local Incidence Cosine)
+        tile_illum = tile_service.render_topographic_illumination_tile(
+            collection="sentinel-2-l2a",
+            item_id="MT_SHASTA_VOLCANO_2026",
+            z=10, x=163, y=395
+        )
+        self.assertTrue(tile_illum.startswith(b"\x89PNG\r\n\x1a\n"), "Illumination hillshade tile must be valid PNG")
+        img_illum = Image.open(io.BytesIO(tile_illum))
+        self.assertEqual(img_illum.size, (256, 256))
+    def test_thermal_lst_inversion_and_sobrino_emissivity_physics(self):
+        """Task T-268 (@debugger): Continuous scientific QA across Land Surface Temperature (LST) & Thermal Inversion.
+        
+        Verifies:
+        1. Sobrino et al. (2004) FVC & narrow-band land surface emissivity bounds [0.90, 0.995].
+        2. Planck blackbody radiance and inverse brightness temperature monotonicity and reciprocity.
+        3. Radiative Transfer Equation (RTE), Artis & Carnahan (1982), and SMW kinetic temperature inversion.
+        4. Thermal conservation & kinetic temperature elevation due to sub-unity emissivity (T_s > T_b for eps < 1.0).
+        5. Sub-zero calibration floor safety (T_C > -100 deg C) and non-negative radiance handling.
+        6. Thermal anomaly departure (Delta T) and SUHI hazard severity tier classifications.
+        """
+        from app.models.schemas import (
+            calculate_fractional_vegetation_cover,
+            calculate_sobrino_land_surface_emissivity,
+            calculate_planck_radiance,
+            calculate_planck_brightness_temperature,
+            calculate_rte_surface_temperature,
+            calculate_artis_carnahan_lst,
+            calculate_smw_lst,
+            classify_thermal_anomaly_severity,
+            apply_lst_inversion,
+            ThermalAnomalySeverity,
+            LstAlgorithmModel,
+            ThermalSensorType
+        )
+
+        # 1. Sobrino et al. (2004) FVC & Emissivity Bounds
+        # Water pixels (NDVI < 0)
+        eps_water = calculate_sobrino_land_surface_emissivity(ndvi=-0.25, fvc=0.0)
+        self.assertAlmostEqual(eps_water, 0.995, places=3, msg="Water emissivity must equal water endmember (0.995)")
+
+        # Bare soil (NDVI < 0.20)
+        eps_soil = calculate_sobrino_land_surface_emissivity(ndvi=0.10, fvc=0.0)
+        self.assertAlmostEqual(eps_soil, 0.970, places=3, msg="Bare soil emissivity must equal soil endmember (0.970)")
+
+        # Full vegetation canopy (NDVI > 0.86)
+        eps_veg = calculate_sobrino_land_surface_emissivity(ndvi=0.92, fvc=1.0)
+        self.assertAlmostEqual(eps_veg, 0.990, places=3, msg="Full canopy emissivity must equal veg endmember (0.990)")
+
+        # Mixed pixel FVC monotonicity
+        fvc_low = calculate_fractional_vegetation_cover(0.35)
+        fvc_mid = calculate_fractional_vegetation_cover(0.53)
+        fvc_high = calculate_fractional_vegetation_cover(0.75)
+        self.assertGreater(fvc_mid, fvc_low, "FVC must increase monotonically with NDVI")
+        self.assertGreater(fvc_high, fvc_mid, "FVC must increase monotonically with NDVI")
+
+        # Emissivity bounds check across entire NDVI spectrum [-0.5 to 1.0]
+        for ndvi_val in [-0.5, -0.1, 0.0, 0.15, 0.30, 0.50, 0.70, 0.85, 0.90, 1.0]:
+            fvc = calculate_fractional_vegetation_cover(ndvi_val)
+            eps = calculate_sobrino_land_surface_emissivity(ndvi_val, fvc)
+            self.assertGreaterEqual(eps, 0.90, f"Emissivity {eps} for NDVI {ndvi_val} must be >= 0.90")
+            self.assertLessEqual(eps, 0.995, f"Emissivity {eps} for NDVI {ndvi_val} must be <= 0.995")
+
+        # 2. Planck Radiance & Brightness Temperature Monotonicity & Reciprocity
+        # Monotonicity: L1 < L2 ==> Tb1 < Tb2
+        tb_cold = calculate_planck_brightness_temperature(radiance=3.5)
+        tb_ambient = calculate_planck_brightness_temperature(radiance=8.5)
+        tb_hot = calculate_planck_brightness_temperature(radiance=15.0)
+        self.assertGreater(tb_ambient, tb_cold, "Planck inversion must be strictly monotonic (L up ==> Tb up)")
+        self.assertGreater(tb_hot, tb_ambient, "Planck inversion must be strictly monotonic (L up ==> Tb up)")
+
+        # Monotonicity: T1 < T2 ==> B(T1) < B(T2)
+        rad_cold = calculate_planck_radiance(temperature_k=273.15)
+        rad_ambient = calculate_planck_radiance(temperature_k=298.15)
+        rad_hot = calculate_planck_radiance(temperature_k=323.15)
+        self.assertGreater(rad_ambient, rad_cold, "Planck forward radiance must be strictly monotonic (T up ==> B up)")
+        self.assertGreater(rad_hot, rad_ambient, "Planck forward radiance must be strictly monotonic (T up ==> B up)")
+
+        # Reciprocity: B(Tb(L)) approx L
+        test_rad = 9.85
+        tb_k = calculate_planck_brightness_temperature(test_rad)
+        recalc_rad = calculate_planck_radiance(tb_k)
+        self.assertAlmostEqual(recalc_rad, test_rad, delta=0.1, msg="Planck forward and inverse laws must be reciprocal")
+
+        # 3. Kinetic Temperature Elevation: Ts > Tb when emissivity < 1.0
+        # In physical thermal remote sensing, a greybody (eps < 1.0) must be warmer than a blackbody to emit the same radiance
+        ts_artis = calculate_artis_carnahan_lst(brightness_temp_k=300.0, emissivity=0.96)
+        self.assertGreater(ts_artis, 300.0, "Kinetic LST (Artis & Carnahan) must be higher than brightness temperature when eps < 1.0")
+
+        ts_smw = calculate_smw_lst(brightness_temp_k=300.0, emissivity=0.96, water_vapor_g_cm2=1.5)
+        self.assertGreater(ts_smw, 300.0, "Kinetic LST (SMW) must be higher than brightness temperature when eps < 1.0")
+
+        # 4. RTE Inversion & Atmospheric Conservation
+        # RTE: L_TOA = [eps*B(Ts) + (1-eps)*L_down]*tau + L_up
+        # When tau=1.0, L_up=0.0, L_down=0.0 and eps=1.0, Ts == Tb
+        ts_rte_ideal = calculate_rte_surface_temperature(radiance_toa=9.85, emissivity=1.0, tau=1.0, l_up=0.0, l_down=0.0)
+        tb_ideal = calculate_planck_brightness_temperature(radiance=9.85)
+        self.assertAlmostEqual(ts_rte_ideal, tb_ideal, delta=0.05, msg="RTE with transparent atmosphere and blackbody must equal Tb")
+
+        # 5. Sub-zero Calibration Floor & Physical Bounds Safety
+        # Extreme cold / near-zero radiance must not crash or yield non-physical temperatures (Tc > -100 deg C)
+        tb_extreme_cold = calculate_planck_brightness_temperature(radiance=0.01)
+        self.assertGreater(tb_extreme_cold - 273.15, -100.0, "Sub-zero calibration floor must maintain Tc > -100 deg C")
+        
+        # Zero / negative input safety
+        rad_zero = calculate_planck_radiance(temperature_k=-10.0)
+        self.assertEqual(rad_zero, 0.0, "Negative temperature input to Planck must clamp gracefully to 0.0")
+
+        # 6. Thermal Anomaly Severity Classification
+        self.assertEqual(classify_thermal_anomaly_severity(0.5), ThermalAnomalySeverity.NOMINAL)
+        self.assertEqual(classify_thermal_anomaly_severity(2.0), ThermalAnomalySeverity.MILD_THERMAL_ANOMALY)
+        self.assertEqual(classify_thermal_anomaly_severity(4.5), ThermalAnomalySeverity.MODERATE_THERMAL_ANOMALY)
+        self.assertEqual(classify_thermal_anomaly_severity(7.5), ThermalAnomalySeverity.SEVERE_THERMAL_ANOMALY)
+        self.assertEqual(classify_thermal_anomaly_severity(12.0), ThermalAnomalySeverity.EXTREME_WILDFIRE_HOTSPOT)
+
+        # 7. Unified End-to-End Inversion Pipeline Evaluation
+        inv_rte = apply_lst_inversion(
+            radiance_or_tb=9.85,
+            ndvi=0.45,
+            method=LstAlgorithmModel.RADIATIVE_TRANSFER_EQUATION,
+            sensor=ThermalSensorType.LANDSAT_TIRS,
+            ambient_baseline_temp_c=25.0
+        )
+        self.assertIn("lst_celsius", inv_rte)
+        self.assertIn("lst_kelvin", inv_rte)
+        self.assertIn("emissivity", inv_rte)
+        self.assertIn("thermal_anomaly_delta_c", inv_rte)
+        self.assertIn("severity", inv_rte)
+        self.assertGreater(inv_rte["lst_celsius"], 20.0, "Inverted LST must be plausible for mid-radiance")
+        self.assertLess(inv_rte["lst_celsius"], 70.0, "Inverted LST must not exceed realistic ground temperature")
+
 
 if __name__ == "__main__":
     unittest.main()

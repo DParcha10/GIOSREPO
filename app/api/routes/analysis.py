@@ -95,6 +95,17 @@ from app.models.schemas import (
     build_aquatic_tile_url,
     build_aquatic_tile_url_template,
     build_aquatic_hab_tile_url_template,
+    TopographicMetric,
+    TopographicSolarGeometry,
+    TopographicCorrectionConfig,
+    TopographicCorrectionAnalysisRequest,
+    TopographicCorrectionSummary,
+    TopographicCorrectionAnalysisResponse,
+    TopographicTileRequestParams,
+    TOPOGRAPHIC_BENCHMARK_SCENES,
+    build_topographic_tile_url,
+    build_topographic_tile_url_template,
+    build_topographic_illumination_tile_url_template,
     format_spectral_profile,
     format_api_route,
     TransectSampleMethod,
@@ -778,13 +789,77 @@ from app.models.schemas import (
     build_mosaic_tile_url,
     build_mosaic_tile_url_template,
     build_mosaic_feather_tile_url_template,
-    build_mosaic_seamline_tile_url_template
+    build_mosaic_seamline_tile_url_template,
+    HlsSensorType,
+    BrdfKernelModel,
+    HlsHarmonizationStage,
+    HlsMetric,
+    HLS_BANDPASS_COEFFICIENTS,
+    HLS_BRDF_SPECTRAL_PARAMETERS,
+    HLS_BENCHMARK_SCENES,
+    calculate_rossthick_volumetric_kernel,
+    calculate_lisparse_geometric_kernel,
+    calculate_nbar_brdf_factor,
+    apply_nbar_normalization,
+    apply_cross_sensor_bandpass_adjustment,
+    apply_hls_harmonization,
+    BrdfGeometryParameters,
+    SpectralBandpassCoefficients,
+    HlsHarmonizationConfig,
+    HlsHarmonizationAnalysisRequest,
+    HlsHarmonizationSummary,
+    HlsHarmonizationAnalysisResponse,
+    HlsTileRequestParams,
+    build_hls_tile_url,
+    build_hls_tile_url_template,
+    build_hls_nbar_tile_url_template,
+    ThermalSensorType,
+    LstAlgorithmModel,
+    ThermalAnomalySeverity,
+    ThermalMetric,
+    THERMAL_CALIBRATION_COEFFICIENTS,
+    THERMAL_EMISSIVITY_ENDMEMBERS,
+    THERMAL_BENCHMARK_SCENES,
+    calculate_fractional_vegetation_cover,
+    calculate_sobrino_land_surface_emissivity,
+    calculate_planck_radiance,
+    calculate_planck_brightness_temperature,
+    calculate_rte_surface_temperature,
+    calculate_artis_carnahan_lst,
+    calculate_smw_lst,
+    classify_thermal_anomaly_severity,
+    apply_lst_inversion,
+    ThermalAtmosphericParameters,
+    ThermalEmissivityConfig,
+    ThermalLstAnalysisRequest,
+    ThermalAnomalySummary,
+    ThermalLstAnalysisResponse,
+    ThermalLstTileRequestParams,
+    build_thermal_lst_tile_url,
+    build_thermal_lst_tile_url_template,
+    build_thermal_anomaly_tile_url_template,
+    ExportFormat,
+    ExportJobStatus,
+    ExportCrs,
+    ExportLayerType,
+    ExportBoundingBox,
+    ExportBandSelection,
+    ExportJobRequest,
+    ExportArtifactMetadata,
+    ExportJobStatusResponse,
+    EXPORT_FORMAT_CONFIGS,
+    EXPORT_CRS_CONFIGS,
+    EXPORT_LAYER_CONFIGS,
+    EXPORT_BENCHMARK_SCENES,
+    build_export_status_url,
+    build_export_download_url
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
 from app.services.data_acquisition import data_acquisition_service
 from app.services.preprocessing import preprocessing_service
 from app.services.spatial import spatial_service
+from app.services.export_service import export_service
 
 logger = logging.getLogger(__name__)
 
@@ -1777,10 +1852,35 @@ def export_raster_data(req: DataExportRequest):
         expires_at=expires_at
     )
 
+@router.get("/export/formats")
+@router.get("/export/formats/", include_in_schema=False)
+@router.get("/analysis/export/formats", include_in_schema=False)
+def get_export_formats_endpoint():
+    """Lists registered container formats, supported CRS projections, and layer definitions."""
+    return export_service.get_export_formats_and_configs()
+
 @router.get("/export/{export_id}/download")
 @router.get("/export/{export_id}")
 def download_exported_data(export_id: str):
     """Direct HTTP retrieval for exported geospatial artifacts."""
+    if export_id == "formats":
+        return get_export_formats_endpoint()
+
+    art_info = export_service.get_artifact_file(export_id)
+    if art_info:
+        filepath, filename, mime_type = art_info
+        with open(filepath, "rb") as f:
+            file_bytes = f.read()
+        return Response(
+            content=file_bytes,
+            media_type=mime_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "public, max-age=86400",
+                "X-Export-Job-ID": export_id
+            }
+        )
+
     entry = _EXPORT_STORE.get(export_id)
     if not entry:
         raise HTTPException(status_code=404, detail=f"Export artifact '{export_id}' not found or expired.")
@@ -2978,7 +3078,6 @@ def get_analysis_water_quality_tile(
 
 @router.post("/lst/radiative-transfer", response_model=LSTAnalysisResponse)
 @router.post("/lst", response_model=LSTAnalysisResponse, include_in_schema=False)
-@router.post("/thermal/lst", response_model=LSTAnalysisResponse, include_in_schema=False)
 def analyze_lst_radiative_transfer(req: LSTAnalysisRequest):
     """Calculates physical Land Surface Temperature (LST) via single-channel Planck inversion (Artis & Carnahan).
     Derives fractional vegetation cover (FVC), narrow-band surface emissivity (Sobrino et al.),
@@ -3379,23 +3478,32 @@ def analyze_composites_bap(req: BAPCompositeRequest):
 
 @tiles_router.get("/thermal/lst/{collection}/{item_id}/{z}/{x}/{y}.png")
 @tiles_router.get("/thermal/lst/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/thermal/lst/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/thermal/lst/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
 def get_thermal_lst_tile(
     z: int,
     x: int,
     y: int,
     collection: Optional[str] = "landsat-c2-l2",
     item_id: Optional[str] = "lst",
-    colormap: Optional[str] = "turbo",
-    rescale: Optional[str] = "15.0,45.0"
+    metric: str = Query("lst_celsius", description="Thermal raster metric to render"),
+    method: str = Query("radiative_transfer_equation", description="Retrieval algorithm model"),
+    colormap: Optional[str] = Query(None, description="Colormap ramp (turbo, magma, inferno, etc.)"),
+    rescale: Optional[str] = Query(None, description="Contrast stretch bounds min,max"),
+    ambient_baseline_temp_c: Optional[float] = Query(None, description="Ambient baseline temperature override in Celsius")
 ):
+    """Dynamic XYZ tile streaming for calibrated Land Surface Temperature (LST) raster tiles."""
     png_bytes = tile_service.render_thermal_lst_tile(
         collection=collection or "landsat-c2-l2",
         item_id=item_id or "lst",
         z=z,
         x=x,
         y=y,
-        colormap=colormap or "turbo",
-        rescale=rescale or "15.0,45.0"
+        metric=metric,
+        method=method,
+        colormap=colormap,
+        rescale=rescale,
+        ambient_baseline_temp_c=ambient_baseline_temp_c
     )
     return Response(
         content=png_bytes,
@@ -3403,18 +3511,36 @@ def get_thermal_lst_tile(
         headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-THERMAL-LST-v2.5"}
     )
 
-@router.get("/tiles/thermal/lst/{collection}/{item_id}/{z}/{x}/{y}.png")
-@router.get("/tiles/thermal/lst/{item_id}/{z}/{x}/{y}.png")
-def get_analysis_thermal_lst_tile(
+@tiles_router.get("/thermal/anomaly/{collection}/{item_id}/{z}/{x}/{y}.png")
+@tiles_router.get("/thermal/anomaly/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/thermal/anomaly/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/thermal/anomaly/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_thermal_anomaly_tile(
     z: int,
     x: int,
     y: int,
     collection: Optional[str] = "landsat-c2-l2",
-    item_id: Optional[str] = "lst",
-    colormap: Optional[str] = "turbo",
-    rescale: Optional[str] = "15.0,45.0"
+    item_id: Optional[str] = "LC09_L2SP_039037_20260715_02_T1",
+    ambient_baseline_temp_c: float = Query(25.0, description="Ambient reference baseline temperature in Celsius"),
+    colormap: Optional[str] = Query("turbo", description="Colormap ramp"),
+    rescale: Optional[str] = Query(None, description="Contrast stretch bounds min,max")
 ):
-    return get_thermal_lst_tile(z=z, x=x, y=y, collection=collection, item_id=item_id, colormap=colormap, rescale=rescale)
+    """Dynamic XYZ tile streaming for thermal anomaly departure tiles (Delta T = T_s - T_ambient)."""
+    png_bytes = tile_service.render_thermal_anomaly_tile(
+        collection=collection or "landsat-c2-l2",
+        item_id=item_id or "LC09_L2SP_039037_20260715_02_T1",
+        z=z,
+        x=x,
+        y=y,
+        ambient_baseline_temp_c=ambient_baseline_temp_c,
+        colormap=colormap or "turbo",
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-THERMAL-ANOMALY-v2.5"}
+    )
 
 @tiles_router.get("/sar/insar/{pair_id}/{z}/{x}/{y}.png")
 @tiles_router.get("/sar/insar/{z}/{x}/{y}.png")
@@ -10194,6 +10320,844 @@ def get_aquatic_quality_tile_endpoint(
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Aquatic-Quality-v2.5"}
     )
+
+
+# ==============================================================================
+# Cycle v2.5.32: Topographic Solar Illumination Correction & SCS+C Inversion
+# Task T-253: Agent 7 (@backend)
+# ==============================================================================
+
+@router.post("/topographic/correction", response_model=TopographicCorrectionAnalysisResponse, response_model_by_alias=False)
+@router.post("/topographic/correction/", response_model=TopographicCorrectionAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/topographic/correction", response_model=TopographicCorrectionAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/topographic/correction/", response_model=TopographicCorrectionAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_topographic_correction_endpoint(
+    payload: Union[TopographicCorrectionAnalysisRequest, Dict[str, Any]] = Body(...)
+):
+    """Multi-spectral topographic solar illumination correction and radiance normalization.
+
+    Evaluates:
+        - Aligned Copernicus 30m DEM slope and aspect local incidence cosine:
+            cos(i) = cos(theta_s) * cos(alpha) + sin(theta_s) * sin(alpha) * cos(phi_s - beta)
+        - Non-Lambertian empirical C-correction (Meyer et al. 1993, Teillet et al. 1982):
+            L_corr = L * (cos(theta_s) + c) / (cos(i) + c)
+        - Sun-Canopy-Sensor with C-correction (SCS+C, Soenen et al. 2005) for rugged forest canopy:
+            L_corr = L * (cos(theta_s) * cos(alpha) + c) / (cos(i) + c)
+        - Minnaert empirical power law: L * (cos(theta_s) / cos(i))^k
+        - Self-shadow and grazing incidence masking
+        - Multi-band empirical C parameter estimation (c = b/m) via OLS regression
+    """
+    if hasattr(payload, "model_dump"):
+        data = payload.model_dump()
+    elif isinstance(payload, dict):
+        data = payload
+    else:
+        data = payload.dict()
+
+    scene_id = str(data.get("scene_id") or "MT_SHASTA_VOLCANO_2026")
+    collection = str(data.get("collection") or "sentinel-2-l2a")
+    dem_collection = str(data.get("dem_collection") or "cop-dem-glo-30")
+    bbox = data.get("bbox")
+
+    raw_method = data.get("method") or "c_correction"
+    method_str = raw_method.value if hasattr(raw_method, "value") else str(raw_method).lower().strip()
+
+    # Extract custom solar ephemeris overrides if supplied
+    solar_geom = data.get("solar_geometry") or {}
+    sz_override = solar_geom.get("solar_zenith_deg") if isinstance(solar_geom, dict) else getattr(solar_geom, "solar_zenith_deg", None)
+    sa_override = solar_geom.get("solar_azimuth_deg") if isinstance(solar_geom, dict) else getattr(solar_geom, "solar_azimuth_deg", None)
+
+    # Extract configuration thresholds
+    cfg = data.get("config") or {}
+    if not isinstance(cfg, dict) and hasattr(cfg, "dict"):
+        cfg = cfg.dict()
+
+    c_factor = cfg.get("c_factor")
+    minnaert_k = cfg.get("minnaert_k")
+    cos_i_min = float(cfg.get("cos_i_min", 0.05))
+    mask_self_shadow = bool(cfg.get("mask_self_shadow", True))
+    mask_water = bool(cfg.get("mask_water", True))
+
+    # 1. Load memory-conscious data cube with aligned DEM
+    ds, meta = data_acquisition_service.load_topographic_data_cube(
+        scene_id=scene_id,
+        bbox=bbox,
+        collection=collection,
+        dem_collection=dem_collection,
+        grid_size=256,
+        solar_zenith_override=float(sz_override) if sz_override is not None else None,
+        solar_azimuth_override=float(sa_override) if sa_override is not None else None
+    )
+
+    # 2. Run multi-band topographic solar illumination inversion
+    inversion = index_service.compute_topographic_correction_inversion(
+        bands=ds,
+        solar_zenith_deg=float(meta["solar_zenith_deg"]),
+        solar_azimuth_deg=float(meta["solar_azimuth_deg"]),
+        method=method_str,
+        c_factor=float(c_factor) if c_factor is not None else None,
+        minnaert_k=float(minnaert_k) if minnaert_k is not None else None,
+        cos_i_min=cos_i_min,
+        mask_self_shadow=mask_self_shadow,
+        mask_water=mask_water
+    )
+
+    summary_model = TopographicCorrectionSummary(**inversion["summary"])
+    solar_geometry_model = TopographicSolarGeometry(
+        solar_zenith_deg=float(meta["solar_zenith_deg"]),
+        solar_azimuth_deg=float(meta["solar_azimuth_deg"]),
+        solar_elevation_deg=float(meta["solar_elevation_deg"]),
+        earth_sun_distance_au=1.013
+    )
+
+    analysis_id = f"TOPO-{uuid.uuid4().hex[:8].upper()}"
+
+    tile_url_template = build_topographic_tile_url_template(
+        collection=collection,
+        item_id=scene_id,
+        method=method_str,
+        metric="corrected_reflectance",
+        solar_zenith=float(meta["solar_zenith_deg"]),
+        solar_azimuth=float(meta["solar_azimuth_deg"]),
+        c_factor=c_factor,
+        minnaert_k=minnaert_k
+    )
+    illumination_tile_url_template = build_topographic_illumination_tile_url_template(
+        collection=collection,
+        item_id=scene_id,
+        solar_zenith=float(meta["solar_zenith_deg"]),
+        solar_azimuth=float(meta["solar_azimuth_deg"])
+    )
+
+    return TopographicCorrectionAnalysisResponse(
+        analysis_id=analysis_id,
+        scene_id=scene_id,
+        collection=collection,
+        dem_collection=dem_collection,
+        method=method_str,
+        solar_geometry=solar_geometry_model,
+        summary=summary_model,
+        tile_url_template=tile_url_template,
+        illumination_tile_url_template=illumination_tile_url_template,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        status="completed"
+    )
+
+
+@router.post("/topographic/solar-geometry", response_model=TopographicSolarGeometry)
+@router.post("/topographic/solar-geometry/", response_model=TopographicSolarGeometry, include_in_schema=False)
+@router.get("/topographic/solar-geometry", response_model=TopographicSolarGeometry)
+@router.get("/topographic/solar-geometry/", response_model=TopographicSolarGeometry, include_in_schema=False)
+@router.post("/analysis/topographic/solar-geometry", response_model=TopographicSolarGeometry, include_in_schema=False)
+@router.get("/analysis/topographic/solar-geometry", response_model=TopographicSolarGeometry, include_in_schema=False)
+def get_topographic_solar_geometry_endpoint(
+    scene_id: Optional[str] = Query(None, description="Benchmark or satellite scene ID"),
+    collection: Optional[str] = Query("sentinel-2-l2a", description="Satellite collection identifier"),
+    payload: Optional[Dict[str, Any]] = Body(None)
+):
+    """Calculates solar illumination zenith, azimuth, and elevation ephemeris angles."""
+    target_scene = scene_id
+    if payload and isinstance(payload, dict):
+        target_scene = payload.get("scene_id") or target_scene
+
+    sid_clean = str(target_scene or "MT_SHASTA_VOLCANO_2026").upper().strip()
+    matched = None
+    for k, sc in TOPOGRAPHIC_BENCHMARK_SCENES.items():
+        if k.upper() == sid_clean or sc["scene_id"].upper() == sid_clean:
+            matched = sc
+            break
+
+    if matched:
+        return TopographicSolarGeometry(
+            solar_zenith_deg=matched["solar_zenith_deg"],
+            solar_azimuth_deg=matched["solar_azimuth_deg"],
+            solar_elevation_deg=matched["solar_elevation_deg"],
+            earth_sun_distance_au=1.013
+        )
+
+    # Default solar geometry for mid-latitude summer acquisition
+    return TopographicSolarGeometry(
+        solar_zenith_deg=34.2,
+        solar_azimuth_deg=148.5,
+        solar_elevation_deg=55.8,
+        earth_sun_distance_au=1.013
+    )
+
+
+@router.get("/topographic/scenes")
+@router.get("/topographic/scenes/", include_in_schema=False)
+@router.get("/analysis/topographic/scenes", include_in_schema=False)
+def list_topographic_scenes_endpoint(
+    collection: str = Query("sentinel-2-l2a"),
+    dem_collection: str = Query("cop-dem-glo-30"),
+    max_cloud: float = Query(30.0)
+):
+    """Lists available high-relief benchmark and satellite candidate scenes for topographic correction."""
+    scenes = data_acquisition_service.search_topographic_scenes(
+        collection=collection,
+        dem_collection=dem_collection,
+        max_cloud=max_cloud
+    )
+    return {"status": "success", "total": len(scenes), "scenes": scenes}
+
+
+@tiles_router.get("/topographic/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/topographic/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_topographic_correction_tile_endpoint(
+    collection: str,
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    method: str = Query("c_correction", description="Topographic correction algorithm ('none', 'c_correction', 'scs_c', 'minnaert', 'cosine')"),
+    metric: str = Query("corrected_reflectance", description="Raster metric to render ('corrected_reflectance', 'cos_incidence', 'illumination', 'illumination_condition', 'difference', 'ratio')"),
+    solar_zenith: Optional[float] = Query(None, description="Solar zenith angle override in degrees"),
+    solar_azimuth: Optional[float] = Query(None, description="Solar azimuth angle override in degrees"),
+    c_factor: Optional[float] = Query(None, description="Empirical C parameter (c = b/m)"),
+    minnaert_k: Optional[float] = Query(None, description="Minnaert k parameter in (0, 1]"),
+    colormap: Optional[str] = Query(None, description="Colormap for metric visualization"),
+    rescale: Optional[str] = Query(None, description="Contrast stretch range min,max")
+):
+    """Dynamic XYZ tile streaming for topographically normalized imagery and solar illumination metrics."""
+    png_bytes = tile_service.render_topographic_correction_tile(
+        collection=collection,
+        item_id=item_id,
+        z=z,
+        x=x,
+        y=y,
+        method=method,
+        metric=metric,
+        solar_zenith=solar_zenith,
+        solar_azimuth=solar_azimuth,
+        c_factor=c_factor,
+        minnaert_k=minnaert_k,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-TopographicCorrection-{method}"}
+    )
+
+
+@tiles_router.get("/topographic/illumination/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/topographic/illumination/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_topographic_illumination_tile_endpoint(
+    collection: str,
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    solar_zenith: Optional[float] = Query(None, description="Solar zenith angle override in degrees"),
+    solar_azimuth: Optional[float] = Query(None, description="Solar azimuth angle override in degrees")
+):
+    """Dynamic XYZ tile streaming for terrain local solar incidence cosine cos(i) hillshade."""
+    png_bytes = tile_service.render_topographic_illumination_tile(
+        collection=collection,
+        item_id=item_id,
+        z=z,
+        x=x,
+        y=y,
+        solar_zenith=solar_zenith,
+        solar_azimuth=solar_azimuth
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-TopographicIllumination-v2.5"}
+    )
+
+
+# ==============================================================================
+# Cycle v2.5.33: Harmonized Landsat Sentinel-2 (HLS) Principles, NBAR & Cross-Sensor Harmonization
+# Task T-259: Agent 7 (@backend)
+# ==============================================================================
+
+@router.post("/hls/harmonization", response_model=HlsHarmonizationAnalysisResponse, response_model_by_alias=False)
+@router.post("/hls/harmonization/", response_model=HlsHarmonizationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/hls/harmonization", response_model=HlsHarmonizationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/hls/harmonization/", response_model=HlsHarmonizationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_hls_harmonization_endpoint(
+    payload: Optional[Union[HlsHarmonizationAnalysisRequest, Dict[str, Any]]] = Body(None)
+):
+    """Executes multi-sensor Harmonized Landsat Sentinel-2 (HLS) surface reflectance harmonization.
+
+    Performs:
+        1. Acquisition view and solar geometry parameter resolution on MGRS UTM tile grid.
+        2. Semi-empirical RossThick-LiSparse-R BRDF inversion normalizing view/illumination
+           anisotropy to constant nadir (theta_v = 0 deg) and solar noon (theta_s = 45 deg).
+        3. Sensor-specific relative spectral response (RSR) bandpass translation matrix (Claverie et al. 2018).
+        4. Derivation of harmonized biophysical indices (NDVI, EVI) and dynamic Leaflet tile streaming.
+    """
+    if payload is None:
+        data = {}
+    elif hasattr(payload, "model_dump"):
+        data = payload.model_dump()
+    elif isinstance(payload, dict):
+        data = payload
+    else:
+        data = {}
+
+    scene_id = data.get("scene_id", "MGRS_10TFK_SAN_FRANCISCO_2026")
+    sensor = data.get("sensor", "landsat_oli")
+    collection = data.get("collection", "landsat-c2-l2")
+    mgrs_tile = data.get("mgrs_tile")
+    cfg = data.get("config", {}) or {}
+
+    geom_dict = data.get("geometry", {}) or {}
+    solar_zenith = geom_dict.get("solar_zenith_deg")
+    solar_azimuth = geom_dict.get("solar_azimuth_deg")
+    view_zenith = geom_dict.get("view_zenith_deg", 0.0)
+    view_azimuth = geom_dict.get("view_azimuth_deg", 0.0)
+    target_solar_zenith = geom_dict.get("target_solar_zenith_deg", 45.0)
+    target_view_zenith = geom_dict.get("target_view_zenith_deg", 0.0)
+
+    # 1. Load multi-sensor data cube
+    ds, metadata = data_acquisition_service.load_hls_data_cube(
+        scene_id=scene_id,
+        mgrs_tile=mgrs_tile,
+        collection=collection,
+        sensor=sensor,
+        solar_zenith_override=solar_zenith,
+        solar_azimuth_override=solar_azimuth,
+        view_zenith_override=view_zenith,
+        view_azimuth_override=view_azimuth,
+        grid_size=256
+    )
+
+    resolved_mgrs = metadata.get("mgrs_tile", mgrs_tile or "10TFK")
+    resolved_sz = float(solar_zenith if solar_zenith is not None else metadata["solar_zenith_deg"])
+    resolved_sa = float(solar_azimuth if solar_azimuth is not None else metadata["solar_azimuth_deg"])
+    resolved_vz = float(view_zenith if view_zenith is not None else metadata["view_zenith_deg"])
+    resolved_va = float(view_azimuth if view_azimuth is not None else metadata["view_azimuth_deg"])
+
+    # 2. Execute BRDF NBAR inversion and cross-sensor harmonization
+    src_sens = cfg.get("source_sensor", sensor or "landsat_oli")
+    tgt_sens = cfg.get("target_sensor", "sentinel_msi")
+    apply_bp = cfg.get("apply_bandpass_adjustment", True)
+    crown_ratio = float(cfg.get("crown_ratio", 1.0))
+    shape_ratio = float(cfg.get("shape_ratio", 2.0))
+
+    inversion = index_service.compute_hls_harmonization(
+        bands=ds,
+        solar_zenith_deg=resolved_sz,
+        solar_azimuth_deg=resolved_sa,
+        view_zenith_deg=resolved_vz,
+        view_azimuth_deg=resolved_va,
+        target_solar_zenith_deg=float(target_solar_zenith),
+        target_view_zenith_deg=float(target_view_zenith),
+        source_sensor=src_sens,
+        target_sensor=tgt_sens,
+        apply_bandpass=apply_bp,
+        crown_ratio=crown_ratio,
+        shape_ratio=shape_ratio
+    )
+
+    summary_raw = inversion["summary"]
+    analysis_id = f"HLS-ANA-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+
+    # Dynamic XYZ tile URLs
+    tile_template = build_hls_tile_url_template(
+        collection=collection,
+        item_id=scene_id,
+        metric="harmonized_reflectance",
+        stage="harmonized"
+    )
+    nbar_template = build_hls_nbar_tile_url_template(
+        collection=collection,
+        item_id=scene_id,
+        target_solar_zenith=target_solar_zenith
+    )
+
+    # Construct Pydantic Response
+    geom_params = BrdfGeometryParameters(
+        solar_zenith_deg=resolved_sz,
+        solar_azimuth_deg=resolved_sa,
+        view_zenith_deg=resolved_vz,
+        view_azimuth_deg=resolved_va,
+        relative_azimuth_deg=inversion["diagnostic_layers"]["relative_azimuth_deg"],
+        target_solar_zenith_deg=target_solar_zenith,
+        target_view_zenith_deg=target_view_zenith
+    )
+
+    hls_config = HlsHarmonizationConfig(
+        source_sensor=src_sens,
+        target_sensor=tgt_sens,
+        apply_bandpass_adjustment=apply_bp,
+        target_solar_zenith_deg=target_solar_zenith,
+        target_view_zenith_deg=target_view_zenith,
+        crown_ratio=crown_ratio,
+        shape_ratio=shape_ratio
+    )
+
+    summary = HlsHarmonizationSummary(
+        source_sensor=summary_raw["source_sensor"],
+        target_sensor=summary_raw["target_sensor"],
+        mgrs_tile=summary_raw["mgrs_tile"],
+        bands_processed=summary_raw["bands_processed"],
+        mean_brdf_adjustment_factor=summary_raw["mean_brdf_adjustment_factor"],
+        mean_source_reflectance=summary_raw["mean_source_reflectance"],
+        mean_nbar_reflectance=summary_raw["mean_nbar_reflectance"],
+        mean_harmonized_reflectance=summary_raw["mean_harmonized_reflectance"],
+        cross_sensor_rmse=summary_raw["cross_sensor_rmse"],
+        mean_volumetric_kernel=summary_raw["mean_volumetric_kernel"],
+        mean_geometric_kernel=summary_raw["mean_geometric_kernel"]
+    )
+
+    return HlsHarmonizationAnalysisResponse(
+        analysis_id=analysis_id,
+        scene_id=scene_id,
+        mgrs_tile=resolved_mgrs,
+        source_sensor=str(src_sens),
+        target_sensor=str(tgt_sens),
+        geometry=geom_params,
+        config=hls_config,
+        summary=summary,
+        tile_url_template=tile_template,
+        nbar_tile_url_template=nbar_template,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        status="completed"
+    )
+
+
+@router.get("/hls/brdf-geometry")
+@router.get("/hls/brdf-geometry/", include_in_schema=False)
+@router.get("/analysis/hls/brdf-geometry", include_in_schema=False)
+@router.post("/hls/brdf-geometry", include_in_schema=False)
+@router.post("/analysis/hls/brdf-geometry", include_in_schema=False)
+def get_hls_brdf_geometry_endpoint(
+    solar_zenith: Optional[float] = Query(None, description="Solar zenith angle in degrees"),
+    solar_azimuth: Optional[float] = Query(None, description="Solar azimuth angle in degrees"),
+    view_zenith: Optional[float] = Query(0.0, description="Sensor view zenith angle in degrees"),
+    view_azimuth: Optional[float] = Query(0.0, description="Sensor view azimuth angle in degrees"),
+    scene_id: Optional[str] = Query(None, description="Benchmark or candidate scene ID"),
+    payload: Optional[Dict[str, Any]] = Body(None)
+):
+    """Calculates acquisition angular geometry, RossThick and LiSparse-R kernels, and NBAR adjustment factors."""
+    p = payload or {}
+    sid = scene_id or p.get("scene_id")
+    sz = solar_zenith if solar_zenith is not None else p.get("solar_zenith_deg")
+    sa = solar_azimuth if solar_azimuth is not None else p.get("solar_azimuth_deg")
+    vz = view_zenith if view_zenith is not None else p.get("view_zenith_deg", 0.0)
+    va = view_azimuth if view_azimuth is not None else p.get("view_azimuth_deg", 0.0)
+
+    if sid:
+        sid_clean = str(sid).upper().strip()
+        for k, sc in HLS_BENCHMARK_SCENES.items():
+            if k.upper() == sid_clean or sc["id"].upper() == sid_clean or sc["mgrs_tile"].upper() == sid_clean:
+                sz = sz if sz is not None else sc["mean_solar_zenith_deg"]
+                sa = sa if sa is not None else sc["mean_solar_azimuth_deg"]
+                vz = vz if vz is not None else sc["mean_view_zenith_deg"]
+                va = va if va is not None else sc["mean_view_azimuth_deg"]
+                break
+
+    sz_val = float(sz if sz is not None else 30.0)
+    sa_val = float(sa if sa is not None else 140.0)
+    vz_val = float(vz if vz is not None else 5.0)
+    va_val = float(va if va is not None else 100.0)
+
+    rel_az = abs(sa_val - va_val)
+    if rel_az > 180.0:
+        rel_az = 360.0 - rel_az
+
+    k_vol_obs = calculate_rossthick_volumetric_kernel(sz_val, vz_val, rel_az)
+    k_geo_obs = calculate_lisparse_geometric_kernel(sz_val, vz_val, rel_az)
+    k_vol_tgt = calculate_rossthick_volumetric_kernel(45.0, 0.0, 0.0)
+    k_geo_tgt = calculate_lisparse_geometric_kernel(45.0, 0.0, 0.0)
+
+    band_c_factors = {}
+    for band_name, spec in HLS_BRDF_SPECTRAL_PARAMETERS.items():
+        if band_name in ("default",):
+            continue
+        c_fac = calculate_nbar_brdf_factor(
+            solar_zenith_deg=sz_val,
+            view_zenith_deg=vz_val,
+            relative_azimuth_deg=rel_az,
+            target_solar_zenith_deg=45.0,
+            target_view_zenith_deg=0.0,
+            band=band_name
+        )
+        band_c_factors[band_name] = round(c_fac, 4)
+
+    return {
+        "status": "success",
+        "geometry": {
+            "solar_zenith_deg": sz_val,
+            "solar_azimuth_deg": sa_val,
+            "view_zenith_deg": vz_val,
+            "view_azimuth_deg": va_val,
+            "relative_azimuth_deg": round(rel_az, 2),
+            "target_solar_zenith_deg": 45.0,
+            "target_view_zenith_deg": 0.0
+        },
+        "kernels": {
+            "observed": {
+                "volumetric_kernel_rossthick": round(k_vol_obs, 5),
+                "geometric_kernel_lisparse_r": round(k_geo_obs, 5)
+            },
+            "target_nbar": {
+                "volumetric_kernel_rossthick": round(k_vol_tgt, 5),
+                "geometric_kernel_lisparse_r": round(k_geo_tgt, 5)
+            }
+        },
+        "brdf_factors": band_c_factors
+    }
+
+
+@router.get("/hls/bandpass")
+@router.get("/hls/bandpass/", include_in_schema=False)
+@router.get("/analysis/hls/bandpass", include_in_schema=False)
+def get_hls_bandpass_coefficients_endpoint():
+    """Returns cross-sensor spectral bandpass adjustment coefficients (Claverie et al. 2018) and BRDF parameters."""
+    return {
+        "status": "success",
+        "coefficients": HLS_BANDPASS_COEFFICIENTS,
+        "brdf_spectral_parameters": HLS_BRDF_SPECTRAL_PARAMETERS,
+        "benchmark_scenes": HLS_BENCHMARK_SCENES
+    }
+
+
+@router.get("/hls/scenes")
+@router.get("/hls/scenes/", include_in_schema=False)
+@router.get("/analysis/hls/scenes", include_in_schema=False)
+def list_hls_scenes_endpoint(
+    collection: str = Query("landsat-c2-l2"),
+    mgrs_tile: Optional[str] = Query(None),
+    max_cloud: float = Query(30.0)
+):
+    """Lists available benchmark and satellite candidate scenes for HLS cross-sensor harmonization."""
+    scenes = data_acquisition_service.search_hls_scenes(
+        collection=collection,
+        mgrs_tile=mgrs_tile,
+        max_cloud=max_cloud
+    )
+    return {"status": "success", "total": len(scenes), "scenes": scenes}
+
+
+@tiles_router.get("/hls/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/hls/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_hls_tile_endpoint(
+    collection: str,
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    metric: str = Query("harmonized_reflectance", description="Raster metric to render"),
+    stage: str = Query("harmonized", description="Harmonization processing stage ('source', 'nbar', 'harmonized')"),
+    sensor: Optional[str] = Query(None, description="Sensor override"),
+    target_solar_zenith: Optional[float] = Query(None, description="Target solar zenith override"),
+    target_view_zenith: Optional[float] = Query(None, description="Target view zenith override"),
+    colormap: Optional[str] = Query(None, description="Optional colormap"),
+    rescale: Optional[str] = Query(None, description="Contrast stretch bounds min,max")
+):
+    """Dynamic XYZ tile streaming for Harmonized Landsat Sentinel-2 (HLS) surface reflectance."""
+    png_bytes = tile_service.render_hls_tile(
+        collection=collection,
+        item_id=item_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        stage=stage,
+        sensor=sensor,
+        target_solar_zenith=target_solar_zenith,
+        target_view_zenith=target_view_zenith,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-HLS-{stage}"}
+    )
+
+
+@tiles_router.get("/hls/nbar/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/hls/nbar/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_hls_nbar_tile_endpoint(
+    collection: str,
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    target_solar_zenith: Optional[float] = Query(None, description="Target solar zenith override")
+):
+    """Dynamic XYZ tile streaming for Nadir BRDF-Adjusted Reflectance (NBAR) surface reflectance."""
+    png_bytes = tile_service.render_hls_nbar_tile(
+        collection=collection,
+        item_id=item_id,
+        z=z,
+        x=x,
+        y=y,
+        target_solar_zenith=target_solar_zenith
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-HLS-NBAR"}
+    )
+
+
+# ============================================================================
+# Cycle v2.5.34 (Task T-265): Land Surface Temperature (LST) Physics,
+# Split-Window / RTE Inversion & Thermal Anomaly Inversion Endpoints
+# ============================================================================
+
+@router.post("/thermal/lst", response_model=ThermalLstAnalysisResponse)
+@router.post("/thermal/lst/", response_model=ThermalLstAnalysisResponse, include_in_schema=False)
+@router.post("/analysis/thermal/lst", response_model=ThermalLstAnalysisResponse, include_in_schema=False)
+@thermal_router.post("/lst", response_model=ThermalLstAnalysisResponse, include_in_schema=False)
+def analyze_thermal_lst_endpoint(
+    payload: Optional[Union[ThermalLstAnalysisRequest, Dict[str, Any]]] = Body(None)
+):
+    """Executes radiometric Land Surface Temperature (LST) inversion and thermal anomaly detection.
+
+    Supported Algorithms:
+        - Radiative Transfer Equation (RTE single-channel: Sobrino et al. 2004)
+        - Artis & Carnahan (1982) single-channel Planck inversion
+        - Statistical Mono-Window (SMW: Ermida et al. 2020) with water vapor parametrization
+        - Split-Window (Jimenez-Munoz et al. 2014) dual-channel thermal retrieval
+
+    Derives:
+        - Fractional Vegetation Cover (FVC: Carlson & Ripley 1997)
+        - Narrow-band Land Surface Emissivity (LSE) with cavity factor
+        - Kinetic surface temperatures in Celsius and Kelvin
+        - Thermal anomaly departures Delta T = T_s - T_ambient and severity categorization
+        - Surface Urban Heat Island (SUHI) intensity
+        - Thermal hotspot count and footprint area in hectares
+        - Dynamic XYZ tile streaming URL templates for LST and anomaly layers
+    """
+    if payload is None:
+        data = {}
+    elif hasattr(payload, "model_dump"):
+        data = payload.model_dump()
+    elif isinstance(payload, dict):
+        data = payload
+    else:
+        data = {}
+
+    scene_id = data.get("scene_id") or data.get("item_id") or "SALTON_SEA_GEOTHERMAL_2026"
+    sensor = data.get("sensor", "landsat_tirs")
+    collection = data.get("collection", "landsat-c2-l2")
+    method = data.get("method", "radiative_transfer_equation")
+    ambient_baseline = data.get("ambient_baseline_temp_c")
+    if ambient_baseline is None:
+        ambient_baseline = data.get("baseline_temp_c", 25.0)
+    ambient_baseline = float(ambient_baseline)
+
+    atm_params = data.get("atmospheric_params") or {}
+    tau = atm_params.get("transmittance") or data.get("atmospheric_transmittance", 0.92)
+    upwelling = atm_params.get("upwelling_radiance", 1.20)
+    downwelling = atm_params.get("downwelling_radiance", 2.10)
+    wv = atm_params.get("water_vapor_g_cm2", 1.5)
+
+    emiss_cfg = data.get("emissivity_config") or {}
+    ndvi_soil = emiss_cfg.get("ndvi_soil") or data.get("ndvi_soil", 0.20)
+    ndvi_veg = emiss_cfg.get("ndvi_veg") or data.get("ndvi_veg", 0.86)
+    eps_soil = emiss_cfg.get("emissivity_soil") or data.get("emissivity_soil", 0.970)
+    eps_veg = emiss_cfg.get("emissivity_veg") or data.get("emissivity_veg", 0.990)
+    eps_water = emiss_cfg.get("emissivity_water", 0.995)
+    cavity = emiss_cfg.get("cavity_factor", 0.55)
+
+    bbox = data.get("bbox")
+    if bbox:
+        bbox = parse_bbox(bbox)
+    polygon = data.get("polygon")
+
+    # 1. Load multi-spectral and thermal data cube
+    ds, metadata = data_acquisition_service.load_thermal_data_cube(
+        scene_id=scene_id,
+        collection=collection,
+        sensor=sensor,
+        bbox=bbox,
+        grid_size=256,
+        ambient_baseline_temp_c=ambient_baseline,
+        tau=tau,
+        water_vapor_g_cm2=wv
+    )
+
+    resolved_ambient = float(ambient_baseline if ambient_baseline is not None else metadata.get("ambient_baseline_temp_c", 25.0))
+    resolved_tau = float(tau if tau is not None else metadata.get("atmospheric_transmittance", 0.92))
+    resolved_wv = float(wv if wv is not None else metadata.get("water_vapor_g_cm2", 1.5))
+
+    # 2. Compute LST and thermal anomaly inversion
+    inversion = index_service.compute_thermal_lst_inversion(
+        bands=ds,
+        sensor=sensor,
+        method=method,
+        ambient_baseline_temp_c=resolved_ambient,
+        tau=resolved_tau,
+        upwelling_radiance=upwelling,
+        downwelling_radiance=downwelling,
+        water_vapor_g_cm2=resolved_wv,
+        ndvi_soil=ndvi_soil,
+        ndvi_veg=ndvi_veg,
+        emissivity_soil=eps_soil,
+        emissivity_veg=eps_veg,
+        emissivity_water=eps_water,
+        cavity_factor=cavity,
+        polygon=polygon
+    )
+
+    summary_raw = inversion["summary"]
+    analysis_id = f"LST-ANA-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+
+    # Dynamic tile streaming templates
+    tile_template = build_thermal_lst_tile_url_template(
+        collection=collection,
+        item_id=scene_id,
+        metric="lst_celsius",
+        method=method
+    )
+    anomaly_template = build_thermal_anomaly_tile_url_template(
+        collection=collection,
+        item_id=scene_id,
+        ambient_baseline_temp_c=resolved_ambient,
+        colormap="turbo"
+    )
+
+    summary = ThermalAnomalySummary(
+        sensor=str(summary_raw["sensor"]),
+        method=str(summary_raw["method"]),
+        mean_lst_c=summary_raw["mean_lst_c"],
+        min_lst_c=summary_raw["min_lst_c"],
+        max_lst_c=summary_raw["max_lst_c"],
+        mean_brightness_temp_c=summary_raw["mean_brightness_temp_c"],
+        mean_emissivity=summary_raw["mean_emissivity"],
+        mean_fvc=summary_raw["mean_fvc"],
+        ambient_baseline_temp_c=summary_raw["ambient_baseline_temp_c"],
+        mean_thermal_anomaly_delta_c=summary_raw["mean_thermal_anomaly_delta_c"],
+        max_thermal_anomaly_delta_c=summary_raw["max_thermal_anomaly_delta_c"],
+        uhi_intensity_c=summary_raw["uhi_intensity_c"],
+        dominant_severity=summary_raw["dominant_severity"],
+        hotspot_pixel_count=summary_raw["hotspot_pixel_count"],
+        hotspot_area_ha=summary_raw["hotspot_area_ha"]
+    )
+
+    return ThermalLstAnalysisResponse(
+        analysis_id=analysis_id,
+        scene_id=scene_id,
+        sensor=str(sensor),
+        method=str(method),
+        summary=summary,
+        tile_url_template=tile_template,
+        anomaly_tile_url_template=anomaly_template,
+        status="completed",
+        created_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@router.get("/thermal/emissivity")
+@router.get("/thermal/emissivity/", include_in_schema=False)
+@router.get("/analysis/thermal/emissivity", include_in_schema=False)
+@router.post("/thermal/emissivity", include_in_schema=False)
+@router.post("/analysis/thermal/emissivity", include_in_schema=False)
+@thermal_router.get("/emissivity", include_in_schema=False)
+def get_thermal_emissivity_endpoint():
+    """Returns land surface emissivity endmembers (Sobrino et al. 2004) and interactive calibration parameters."""
+    return {
+        "status": "success",
+        "endmembers": THERMAL_EMISSIVITY_ENDMEMBERS,
+        "default_config": ThermalEmissivityConfig().model_dump(),
+        "method": "sobrino_ndvi_threshold",
+        "description": "Narrow-band 10.8-12.0 um Land Surface Emissivity derived from Fractional Vegetation Cover (FVC)"
+    }
+
+
+@router.get("/thermal/anomaly")
+@router.get("/thermal/anomaly/", include_in_schema=False)
+@router.get("/analysis/thermal/anomaly", include_in_schema=False)
+@router.post("/thermal/anomaly", include_in_schema=False)
+@router.post("/analysis/thermal/anomaly", include_in_schema=False)
+@thermal_router.get("/anomaly", include_in_schema=False)
+def get_thermal_anomaly_endpoint():
+    """Returns thermal anomaly hazard categorization tiers, benchmark scenes, and calibration coefficients."""
+    return {
+        "status": "success",
+        "severity_tiers": [s.value for s in ThermalAnomalySeverity],
+        "benchmark_scenes": THERMAL_BENCHMARK_SCENES,
+        "calibration_coefficients": THERMAL_CALIBRATION_COEFFICIENTS
+    }
+
+
+@router.get("/thermal/scenes")
+@router.get("/thermal/scenes/", include_in_schema=False)
+@router.get("/analysis/thermal/scenes", include_in_schema=False)
+@thermal_router.get("/scenes", include_in_schema=False)
+def list_thermal_scenes_endpoint(
+    collection: str = Query("landsat-c2-l2"),
+    sensor: str = Query("landsat_tirs"),
+    max_cloud: float = Query(30.0)
+):
+    """Lists available benchmark and satellite candidate scenes for Land Surface Temperature inversion."""
+    scenes = data_acquisition_service.search_thermal_scenes(
+        collection=collection,
+        sensor=sensor,
+        max_cloud=max_cloud
+    )
+    return {"status": "success", "total": len(scenes), "scenes": scenes}
+
+
+# ============================================================================
+# CLOUD-NATIVE GEOTIFF & GEOPACKAGE DATASET EXPORT PIPELINE (CYCLE v2.5.35)
+# ============================================================================
+
+@router.post("/export/request", response_model=ExportJobStatusResponse)
+@router.post("/export/request/", response_model=ExportJobStatusResponse, include_in_schema=False)
+@router.post("/analysis/export/request", response_model=ExportJobStatusResponse, include_in_schema=False)
+def request_dataset_export_endpoint(req: ExportJobRequest):
+    """Initiates an asynchronous geospatial export job generating Cloud-Optimized GeoTIFFs (COG),
+    vector GeoPackages (GPKG), GeoJSON, or CSV summaries.
+    Enforces large-raster memory guards, pyramidal overviews, and disk space limits.
+    """
+    job_status = export_service.submit_export_job(req, run_async=True)
+    return job_status
+
+
+@router.get("/export/status/{job_id}", response_model=ExportJobStatusResponse)
+@router.get("/export/status/{job_id}/", response_model=ExportJobStatusResponse, include_in_schema=False)
+@router.get("/analysis/export/status/{job_id}", response_model=ExportJobStatusResponse, include_in_schema=False)
+def get_export_job_status_endpoint(job_id: str):
+    """Retrieves current processing progress, status lifecycle state, and completed artifact metadata."""
+    job = export_service.get_job_status(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Export job '{job_id}' not found.")
+    return job
+
+
+@router.get("/export/download/{job_id}")
+@router.get("/export/download/{job_id}/", include_in_schema=False)
+@router.get("/analysis/export/download/{job_id}", include_in_schema=False)
+def download_export_artifact_endpoint(job_id: str):
+    """Streams the completed Cloud-Native GeoTIFF, GeoPackage, GeoJSON, or CSV artifact."""
+    artifact_info = export_service.get_artifact_file(job_id)
+    if not artifact_info:
+        job = export_service.get_job_status(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Export job '{job_id}' not found.")
+        elif job.status != ExportJobStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail=f"Export job '{job_id}' is not yet completed (current status: {job.status}).")
+        else:
+            raise HTTPException(status_code=404, detail=f"Export artifact for job '{job_id}' not found on disk.")
+
+    filepath, filename, mime_type = artifact_info
+    with open(filepath, "rb") as f:
+        file_bytes = f.read()
+
+    return Response(
+        content=file_bytes,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "public, max-age=86400",
+            "X-Export-Job-ID": job_id
+        }
+    )
+
+
+
+
 
 
 

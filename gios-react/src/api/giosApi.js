@@ -89,7 +89,29 @@ import {
   buildAquaticTileUrlTemplate,
   buildAquaticHabTileUrlTemplate,
   buildTopographicTileUrlTemplate,
-  buildTopographicIlluminationTileUrlTemplate
+  buildTopographicIlluminationTileUrlTemplate,
+  HLS_BANDPASS_COEFFICIENTS,
+  buildHlsTileUrlTemplate,
+  buildHlsNbarTileUrlTemplate,
+  calculateSobrinoFractionalVegetationCover,
+  calculateSobrinoLandSurfaceEmissivity,
+  classifyThermalAnomalySeverity,
+  buildThermalLstTileUrlTemplate,
+  buildThermalAnomalyTileUrlTemplate,
+  ExportFormat,
+  EXPORT_FORMATS,
+  ExportJobStatus,
+  EXPORT_JOB_STATUSES,
+  ExportCrs,
+  EXPORT_CRS_OPTIONS,
+  ExportLayerType,
+  EXPORT_LAYER_TYPES,
+  EXPORT_FORMAT_CONFIGS,
+  EXPORT_CRS_CONFIGS,
+  EXPORT_LAYER_CONFIGS,
+  EXPORT_BENCHMARK_SCENES,
+  generateQgisIngestionSnippet,
+  buildExportDownloadUrl
 } from '../config/constants.js';
 
 export {
@@ -1303,6 +1325,81 @@ const demoAdapter = async (config) => {
         mean_depth_m: 6.8,
         max_depth_m: 35.0
       };
+      else if (url.includes('/api/v1/analysis/export/request') || url.includes('/analysis/export/request')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const jobId = `EXP-JOB-${Date.now()}`;
+        const format = parsed.format || 'geotiff_cog';
+        const layerType = parsed.layer_type || 'surface_reflectance';
+        const collection = parsed.collection || 'sentinel-2-l2a';
+        const crs = parsed.target_crs || 'EPSG:4326';
+        const bbox = parsed.aoi_bbox ? [parsed.aoi_bbox.min_lon || -122.52, parsed.aoi_bbox.min_lat || 37.70, parsed.aoi_bbox.max_lon || -122.35, parsed.aoi_bbox.max_lat || 37.85] : [-122.52, 37.70, -122.35, 37.85];
+        data = {
+          job_id: jobId,
+          status: 'queued',
+          progress_pct: 0.0,
+          message: 'Asynchronous geospatial export job queued for processing',
+          request: {
+            aoi_bbox: { min_lon: bbox[0], min_lat: bbox[1], max_lon: bbox[2], max_lat: bbox[3] },
+            format,
+            layer_type: layerType,
+            collection,
+            target_crs: crs,
+            resolution_m: parsed.resolution_m || 10.0
+          },
+          download_url: `/api/v1/analysis/export/download/${jobId}`,
+          created_at: new Date().toISOString()
+        };
+      }
+      else if (url.includes('/api/v1/analysis/export/status') || url.includes('/analysis/export/status')) {
+        const parts = url.split('/');
+        const jobId = parts[parts.length - 1] || 'EXP-JOB-2026-001';
+        data = {
+          job_id: jobId,
+          status: 'completed',
+          progress_pct: 100.0,
+          message: 'Export artifact generated successfully and ready for ingestion',
+          request: {
+            aoi_bbox: { min_lon: -122.52, min_lat: 37.70, max_lon: -122.35, max_lat: 37.85 },
+            format: 'geotiff_cog',
+            layer_type: 'surface_reflectance',
+            collection: 'sentinel-2-l2a',
+            target_crs: 'EPSG:4326',
+            resolution_m: 10.0
+          },
+          artifact: {
+            filename: `gios_sentinel_2_l2a_surface_reflectance_${jobId}.tif`,
+            format: 'geotiff_cog',
+            mime_type: 'image/tiff; application=geotiff',
+            file_size_bytes: 8388608,
+            crs: 'EPSG:4326',
+            width_px: 1512,
+            height_px: 1670,
+            band_count: 4,
+            affine_transform: [0.00008983, 0.0, -122.52, 0.0, -0.00008983, 37.85],
+            bbox: [-122.52, 37.70, -122.35, 37.85],
+            checksum_sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+            qgis_instructions: generateQgisIngestionSnippet(`gios_sentinel_2_l2a_surface_reflectance_${jobId}.tif`, 'geotiff_cog', 'EPSG:4326')
+          },
+          download_url: `/api/v1/analysis/export/download/${jobId}`,
+          created_at: new Date(Date.now() - 15000).toISOString(),
+          completed_at: new Date().toISOString(),
+          execution_time_seconds: 14.8
+        };
+      }
+      else if (url.includes('/api/v1/analysis/export/download') || url.includes('/analysis/export/download')) {
+        const parts = url.split('/');
+        const jobId = parts[parts.length - 1] || 'EXP-JOB-2026-001';
+        data = new Blob(['mock GeoTIFF binary byte array content for ' + jobId], { type: 'image/tiff' });
+      }
+      else if (url.includes('/api/v1/analysis/export/formats') || url.includes('/analysis/export/formats')) {
+        data = {
+          formats: EXPORT_FORMAT_CONFIGS,
+          crs_options: EXPORT_CRS_CONFIGS,
+          layer_types: EXPORT_LAYER_CONFIGS,
+          benchmark_scenes: EXPORT_BENCHMARK_SCENES
+        };
+      }
       else if (url.includes('/api/v1/analysis/export')) data = {
         export_id: 'EXP-DEMO-01',
         status: 'ready',
@@ -3319,6 +3416,154 @@ const demoAdapter = async (config) => {
           solar_elevation_deg: 55.8,
           earth_sun_distance_au: 1.013,
           scene_id: parsed.scene_id || 'S2A_MSIL2A_20260815_MT_SHASTA'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/hls/harmonization') || url.includes('/analysis/hls/harmonization')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const sceneId = parsed.scene_id || 'LC09_L2SP_044034_20260718_02_T1';
+        const mgrsTile = parsed.mgrs_tile || '10TFK';
+        const anaId = `HLS-ANA-${Date.now()}`;
+        const collection = parsed.collection || 'landsat-c2-l2';
+        data = {
+          analysis_id: anaId,
+          scene_id: sceneId,
+          mgrs_tile: mgrsTile,
+          source_sensor: parsed.sensor || 'landsat_oli',
+          target_sensor: 'sentinel_msi',
+          geometry: {
+            solar_zenith_deg: 28.5,
+            solar_azimuth_deg: 134.2,
+            view_zenith_deg: 4.8,
+            view_azimuth_deg: 102.5,
+            relative_azimuth_deg: 31.7,
+            target_solar_zenith_deg: 45.0,
+            target_view_zenith_deg: 0.0
+          },
+          config: parsed.config || {
+            source_sensor: 'landsat_oli',
+            target_sensor: 'sentinel_msi',
+            brdf_model: 'rossthick_lisparse_r',
+            target_solar_zenith_deg: 45.0,
+            target_view_zenith_deg: 0.0,
+            apply_bandpass_adjustment: true,
+            bands: ['blue', 'green', 'red', 'nir', 'swir1', 'swir2']
+          },
+          summary: {
+            source_sensor: 'landsat_oli',
+            target_sensor: 'sentinel_msi',
+            mgrs_tile: mgrsTile,
+            bands_processed: ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
+            mean_brdf_adjustment_factor: 0.942,
+            mean_source_reflectance: 0.185,
+            mean_nbar_reflectance: 0.174,
+            mean_harmonized_reflectance: 0.171,
+            cross_sensor_rmse: 0.0054,
+            mean_volumetric_kernel: -0.038,
+            mean_geometric_kernel: -0.842
+          },
+          tile_url_template: `/api/v1/tiles/hls/${collection}/${sceneId}/{z}/{x}/{y}.png?stage=harmonized`,
+          nbar_tile_url_template: `/api/v1/tiles/hls/nbar/${collection}/${sceneId}/{z}/{x}/{y}.png`,
+          created_at: new Date().toISOString(),
+          status: 'completed'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/hls/brdf-geometry') || url.includes('/analysis/hls/brdf-geometry')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = {
+          solar_zenith_deg: parsed.solar_zenith_deg || 28.5,
+          view_zenith_deg: parsed.view_zenith_deg || 4.8,
+          relative_azimuth_deg: parsed.relative_azimuth_deg || 31.7,
+          target_solar_zenith_deg: 45.0,
+          target_view_zenith_deg: 0.0,
+          k_vol: -0.0382,
+          k_geo: -0.8421,
+          c_factors: { blue: 0.945, green: 0.941, red: 0.938, nir: 0.949, swir1: 0.952, swir2: 0.948 }
+        };
+      }
+      else if (url.includes('/api/v1/analysis/hls/bandpass') || url.includes('/analysis/hls/bandpass')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = {
+          source_sensor: parsed.source_sensor || 'landsat_oli',
+          target_sensor: parsed.target_sensor || 'sentinel_msi',
+          coefficients: HLS_BANDPASS_COEFFICIENTS,
+          adjusted_reflectances: {
+            blue: 0.19586,
+            green: 0.20186,
+            red: 0.19720,
+            nir: 0.19956,
+            swir1: 0.20014,
+            swir2: 0.20060
+          }
+        };
+      }
+      else if (url.includes('/api/v1/analysis/thermal/lst') || url.includes('/analysis/thermal/lst')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const sceneId = parsed.scene_id || 'LC09_L2SP_039037_20260715_02_T1';
+        const collection = parsed.collection || 'landsat-c2-l2';
+        const sensor = parsed.sensor || 'landsat_tirs';
+        const method = parsed.method || 'radiative_transfer_equation';
+        const baseline = parsed.ambient_baseline_temp_c !== undefined ? Number(parsed.ambient_baseline_temp_c) : 25.0;
+        const meanLst = 42.8;
+        const deltaT = Math.round((meanLst - baseline) * 10) / 10;
+        data = {
+          analysis_id: `LST-ANA-${Date.now()}`,
+          scene_id: sceneId,
+          sensor,
+          method,
+          summary: {
+            sensor,
+            method,
+            mean_lst_c: meanLst,
+            min_lst_c: 26.2,
+            max_lst_c: 54.1,
+            mean_brightness_temp_c: 38.6,
+            mean_emissivity: 0.974,
+            mean_fvc: 0.28,
+            ambient_baseline_temp_c: baseline,
+            mean_thermal_anomaly_delta_c: deltaT,
+            max_thermal_anomaly_delta_c: Math.round((54.1 - baseline) * 10) / 10,
+            uhi_intensity_c: Math.max(0.0, deltaT),
+            dominant_severity: deltaT >= 10.0 ? 'extreme_wildfire_hotspot' : (deltaT >= 6.0 ? 'severe_thermal_anomaly' : 'moderate_thermal_anomaly'),
+            hotspot_pixel_count: 1420,
+            hotspot_area_ha: 127.8
+          },
+          tile_url_template: `/api/v1/tiles/thermal/lst/${collection}/${sceneId}/{z}/{x}/{y}.png`,
+          anomaly_tile_url_template: `/api/v1/tiles/thermal/anomaly/${collection}/${sceneId}/{z}/{x}/{y}.png?ambient_baseline_temp_c=${baseline}`,
+          status: 'completed',
+          created_at: new Date().toISOString()
+        };
+      }
+      else if (url.includes('/api/v1/analysis/thermal/emissivity') || url.includes('/analysis/thermal/emissivity')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const ndvi = parsed.ndvi !== undefined ? Number(parsed.ndvi) : 0.45;
+        const fvc = calculateSobrinoFractionalVegetationCover(ndvi);
+        const eps = calculateSobrinoLandSurfaceEmissivity(ndvi, fvc);
+        data = {
+          ndvi,
+          fvc,
+          emissivity: eps,
+          soil_endmember: 0.970,
+          veg_endmember: 0.990,
+          cavity_factor: 0.55
+        };
+      }
+      else if (url.includes('/api/v1/analysis/thermal/anomaly') || url.includes('/analysis/thermal/anomaly')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const lstC = parsed.lst_celsius !== undefined ? Number(parsed.lst_celsius) : 48.5;
+        const baseline = parsed.ambient_baseline_temp_c !== undefined ? Number(parsed.ambient_baseline_temp_c) : 34.0;
+        const delta = Math.round((lstC - baseline) * 10) / 10;
+        data = {
+          lst_celsius: lstC,
+          ambient_baseline_temp_c: baseline,
+          thermal_anomaly_delta_c: delta,
+          uhi_intensity_c: Math.max(0.0, delta),
+          severity: classifyThermalAnomalySeverity(delta)
         };
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
@@ -8605,6 +8850,154 @@ export const getTopographicIlluminationTileUrlTemplate = (options = {}) => {
   return buildTopographicIlluminationTileUrlTemplate(options);
 };
 
+/**
+ * Executes multi-sensor Harmonized Landsat Sentinel-2 (HLS) analysis.
+ * 
+ * @param {Object} [params={}] - Request parameters (scene_id, sensor, collection, mgrs_tile, geometry, config)
+ * @returns {Promise<Object>} HLS harmonization analysis response and tile templates
+ */
+export const fetchHlsHarmonizationAnalysis = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/hls/harmonization', params);
+  return response.data;
+};
+
+/**
+ * Requests BRDF view and illumination geometry calculation.
+ * 
+ * @param {Object} [params={}] - Request parameters (solar_zenith, solar_azimuth, view_zenith, view_azimuth)
+ * @returns {Promise<Object>} Calculated BRDF kernel values (k_vol, k_geo, c_brdf)
+ */
+export const fetchHlsBrdfGeometry = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/hls/brdf-geometry', params);
+  return response.data;
+};
+
+/**
+ * Requests cross-sensor spectral bandpass adjustment.
+ * 
+ * @param {Object} [params={}] - Request parameters (reflectance, band, source_sensor, target_sensor)
+ * @returns {Promise<Object>} Adjusted reflectance values and coefficients
+ */
+export const fetchHlsBandpassAdjustment = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/hls/bandpass', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for fully harmonized HLS imagery.
+ * 
+ * @param {Object} [options={}] - Options (collection, itemId, metric, stage, sensor, colormap, rescale)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getHlsTileUrlTemplate = (options = {}) => {
+  return buildHlsTileUrlTemplate(options);
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for NBAR normalized surface reflectance tiles.
+ * 
+ * @param {Object} [options={}] - Options (collection, itemId, targetSolarZenith)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getHlsNbarTileUrlTemplate = (options = {}) => {
+  return buildHlsNbarTileUrlTemplate(options);
+};
+
+/**
+ * Executes Land Surface Temperature (LST) and thermal anomaly inversion analysis.
+ * 
+ * @param {Object} [params={}] - LST analysis parameters
+ * @returns {Promise<Object>} Analysis response with kinetic temperature and tile templates
+ */
+export const fetchThermalLstAnalysis = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/thermal/lst', params);
+  return response.data;
+};
+
+/**
+ * Calculates fractional vegetation cover and surface emissivity for a given NDVI.
+ * 
+ * @param {Object} [params={}] - Emissivity parameters
+ * @returns {Promise<Object>} Emissivity derivation result
+ */
+export const fetchThermalEmissivity = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/thermal/emissivity', params);
+  return response.data;
+};
+
+/**
+ * Evaluates thermal anomaly departure and classification tier.
+ * 
+ * @param {Object} [params={}] - Thermal anomaly parameters
+ * @returns {Promise<Object>} Thermal anomaly assessment
+ */
+export const fetchThermalAnomaly = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/thermal/anomaly', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for kinetic Land Surface Temperature raster tiles.
+ * 
+ * @param {Object} [options={}] - Options (collection, itemId, metric, method, colormap, rescale)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getThermalLstTileUrlTemplate = (options = {}) => {
+  return buildThermalLstTileUrlTemplate(options);
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for thermal anomaly departure tiles.
+ * 
+ * @param {Object} [options={}] - Options (collection, itemId, ambientBaselineTempC, colormap)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getThermalAnomalyTileUrlTemplate = (options = {}) => {
+  return buildThermalAnomalyTileUrlTemplate(options);
+};
+
+/**
+ * Submits an asynchronous geospatial data export request (GeoTIFF COG, GeoPackage, GeoJSON, CSV).
+ * 
+ * @param {Object} [params={}] - Export job parameters
+ * @returns {Promise<Object>} Job submission response with job_id and status
+ */
+export const requestDatasetExport = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/export/request', params);
+  return response.data;
+};
+
+/**
+ * Polls the execution status and artifact metadata for an asynchronous export job.
+ * 
+ * @param {string} jobId - Unique export job identifier
+ * @returns {Promise<Object>} Job status response with progress and artifact details
+ */
+export const fetchExportJobStatus = async (jobId) => {
+  const response = await giosApi.get(`/api/v1/analysis/export/status/${jobId}`);
+  return response.data;
+};
+
+/**
+ * Retrieves the download URL for a completed export artifact.
+ * 
+ * @param {string} jobId - Unique export job identifier
+ * @returns {string} Direct download URL
+ */
+export const fetchExportDownloadUrl = (jobId) => {
+  return buildExportDownloadUrl(jobId);
+};
+
+/**
+ * Retrieves available geospatial export formats, coordinate systems, and layer presets.
+ * 
+ * @returns {Promise<Object>} Formats, CRS options, and layer configurations
+ */
+export const fetchExportFormats = async () => {
+  const response = await giosApi.get('/api/v1/analysis/export/formats');
+  return response.data;
+};
+
 export {
   InSARDeformationHazardTier,
   INSAR_HAZARD_CONFIGS,
@@ -8839,7 +9232,71 @@ export {
   estimateCFactorFromLinearRegression,
   buildTopographicTileUrl,
   buildTopographicTileUrlTemplate,
-  buildTopographicIlluminationTileUrlTemplate
+  buildTopographicIlluminationTileUrlTemplate,
+  HlsSensorType,
+  HLS_SENSOR_TYPES,
+  BrdfKernelModel,
+  BRDF_KERNEL_MODEL_TYPES,
+  HlsHarmonizationStage,
+  HLS_HARMONIZATION_STAGES,
+  HlsMetric,
+  HLS_METRICS,
+  HLS_BANDPASS_COEFFICIENTS,
+  HLS_BRDF_SPECTRAL_PARAMETERS,
+  HLS_BENCHMARK_SCENES,
+  DEFAULT_HLS_GEOMETRY,
+  calculateRossThickVolumetricKernel,
+  calculateLiSparseGeometricKernel,
+  calculateNbarBrdfFactor,
+  applyNbarNormalization,
+  applyCrossSensorBandpassAdjustment,
+  applyHlsHarmonization,
+  buildHlsTileUrl,
+  buildHlsNbarTileUrlTemplate,
+  ThermalSensorType,
+  THERMAL_SENSOR_TYPES,
+  LstAlgorithmModel,
+  LST_ALGORITHM_MODELS,
+  ThermalAnomalySeverity,
+  THERMAL_ANOMALY_SEVERITIES,
+  ThermalMetric,
+  THERMAL_METRICS,
+  THERMAL_CALIBRATION_COEFFICIENTS,
+  THERMAL_EMISSIVITY_ENDMEMBERS,
+  THERMAL_BENCHMARK_SCENES,
+  calculateSobrinoFractionalVegetationCover,
+  calculateSobrinoLandSurfaceEmissivity,
+  calculatePlanckRadiance,
+  calculatePlanckBrightnessTemperature,
+  calculateRteSurfaceTemperature,
+  calculateArtisCarnahanLst,
+  calculateSmwLst,
+  classifyThermalAnomalySeverity,
+  applyLstInversion,
+  buildThermalLstTileUrl,
+  buildThermalLstTileUrlTemplate,
+  buildThermalAnomalyTileUrlTemplate,
+  ExportFormat,
+  EXPORT_FORMATS,
+  ExportJobStatus,
+  EXPORT_JOB_STATUSES,
+  ExportCrs,
+  EXPORT_CRS_OPTIONS,
+  ExportLayerType,
+  EXPORT_LAYER_TYPES,
+  EXPORT_FORMAT_CONFIGS,
+  EXPORT_CRS_CONFIGS,
+  EXPORT_LAYER_CONFIGS,
+  EXPORT_BENCHMARK_SCENES,
+  normalizeExportFormat,
+  determineUtmEpsg,
+  bboxToGeoJsonPolygon,
+  calculateBboxAreaKm2,
+  calculateAffineTransformMatrix,
+  generateQgisIngestionSnippet,
+  formatExportJobFilename,
+  buildExportStatusUrl,
+  buildExportDownloadUrl
 } from '../config/constants.js';
 
 export default giosApi;

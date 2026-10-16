@@ -977,6 +977,24 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_hls_short": "/tiles/hls/{collection}/{item_id}/{z}/{x}/{y}.png",
     "tiles_hls_nbar": "/api/v1/tiles/hls/nbar/{collection}/{item_id}/{z}/{x}/{y}.png",
     "tiles_hls_nbar_short": "/tiles/hls/nbar/{collection}/{item_id}/{z}/{x}/{y}.png",
+    # Cycle v2.5.34: Land Surface Temperature (LST) Physics, Split-Window / RTE & Thermal Anomaly Inversion Contracts
+    "analysis_thermal_lst": "/api/v1/analysis/thermal/lst",
+    "analysis_thermal_lst_short": "/analysis/thermal/lst",
+    "analysis_thermal_emissivity": "/api/v1/analysis/thermal/emissivity",
+    "analysis_thermal_emissivity_short": "/analysis/thermal/emissivity",
+    "analysis_thermal_anomaly": "/api/v1/analysis/thermal/anomaly",
+    "analysis_thermal_anomaly_short": "/analysis/thermal/anomaly",
+    "tiles_thermal_anomaly": "/api/v1/tiles/thermal/anomaly/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "tiles_thermal_anomaly_short": "/tiles/thermal/anomaly/{collection}/{item_id}/{z}/{x}/{y}.png",
+    # Cycle v2.5.35: Cloud-Native GeoTIFF & GeoPackage Export Pipeline Contracts
+    "analysis_export_request": "/api/v1/analysis/export/request",
+    "analysis_export_request_short": "/analysis/export/request",
+    "analysis_export_status": "/api/v1/analysis/export/status/{job_id}",
+    "analysis_export_status_short": "/analysis/export/status/{job_id}",
+    "analysis_export_download": "/api/v1/analysis/export/download/{job_id}",
+    "analysis_export_download_short": "/analysis/export/download/{job_id}",
+    "analysis_export_formats": "/api/v1/analysis/export/formats",
+    "analysis_export_formats_short": "/analysis/export/formats",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1175,6 +1193,22 @@ def format_api_route(route_name: str, **kwargs) -> str:
                     break
             if "item_id" not in kwargs:
                 kwargs["item_id"] = "LC09_L2SP_044034_20260718_02_T1"
+    elif route_name in ("tiles_thermal_anomaly", "tiles_thermal_anomaly_short", "tiles_thermal_lst", "tiles_thermal_lst_short"):
+        if "collection" not in kwargs:
+            kwargs["collection"] = "landsat-c2-l2"
+        if "item_id" not in kwargs:
+            for alt in ("itemId", "scene_id", "sceneId", "id"):
+                if alt in kwargs:
+                    kwargs["item_id"] = kwargs[alt]
+                    break
+            if "item_id" not in kwargs:
+                kwargs["item_id"] = "LC09_L2SP_044034_20260718_02_T1"
+    elif route_name in ("analysis_export_status", "analysis_export_status_short", "analysis_export_download", "analysis_export_download_short"):
+        if "job_id" not in kwargs:
+            for alt in ("id", "export_id", "jobId", "exportId"):
+                if alt in kwargs:
+                    kwargs["job_id"] = kwargs[alt]
+                    break
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -31645,3 +31679,997 @@ def build_hls_nbar_tile_url_template(
     if target_solar_zenith is not None and target_solar_zenith != 45.0:
         params.append(f"target_solar_zenith={target_solar_zenith}")
     return f"{base}?{'&'.join(params)}" if params else base
+
+
+# ============================================================================
+# CYCLE v2.5.34 (TASK T-264): LAND SURFACE TEMPERATURE (LST) PHYSICS,
+# SPLIT-WINDOW & RADIATIVE TRANSFER EQUATION (RTE), FRACTIONAL VEGETATION
+# COVER (FVC), LAND SURFACE EMISSIVITY (LSE) & THERMAL ANOMALY INVERSION
+# ============================================================================
+
+class ThermalSensorType(str, Enum):
+    """Calibrated thermal infrared sensor platforms."""
+    LANDSAT_TIRS = "landsat_tirs"       # Landsat 8/9 TIRS Band 10 & Band 11
+    SENTINEL3_SLSTR = "sentinel3_slstr" # Sentinel-3 SLSTR S8 & S9 split-window
+    MODIS_THERMAL = "modis_thermal"     # Terra/Aqua MODIS Band 31/32
+    ECOSTRESS = "ecostress"             # ISS ECOSTRESS 5-band thermal infrared
+
+
+class LstAlgorithmModel(str, Enum):
+    """Radiometric Land Surface Temperature retrieval algorithm models."""
+    STATISTICAL_MONO_WINDOW = "statistical_mono_window"         # SMW (Ermida et al., 2020)
+    RADIATIVE_TRANSFER_EQUATION = "radiative_transfer_equation" # RTE single-channel (Sobrino et al., 2004)
+    SPLIT_WINDOW = "split_window"                               # Dual-band split-window (Jimenez-Munoz et al., 2014)
+    ARTIS_CARNAHAN_SINGLE_CHANNEL = "artis_carnahan_single_channel" # Artis & Carnahan (1982) Planck inversion
+    MONO_WINDOW = "mono_window"                                 # Qin et al. (2001) mono-window
+
+
+class ThermalAnomalySeverity(str, Enum):
+    """Thermal hazard and temperature anomaly classification tiers."""
+    NOMINAL = "nominal"                                 # Delta T < 1.5 C (within seasonal ambient norm)
+    MILD_THERMAL_ANOMALY = "mild_thermal_anomaly"       # 1.5 C <= Delta T < 3.5 C (minor thermal elevation)
+    MODERATE_THERMAL_ANOMALY = "moderate_thermal_anomaly" # 3.5 C <= Delta T < 6.0 C (significant geothermal/industrial flux)
+    SEVERE_THERMAL_ANOMALY = "severe_thermal_anomaly"   # 6.0 C <= Delta T < 10.0 C (intense heat island / subsurface smolder)
+    EXTREME_WILDFIRE_HOTSPOT = "extreme_wildfire_hotspot" # Delta T >= 10.0 C (active flame front or volcanic eruption)
+
+
+class ThermalMetric(str, Enum):
+    """Analytical metrics derived from thermal infrared inversion."""
+    LST_CELSIUS = "lst_celsius"                         # Kinetic Land Surface Temperature in Celsius
+    LST_KELVIN = "lst_kelvin"                           # Kinetic Land Surface Temperature in Kelvin
+    BRIGHTNESS_TEMPERATURE = "brightness_temperature"   # At-sensor Top-Of-Atmosphere brightness temperature in Celsius
+    LAND_SURFACE_EMISSIVITY = "land_surface_emissivity" # Narrow-band surface emissivity (0.85 - 1.0)
+    FRACTIONAL_VEGETATION_COVER = "fractional_vegetation_cover" # Fractional vegetation cover FVC (0.0 - 1.0)
+    THERMAL_ANOMALY_DELTA = "thermal_anomaly_delta"     # Temperature delta Delta T = T_s - T_ambient in Celsius
+    UHI_INTENSITY = "uhi_intensity"                     # Surface Urban Heat Island intensity relative to rural baseline
+
+
+# Thermal Sensor Calibration & Planck Inversion Coefficients
+THERMAL_CALIBRATION_COEFFICIENTS: Dict[str, Dict[str, Any]] = {
+    "landsat_8_tirs_b10": {
+        "k1": 774.8853,
+        "k2": 1321.0789,
+        "wavelength_um": 10.895,
+        "bandwidth_um": 0.59,
+        "radiance_mult": 0.0003342,
+        "radiance_add": 0.10000,
+        "sensor": "landsat_tirs",
+        "band": "B10"
+    },
+    "landsat_8_tirs_b11": {
+        "k1": 480.8883,
+        "k2": 1201.1442,
+        "wavelength_um": 12.005,
+        "bandwidth_um": 1.01,
+        "radiance_mult": 0.0003342,
+        "radiance_add": 0.10000,
+        "sensor": "landsat_tirs",
+        "band": "B11"
+    },
+    "landsat_9_tirs_b10": {
+        "k1": 799.0284,
+        "k2": 1329.2405,
+        "wavelength_um": 10.895,
+        "bandwidth_um": 0.59,
+        "radiance_mult": 0.0003342,
+        "radiance_add": 0.10000,
+        "sensor": "landsat_tirs",
+        "band": "B10"
+    },
+    "landsat_9_tirs_b11": {
+        "k1": 499.0152,
+        "k2": 1210.1548,
+        "wavelength_um": 12.005,
+        "bandwidth_um": 1.01,
+        "radiance_mult": 0.0003342,
+        "radiance_add": 0.10000,
+        "sensor": "landsat_tirs",
+        "band": "B11"
+    },
+    "sentinel_3_slstr_s8": {
+        "k1": 606.12,
+        "k2": 1308.20,
+        "wavelength_um": 10.85,
+        "sensor": "sentinel3_slstr",
+        "band": "S8"
+    },
+    "sentinel_3_slstr_s9": {
+        "k1": 450.45,
+        "k2": 1198.30,
+        "wavelength_um": 12.00,
+        "sensor": "sentinel3_slstr",
+        "band": "S9"
+    }
+}
+
+# Empirical Land Surface Emissivity Endmembers (Sobrino et al., 2004)
+THERMAL_EMISSIVITY_ENDMEMBERS: Dict[str, Any] = {
+    "soil": {"ndvi_soil": 0.20, "emissivity_soil": 0.970},
+    "vegetation": {"ndvi_veg": 0.86, "emissivity_veg": 0.990},
+    "water": {"emissivity_water": 0.995},
+    "urban_impervious": {"emissivity_urban": 0.962},
+    "cavity_geometrical_factor": 0.55
+}
+
+# Calibrated Thermal Benchmark Scenes
+THERMAL_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "SALTON_SEA_GEOTHERMAL_2026": {
+        "id": "SALTON_SEA_GEOTHERMAL_2026",
+        "name": "Salton Sea Geothermal Field, California",
+        "description": "Geothermal mud volcanoes and obsidian butte thermal anomaly field in Imperial Valley.",
+        "landsat_scene_id": "LC09_L2SP_039037_20260715_02_T1",
+        "center": [33.2014, -115.6258],
+        "ambient_baseline_temp_c": 34.0,
+        "expected_mean_lst_c": 48.5,
+        "expected_anomaly_severity": "severe_thermal_anomaly",
+        "atmospheric_transmittance": 0.91,
+        "water_vapor_g_cm2": 1.8
+    },
+    "PHOENIX_URBAN_HEAT_ISLAND_2026": {
+        "id": "PHOENIX_URBAN_HEAT_ISLAND_2026",
+        "name": "Phoenix Metropolitan Core, Arizona",
+        "description": "Severe summer urban heat island with high impervious asphalt and concrete thermal storage.",
+        "landsat_scene_id": "LC09_L2SP_037037_20260712_02_T1",
+        "center": [33.4484, -112.0740],
+        "ambient_baseline_temp_c": 43.0,
+        "expected_mean_lst_c": 52.8,
+        "expected_anomaly_severity": "severe_thermal_anomaly",
+        "atmospheric_transmittance": 0.93,
+        "water_vapor_g_cm2": 1.2
+    },
+    "MT_ST_HELENS_VOLCANO_2026": {
+        "id": "MT_ST_HELENS_VOLCANO_2026",
+        "name": "Mount St. Helens Crater & Lava Dome, Washington",
+        "description": "Active volcanic lava dome thermal flux and hydrothermal crater venting.",
+        "landsat_scene_id": "LC08_L2SP_046028_20260802_02_T1",
+        "center": [46.1914, -122.1956],
+        "ambient_baseline_temp_c": 18.0,
+        "expected_mean_lst_c": 31.4,
+        "expected_anomaly_severity": "extreme_wildfire_hotspot",
+        "atmospheric_transmittance": 0.89,
+        "water_vapor_g_cm2": 1.4
+    }
+}
+
+
+# ============================================================================
+# DETERMINISTIC MATHEMATICAL SOLVERS FOR LST PHYSICS
+# ============================================================================
+
+def calculate_fractional_vegetation_cover(
+    ndvi: float,
+    ndvi_soil: float = 0.20,
+    ndvi_veg: float = 0.86
+) -> float:
+    """Calculates Fractional Vegetation Cover (FVC / F_v) using Carlson & Ripley (1997) / Sobrino et al. (2004).
+    
+    Formula:
+        F_v = [ (NDVI - NDVI_soil) / (NDVI_veg - NDVI_soil) ]^2
+    """
+    if not math.isfinite(ndvi):
+        return 0.0
+    if ndvi <= ndvi_soil:
+        return 0.0
+    if ndvi >= ndvi_veg:
+        return 1.0
+    denom = ndvi_veg - ndvi_soil
+    if denom <= 0.0:
+        return 0.0
+    fvc = ((ndvi - ndvi_soil) / denom) ** 2
+    return float(max(0.0, min(1.0, round(fvc, 4))))
+
+
+def calculate_sobrino_land_surface_emissivity(
+    ndvi: float,
+    fvc: float,
+    eps_soil: float = 0.970,
+    eps_veg: float = 0.990,
+    eps_water: float = 0.995,
+    cavity_factor: float = 0.55
+) -> float:
+    """Derives narrow-band Land Surface Emissivity (LSE / epsilon) using Sobrino et al. (2004) NDVI threshold method.
+    
+    Invariants:
+        1. Water pixels (NDVI < 0): eps = eps_water (0.995)
+        2. Pure bare soil (NDVI < NDVI_soil): eps = eps_soil (0.970)
+        3. Full canopy vegetation (NDVI > NDVI_veg): eps = eps_veg (0.990)
+        4. Mixed pixel (NDVI_soil <= NDVI <= NDVI_veg):
+           d_eps = (1 - eps_soil) * (1 - F_v) * F * eps_veg
+           eps = eps_veg * F_v + eps_soil * (1 - F_v) + d_eps
+    """
+    if not math.isfinite(ndvi):
+        return float(eps_soil)
+    if ndvi < 0.0:
+        return float(eps_water)
+    if ndvi < 0.20:
+        return float(eps_soil)
+    if ndvi > 0.86:
+        return float(eps_veg)
+    
+    fv = max(0.0, min(1.0, fvc))
+    d_eps = (1.0 - eps_soil) * (1.0 - fv) * cavity_factor * eps_veg
+    eps = eps_veg * fv + eps_soil * (1.0 - fv) + d_eps
+    return float(max(0.85, min(1.0, round(eps, 4))))
+
+
+def calculate_planck_radiance(
+    temperature_k: float,
+    k1: float = 774.8853,
+    k2: float = 1321.0789
+) -> float:
+    """Calculates spectral blackbody radiance B(T) via Planck's Law in W/(m^2*sr*um).
+    
+    Formula:
+        B(T) = K1 / [ exp(K2 / T) - 1 ]
+    """
+    if temperature_k <= 0.0:
+        return 0.0
+    val = k2 / max(1.0, temperature_k)
+    if val > 700.0:
+        return 0.0
+    return float(k1 / (math.exp(val) - 1.0))
+
+
+def calculate_planck_brightness_temperature(
+    radiance: float,
+    k1: float = 774.8853,
+    k2: float = 1321.0789
+) -> float:
+    """Inverts Planck's law to derive top-of-atmosphere brightness temperature T_b in Kelvin.
+    
+    Formula:
+        T_b = K2 / ln(K1 / L + 1)
+    """
+    rad = max(1e-7, float(radiance))
+    ratio = (k1 / rad) + 1.0
+    if ratio <= 1.0:
+        return 273.15
+    tb_k = k2 / math.log(ratio)
+    # Physical sub-zero calibration floor safety: Tb >= 173.15 K (Tc >= -100.0 °C)
+    return float(round(max(173.15, tb_k), 2))
+
+
+def calculate_rte_surface_temperature(
+    radiance_toa: float,
+    emissivity: float,
+    tau: float = 0.92,
+    l_up: float = 1.20,
+    l_down: float = 2.10,
+    k1: float = 774.8853,
+    k2: float = 1321.0789
+) -> float:
+    """Derives kinetic Land Surface Temperature T_s in Kelvin via Radiative Transfer Equation (RTE) inversion.
+    
+    RTE Formulation:
+        L_TOA = [ eps * B(T_s) + (1 - eps) * L_down ] * tau + L_up
+        ==> B(T_s) = [ L_TOA - L_up - tau * (1 - eps) * L_down ] / (tau * eps)
+        ==> T_s = K2 / ln(K1 / B(T_s) + 1)
+    """
+    eps = max(0.85, min(1.0, float(emissivity)))
+    t = max(0.10, min(1.0, float(tau)))
+    denom = t * eps
+    
+    numerator = radiance_toa - l_up - t * (1.0 - eps) * l_down
+    b_ts = max(1e-7, numerator / denom)
+    
+    ratio = (k1 / b_ts) + 1.0
+    if ratio <= 1.0:
+        return 273.15
+    ts_k = k2 / math.log(ratio)
+    # Physical sub-zero calibration floor safety: Ts >= 173.15 K (Tc >= -100.0 °C)
+    return float(round(max(173.15, ts_k), 2))
+
+
+def calculate_artis_carnahan_lst(
+    brightness_temp_k: float,
+    emissivity: float,
+    wavelength_um: float = 10.895
+) -> float:
+    """Derives kinetic Land Surface Temperature T_s in Kelvin using Artis & Carnahan (1982) single-channel equation.
+    
+    Formula:
+        T_s = T_b / [ 1 + (lambda * T_b / rho) * ln(eps) ]
+        where rho = h * c / k_B = 14380.0 um*K
+    """
+    tb = max(1.0, float(brightness_temp_k))
+    eps = max(0.85, min(1.0, float(emissivity)))
+    rho = 14380.0
+    denom = 1.0 + ((wavelength_um * tb) / rho) * math.log(eps)
+    if denom <= 0.0:
+        return float(round(max(173.15, tb), 2))
+    return float(round(max(173.15, tb / denom), 2))
+
+
+def calculate_smw_lst(
+    brightness_temp_k: float,
+    emissivity: float,
+    water_vapor_g_cm2: float = 1.5,
+    sensor: str = "landsat_tirs"
+) -> float:
+    """Derives kinetic Land Surface Temperature using Statistical Mono-Window (SMW) algorithm (Ermida et al., 2020).
+    
+    Formula:
+        T_s = A * (T_b / eps) + B * (1 / eps) + C
+    """
+    tb = max(1.0, float(brightness_temp_k))
+    eps = max(0.85, min(1.0, float(emissivity)))
+    w = max(0.0, float(water_vapor_g_cm2))
+    
+    # Linear coefficients parameterized by total column atmospheric water vapor w
+    a_coef = 0.975 + 0.005 * w
+    b_coef = -0.50 - 0.20 * w
+    c_coef = 1.20 - 0.10 * w
+    
+    ts_k = a_coef * (tb / eps) + b_coef * (1.0 / eps) + c_coef
+    # Physical sub-zero calibration floor safety: Ts >= 173.15 K (Tc >= -100.0 °C)
+    return float(round(max(173.15, ts_k), 2))
+
+
+def classify_thermal_anomaly_severity(delta_t_c: float) -> ThermalAnomalySeverity:
+    """Classifies temperature difference Delta T = T_s - T_ambient into operational severity tiers."""
+    val = float(delta_t_c)
+    if val >= 10.0:
+        return ThermalAnomalySeverity.EXTREME_WILDFIRE_HOTSPOT
+    if val >= 6.0:
+        return ThermalAnomalySeverity.SEVERE_THERMAL_ANOMALY
+    if val >= 3.5:
+        return ThermalAnomalySeverity.MODERATE_THERMAL_ANOMALY
+    if val >= 1.5:
+        return ThermalAnomalySeverity.MILD_THERMAL_ANOMALY
+    return ThermalAnomalySeverity.NOMINAL
+
+
+def apply_lst_inversion(
+    radiance_or_tb: float,
+    ndvi: float,
+    method: Union[LstAlgorithmModel, str] = LstAlgorithmModel.RADIATIVE_TRANSFER_EQUATION,
+    sensor: Union[ThermalSensorType, str] = ThermalSensorType.LANDSAT_TIRS,
+    ambient_baseline_temp_c: float = 25.0,
+    tau: float = 0.92,
+    l_up: float = 1.20,
+    l_down: float = 2.10,
+    water_vapor_g_cm2: float = 1.5,
+    eps_soil: float = 0.970,
+    eps_veg: float = 0.990
+) -> Dict[str, Any]:
+    """Unified end-to-end evaluation executing FVC derivation, Sobrino LSE estimation, and LST inversion."""
+    m_str = method.value if isinstance(method, LstAlgorithmModel) else str(method).lower()
+    s_str = sensor.value if isinstance(sensor, ThermalSensorType) else str(sensor).lower()
+    
+    # 1. Fractional Vegetation Cover & Emissivity
+    fvc = calculate_fractional_vegetation_cover(ndvi)
+    eps = calculate_sobrino_land_surface_emissivity(ndvi, fvc, eps_soil=eps_soil, eps_veg=eps_veg)
+    
+    # Calibration coefficients
+    cal = THERMAL_CALIBRATION_COEFFICIENTS.get("landsat_9_tirs_b10", THERMAL_CALIBRATION_COEFFICIENTS["landsat_8_tirs_b10"])
+    k1 = cal["k1"]
+    k2 = cal["k2"]
+    wave = cal["wavelength_um"]
+    
+    # 2. Inversion algorithm
+    if m_str in ("radiative_transfer_equation", "rte"):
+        # If input looks like brightness temperature (> 150), calculate equivalent Planck radiance
+        rad = calculate_planck_radiance(radiance_or_tb, k1=k1, k2=k2) if radiance_or_tb > 150.0 else radiance_or_tb
+        tb_k = calculate_planck_brightness_temperature(rad, k1=k1, k2=k2)
+        ts_k = calculate_rte_surface_temperature(rad, eps, tau=tau, l_up=l_up, l_down=l_down, k1=k1, k2=k2)
+    elif m_str in ("statistical_mono_window", "smw"):
+        tb_k = radiance_or_tb if radiance_or_tb > 150.0 else calculate_planck_brightness_temperature(radiance_or_tb, k1=k1, k2=k2)
+        ts_k = calculate_smw_lst(tb_k, eps, water_vapor_g_cm2=water_vapor_g_cm2, sensor=s_str)
+    else:  # artis_carnahan_single_channel / mono_window / default
+        tb_k = radiance_or_tb if radiance_or_tb > 150.0 else calculate_planck_brightness_temperature(radiance_or_tb, k1=k1, k2=k2)
+        ts_k = calculate_artis_carnahan_lst(tb_k, eps, wavelength_um=wave)
+    
+    ts_c = round(ts_k - 273.15, 2)
+    tb_c = round(tb_k - 273.15, 2)
+    delta_t = round(ts_c - ambient_baseline_temp_c, 2)
+    uhi_intensity = max(0.0, delta_t)
+    severity = classify_thermal_anomaly_severity(delta_t)
+    
+    return {
+        "lst_celsius": ts_c,
+        "lst_kelvin": ts_k,
+        "brightness_temperature_c": tb_c,
+        "brightness_temperature_k": tb_k,
+        "emissivity": eps,
+        "fvc": fvc,
+        "thermal_anomaly_delta_c": delta_t,
+        "uhi_intensity_c": uhi_intensity,
+        "severity": severity.value if hasattr(severity, "value") else str(severity),
+        "method": m_str,
+        "sensor": s_str
+    }
+
+
+# ============================================================================
+# PYDANTIC SCHEMAS FOR CYCLE v2.5.34 (TASK T-264)
+# ============================================================================
+
+class ThermalAtmosphericParameters(BaseModel):
+    """Atmospheric transfer parameters for thermal Radiative Transfer Equation (RTE) inversion."""
+    transmittance: float = Field(0.92, ge=0.10, le=1.0, description="Atmospheric path transmittance tau in thermal channel")
+    upwelling_radiance: float = Field(1.20, ge=0.0, description="Upwelling thermal path radiance L_up in W/(m^2*sr*um)")
+    downwelling_radiance: float = Field(2.10, ge=0.0, description="Downwelling atmospheric thermal radiance L_down in W/(m^2*sr*um)")
+    water_vapor_g_cm2: float = Field(1.5, ge=0.0, le=10.0, description="Total column atmospheric water vapor in g/cm^2")
+
+
+class ThermalEmissivityConfig(BaseModel):
+    """Empirical parameters for Fractional Vegetation Cover (FVC) and Land Surface Emissivity (LSE)."""
+    ndvi_soil: float = Field(0.20, ge=-1.0, le=1.0, description="Bare soil NDVI threshold")
+    ndvi_veg: float = Field(0.86, ge=0.0, le=1.0, description="Full vegetation canopy NDVI threshold")
+    emissivity_soil: float = Field(0.970, ge=0.80, le=1.0, description="Base bare soil narrow-band emissivity")
+    emissivity_veg: float = Field(0.990, ge=0.80, le=1.0, description="Base dense vegetation narrow-band emissivity")
+    emissivity_water: float = Field(0.995, ge=0.80, le=1.0, description="Pure open water emissivity")
+    cavity_factor: float = Field(0.55, ge=0.0, le=1.0, description="Geometrical cavity/roughness factor F")
+
+
+class ThermalLstAnalysisRequest(BaseModel):
+    """Request payload for radiometric Land Surface Temperature (LST) and thermal anomaly analysis."""
+    scene_id: str = Field(..., description="Observation scene or granule identifier")
+    sensor: Union[ThermalSensorType, str] = Field(ThermalSensorType.LANDSAT_TIRS, description="Thermal sensor platform")
+    collection: str = Field("landsat-c2-l2", description="STAC collection identifier")
+    method: Union[LstAlgorithmModel, str] = Field(
+        LstAlgorithmModel.RADIATIVE_TRANSFER_EQUATION,
+        description="LST retrieval algorithm model"
+    )
+    ambient_baseline_temp_c: float = Field(25.0, description="Regional ambient baseline temperature in Celsius for Delta T calculation")
+    atmospheric_params: Optional[ThermalAtmosphericParameters] = Field(None, description="Atmospheric radiative transfer parameters")
+    emissivity_config: Optional[ThermalEmissivityConfig] = Field(None, description="FVC and surface emissivity calibration parameters")
+    polygon: Optional[Dict[str, Any]] = Field(None, description="Optional GeoJSON clipping polygon")
+
+
+class ThermalAnomalySummary(BaseModel):
+    """Statistical summary of kinetic surface temperature and thermal anomaly detection."""
+    sensor: str = Field(..., description="Evaluated thermal sensor")
+    method: str = Field(..., description="Applied LST retrieval method")
+    mean_lst_c: float = Field(..., description="Mean kinetic surface temperature in Celsius")
+    min_lst_c: float = Field(..., description="Minimum surface temperature in Celsius")
+    max_lst_c: float = Field(..., description="Maximum surface temperature in Celsius")
+    mean_brightness_temp_c: float = Field(..., description="Mean top-of-atmosphere brightness temperature in Celsius")
+    mean_emissivity: float = Field(..., description="Mean derived narrow-band surface emissivity")
+    mean_fvc: float = Field(..., description="Mean fractional vegetation cover FVC")
+    ambient_baseline_temp_c: float = Field(..., description="Applied ambient baseline reference temperature in Celsius")
+    mean_thermal_anomaly_delta_c: float = Field(..., description="Mean temperature departure Delta T = T_s - T_ambient in Celsius")
+    max_thermal_anomaly_delta_c: float = Field(..., description="Peak thermal anomaly delta in Celsius")
+    uhi_intensity_c: float = Field(..., description="Estimated Surface Urban Heat Island intensity")
+    dominant_severity: ThermalAnomalySeverity = Field(..., description="Dominant thermal hazard classification tier")
+    hotspot_pixel_count: int = Field(..., description="Number of pixels with thermal anomaly Delta T >= 6.0 C")
+    hotspot_area_ha: float = Field(..., description="Total area of detected thermal hotspots in hectares")
+
+
+class ThermalLstAnalysisResponse(BaseModel):
+    """Response payload containing Land Surface Temperature analysis results and dynamic tile endpoints."""
+    analysis_id: str = Field(..., description="Unique thermal LST analysis execution identifier")
+    scene_id: str = Field(..., description="Evaluated satellite scene ID")
+    sensor: str = Field(..., description="Thermal sensor")
+    method: str = Field(..., description="Applied retrieval algorithm")
+    summary: ThermalAnomalySummary = Field(..., description="Thermal anomaly statistics summary")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for kinetic LST raster tiles")
+    anomaly_tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for thermal anomaly delta tiles")
+    status: str = Field("completed", description="Execution status")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO 8601 execution timestamp")
+
+
+class ThermalLstTileRequestParams(BaseModel):
+    """Parameters for dynamic XYZ Land Surface Temperature and thermal anomaly raster tile streaming."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level")
+    x: int = Field(..., ge=0, description="Slippy map tile column")
+    y: int = Field(..., ge=0, description="Slippy map tile row")
+    collection: str = Field("landsat-c2-l2", description="Satellite collection identifier")
+    item_id: str = Field(..., description="Scene or granule identifier")
+    metric: Union[ThermalMetric, str] = Field("lst_celsius", description="Thermal raster metric to render")
+    method: Union[LstAlgorithmModel, str] = Field("radiative_transfer_equation", description="Retrieval algorithm model")
+    colormap: Optional[str] = Field(None, description="Optional colormap ramp (inferno, magma, thermal, turbo)")
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = Field(None, description="Contrast stretch bounds min,max")
+    ambient_baseline_temp_c: Optional[float] = Field(None, description="Ambient baseline temperature override for anomaly calculation")
+
+
+# Dynamic Tile URL Builders for Cycle v2.5.34 (Task T-264)
+
+def build_thermal_lst_tile_url(
+    collection: str = "landsat-c2-l2",
+    item_id: str = "LC09_L2SP_039037_20260715_02_T1",
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    metric: Union[str, ThermalMetric] = "lst_celsius",
+    method: Union[str, LstAlgorithmModel] = "radiative_transfer_equation",
+    colormap: Optional[str] = None,
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None,
+    ambient_baseline_temp_c: Optional[float] = None
+) -> str:
+    """Builds a dynamic XYZ tile streaming URL for Land Surface Temperature and thermal anomaly imagery."""
+    met_str = metric.value if isinstance(metric, ThermalMetric) else str(metric).lower()
+    meth_str = method.value if isinstance(method, LstAlgorithmModel) else str(method).lower()
+    base = f"/api/v1/tiles/thermal/lst/{collection}/{item_id}/{z}/{x}/{y}.png"
+    params: List[str] = []
+    if met_str != "lst_celsius":
+        params.append(f"metric={met_str}")
+    if meth_str != "radiative_transfer_equation":
+        params.append(f"method={meth_str}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        r_str = f"{rescale[0]},{rescale[1]}" if isinstance(rescale, (list, tuple)) else str(rescale)
+        params.append(f"rescale={r_str}")
+    if ambient_baseline_temp_c is not None:
+        params.append(f"ambient_baseline_temp_c={ambient_baseline_temp_c}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_thermal_lst_tile_url_template(
+    collection: str = "landsat-c2-l2",
+    item_id: str = "LC09_L2SP_039037_20260715_02_T1",
+    metric: Union[str, ThermalMetric] = "lst_celsius",
+    method: Union[str, LstAlgorithmModel] = "radiative_transfer_equation",
+    colormap: Optional[str] = None,
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for kinetic Land Surface Temperature raster tiles."""
+    met_str = metric.value if isinstance(metric, ThermalMetric) else str(metric).lower()
+    meth_str = method.value if isinstance(method, LstAlgorithmModel) else str(method).lower()
+    base = f"/api/v1/tiles/thermal/lst/{collection}/{item_id}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = []
+    if met_str != "lst_celsius":
+        params.append(f"metric={met_str}")
+    if meth_str != "radiative_transfer_equation":
+        params.append(f"method={meth_str}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        r_str = f"{rescale[0]},{rescale[1]}" if isinstance(rescale, (list, tuple)) else str(rescale)
+        params.append(f"rescale={r_str}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_thermal_anomaly_tile_url_template(
+    collection: str = "landsat-c2-l2",
+    item_id: str = "LC09_L2SP_039037_20260715_02_T1",
+    ambient_baseline_temp_c: float = 25.0,
+    colormap: Optional[str] = "turbo"
+) -> str:
+    """Builds dynamic Leaflet tile URL template for thermal anomaly departure tiles (Delta T)."""
+    base = f"/api/v1/tiles/thermal/anomaly/{collection}/{item_id}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = [f"ambient_baseline_temp_c={ambient_baseline_temp_c}"]
+    if colormap:
+        params.append(f"colormap={colormap}")
+    return f"{base}?{'&'.join(params)}"
+
+
+# ============================================================================
+# CYCLE v2.5.35: CLOUD-NATIVE GEOTIFF & GEOPACKAGE EXPORT PIPELINE CONTRACTS
+# ============================================================================
+
+class ExportFormat(str, Enum):
+    """Supported output formats for geospatial raster and vector data export."""
+    GEOTIFF_COG = "geotiff_cog"      # Cloud-Optimized GeoTIFF with internal pyramids & tiling
+    GEOPACKAGE = "geopackage"        # OGC GeoPackage container for vector contours & attributes
+    GEOJSON_VECTOR = "geojson_vector" # RFC 7946 GeoJSON FeatureCollection vector layer
+    CSV_SUMMARY = "csv_summary"      # Tabular summary statistics and histogram metrics
+
+
+class ExportJobStatus(str, Enum):
+    """Lifecycle status states for asynchronous spatial export processing."""
+    QUEUED = "queued"          # Submitted to export job queue, awaiting worker pickup
+    PROCESSING = "processing"  # Worker currently clipping raster/generating vector package
+    COMPLETED = "completed"    # Export generation finished, artifact ready for download
+    FAILED = "failed"          # Error occurred during clipping, reprojection, or archiving
+
+
+class ExportCrs(str, Enum):
+    """Supported coordinate reference systems for geospatial export."""
+    EPSG_4326 = "EPSG:4326"    # WGS 84 geographic latitude/longitude
+    EPSG_3857 = "EPSG:3857"    # WGS 84 / Pseudo-Mercator (Web Mercator)
+    AUTO_UTM = "AUTO_UTM"      # Auto-determined Universal Transverse Mercator zone
+
+
+class ExportLayerType(str, Enum):
+    """Geospatial analytical layer types eligible for clipping and export."""
+    SURFACE_REFLECTANCE = "surface_reflectance" # Calibrated multi-spectral optical imagery
+    SPECTRAL_INDEX = "spectral_index"           # Biophysical indices (NDVI, NDWI, MNDWI, NBR, etc.)
+    THERMAL_LST = "thermal_lst"                 # Kinetic Land Surface Temperature in Celsius
+    SAR_BACKSCATTER = "sar_backscatter"         # Sentinel-1 radiometrically terrain-corrected backscatter
+    INSAR_VELOCITY = "insar_velocity"           # InSAR Persistent Scatterer millimeter deformation velocity
+    DEM_ELEVATION = "dem_elevation"             # Copernicus 30m Digital Elevation Model
+    HAZARD_CONTOUR = "hazard_contour"           # Vectorized hazard polygons and risk tiers
+
+
+EXPORT_FORMAT_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "geotiff_cog": {
+        "format": "geotiff_cog",
+        "label": "Cloud-Optimized GeoTIFF (COG)",
+        "extension": ".tif",
+        "mime_type": "image/tiff; application=geotiff",
+        "supports_bands": True,
+        "is_raster": True,
+        "description": "Pyramidal tiled GeoTIFF with internal overviews for enterprise GIS and cloud streaming.",
+    },
+    "geopackage": {
+        "format": "geopackage",
+        "label": "OGC GeoPackage (GPKG)",
+        "extension": ".gpkg",
+        "mime_type": "application/geopackage+sqlite3",
+        "supports_bands": False,
+        "is_raster": False,
+        "description": "Open standard SQLite-based container for geospatial features, contours, and attributes.",
+    },
+    "geojson_vector": {
+        "format": "geojson_vector",
+        "label": "GeoJSON Feature Collection",
+        "extension": ".geojson",
+        "mime_type": "application/geo+json",
+        "supports_bands": False,
+        "is_raster": False,
+        "description": "RFC 7946 compliant vector geometry polygons and metadata attributes.",
+    },
+    "csv_summary": {
+        "format": "csv_summary",
+        "label": "Tabular Zonal Statistics CSV",
+        "extension": ".csv",
+        "mime_type": "text/csv",
+        "supports_bands": True,
+        "is_raster": False,
+        "description": "Tabular metrics, histograms, percentiles, and coordinate bounding metrics.",
+    },
+}
+
+EXPORT_CRS_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "EPSG:4326": {
+        "crs": "EPSG:4326",
+        "label": "WGS 84 (Geographic Degrees)",
+        "description": "World Geodetic System 1984 ellipsoidal coordinates (latitude/longitude).",
+        "unit": "degree",
+    },
+    "EPSG:3857": {
+        "crs": "EPSG:3857",
+        "label": "WGS 84 / Pseudo-Mercator (Web Mercator)",
+        "description": "Spherical Mercator projected coordinate system used by web maps.",
+        "unit": "meter",
+    },
+    "AUTO_UTM": {
+        "crs": "AUTO_UTM",
+        "label": "Auto-Determined Local UTM Zone",
+        "description": "Optimal Universal Transverse Mercator projection minimizing conformal distortion.",
+        "unit": "meter",
+    },
+}
+
+EXPORT_LAYER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "surface_reflectance": {
+        "layer_type": "surface_reflectance",
+        "label": "Surface Reflectance (Multi-Band)",
+        "default_bands": ["B02", "B03", "B04", "B08"],
+        "default_format": "geotiff_cog",
+    },
+    "spectral_index": {
+        "layer_type": "spectral_index",
+        "label": "Biophysical Spectral Index (NDVI/NDWI/NBR)",
+        "default_bands": ["ndvi"],
+        "default_format": "geotiff_cog",
+    },
+    "thermal_lst": {
+        "layer_type": "thermal_lst",
+        "label": "Kinetic Land Surface Temperature (LST)",
+        "default_bands": ["lst_celsius"],
+        "default_format": "geotiff_cog",
+    },
+    "sar_backscatter": {
+        "layer_type": "sar_backscatter",
+        "label": "SAR Backscatter (VV/VH Amplitude & Ratio)",
+        "default_bands": ["vv", "vh"],
+        "default_format": "geotiff_cog",
+    },
+    "insar_velocity": {
+        "layer_type": "insar_velocity",
+        "label": "InSAR Persistent Scatterer Deformation Velocity",
+        "default_bands": ["velocity_mm_yr"],
+        "default_format": "geotiff_cog",
+    },
+    "dem_elevation": {
+        "layer_type": "dem_elevation",
+        "label": "Copernicus 30m Digital Elevation Model",
+        "default_bands": ["elevation_m"],
+        "default_format": "geotiff_cog",
+    },
+    "hazard_contour": {
+        "layer_type": "hazard_contour",
+        "label": "Vectorized Hazard Exposure Polygons",
+        "default_bands": ["severity_tier"],
+        "default_format": "geopackage",
+    },
+}
+
+EXPORT_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "SAN_FRANCISCO_BAY_EXPORT_2026": {
+        "scene_name": "San Francisco Bay Optical & Chlorophyll Survey",
+        "bbox": [-122.52, 37.70, -122.35, 37.85],
+        "collection": "sentinel-2-l2a",
+        "layer_type": "surface_reflectance",
+        "format": "geotiff_cog",
+        "target_crs": "EPSG:4326",
+        "resolution_m": 10.0,
+    },
+    "SALTON_SEA_THERMAL_EXPORT_2026": {
+        "scene_name": "Salton Sea Geothermal & LST Surface Survey",
+        "bbox": [-116.05, 33.15, -115.75, 33.45],
+        "collection": "landsat-c2-l2",
+        "layer_type": "thermal_lst",
+        "format": "geotiff_cog",
+        "target_crs": "AUTO_UTM",
+        "resolution_m": 30.0,
+    },
+    "TAILINGS_DAM_HAZARD_EXPORT_2026": {
+        "scene_name": "Tailings Dam Liquefaction & Flownet Risk Exposure",
+        "bbox": [-44.25, -20.15, -44.10, -20.00],
+        "collection": "sentinel-1-rtc",
+        "layer_type": "hazard_contour",
+        "format": "geopackage",
+        "target_crs": "EPSG:4326",
+        "resolution_m": 10.0,
+    },
+}
+
+
+def normalize_export_format(fmt: Union[str, ExportFormat]) -> ExportFormat:
+    """Normalizes format string aliases into canonical ExportFormat enum."""
+    if isinstance(fmt, ExportFormat):
+        return fmt
+    val = str(fmt).strip().lower()
+    mapping = {
+        "geotiff_cog": ExportFormat.GEOTIFF_COG,
+        "geotiff": ExportFormat.GEOTIFF_COG,
+        "cog": ExportFormat.GEOTIFF_COG,
+        "tif": ExportFormat.GEOTIFF_COG,
+        "tiff": ExportFormat.GEOTIFF_COG,
+        "geopackage": ExportFormat.GEOPACKAGE,
+        "gpkg": ExportFormat.GEOPACKAGE,
+        "geojson_vector": ExportFormat.GEOJSON_VECTOR,
+        "geojson": ExportFormat.GEOJSON_VECTOR,
+        "json": ExportFormat.GEOJSON_VECTOR,
+        "csv_summary": ExportFormat.CSV_SUMMARY,
+        "csv": ExportFormat.CSV_SUMMARY,
+    }
+    if val in mapping:
+        return mapping[val]
+    raise ValueError(f"Unsupported export format '{fmt}'. Allowed: {[e.value for e in ExportFormat]}")
+
+
+def determine_utm_epsg(lon: float, lat: float) -> str:
+    """Determines the standard EPSG code for the Universal Transverse Mercator (UTM) zone."""
+    lon_val = max(-180.0, min(180.0, float(lon)))
+    lat_val = max(-80.0, min(84.0, float(lat)))
+    zone = int(math.floor((lon_val + 180.0) / 6.0)) + 1
+    if zone > 60:
+        zone = 60
+    epsg_code = 32600 + zone if lat_val >= 0 else 32700 + zone
+    return f"EPSG:{epsg_code}"
+
+
+def bbox_to_geojson_polygon(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> Dict[str, Any]:
+    """Generates an RFC 7946 compliant GeoJSON Polygon geometry from a bounding box with counter-clockwise winding order."""
+    return {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [round(min_lon, 6), round(min_lat, 6)],
+                [round(max_lon, 6), round(min_lat, 6)],
+                [round(max_lon, 6), round(max_lat, 6)],
+                [round(min_lon, 6), round(max_lat, 6)],
+                [round(min_lon, 6), round(min_lat, 6)],
+            ]
+        ]
+    }
+
+
+def calculate_affine_transform_matrix(min_lon: float, max_lat: float, res_x: float, res_y: float) -> List[float]:
+    """Calculates GDAL 6-parameter affine georeferencing transform matrix [a, b, c, d, e, f]."""
+    return [float(res_x), 0.0, float(min_lon), 0.0, -float(abs(res_y)), float(max_lat)]
+
+
+def generate_qgis_ingestion_snippet(filename: str, format_type: str, crs: str) -> str:
+    """Generates PyQGIS and GDAL console command snippets for enterprise GIS ingestion."""
+    fmt = str(format_type).lower()
+    if "geopackage" in fmt or "gpkg" in fmt:
+        return f"# PyQGIS ingestion:\nlayer = iface.addVectorLayer('{filename}', '{filename}', 'ogr')\n# Target CRS: {crs}"
+    elif "geojson" in fmt or "vector" in fmt:
+        return f"# PyQGIS ingestion:\nlayer = iface.addVectorLayer('{filename}', '{filename}', 'ogr')\n# Target CRS: {crs}"
+    elif "csv" in fmt:
+        return f"# PyQGIS Delimited Text:\nuri = 'file:///{filename}?delimiter=,&xField=lon&yField=lat&crs={crs}'\nlayer = iface.addVectorLayer(uri, '{filename}', 'delimitedtext')"
+    else:
+        return f"# PyQGIS ingestion:\nlayer = iface.addRasterLayer('{filename}', '{filename}')\n# Target CRS: {crs}\n# GDAL verification: gdalinfo {filename}"
+
+
+def format_export_job_filename(
+    collection: str,
+    layer_type: Union[str, ExportLayerType],
+    format_type: Union[str, ExportFormat],
+    item_id: Optional[str] = None,
+    timestamp_str: Optional[str] = None
+) -> str:
+    """Generates standardized canonical file basenames for asynchronous export artifacts."""
+    fmt_enum = normalize_export_format(format_type)
+    ext = EXPORT_FORMAT_CONFIGS.get(fmt_enum.value, {}).get("extension", ".tif")
+    col_clean = re.sub(r"[^a-zA-Z0-9_-]", "_", str(collection).lower().strip())
+    lay_clean = layer_type.value if hasattr(layer_type, "value") else str(layer_type).lower().strip()
+    ts = timestamp_str or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    if item_id:
+        item_clean = re.sub(r"[^a-zA-Z0-9_-]", "_", str(item_id).strip())
+        return f"gios_{col_clean}_{item_clean}_{lay_clean}_{ts}{ext}"
+    return f"gios_{col_clean}_{lay_clean}_{ts}{ext}"
+
+
+class ExportBoundingBox(BaseModel):
+    """Geographic bounding box specification with spatial validation and UTM reprojection."""
+    min_lon: float = Field(..., ge=-180.0, le=180.0, description="Westernmost boundary longitude")
+    min_lat: float = Field(..., ge=-90.0, le=90.0, description="Southernmost boundary latitude")
+    max_lon: float = Field(..., ge=-180.0, le=180.0, description="Easternmost boundary longitude")
+    max_lat: float = Field(..., ge=-90.0, le=90.0, description="Northernmost boundary latitude")
+
+    def __init__(self, *args, **kwargs):
+        if args and len(args) == 1:
+            val = args[0]
+            if isinstance(val, (list, tuple)) and len(val) == 4:
+                super().__init__(min_lon=float(val[0]), min_lat=float(val[1]), max_lon=float(val[2]), max_lat=float(val[3]))
+                return
+            elif isinstance(val, dict):
+                res = dict(val)
+                if "min_lon" not in res:
+                    if "west" in res: res["min_lon"] = res["west"]
+                    elif "minx" in res: res["min_lon"] = res["minx"]
+                    elif "left" in res: res["min_lon"] = res["left"]
+                if "min_lat" not in res:
+                    if "south" in res: res["min_lat"] = res["south"]
+                    elif "miny" in res: res["min_lat"] = res["miny"]
+                    elif "bottom" in res: res["min_lat"] = res["bottom"]
+                if "max_lon" not in res:
+                    if "east" in res: res["max_lon"] = res["east"]
+                    elif "maxx" in res: res["max_lon"] = res["maxx"]
+                    elif "right" in res: res["max_lon"] = res["right"]
+                if "max_lat" not in res:
+                    if "north" in res: res["max_lat"] = res["north"]
+                    elif "maxy" in res: res["max_lat"] = res["maxy"]
+                    elif "top" in res: res["max_lat"] = res["top"]
+                super().__init__(**res)
+                return
+        super().__init__(*args, **kwargs)
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_bbox_input(cls, data: Any) -> Any:
+        if isinstance(data, (list, tuple)) and len(data) == 4:
+            return {
+                "min_lon": float(data[0]),
+                "min_lat": float(data[1]),
+                "max_lon": float(data[2]),
+                "max_lat": float(data[3]),
+            }
+        if isinstance(data, dict):
+            res = dict(data)
+            if "min_lon" not in res:
+                if "west" in res: res["min_lon"] = res["west"]
+                elif "minx" in res: res["min_lon"] = res["minx"]
+                elif "left" in res: res["min_lon"] = res["left"]
+            if "min_lat" not in res:
+                if "south" in res: res["min_lat"] = res["south"]
+                elif "miny" in res: res["min_lat"] = res["miny"]
+                elif "bottom" in res: res["min_lat"] = res["bottom"]
+            if "max_lon" not in res:
+                if "east" in res: res["max_lon"] = res["east"]
+                elif "maxx" in res: res["max_lon"] = res["maxx"]
+                elif "right" in res: res["max_lon"] = res["right"]
+            if "max_lat" not in res:
+                if "north" in res: res["max_lat"] = res["north"]
+                elif "maxy" in res: res["max_lat"] = res["maxy"]
+                elif "top" in res: res["max_lat"] = res["top"]
+            return res
+        return data
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "ExportBoundingBox":
+        if self.min_lon > self.max_lon:
+            raise ValueError(f"min_lon ({self.min_lon}) cannot exceed max_lon ({self.max_lon})")
+        if self.min_lat > self.max_lat:
+            raise ValueError(f"min_lat ({self.min_lat}) cannot exceed max_lat ({self.max_lat})")
+        return self
+
+    def as_tuple(self) -> Tuple[float, float, float, float]:
+        return (self.min_lon, self.min_lat, self.max_lon, self.max_lat)
+
+    def center(self) -> Tuple[float, float]:
+        return ((self.min_lon + self.max_lon) / 2.0, (self.min_lat + self.max_lat) / 2.0)
+
+    def calculate_approx_area_km2(self) -> float:
+        center_lat = (self.min_lat + self.max_lat) / 2.0
+        deg_lat_km = 111.32
+        deg_lon_km = 111.32 * math.cos(math.radians(center_lat))
+        delta_lat = self.max_lat - self.min_lat
+        delta_lon = self.max_lon - self.min_lon
+        return round(abs(delta_lat * deg_lat_km * delta_lon * deg_lon_km), 4)
+
+    def get_utm_epsg(self) -> str:
+        center_lon, center_lat = self.center()
+        return determine_utm_epsg(center_lon, center_lat)
+
+    def to_geojson_polygon(self) -> Dict[str, Any]:
+        return bbox_to_geojson_polygon(self.min_lon, self.min_lat, self.max_lon, self.max_lat)
+
+
+class ExportBandSelection(BaseModel):
+    """Specification of raster bands, spectral indices, or display styling for exported rasters."""
+    bands: Optional[List[str]] = Field(default_factory=list, description="Target band identifiers, e.g. ['B02', 'B03', 'B04', 'B08']")
+    index: Optional[str] = Field(None, description="Target computed spectral index or metric, e.g. 'ndvi', 'lst_celsius'")
+    colormap: Optional[str] = Field(None, description="Optional single-band rendered colormap palette")
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = Field(None, description="Contrast stretch min,max")
+
+
+class ExportJobRequest(BaseModel):
+    """Comprehensive request payload initiating an asynchronous geospatial export job."""
+    aoi_bbox: ExportBoundingBox = Field(..., description="Target geographic bounding box")
+    format: Union[ExportFormat, str] = Field(ExportFormat.GEOTIFF_COG, description="Requested output container format")
+    layer_type: Union[ExportLayerType, str] = Field(ExportLayerType.SURFACE_REFLECTANCE, description="Geospatial layer type to extract")
+    collection: str = Field("sentinel-2-l2a", description="Imagery, elevation, or sensor collection identifier")
+    item_id: Optional[str] = Field(None, description="Specific satellite scene ID or orthomosaic identifier")
+    date: Optional[str] = Field(None, description="Target acquisition date ISO 8601 (YYYY-MM-DD)")
+    target_crs: Union[ExportCrs, str] = Field(ExportCrs.EPSG_4326, description="Target Coordinate Reference System")
+    resolution_m: Optional[float] = Field(10.0, gt=0.0, description="Target spatial pixel resolution in meters")
+    band_selection: Optional[ExportBandSelection] = Field(None, description="Band selection and rendering parameters")
+    clip_polygon: Optional[Dict[str, Any]] = Field(None, description="Optional GeoJSON clipping polygon within AOI")
+    compress: str = Field("deflate", description="Raster compression method: deflate, lzw, zstd")
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            res = dict(data)
+            if "aoi_bbox" not in res:
+                if "bbox" in res:
+                    res["aoi_bbox"] = res["bbox"]
+                elif "bounds" in res:
+                    res["aoi_bbox"] = res["bounds"]
+            if "format" in res and isinstance(res["format"], str):
+                try:
+                    res["format"] = normalize_export_format(res["format"])
+                except Exception:
+                    pass
+            return res
+        return data
+
+
+class ExportArtifactMetadata(BaseModel):
+    """Metadata describing a completed geospatial export artifact for QGIS/ArcGIS ingestion."""
+    filename: str = Field(..., description="Output file basename on disk")
+    format: Union[ExportFormat, str] = Field(..., description="Export format identifier")
+    mime_type: str = Field(..., description="MIME content type for HTTP download")
+    file_size_bytes: int = Field(..., ge=0, description="Artifact file size in bytes")
+    crs: str = Field(..., description="Embedded coordinate reference system (e.g. EPSG:4326, EPSG:32610)")
+    width_px: int = Field(..., ge=0, description="Raster width in pixels (or feature count for vectors)")
+    height_px: int = Field(..., ge=0, description="Raster height in pixels (or layer count for vectors)")
+    band_count: int = Field(..., ge=1, description="Number of raster bands or vector attribute count")
+    affine_transform: Optional[List[float]] = Field(None, description="Affine transformation 6-element matrix [res_x, 0, min_lon, 0, -res_y, max_lat]")
+    bbox: Tuple[float, float, float, float] = Field(..., description="Georeferenced bounding box (min_lon, min_lat, max_lon, max_lat)")
+    checksum_sha256: Optional[str] = Field(None, description="SHA-256 integrity checksum hex string")
+    qgis_instructions: str = Field(..., description="Interoperability ingestion snippet for QGIS/ArcGIS")
+
+
+class ExportJobStatusResponse(BaseModel):
+    """Status polling response for asynchronous geospatial export pipelines."""
+    job_id: str = Field(..., description="Unique asynchronous export job identifier")
+    status: Union[ExportJobStatus, str] = Field(..., description="Execution status: queued, processing, completed, failed")
+    progress_pct: float = Field(0.0, ge=0.0, le=100.0, description="Processing completion percentage (0.0 to 100.0)")
+    message: str = Field(..., description="Human-readable status or error message")
+    request: ExportJobRequest = Field(..., description="Original export configuration request")
+    artifact: Optional[ExportArtifactMetadata] = Field(None, description="Output metadata when status is completed")
+    download_url: Optional[str] = Field(None, description="Direct download URL endpoint")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Job submission timestamp ISO 8601")
+    completed_at: Optional[str] = Field(None, description="Job completion timestamp ISO 8601")
+    execution_time_seconds: Optional[float] = Field(None, description="Elapsed processing duration in seconds")
+
+
+def build_export_status_url(job_id: str) -> str:
+    """Builds the canonical API endpoint URL for polling export job status."""
+    return f"/api/v1/analysis/export/status/{job_id}"
+
+
+def build_export_download_url(job_id: str) -> str:
+    """Builds the canonical API endpoint URL for downloading a completed export artifact."""
+    return f"/api/v1/analysis/export/download/{job_id}"
+
