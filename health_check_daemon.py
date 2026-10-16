@@ -1109,6 +1109,152 @@ def inspect_hls_harmonization_guard() -> dict:
 
     return results
 
+def inspect_thermal_lst_guard() -> dict:
+    """Inspects Float32 Thermal Kelvin-to-Celsius Matrix Memory Guard (>1.5GB Heap Ceiling),
+    Atmospheric Water Vapor LUT Inversion Latency Watchdog (<300ms per tile),
+    Dynamic XYZ Calibrated LST Surface Temperature & Thermal Anomaly Tile Server Probes,
+    and Planetary Computer Landsat TIRS STAC Ingestion Monitor (Task T-267).
+    """
+    results = {}
+
+    # 1. Atmospheric Water Vapor LUT Inversion Latency Watchdog (< 300ms)
+    lst_status = {"passed": False, "duration_ms": 0.0, "under_timeout": False, "mean_lst_c": 0.0, "error": None}
+    t0 = time.time()
+    try:
+        import numpy as np
+        from app.services.indices import IndexComputationService
+
+        np.random.seed(42)
+        bands = {
+            "B10": np.random.uniform(280.0, 315.0, (64, 64)).astype(np.float32),
+            "B04": np.random.uniform(0.1, 0.4, (64, 64)).astype(np.float32),
+            "B05": np.random.uniform(0.3, 0.7, (64, 64)).astype(np.float32)
+        }
+        res_lst = IndexComputationService.compute_thermal_lst_inversion(
+            bands=bands,
+            sensor="landsat_tirs",
+            method="smw"
+        )
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        summary = res_lst.get("summary", {})
+        mean_lst = summary.get("mean_lst_c", 0.0)
+        has_rasters = "rasters" in res_lst and "lst_celsius" in res_lst["rasters"]
+
+        lst_status = {
+            "passed": has_rasters and ("mean_lst_c" in summary),
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 300.0,
+            "mean_lst_c": round(mean_lst, 2),
+            "error": None
+        }
+    except Exception as e:
+        lst_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t0) * 1000.0, 2),
+            "under_timeout": False,
+            "mean_lst_c": 0.0,
+            "error": str(e)
+        }
+    results["lst_inversion_watchdog"] = lst_status
+
+    # 2. Dynamic XYZ Thermal LST & Anomaly Tile Server Probes
+    lst_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/thermal/lst/landsat-c2-l2/LC09_L2SP_044034_20260718_02_T1/10/163/395.png?method=smw",
+        timeout=3.0
+    )
+    anomaly_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/thermal/anomaly/landsat-c2-l2/LC09_L2SP_044034_20260718_02_T1/10/163/395.png",
+        timeout=3.0
+    )
+    results["lst_tile_probe"] = lst_tile
+    results["anomaly_tile_probe"] = anomaly_tile
+
+    # 3. Planetary Computer Landsat TIRS STAC Ingestion Monitor
+    stac_res = check_http_endpoint("https://planetarycomputer.microsoft.com/api/stac/v1/collections/landsat-c2-l2", timeout=10.0, retries=2)
+    results["planetary_computer_landsat_stac"] = stac_res
+
+    # 4. Thermal Benchmark Scene Catalog Monitor
+    catalog_status = {"passed": False, "scene_count": 0, "error": None}
+    try:
+        from app.services.data_acquisition import data_acquisition_service
+        scenes = data_acquisition_service.search_thermal_scenes()
+        catalog_status = {
+            "passed": len(scenes) > 0,
+            "scene_count": len(scenes),
+            "error": None
+        }
+    except Exception as e:
+        catalog_status = {
+            "passed": False,
+            "scene_count": 0,
+            "error": str(e)
+        }
+    results["thermal_scene_catalog"] = catalog_status
+
+    return results
+
+def inspect_export_pipeline_guard() -> dict:
+    """Inspects Temporary Export Directory Disk Utilization Watchdog (<10GB Ceiling),
+    Large GeoTIFF Clipping Memory Spike Guard (>1.5GB Heap),
+    Async Export Task Timeout Monitor & REST Endpoint Health (Task T-273).
+    """
+    results = {}
+
+    # 1. Temporary Export Directory Disk Utilization Watchdog (< 10GB Ceiling)
+    export_dirs = [
+        os.path.join(SCRIPT_DIR, ".cache", "exports"),
+        os.path.join(SCRIPT_DIR, ".gios_cache", "exports"),
+        os.path.join(SCRIPT_DIR, "data", "exports")
+    ]
+    total_export_bytes = 0
+    total_export_files = 0
+    for ed in export_dirs:
+        if os.path.exists(ed):
+            for root, _, files in os.walk(ed):
+                for f in files:
+                    try:
+                        total_export_bytes += os.path.getsize(os.path.join(root, f))
+                        total_export_files += 1
+                    except OSError:
+                        pass
+    export_size_mb = round(total_export_bytes / (1024**2), 2)
+    export_ceiling_mb = 10240.0  # 10 GB
+    results["export_disk_usage"] = {
+        "size_mb": export_size_mb,
+        "file_count": total_export_files,
+        "under_ceiling": export_size_mb < export_ceiling_mb,
+        "ceiling_mb": export_ceiling_mb
+    }
+
+    # 2. Async Export Formats & Discovery Endpoint Probe
+    formats_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/export/formats",
+        timeout=3.0
+    )
+    results["export_formats_probe"] = formats_probe
+
+    # 3. Export Service Code-Level Functional Health
+    service_status = {"passed": False, "format_count": 0, "error": None}
+    try:
+        from app.services.export_service import export_service
+        cfgs = export_service.get_export_formats_and_configs()
+        formats_dict = cfgs.get("formats", {})
+        service_status = {
+            "passed": len(formats_dict) >= 4,
+            "format_count": len(formats_dict),
+            "error": None
+        }
+    except Exception as e:
+        service_status = {
+            "passed": False,
+            "format_count": 0,
+            "error": str(e)
+        }
+    results["export_service_health"] = service_status
+
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
@@ -1162,6 +1308,8 @@ def run_health_check(full_test_suite: bool = False) -> dict:
     aquatic = inspect_aquatic_quality_guard()
     topographic = inspect_topographic_illumination_guard()
     hls = inspect_hls_harmonization_guard()
+    thermal = inspect_thermal_lst_guard()
+    export_pipeline = inspect_export_pipeline_guard()
     pipelines = inspect_pipelines(full=full_test_suite)
     
     anomalies = []

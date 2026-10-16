@@ -32480,16 +32480,27 @@ def generate_qgis_ingestion_snippet(filename: str, format_type: str, crs: str) -
 
 def format_export_job_filename(
     collection: str,
-    layer_type: Union[str, ExportLayerType],
-    format_type: Union[str, ExportFormat],
+    layer_type: Union[str, ExportLayerType, ExportFormat],
+    format_type: Union[str, ExportFormat, ExportLayerType],
     item_id: Optional[str] = None,
     timestamp_str: Optional[str] = None
 ) -> str:
     """Generates standardized canonical file basenames for asynchronous export artifacts."""
-    fmt_enum = normalize_export_format(format_type)
+    # Robustly support both (collection, layer_type, format_type) and (collection, format_type, layer_type)
+    try:
+        fmt_enum = normalize_export_format(format_type)
+        actual_layer = layer_type
+    except Exception:
+        try:
+            fmt_enum = normalize_export_format(layer_type)
+            actual_layer = format_type
+        except Exception:
+            fmt_enum = normalize_export_format(format_type)
+            actual_layer = layer_type
+
     ext = EXPORT_FORMAT_CONFIGS.get(fmt_enum.value, {}).get("extension", ".tif")
     col_clean = re.sub(r"[^a-zA-Z0-9_-]", "_", str(collection).lower().strip())
-    lay_clean = layer_type.value if hasattr(layer_type, "value") else str(layer_type).lower().strip()
+    lay_clean = actual_layer.value if hasattr(actual_layer, "value") else str(actual_layer).lower().strip()
     ts = timestamp_str or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     if item_id:
         item_clean = re.sub(r"[^a-zA-Z0-9_-]", "_", str(item_id).strip())

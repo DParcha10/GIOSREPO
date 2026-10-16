@@ -3946,6 +3946,110 @@ class TestScientificRigor(unittest.TestCase):
         self.assertGreater(inv_rte["lst_celsius"], 20.0, "Inverted LST must be plausible for mid-radiance")
         self.assertLess(inv_rte["lst_celsius"], 70.0, "Inverted LST must not exceed realistic ground temperature")
 
+    def test_cloud_native_export_georeferencing_and_spatial_rigor(self):
+        """Task T-274: Continuous Scientific QA: GeoTIFF CRS & Affine Transform Georeferencing,
+        UTM Zone Projection, RFC 7946 GeoJSON Winding Order & Export Schemas.
+        """
+        from app.models.schemas import (
+            ExportBoundingBox,
+            determine_utm_epsg,
+            bbox_to_geojson_polygon,
+            calculate_affine_transform_matrix,
+            generate_qgis_ingestion_snippet,
+            format_export_job_filename
+        )
+
+        # 1. GDAL 6-Parameter Affine Georeferencing Transform Matrix
+        # Matrix: [res_x, 0, min_lon, 0, -res_y, max_lat]
+        # Verify North-Up invariant: -res_y < 0, res_x > 0, shear/rotation == 0
+        min_lon, min_lat, max_lon, max_lat = -122.52, 37.70, -122.35, 37.85
+        res_x = 0.0001
+        res_y = 0.0001
+        affine = calculate_affine_transform_matrix(min_lon=min_lon, max_lat=max_lat, res_x=res_x, res_y=res_y)
+
+        self.assertEqual(len(affine), 6)
+        self.assertEqual(affine[0], res_x)
+        self.assertEqual(affine[1], 0.0, "Pixel rotation terms must be zero")
+        self.assertEqual(affine[2], min_lon, "Origin X must match min_lon")
+        self.assertEqual(affine[3], 0.0, "Pixel rotation terms must be zero")
+        self.assertEqual(affine[4], -res_y, "Pixel height must be negative for north-up raster")
+        self.assertEqual(affine[5], max_lat, "Origin Y must match max_lat")
+
+        # Top-left corner (pixel 0,0) -> geographic coordinates
+        origin_x = affine[2] + 0 * affine[0] + 0 * affine[1]
+        origin_y = affine[5] + 0 * affine[3] + 0 * affine[4]
+        self.assertAlmostEqual(origin_x, min_lon)
+        self.assertAlmostEqual(origin_y, max_lat)
+
+        # 2. Universal Transverse Mercator (UTM) Zone & EPSG Derivation
+        # Northern Hemisphere: Zone = floor((lon + 180)/6) + 1, EPSG = 32600 + Zone
+        # Southern Hemisphere: EPSG = 32700 + Zone
+        # San Francisco Bay (-122.4, 37.8) -> Zone 10N -> EPSG:32610
+        epsg_sf = determine_utm_epsg(-122.4, 37.8)
+        self.assertEqual(epsg_sf, "EPSG:32610")
+
+        # Minas Gerais, Brazil (-43.9, -19.9) -> Zone 23S -> EPSG:32723
+        epsg_br = determine_utm_epsg(-43.9, -19.9)
+        self.assertEqual(epsg_br, "EPSG:32723")
+
+        # Melbourne, Australia (144.9, -37.8) -> Zone 55S -> EPSG:32755
+        epsg_au = determine_utm_epsg(144.9, -37.8)
+        self.assertEqual(epsg_au, "EPSG:32755")
+
+        # Prime Meridian / London (0.1, 51.5) -> Zone 31N -> EPSG:32631
+        epsg_uk = determine_utm_epsg(0.1, 51.5)
+        self.assertEqual(epsg_uk, "EPSG:32631")
+
+        # 3. RFC 7946 GeoJSON Polygon Geometry & Counter-Clockwise (CCW) Winding Order
+        geom = bbox_to_geojson_polygon(min_lon=min_lon, min_lat=min_lat, max_lon=max_lon, max_lat=max_lat)
+        self.assertEqual(geom["type"], "Polygon")
+        coords = geom["coordinates"][0]
+        self.assertEqual(len(coords), 5, "Closed bounding box polygon must have 5 coordinates")
+        self.assertEqual(coords[0], coords[4], "Polygon ring must be explicitly closed")
+
+        # Green's theorem / Shoelace signed area for exterior ring winding order:
+        # Signed area > 0 confirms counter-clockwise (CCW) exterior boundary as mandated by RFC 7946 Section 3.1.6
+        signed_area = 0.0
+        for i in range(len(coords) - 1):
+            signed_area += (coords[i][0] * coords[i+1][1] - coords[i+1][0] * coords[i][1])
+        self.assertGreater(signed_area, 0.0, "RFC 7946 exterior polygon ring must follow right-hand rule (counter-clockwise)")
+
+        # 4. ExportBoundingBox Validation & Surface Area
+        bbox_model = ExportBoundingBox(min_lon=min_lon, min_lat=min_lat, max_lon=max_lon, max_lat=max_lat)
+        self.assertEqual(bbox_model.center(), ((min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0))
+        self.assertEqual(bbox_model.get_utm_epsg(), "EPSG:32610")
+
+        area_km2 = bbox_model.calculate_approx_area_km2()
+        self.assertGreater(area_km2, 100.0)
+        self.assertLess(area_km2, 1000.0)
+
+        # Inverted coordinates must raise ValueError
+        with self.assertRaises(ValueError):
+            ExportBoundingBox(min_lon=10.0, min_lat=20.0, max_lon=5.0, max_lat=25.0)
+        with self.assertRaises(ValueError):
+            ExportBoundingBox(min_lon=5.0, min_lat=30.0, max_lon=10.0, max_lat=25.0)
+
+        # Dict and tuple aliases parsing
+        bbox_from_tuple = ExportBoundingBox([min_lon, min_lat, max_lon, max_lat])  # type: ignore
+        self.assertEqual(bbox_from_tuple.as_tuple(), (min_lon, min_lat, max_lon, max_lat))
+
+        # 5. Filename Formatting & PyQGIS Ingestion Snippets
+        tif_filename = format_export_job_filename("sentinel-2-l2a", "surface_reflectance", "geotiff_cog", item_id="S2A_1234")
+        self.assertTrue(tif_filename.endswith(".tif"))
+        self.assertIn("sentinel-2-l2a", tif_filename)
+
+        gpkg_filename = format_export_job_filename("hazard_contour", "hazard_contour", "geopackage", item_id="HAZ_5678")
+        self.assertTrue(gpkg_filename.endswith(".gpkg"))
+
+        snippet_raster = generate_qgis_ingestion_snippet(tif_filename, "geotiff_cog", "EPSG:32610")
+        self.assertIn("iface.addRasterLayer", snippet_raster)
+        self.assertIn(tif_filename, snippet_raster)
+        self.assertIn("EPSG:32610", snippet_raster)
+
+        snippet_vector = generate_qgis_ingestion_snippet(gpkg_filename, "geopackage", "EPSG:4326")
+        self.assertIn("iface.addVectorLayer", snippet_vector)
+        self.assertIn(gpkg_filename, snippet_vector)
+
 
 if __name__ == "__main__":
     unittest.main()
