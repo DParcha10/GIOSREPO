@@ -83,7 +83,13 @@ import {
   SAR_FLOOD_TIER_CONFIGS,
   buildSarBackscatterTileUrlTemplate,
   buildSarSpeckleFilterTileUrlTemplate,
-  buildSarFloodTileUrlTemplate
+  buildSarFloodTileUrlTemplate,
+  buildCoregistrationTileUrlTemplate,
+  buildCoregistrationVectorFieldTileUrlTemplate,
+  buildAquaticTileUrlTemplate,
+  buildAquaticHabTileUrlTemplate,
+  buildTopographicTileUrlTemplate,
+  buildTopographicIlluminationTileUrlTemplate
 } from '../config/constants.js';
 
 export {
@@ -3148,6 +3154,7 @@ const demoAdapter = async (config) => {
             dominant_tier: 'calm_water'
           },
           tile_url_template: `/api/v1/tiles/sar/${parsed.collection || 'sentinel-1-rtc'}/${pol}/{z}/{x}/{y}.png?filter=${filter}`,
+          flood_tile_url_template: `/api/v1/tiles/sar/flood/{z}/{x}/{y}.png?collection=${parsed.collection || 'sentinel-1-rtc'}&threshold_db=${parsed.water_threshold_db || -16.5}`,
           created_at: new Date().toISOString(),
           status: 'completed'
         };
@@ -3158,6 +3165,160 @@ const demoAdapter = async (config) => {
           polarizations: SAR_POLARIZATION_CONFIGS,
           calibrations: SAR_BACKSCATTER_CALIBRATIONS,
           flood_tiers: SAR_FLOOD_TIER_CONFIGS
+        };
+      }
+      else if (url.includes('/api/v1/analysis/coregistration/tie-points') || url.includes('/analysis/coregistration/tie-points')) {
+        data = {
+          tie_points: [
+            { point_id: 'TP-001', reference_x: 120.0, reference_y: 150.0, target_x: 119.68, target_y: 150.44, shift_x: -0.32, shift_y: 0.44, correlation_score: 0.94, is_inlier: true, residual_pixels: 0.08 },
+            { point_id: 'TP-002', reference_x: 240.0, reference_y: 150.0, target_x: 239.71, target_y: 150.42, shift_x: -0.29, shift_y: 0.42, correlation_score: 0.91, is_inlier: true, residual_pixels: 0.11 },
+            { point_id: 'TP-003', reference_x: 120.0, reference_y: 300.0, target_x: 119.65, target_y: 300.46, shift_x: -0.35, shift_y: 0.46, correlation_score: 0.88, is_inlier: true, residual_pixels: 0.09 },
+            { point_id: 'TP-004', reference_x: 240.0, reference_y: 300.0, target_x: 239.69, target_y: 300.45, shift_x: -0.31, shift_y: 0.45, correlation_score: 0.93, is_inlier: true, residual_pixels: 0.07 }
+          ],
+          total_points: 4,
+          inlier_count: 4
+        };
+      }
+      else if (url.includes('/api/v1/analysis/coregistration') || url.includes('/analysis/coregistration')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const refId = parsed.reference_scene_id || 'S2A_MSIL2A_20260701T183921_T10SEJ';
+        const tgtId = parsed.target_scene_id || 'S2B_MSIL2A_20260716T183919_T10SEJ';
+        const anaId = `COREG-ANA-${Date.now()}`;
+        data = {
+          analysis_id: anaId,
+          reference_scene_id: refId,
+          target_scene_id: tgtId,
+          method: parsed.method || 'fft_phase_correlation',
+          kernel: parsed.kernel || 'cubic_convolution',
+          affine_matrix: {
+            a: 1.000012,
+            b: -0.000008,
+            c: 0.000006,
+            d: 0.999994,
+            tx: -0.32,
+            ty: 0.44,
+            rmse_pixels: 0.16,
+            inlier_count: 32,
+            total_tie_points: 36
+          },
+          summary: {
+            mean_shift_x_pixels: -0.32,
+            mean_shift_y_pixels: 0.44,
+            rmse_pixels: 0.16,
+            max_shift_pixels: 0.54,
+            mean_correlation: 0.91,
+            inlier_fraction: 0.8889,
+            quality_tier: 'subpixel_excellent',
+            false_change_risk_pct: 3.2
+          },
+          tile_url_template: `/api/v1/tiles/coregistration/${refId}/${tgtId}/{z}/{x}/{y}.png?mode=aligned&kernel=${parsed.kernel || 'cubic_convolution'}`,
+          vector_field_tile_url_template: `/api/v1/tiles/coregistration/vector-field/${anaId}/{z}/{x}/{y}.png`,
+          created_at: new Date().toISOString(),
+          status: 'completed'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/aquatic/quality') || url.includes('/analysis/aquatic/quality')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const sceneId = parsed.scene_id || 'S2A_MSIL2A_20260814T160901_T17TNE';
+        const anaId = `AQUA-ANA-${Date.now()}`;
+        data = {
+          analysis_id: anaId,
+          scene_id: sceneId,
+          collection: parsed.collection || 'sentinel-2-l2a',
+          algorithm: parsed.algorithm || 'ndci_mishra_2012',
+          water_masking_method: parsed.water_masking_method || 'mndwi_threshold',
+          mndwi_threshold: parsed.mndwi_threshold !== undefined ? parsed.mndwi_threshold : 0.0,
+          summary: {
+            water_pixels: 42150,
+            water_surface_area_ha: 421.5,
+            mean_ndci: 0.28,
+            mean_fai: 0.045,
+            mean_chla_ug_l: 52.4,
+            mean_turbidity_ntu: 18.6,
+            dominant_eutrophication_tier: 'hypertrophic',
+            bloom_extent_ha: 298.4,
+            bloom_risk_level: 'severe',
+            floating_scum_detected: true,
+            tier_distribution: {
+              oligotrophic: 4.2,
+              mesotrophic: 12.8,
+              eutrophic: 28.5,
+              hypertrophic: 54.5
+            }
+          },
+          tile_url_template: `/api/v1/tiles/aquatic/${parsed.collection || 'sentinel-2-l2a'}/ndci/{z}/{x}/{y}.png`,
+          hab_tile_url_template: `/api/v1/tiles/aquatic/hab/${parsed.collection || 'sentinel-2-l2a'}/{z}/{x}/{y}.png`,
+          created_at: new Date().toISOString(),
+          status: 'completed'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/aquatic/hab') || url.includes('/analysis/aquatic/hab')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const sceneId = parsed.scene_id || 'S2A_MSIL2A_20260814T160901_T17TNE';
+        const anaId = `HAB-ANA-${Date.now()}`;
+        data = {
+          analysis_id: anaId,
+          scene_id: sceneId,
+          dominant_tier: 'hypertrophic',
+          alert_level: 'Alert Level 2 (Scum Hazard)',
+          mean_ndci: 0.28,
+          mean_fai: 0.045,
+          scum_detected: true,
+          bloom_extent_ha: 298.4,
+          advisory: 'Acute hazard from toxic surface scums; restrict livestock access and drinking water intake; post public warnings.',
+          tile_url_template: `/api/v1/tiles/aquatic/hab/${parsed.collection || 'sentinel-2-l2a'}/{z}/{x}/{y}.png`,
+          created_at: new Date().toISOString()
+        };
+      }
+      else if (url.includes('/api/v1/analysis/topographic/correction') || url.includes('/analysis/topographic/correction')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const sceneId = parsed.scene_id || 'S2A_MSIL2A_20260815_MT_SHASTA';
+        const anaId = `TOPO-ANA-${Date.now()}`;
+        const method = parsed.method || 'c_correction';
+        data = {
+          analysis_id: anaId,
+          scene_id: sceneId,
+          collection: parsed.collection || 'sentinel-2-l2a',
+          dem_collection: parsed.dem_collection || 'cop-dem-glo-30',
+          method: method,
+          solar_geometry: {
+            solar_zenith_deg: 34.2,
+            solar_azimuth_deg: 148.5,
+            solar_elevation_deg: 55.8,
+            earth_sun_distance_au: 1.013
+          },
+          summary: {
+            mean_cos_i: 0.7842,
+            min_cos_i: -0.1824,
+            max_cos_i: 0.9982,
+            sunlit_pixel_pct: 82.5,
+            shaded_pixel_pct: 12.8,
+            self_shadow_pixel_pct: 4.7,
+            estimated_c_factors: { B02: 0.12, B03: 0.09, B04: 0.08, B08: 0.06, B11: 0.04 },
+            estimated_minnaert_k: { B02: 0.58, B03: 0.62, B04: 0.65, B08: 0.72, B11: 0.78 },
+            mean_radiance_uncalibrated: 0.1845,
+            mean_radiance_corrected: 0.2012,
+            radiance_std_reduction_pct: 41.8
+          },
+          tile_url_template: `/api/v1/tiles/topographic/${parsed.collection || 'sentinel-2-l2a'}/${sceneId}/{z}/{x}/{y}.png?method=${method}`,
+          illumination_tile_url_template: `/api/v1/tiles/topographic/illumination/${parsed.collection || 'sentinel-2-l2a'}/${sceneId}/{z}/{x}/{y}.png`,
+          created_at: new Date().toISOString(),
+          status: 'completed'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/topographic/solar-geometry') || url.includes('/analysis/topographic/solar-geometry')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = {
+          solar_zenith_deg: 34.2,
+          solar_azimuth_deg: 148.5,
+          solar_elevation_deg: 55.8,
+          earth_sun_distance_au: 1.013,
+          scene_id: parsed.scene_id || 'S2A_MSIL2A_20260815_MT_SHASTA'
         };
       }
       else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
@@ -8318,6 +8479,132 @@ export const getSarFloodTileUrlTemplate = (options = {}) => {
   return buildSarFloodTileUrlTemplate(options);
 };
 
+/**
+ * Executes automated sub-pixel image co-registration between reference and target scenes.
+ * 
+ * @param {Object} [params={}] - Co-registration request parameters
+ * @returns {Promise<Object>} Analysis response with affine transform, tie points, and tile templates
+ */
+export const fetchCoRegistrationAnalysis = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/coregistration', params);
+  return response.data;
+};
+
+/**
+ * Fetches tie points with measured sub-pixel shifts between reference and target scenes.
+ * 
+ * @param {Object} [params={}] - Query parameters
+ * @returns {Promise<Object>} Tie points catalog
+ */
+export const fetchCoRegistrationTiePoints = async (params = {}) => {
+  const response = await giosApi.get('/api/v1/analysis/coregistration/tie-points', { params });
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for co-registered raster tiles.
+ * 
+ * @param {Object} [options={}] - Options (referenceSceneId, targetSceneId, mode, kernel, colormap)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getCoRegistrationTileUrlTemplate = (options = {}) => {
+  return buildCoregistrationTileUrlTemplate(options);
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for displacement vector arrow overlay tiles.
+ * 
+ * @param {Object} [options={}] - Options (analysisId, arrowScale)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getCoRegistrationVectorFieldTileUrlTemplate = (options = {}) => {
+  return buildCoregistrationVectorFieldTileUrlTemplate(options);
+};
+
+/**
+ * Requests multi-spectral bio-optical water quality and algal bloom analysis.
+ * 
+ * @param {Object} [params={}] - Request parameters (scene_id, bbox, collection, metrics, water_masking_method, mndwi_threshold, algorithm)
+ * @returns {Promise<Object>} Analysis response with water body summary and dynamic tile contracts
+ */
+export const fetchAquaticQualityAnalysis = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/aquatic/quality', params);
+  return response.data;
+};
+
+/**
+ * Requests targeted Harmful Algal Bloom (HAB) and cyanobacterial risk assessment.
+ * 
+ * @param {Object} [params={}] - Request parameters
+ * @returns {Promise<Object>} HAB risk summary and advisory tiers
+ */
+export const fetchAquaticHabDetection = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/aquatic/hab', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for aquatic quality metrics.
+ * 
+ * @param {Object} [options={}] - Options (collection, metric, colormap, rescale, mndwiThreshold, maskLand)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getAquaticTileUrlTemplate = (options = {}) => {
+  return buildAquaticTileUrlTemplate(options);
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for HAB hazard tier tiles.
+ * 
+ * @param {Object} [options={}] - Options (collection, mndwiThreshold)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getAquaticHabTileUrlTemplate = (options = {}) => {
+  return buildAquaticHabTileUrlTemplate(options);
+};
+
+/**
+ * Requests topographic solar illumination correction analysis.
+ * 
+ * @param {Object} [params={}] - Request parameters (scene_id, collection, dem_collection, bbox, method, solar_geometry, config)
+ * @returns {Promise<Object>} Topographic correction analysis response and tile templates
+ */
+export const fetchTopographicCorrectionAnalysis = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/topographic/correction', params);
+  return response.data;
+};
+
+/**
+ * Requests solar illumination geometry and ephemeris angles for a scene.
+ * 
+ * @param {Object} [params={}] - Request parameters (scene_id, collection)
+ * @returns {Promise<Object>} Solar geometry angles
+ */
+export const fetchTopographicSolarGeometry = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/topographic/solar-geometry', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for topographically corrected imagery.
+ * 
+ * @param {Object} [options={}] - Options (collection, itemId, method, metric, solarZenith, solarAzimuth, cFactor, minnaertK, colormap, rescale)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getTopographicTileUrlTemplate = (options = {}) => {
+  return buildTopographicTileUrlTemplate(options);
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for topographic solar local incidence cos(i) hillshade tiles.
+ * 
+ * @param {Object} [options={}] - Options (collection, itemId, solarZenith, solarAzimuth)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getTopographicIlluminationTileUrlTemplate = (options = {}) => {
+  return buildTopographicIlluminationTileUrlTemplate(options);
+};
+
 export {
   InSARDeformationHazardTier,
   INSAR_HAZARD_CONFIGS,
@@ -8495,7 +8782,64 @@ export {
   buildSarSpeckleFilterTileUrl,
   buildSarSpeckleFilterTileUrlTemplate,
   buildSarFloodTileUrl,
-  buildSarFloodTileUrlTemplate
+  buildSarFloodTileUrlTemplate,
+  COREGISTRATION_METHODS,
+  CoRegistrationMethod,
+  GEOMETRIC_RESAMPLING_KERNELS,
+  GeometricResamplingKernel,
+  COREGISTRATION_QUALITY_TIERS,
+  CoRegistrationQualityTier,
+  COREGISTRATION_METHOD_CONFIGS,
+  RESAMPLING_KERNEL_CONFIGS,
+  COREGISTRATION_QUALITY_TIER_CONFIGS,
+  COREGISTRATION_BENCHMARK_PAIRS,
+  calculateFftPhaseCorrelationShift,
+  estimateAffineTransformMatrix,
+  evaluateResamplingKernelWeight,
+  classifyCoregistrationQualityTier,
+  calculateChangeDetectionFalsePositiveRisk,
+  buildCoregistrationTileUrl,
+  buildCoregistrationTileUrlTemplate,
+  buildCoregistrationVectorFieldTileUrlTemplate,
+  AQUATIC_METRICS,
+  AquaticMetric,
+  EUTROPHICATION_RISK_TIERS,
+  EutrophicationRiskTier,
+  BIO_OPTICAL_ALGORITHMS,
+  BioOpticalAlgorithm,
+  WATER_MASKING_METHODS,
+  WaterMaskingMethod,
+  AQUATIC_METRIC_CONFIGS,
+  EUTROPHICATION_TIER_CONFIGS,
+  BIO_OPTICAL_ALGORITHM_CONFIGS,
+  AQUATIC_BENCHMARK_SCENES,
+  calculateFai,
+  calculateChlaFromNdci,
+  calculateNechadTurbidity,
+  calculateMndwi,
+  isWaterPixel,
+  classifyEutrophicationRiskTier,
+  buildAquaticTileUrl,
+  buildAquaticTileUrlTemplate,
+  buildAquaticHabTileUrlTemplate,
+  TopographicCorrectionMethod,
+  ILLUMINATION_CONDITIONS,
+  IlluminationCondition,
+  TOPOGRAPHIC_METRICS,
+  TopographicMetric,
+  TOPOGRAPHIC_METHOD_CONFIGS,
+  TOPOGRAPHIC_BENCHMARK_SCENES,
+  DEFAULT_SOLAR_EPHEMERIS,
+  calculateLocalIncidenceCosine,
+  calculateCCorrectionFactor,
+  calculateMinnaertCorrection,
+  calculateScsCCorrection,
+  classifyIlluminationCondition,
+  applyTopographicCorrection,
+  estimateCFactorFromLinearRegression,
+  buildTopographicTileUrl,
+  buildTopographicTileUrlTemplate,
+  buildTopographicIlluminationTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;

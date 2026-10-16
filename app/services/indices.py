@@ -1,5 +1,5 @@
 """Index Computation Service implementing certified environmental and biophysical hazard formulas."""
-from typing import Dict, Any, Union, List, Tuple
+from typing import Dict, Any, Union, List, Tuple, Optional
 import numpy as np
 
 class IndexComputationService:
@@ -40,6 +40,91 @@ class IndexComputationService:
         denom = green_arr + swir_arr
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(np.abs(denom) < IndexComputationService.EPSILON, np.nan, (green_arr - swir_arr) / denom)
+
+    @staticmethod
+    def fai(
+        nir: Any,
+        red: Any,
+        swir: Any,
+        lambda_red: float = 665.0,
+        lambda_nir: float = 842.0,
+        lambda_swir: float = 1610.0
+    ) -> Any:
+        """Floating Algae Index (Hu 2009) via baseline subtraction."""
+        nir_arr = np.asarray(nir, dtype=np.float32)
+        red_arr = np.asarray(red, dtype=np.float32)
+        swir_arr = np.asarray(swir, dtype=np.float32)
+        denom = max(1.0, float(lambda_swir - lambda_red))
+        f = float(lambda_nir - lambda_red) / denom
+        r_base = red_arr + (swir_arr - red_arr) * f
+        return nir_arr - r_base
+
+    @staticmethod
+    def chla_from_ndci(ndci: Any, model: str = "mishra_polynomial") -> Any:
+        """Estimates bio-optical Chlorophyll-a concentration in ug/L from NDCI.
+        
+        Mishra & Mishra (2012):
+            Chl-a = 14.039 + 86.115 * NDCI + 194.325 * NDCI^2
+        """
+        v = np.asarray(ndci, dtype=np.float32)
+        if model == "linear":
+            return np.maximum(0.0, 10.0 + 50.0 * v)
+        poly = 14.039 + 86.115 * v + 194.325 * (v ** 2)
+        low_v = np.maximum(0.2, 2.5 + (v + 0.15) * 8.0)
+        chla = np.where(v < -0.15, low_v, poly)
+        return np.maximum(0.0, chla)
+
+    @staticmethod
+    def chla_2bda(red_edge1: Any, red: Any, a: float = 61.324, b: float = -37.94) -> Any:
+        """2-Band Red-Edge Chlorophyll-a model (Dall'Olmo & Gitelson 2005): Chl-a = a * (R705/R665) + b."""
+        re_arr = np.asarray(red_edge1, dtype=np.float32)
+        r_arr = np.asarray(red, dtype=np.float32)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.where(r_arr > 1e-6, re_arr / r_arr, 0.0)
+            chla = a * ratio + b
+            return np.maximum(0.0, chla)
+
+    @staticmethod
+    def chla_3bda(red: Any, red_edge1: Any, red_edge2: Any, a: float = 117.4, b: float = 23.09) -> Any:
+        """3-Band Red-Edge Chlorophyll-a model (Gitelson et al. 2008): Chl-a = a * [(1/R665 - 1/R705) * R740] + b."""
+        r_arr = np.asarray(red, dtype=np.float32)
+        re1_arr = np.asarray(red_edge1, dtype=np.float32)
+        re2_arr = np.asarray(red_edge2, dtype=np.float32)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            term1 = np.where(r_arr > 1e-6, 1.0 / r_arr, 0.0)
+            term2 = np.where(re1_arr > 1e-6, 1.0 / re1_arr, 0.0)
+            diff = (term1 - term2) * re2_arr
+            chla = a * diff + b
+            return np.maximum(0.0, chla)
+
+    @staticmethod
+    def nechad_turbidity(
+        red: Any,
+        a_rho: float = 357.85,
+        c_rho: float = 0.1935,
+        max_turbidity: float = 1000.0
+    ) -> Any:
+        """Semi-analytical turbidity / TSS inversion (Nechad et al. 2010): S = (A_rho * rho_w) / (1 - rho_w / C_rho)."""
+        r_arr = np.asarray(red, dtype=np.float32)
+        r_clean = np.maximum(0.0, r_arr)
+        ratio = np.clip(r_clean / max(1e-4, float(c_rho)), 0.0, 0.95)
+        denom = np.maximum(0.05, 1.0 - ratio)
+        val = (float(a_rho) * r_clean) / denom
+        return np.clip(val, 0.0, float(max_turbidity))
+
+    @staticmethod
+    def classify_eutrophication_risk_array(
+        chla_arr: np.ndarray,
+        ndci_arr: Optional[np.ndarray] = None,
+        turbidity_arr: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """Classifies 2D array of water pixels into numeric risk tiers (0=oligotrophic, 1=mesotrophic, 2=eutrophic, 3=hypertrophic)."""
+        c = np.asarray(chla_arr, dtype=np.float32)
+        tiers = np.zeros_like(c, dtype=np.int32)
+        tiers[c >= 2.5] = 1
+        tiers[c >= 8.0] = 2
+        tiers[c > 25.0] = 3
+        return tiers
 
     @staticmethod
     def nbr(nir: Any, swir2: Any) -> Any:
@@ -394,6 +479,19 @@ class IndexComputationService:
             else:
                 tc = cls.lst(thermal)
             return cls.cwsi_idso(tc)
+        elif name == "fai":
+            nir = bands.get("nir", bands.get("B08", bands.get("b08", bands.get("nir08", bands.get("b8", bands.get("B8"))))))
+            red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
+            swir = bands.get("swir1", bands.get("B11", bands.get("b11", bands.get("swir16"))))
+            return cls.fai(nir, red, swir)
+        elif name == "chla":
+            re = bands.get("rededge1", bands.get("B05", bands.get("b05", bands.get("rededge", bands.get("b5", bands.get("B5"))))))
+            red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
+            ndci_val = cls.ndci(re, red)
+            return cls.chla_from_ndci(ndci_val)
+        elif name == "nechad_turbidity":
+            red = bands.get("red", bands.get("B04", bands.get("b04", bands.get("b4", bands.get("B4")))))
+            return cls.nechad_turbidity(red)
         else:
             raise ValueError(f"Unsupported spectral index: {index_name}")
 
@@ -425,7 +523,11 @@ class IndexComputationService:
                 "tsm": ["B03", "B04", "B08", "SCL"],
                 "turbidity": ["B03", "B04", "B08", "SCL"],
                 "aquatic_tsm": ["B03", "B04", "B08", "SCL"],
-                "cwsi": ["B04", "B08", "SCL"]
+                "cwsi": ["B04", "B08", "SCL"],
+                "fai": ["B04", "B08", "B11", "SCL"],
+                "chla": ["B04", "B05", "SCL"],
+                "nechad_turbidity": ["B04", "SCL"],
+                "eutrophication_tier": ["B03", "B04", "B05", "B08", "B11", "SCL"]
             }
             return band_map.get(idx, ["B02", "B03", "B04", "B05", "B08", "B11", "B12", "SCL"])
         else:
@@ -451,7 +553,11 @@ class IndexComputationService:
                 "tsm": ["green", "red", "nir08", "qa_pixel"],
                 "turbidity": ["green", "red", "nir08", "qa_pixel"],
                 "aquatic_tsm": ["green", "red", "nir08", "qa_pixel"],
-                "cwsi": ["lwir11", "red", "nir08", "qa_pixel"]
+                "cwsi": ["lwir11", "red", "nir08", "qa_pixel"],
+                "fai": ["red", "nir08", "swir16", "qa_pixel"],
+                "chla": ["red", "nir08", "qa_pixel"],
+                "nechad_turbidity": ["red", "qa_pixel"],
+                "eutrophication_tier": ["green", "red", "nir08", "swir16", "qa_pixel"]
             }
             return band_map.get(idx, ["blue", "green", "red", "nir08", "swir16", "swir22", "lwir11", "qa_pixel"])
 
@@ -750,6 +856,451 @@ class IndexComputationService:
 
         return composited_bands, best_idx, min_cp
 
+    # --------------------------------------------------------------------------
+    # Cycle v2.5.30: Sub-Pixel Automated Image Co-Registration, FFT Phase
+    # Correlation, Affine Warping & Geometric Resampling
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def compute_coregistration_tie_points(
+        cls,
+        ref_raster: Any,
+        target_raster: Any,
+        grid_spacing_pixels: int = 64,
+        patch_size_pixels: int = 32,
+        min_correlation: float = 0.60,
+        outlier_threshold_pixels: float = 1.5,
+        subpixel: bool = True
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Extracts candidate tie points across a regular spatial grid using FFT phase correlation,
+        fits a 6-parameter 2D affine transformation homography with RANSAC outlier filtering,
+        and computes per-tie-point residuals and geometric inlier status.
+
+        Returns:
+            (tie_points, affine_summary)
+        """
+        from app.models.schemas import (
+            calculate_fft_phase_correlation_shift,
+            estimate_affine_transform_matrix,
+            classify_coregistration_quality_tier,
+            calculate_change_detection_false_positive_risk
+        )
+
+        ref_arr = np.asarray(ref_raster, dtype=np.float32)
+        tgt_arr = np.asarray(target_raster, dtype=np.float32)
+
+        if ref_arr.ndim == 3:
+            ref_2d = ref_arr[0] if ref_arr.shape[0] < ref_arr.shape[2] else ref_arr[:, :, 0]
+            tgt_2d = tgt_arr[0] if tgt_arr.shape[0] < tgt_arr.shape[2] else tgt_arr[:, :, 0]
+        else:
+            ref_2d = ref_arr
+            tgt_2d = tgt_arr
+
+        h, w = ref_2d.shape
+        half_patch = max(8, patch_size_pixels // 2)
+        spacing = max(16, int(grid_spacing_pixels))
+
+        candidate_points: List[Dict[str, Any]] = []
+        pt_counter = 1
+
+        y_steps = range(half_patch, h - half_patch, spacing)
+        x_steps = range(half_patch, w - half_patch, spacing)
+
+        for cy in y_steps:
+            for cx in x_steps:
+                ref_patch = ref_2d[cy - half_patch : cy + half_patch, cx - half_patch : cx + half_patch]
+                tgt_patch = tgt_2d[cy - half_patch : cy + half_patch, cx - half_patch : cx + half_patch]
+
+                if np.std(ref_patch) < 1e-6 or np.std(tgt_patch) < 1e-6:
+                    continue
+
+                shift_info = calculate_fft_phase_correlation_shift(ref_patch, tgt_patch, subpixel=subpixel)
+                corr_score = float(shift_info.get("correlation_score", 0.0))
+
+                if corr_score >= float(min_correlation):
+                    sx = float(shift_info.get("shift_x", 0.0))
+                    sy = float(shift_info.get("shift_y", 0.0))
+                    candidate_points.append({
+                        "point_id": f"TP_{pt_counter:04d}",
+                        "reference_x": float(cx),
+                        "reference_y": float(cy),
+                        "target_x": round(float(cx + sx), 4),
+                        "target_y": round(float(cy + sy), 4),
+                        "shift_x": round(sx, 4),
+                        "shift_y": round(sy, 4),
+                        "correlation_score": round(corr_score, 4),
+                        "is_inlier": True,
+                        "residual_pixels": 0.0
+                    })
+                    pt_counter += 1
+
+        # Fit 2D affine transformation with RANSAC
+        if len(candidate_points) >= 3:
+            affine_fit = estimate_affine_transform_matrix(
+                candidate_points,
+                outlier_threshold_pixels=outlier_threshold_pixels
+            )
+            a = float(affine_fit.get("a", 1.0))
+            b_val = float(affine_fit.get("b", 0.0))
+            c = float(affine_fit.get("c", 0.0))
+            d = float(affine_fit.get("d", 1.0))
+            tx = float(affine_fit.get("tx", 0.0))
+            ty = float(affine_fit.get("ty", 0.0))
+
+            inlier_shifts_x = []
+            inlier_shifts_y = []
+            inlier_corrs = []
+            max_shift = 0.0
+
+            for pt in candidate_points:
+                rx = pt["reference_x"]
+                ry = pt["reference_y"]
+                pred_x = a * rx + b_val * ry + tx
+                pred_y = c * rx + d * ry + ty
+                res = float(np.sqrt((pt["target_x"] - pred_x) ** 2 + (pt["target_y"] - pred_y) ** 2))
+                pt["residual_pixels"] = round(res, 4)
+                is_inl = res <= float(outlier_threshold_pixels)
+                pt["is_inlier"] = is_inl
+                if is_inl:
+                    inlier_shifts_x.append(pt["shift_x"])
+                    inlier_shifts_y.append(pt["shift_y"])
+                    inlier_corrs.append(pt["correlation_score"])
+                    sh_mag = float(np.sqrt(pt["shift_x"] ** 2 + pt["shift_y"] ** 2))
+                    if sh_mag > max_shift:
+                        max_shift = sh_mag
+
+            inlier_cnt = len(inlier_shifts_x)
+            mean_sx = float(np.mean(inlier_shifts_x)) if inlier_cnt > 0 else float(affine_fit.get("tx", 0.0))
+            mean_sy = float(np.mean(inlier_shifts_y)) if inlier_cnt > 0 else float(affine_fit.get("ty", 0.0))
+            mean_corr = float(np.mean(inlier_corrs)) if inlier_cnt > 0 else 0.85
+            rmse = float(affine_fit.get("rmse_pixels", 0.0))
+            inlier_frac = float(inlier_cnt) / float(len(candidate_points))
+        else:
+            mean_sx = 0.0
+            mean_sy = 0.0
+            max_shift = 0.0
+            mean_corr = 0.90
+            rmse = 0.0
+            inlier_frac = 1.0
+            affine_fit = {
+                "a": 1.0, "b": 0.0, "c": 0.0, "d": 1.0,
+                "tx": 0.0, "ty": 0.0,
+                "rmse_pixels": 0.0,
+                "inlier_count": len(candidate_points),
+                "total_tie_points": len(candidate_points)
+            }
+
+        quality_tier = classify_coregistration_quality_tier(rmse)
+        false_change_risk = calculate_change_detection_false_positive_risk(
+            max(abs(mean_sx), abs(mean_sy)), spatial_sigma=0.6
+        )
+
+        summary = {
+            "mean_shift_x_pixels": round(mean_sx, 4),
+            "mean_shift_y_pixels": round(mean_sy, 4),
+            "rmse_pixels": round(rmse, 4),
+            "max_shift_pixels": round(max_shift, 4),
+            "mean_correlation": round(mean_corr, 4),
+            "inlier_fraction": round(inlier_frac, 4),
+            "quality_tier": quality_tier,
+            "false_change_risk_pct": round(false_change_risk, 2),
+            "affine_matrix": affine_fit
+        }
+
+        return candidate_points, summary
+
+    @classmethod
+    def warp_raster_affine(
+        cls,
+        raster: Any,
+        affine_matrix: Union[Dict[str, Any], Any],
+        kernel: Union[str, Any] = "cubic_convolution",
+        fill_value: float = 0.0
+    ) -> np.ndarray:
+        """Warps a 2D or 3D target raster according to the affine transformation matrix
+        mapping coordinates from reference grid to target image space.
+        
+        Geometric Resampling Kernels supported:
+            - nearest: 0th order (preserves discrete masks, SCL, radiometry)
+            - bilinear: 1st order (linear interpolation across 2x2 neighborhood)
+            - cubic_convolution: Keys (1981) cubic convolution (a = -0.5, order 3)
+            - cubic_spline: 3rd order B-spline interpolation
+            - lanczos: Lanczos-3 windowed sinc / high-order spline (order 4)
+        """
+        import scipy.ndimage as ndi
+
+        arr = np.asarray(raster, dtype=np.float32)
+
+        if isinstance(affine_matrix, dict):
+            a = float(affine_matrix.get("a", 1.0))
+            b_val = float(affine_matrix.get("b", 0.0))
+            c = float(affine_matrix.get("c", 0.0))
+            d = float(affine_matrix.get("d", 1.0))
+            tx = float(affine_matrix.get("tx", 0.0))
+            ty = float(affine_matrix.get("ty", 0.0))
+        elif hasattr(affine_matrix, "a"):
+            a = float(affine_matrix.a)
+            b_val = float(affine_matrix.b)
+            c = float(affine_matrix.c)
+            d = float(affine_matrix.d)
+            tx = float(affine_matrix.tx)
+            ty = float(affine_matrix.ty)
+        else:
+            a, b_val, c, d, tx, ty = 1.0, 0.0, 0.0, 1.0, 0.0, 0.0
+
+        # In row-major (y, x) space:
+        # y_in = d * y_out + c * x_out + ty
+        # x_in = b * y_out + a * x_out + tx
+        M = np.array([[d, c], [b_val, a]], dtype=np.float64)
+        offset = np.array([ty, tx], dtype=np.float64)
+
+        k_str = str(kernel.value if hasattr(kernel, "value") else kernel).lower().strip()
+        if k_str == "nearest":
+            order = 0
+        elif k_str == "bilinear":
+            order = 1
+        elif k_str in ("cubic_convolution", "cubic", "bicubic", "cubic_spline"):
+            order = 3
+        elif k_str == "lanczos":
+            order = 4
+        else:
+            order = 3
+
+        if arr.ndim == 2:
+            return ndi.affine_transform(
+                arr,
+                matrix=M,
+                offset=offset,
+                order=order,
+                mode="constant",
+                cval=fill_value
+            ).astype(np.float32)
+        elif arr.ndim == 3:
+            if arr.shape[0] <= 16:
+                warped_bands = [
+                    ndi.affine_transform(
+                        arr[b],
+                        matrix=M,
+                        offset=offset,
+                        order=order,
+                        mode="constant",
+                        cval=fill_value
+                    ).astype(np.float32)
+                    for b in range(arr.shape[0])
+                ]
+                return np.stack(warped_bands, axis=0)
+            else:
+                warped_bands = [
+                    ndi.affine_transform(
+                        arr[:, :, b],
+                        matrix=M,
+                        offset=offset,
+                        order=order,
+                        mode="constant",
+                        cval=fill_value
+                    ).astype(np.float32)
+                    for b in range(arr.shape[2])
+                ]
+                return np.stack(warped_bands, axis=-1)
+        return arr
+
+    @classmethod
+    def compute_coregistration_differencing(
+        cls,
+        ref_raster: Any,
+        target_raster: Any,
+        affine_matrix: Union[Dict[str, Any], Any],
+        kernel: Union[str, Any] = "cubic_convolution"
+    ) -> Dict[str, Any]:
+        """Calculates radiometric differences before and after sub-pixel affine co-registration.
+        
+        Demonstrates Townshend et al. (1992) misregistration error reduction:
+            diff_pre = |ref - target_raw|
+            diff_post = |ref - target_aligned|
+            
+        Returns dictionary with diff_pre, diff_post, warped_target, and error metrics.
+        """
+        ref_arr = np.asarray(ref_raster, dtype=np.float32)
+        tgt_arr = np.asarray(target_raster, dtype=np.float32)
+
+        warped_tgt = cls.warp_raster_affine(tgt_arr, affine_matrix, kernel=kernel)
+
+        diff_pre = np.abs(ref_arr - tgt_arr)
+        diff_post = np.abs(ref_arr - warped_tgt)
+
+        rmse_pre = float(np.sqrt(np.mean(diff_pre ** 2)))
+        rmse_post = float(np.sqrt(np.mean(diff_post ** 2)))
+        reduction_pct = max(0.0, (1.0 - rmse_post / max(1e-7, rmse_pre)) * 100.0)
+
+        return {
+            "diff_pre": diff_pre,
+            "diff_post": diff_post,
+            "warped_target": warped_tgt,
+            "rmse_diff_pre": round(rmse_pre, 4),
+            "rmse_diff_post": round(rmse_post, 4),
+            "error_reduction_pct": round(reduction_pct, 2)
+        }
+
+    @classmethod
+    def compute_aquatic_quality_inversion(
+        cls,
+        bands: Dict[str, Any],
+        algorithm: str = "ndci_mishra_2012",
+        water_masking_method: str = "mndwi_threshold",
+        mndwi_threshold: float = 0.0,
+        pixel_size_m: float = 10.0
+    ) -> Dict[str, Any]:
+        """Computes comprehensive multi-spectral bio-optical water quality and HAB risk inversion.
+        
+        Evaluates:
+            - Water boundary masking via MNDWI = (B03 - B11)/(B03 + B11) > mndwi_threshold
+            - NDCI (Mishra & Mishra 2012): (B05 - B04)/(B05 + B04)
+            - FAI (Hu 2009): B08 - [B04 + (B11 - B04) * 0.1873]
+            - Chlorophyll-a concentration (ug/L) via requested bio-optical algorithm
+            - Nechad et al. (2010) semi-analytical turbidity / TSS (NTU)
+            - Carlson / WHO trophic state categorization (Oligotrophic, Mesotrophic, Eutrophic, Hypertrophic)
+            - Surface floating algae scum detection
+            
+        Returns dictionary with 2D raster arrays and summary statistics matching AquaticWaterBodySummary.
+        """
+        b3 = np.asarray(bands.get("B03", bands.get("b03", bands.get("green", 0.0))), dtype=np.float32)
+        b4 = np.asarray(bands.get("B04", bands.get("b04", bands.get("red", 0.0))), dtype=np.float32)
+        b5 = np.asarray(bands.get("B05", bands.get("b05", bands.get("rededge1", 0.0))), dtype=np.float32)
+        b6 = np.asarray(bands.get("B06", bands.get("b06", bands.get("rededge2", b5))), dtype=np.float32)
+        b8 = np.asarray(bands.get("B08", bands.get("b08", bands.get("nir", 0.0))), dtype=np.float32)
+        b11 = np.asarray(bands.get("B11", bands.get("b11", bands.get("swir1", 0.0))), dtype=np.float32)
+        scl = bands.get("SCL", bands.get("scl", None))
+
+        # 1. Water Boundary Masking
+        mndwi_arr = cls.mndwi(b3, b11)
+        if water_masking_method == "scl_water_mask" and scl is not None:
+            scl_arr = np.asarray(scl, dtype=np.int32)
+            water_mask = (scl_arr == 6)
+        elif water_masking_method == "nir_threshold":
+            water_mask = (b8 < 0.10) & (b3 > 0.01)
+        elif water_masking_method == "ndwi_threshold":
+            ndwi_arr = (b3 - b8) / np.maximum(1e-6, b3 + b8)
+            water_mask = (ndwi_arr > float(mndwi_threshold))
+        else:
+            water_mask = (mndwi_arr > float(mndwi_threshold))
+
+        # 2. Bio-Optical NDCI
+        ndci_raw = cls.ndci(b5, b4)
+        ndci_arr = np.clip(ndci_raw, -1.0, 1.0)
+
+        # 3. Floating Algae Index (FAI)
+        fai_arr = cls.fai(b8, b4, b11)
+
+        # 4. Chlorophyll-a Inversion (ug/L)
+        algo_clean = str(algorithm).lower()
+        if "2bda" in algo_clean:
+            chla_arr = cls.chla_2bda(b5, b4)
+        elif "3bda" in algo_clean:
+            chla_arr = cls.chla_3bda(b4, b5, b6)
+        else:
+            chla_arr = cls.chla_from_ndci(ndci_arr)
+
+        # 5. Nechad Turbidity / TSS (NTU)
+        turbidity_arr = cls.nechad_turbidity(b4)
+
+        # 6. Eutrophication Risk Tiers (0=oligotrophic, 1=mesotrophic, 2=eutrophic, 3=hypertrophic)
+        tier_arr = cls.classify_eutrophication_risk_array(chla_arr, ndci_arr, turbidity_arr)
+
+        # 7. Land Masking: Non-water pixels set to NaN
+        ndci_water = np.where(water_mask, ndci_arr, np.nan)
+        fai_water = np.where(water_mask, fai_arr, np.nan)
+        chla_water = np.where(water_mask, chla_arr, np.nan)
+        turbidity_water = np.where(water_mask, turbidity_arr, np.nan)
+        tier_water = np.where(water_mask, tier_arr, -1)
+
+        water_pixel_count = int(np.sum(water_mask))
+        pixel_area_ha = float((pixel_size_m ** 2) / 10000.0)
+        water_area_ha = round(float(water_pixel_count * pixel_area_ha), 2)
+
+        if water_pixel_count > 0:
+            mean_ndci_val = float(np.nanmean(ndci_water))
+            mean_fai_val = float(np.nanmean(fai_water))
+            mean_chla_val = float(np.nanmean(chla_water))
+            mean_turbidity_val = float(np.nanmean(turbidity_water))
+
+            valid_tiers = tier_arr[water_mask]
+            t0 = float(np.sum(valid_tiers == 0)) / water_pixel_count * 100.0
+            t1 = float(np.sum(valid_tiers == 1)) / water_pixel_count * 100.0
+            t2 = float(np.sum(valid_tiers == 2)) / water_pixel_count * 100.0
+            t3 = float(np.sum(valid_tiers == 3)) / water_pixel_count * 100.0
+            tier_distribution = {
+                "oligotrophic": round(t0, 1),
+                "mesotrophic": round(t1, 1),
+                "eutrophic": round(t2, 1),
+                "hypertrophic": round(t3, 1)
+            }
+
+            tier_counts = [t0, t1, t2, t3]
+            max_idx = int(np.argmax(tier_counts))
+            tier_names = ["oligotrophic", "mesotrophic", "eutrophic", "hypertrophic"]
+            dominant_tier = tier_names[max_idx]
+
+            bloom_pixels = int(np.sum(valid_tiers >= 2))
+            bloom_extent_ha = round(float(bloom_pixels * pixel_area_ha), 2)
+
+            scum_pixels = int(np.sum(fai_water > 0.02))
+            floating_scum_detected = bool(scum_pixels > 0 and (scum_pixels / water_pixel_count > 0.005 or np.nanmax(fai_water) > 0.025))
+
+            if dominant_tier == "hypertrophic" or t3 > 15.0:
+                bloom_risk = "severe"
+            elif dominant_tier == "eutrophic" or (t2 + t3) > 30.0:
+                bloom_risk = "high"
+            elif dominant_tier == "mesotrophic" or (t2 + t3) > 10.0:
+                bloom_risk = "moderate"
+            else:
+                bloom_risk = "low"
+        else:
+            mean_ndci_val = 0.0
+            mean_fai_val = 0.0
+            mean_chla_val = 0.0
+            mean_turbidity_val = 0.0
+            dominant_tier = "mesotrophic"
+            bloom_extent_ha = 0.0
+            bloom_risk = "low"
+            floating_scum_detected = False
+            tier_distribution = {
+                "oligotrophic": 0.0,
+                "mesotrophic": 100.0,
+                "eutrophic": 0.0,
+                "hypertrophic": 0.0
+            }
+
+        summary = {
+            "water_pixels": water_pixel_count,
+            "water_surface_area_ha": water_area_ha,
+            "mean_ndci": round(mean_ndci_val, 4),
+            "mean_fai": round(mean_fai_val, 6),
+            "mean_chla_ug_l": round(mean_chla_val, 2),
+            "mean_turbidity_ntu": round(mean_turbidity_val, 2),
+            "dominant_eutrophication_tier": dominant_tier,
+            "bloom_extent_ha": bloom_extent_ha,
+            "bloom_risk_level": bloom_risk,
+            "floating_scum_detected": floating_scum_detected,
+            "tier_distribution": tier_distribution
+        }
+
+        return {
+            "water_mask": water_mask,
+            "mndwi": mndwi_arr,
+            "ndci": ndci_arr,
+            "fai": fai_arr,
+            "chla": chla_arr,
+            "turbidity": turbidity_arr,
+            "tier": tier_arr,
+            "ndci_water": ndci_water,
+            "fai_water": fai_water,
+            "chla_water": chla_water,
+            "turbidity_water": turbidity_water,
+            "tier_water": tier_water,
+            "summary": summary
+        }
+
 
 index_service = IndexComputationService()
+
 

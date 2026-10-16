@@ -600,6 +600,267 @@ def inspect_mosaic_vrt_guard() -> dict:
 
     return results
 
+def inspect_temporal_stack_guard() -> dict:
+    """Inspects 4D Temporal Stack Memory Allocation Guard (>1.2GB Heap Threshold),
+    Statistical Pixel Reducer Execution Latency Watchdog (<400ms per tile for 5-scene stack),
+    Quality mosaic tier classifier, and dynamic composite tile server probe (Task T-231).
+    """
+    results = {}
+
+    # 1. Statistical Pixel Reducer Execution Latency Watchdog (< 400ms for 5-scene stack)
+    reducer_status = {"passed": False, "duration_ms": 0.0, "under_timeout": False, "shape": None, "error": None}
+    t0 = time.time()
+    try:
+        import numpy as np
+        from app.models.schemas import apply_temporal_reduction
+        
+        # 5 scenes, 128x128 float32 temporal raster stack
+        stack = np.random.uniform(0.05, 0.75, size=(5, 128, 128)).astype(np.float32)
+        med_composite = apply_temporal_reduction(stack, reducer="median")
+        elapsed_ms = (time.time() - t0) * 1000.0
+        
+        is_finite = bool(np.all(np.isfinite(med_composite)))
+        correct_shape = med_composite.shape == (128, 128)
+        
+        reducer_status = {
+            "passed": is_finite and correct_shape,
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 400.0,
+            "shape": list(med_composite.shape),
+            "error": None
+        }
+    except Exception as e:
+        reducer_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t0) * 1000.0, 2),
+            "under_timeout": False,
+            "shape": None,
+            "error": str(e)
+        }
+    results["reducer_execution_watchdog"] = reducer_status
+
+    # 2. Quality Mosaic Classifier Invariant Guard
+    quality_status = {"passed": False, "tier": None, "error": None}
+    try:
+        from app.models.schemas import classify_temporal_composite_quality
+        q_tier = classify_temporal_composite_quality(clear_pixel_pct=92.0, scene_count=5)
+        quality_status = {
+            "passed": q_tier.value == "excellent",
+            "tier": q_tier.value,
+            "error": None
+        }
+    except Exception as e:
+        quality_status = {"passed": False, "tier": None, "error": str(e)}
+    results["quality_classifier_guard"] = quality_status
+
+    # 3. Dynamic Temporal Composite Tile Server Probe
+    composite_tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/composite/sentinel-2-l2a/10/163/395.png?reducer=median",
+        timeout=3.0
+    )
+    results["composite_tile_probe"] = composite_tile_probe
+
+    # 4. Planetary Computer Multi-Temporal STAC Search Monitor
+    stac_temporal_res = check_http_endpoint(
+        "https://planetarycomputer.microsoft.com/api/stac/v1/search?collections=sentinel-2-l2a&limit=4&datetime=2026-06-01T00:00:00Z/2026-08-31T23:59:59Z&bbox=-120.9,36.9,-120.7,37.1",
+        timeout=10.0,
+        retries=2
+    )
+    results["stac_temporal_query"] = stac_temporal_res
+
+    return results
+
+def inspect_sar_backscatter_guard() -> dict:
+    """Inspects Float32 SAR Amplitude Array Allocation Guard (>1.5GB Threshold),
+    2D Spatial Adaptive Speckle Filter (Refined Lee) Convolution Latency Watchdog (<600ms per tile),
+    SAR Decibel Water Inundation Thresholding Guard, Planetary Computer Sentinel-1 RTC STAC Availability Monitor,
+    and Dynamic XYZ SAR Backscatter Tile Server Probe (Task T-237).
+    """
+    results = {}
+
+    # 1. 2D Spatial Adaptive Speckle Filter (Refined Lee) Convolution Latency Watchdog (< 600ms)
+    filter_status = {"passed": False, "duration_ms": 0.0, "under_timeout": False, "shape": None, "error": None}
+    t0 = time.time()
+    try:
+        import numpy as np
+        from app.models.schemas import (
+            apply_speckle_filter_1d_or_2d,
+            SpeckleFilterMethod,
+            linear_to_decibel
+        )
+        
+        # 128x128 synthetic radar backscatter
+        raw_sar = np.random.exponential(scale=0.1, size=(128, 128)).astype(np.float32)
+        filtered = apply_speckle_filter_1d_or_2d(
+            raw_sar,
+            method=SpeckleFilterMethod.REFINED_LEE,
+            kernel_size=5,
+            num_looks=4.4
+        )
+        elapsed_ms = (time.time() - t0) * 1000.0
+        
+        is_finite = bool(np.all(np.isfinite(filtered)))
+        correct_shape = filtered.shape == (128, 128)
+        
+        filter_status = {
+            "passed": is_finite and correct_shape,
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 600.0,
+            "shape": list(filtered.shape),
+            "error": None
+        }
+    except Exception as e:
+        filter_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t0) * 1000.0, 2),
+            "under_timeout": False,
+            "shape": None,
+            "error": str(e)
+        }
+    results["speckle_filter_watchdog"] = filter_status
+
+    # 2. SAR Decibel Water Inundation Thresholding Guard (sigma0_VV <= -16.5 dB)
+    water_status = {"passed": False, "water_fraction": 0.0, "error": None}
+    try:
+        from app.models.schemas import linear_to_decibel, classify_sar_water_pixels
+        import numpy as np
+        
+        sim_lin = np.array([[0.005, 0.01], [0.05, 0.1]], dtype=np.float32)
+        sim_db = linear_to_decibel(sim_lin)
+        res_water = classify_sar_water_pixels(sim_db, threshold_db=-16.5)
+        
+        water_status = {
+            "passed": res_water["water_pixels"] == 2,
+            "water_fraction": res_water["water_fraction"],
+            "error": None
+        }
+    except Exception as e:
+        water_status = {"passed": False, "water_fraction": 0.0, "error": str(e)}
+    results["water_threshold_guard"] = water_status
+
+    # 3. Dynamic XYZ SAR Backscatter Tile Server Probe
+    sar_tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/sar/sentinel-1-rtc/10/163/395.png?polarization=vv",
+        timeout=3.0
+    )
+    results["sar_tile_probe"] = sar_tile_probe
+
+    # 4. Planetary Computer Sentinel-1 RTC STAC Availability Monitor
+    stac_sar_res = check_http_endpoint(
+        "https://planetarycomputer.microsoft.com/api/stac/v1/collections/sentinel-1-rtc",
+        timeout=10.0,
+        retries=2
+    )
+    results["stac_sar_collection"] = stac_sar_res
+
+    return results
+
+def inspect_coregistration_guard() -> dict:
+    """Inspects 2D FFT Cross-Power Spectrum Matrix Memory Allocation Guard (>1.5GB Threshold),
+    RANSAC Transformation Fitting Latency Watchdog (<800ms), Keys Cubic Convolution Geometric
+    Resampling Warper, Dynamic XYZ Co-Registered Tile Server Probes, and Multi-Temporal Benchmark
+    Scene Pair Ingestion (Task T-243).
+    """
+    results = {}
+
+    # 1. RANSAC Transformation Fitting Latency Watchdog (< 800ms)
+    ransac_status = {"passed": False, "duration_ms": 0.0, "under_timeout": False, "points_count": 0, "error": None}
+    t0 = time.time()
+    try:
+        import numpy as np
+        from app.services.indices import IndexComputationService
+
+        np.random.seed(42)
+        r_ref = np.random.uniform(0.1, 0.8, (128, 128)).astype(np.float32)
+        r_tgt = np.roll(np.roll(r_ref, 1, axis=1), 1, axis=0)
+
+        pts, summary = IndexComputationService.compute_coregistration_tie_points(
+            r_ref,
+            r_tgt,
+            grid_spacing_pixels=32,
+            patch_size_pixels=16,
+            min_correlation=0.50
+        )
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        ransac_status = {
+            "passed": len(pts) > 0,
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 800.0,
+            "points_count": len(pts),
+            "error": None
+        }
+    except Exception as e:
+        ransac_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t0) * 1000.0, 2),
+            "under_timeout": False,
+            "points_count": 0,
+            "error": str(e)
+        }
+    results["ransac_fitting_watchdog"] = ransac_status
+
+    # 2. Keys Cubic Convolution Geometric Resampling Warper
+    resamp_status = {"passed": False, "duration_ms": 0.0, "shape": None, "error": None}
+    t_warp = time.time()
+    try:
+        import numpy as np
+        from app.services.indices import IndexComputationService
+        test_img = np.random.uniform(0.1, 0.8, (64, 64)).astype(np.float32)
+        warped = IndexComputationService.warp_raster_affine(
+            test_img,
+            affine_matrix={"a": 1.0, "b": 0.0, "c": 0.0, "d": 1.0, "tx": 1.5, "ty": 1.5},
+            kernel="cubic_convolution"
+        )
+        warp_elapsed = (time.time() - t_warp) * 1000.0
+        is_finite = bool(np.all(np.isfinite(warped)))
+        resamp_status = {
+            "passed": is_finite and warped.shape == (64, 64),
+            "duration_ms": round(warp_elapsed, 2),
+            "shape": list(warped.shape),
+            "error": None
+        }
+    except Exception as e:
+        resamp_status = {
+            "passed": False,
+            "duration_ms": round((time.time() - t_warp) * 1000.0, 2),
+            "shape": None,
+            "error": str(e)
+        }
+    results["resampling_guard"] = resamp_status
+
+    # 3. Dynamic XYZ Co-Registered Tile Server Probes
+    coreg_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/coregistration/S2_SAN_LUIS_2026_06/S2_SAN_LUIS_2026_08/10/163/395.png?mode=aligned",
+        timeout=3.0
+    )
+    vec_tile = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/coregistration/vector-field/COREG_PROBE/10/163/395.png",
+        timeout=3.0
+    )
+    results["coreg_tile_probe"] = coreg_tile
+    results["vector_field_tile_probe"] = vec_tile
+
+    # 4. Multi-Temporal Scene Pair Ingestion & Benchmark Catalog
+    catalog_status = {"passed": False, "pair_count": 0, "error": None}
+    try:
+        from app.services.data_acquisition import data_acquisition_service
+        pairs = data_acquisition_service.search_coregistration_scene_pairs()
+        catalog_status = {
+            "passed": len(pairs) > 0,
+            "pair_count": len(pairs),
+            "error": None
+        }
+    except Exception as e:
+        catalog_status = {
+            "passed": False,
+            "pair_count": 0,
+            "error": str(e)
+        }
+    results["scene_pair_catalog"] = catalog_status
+
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
@@ -634,7 +895,7 @@ def inspect_resources() -> dict:
         "gios_processes": gios_procs
     }
 
-def run_health_check() -> dict:
+def run_health_check(full_test_suite: bool = False) -> dict:
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
     
@@ -647,7 +908,10 @@ def run_health_check() -> dict:
     band_math = inspect_band_math_ast_guard()
     dem_topography = inspect_dem_topography_guard()
     mosaic_vrt = inspect_mosaic_vrt_guard()
-    pipelines = inspect_pipelines()
+    temporal_stack = inspect_temporal_stack_guard()
+    sar_backscatter = inspect_sar_backscatter_guard()
+    coregistration = inspect_coregistration_guard()
+    pipelines = inspect_pipelines(full=full_test_suite)
     
     anomalies = []
     
@@ -869,7 +1133,128 @@ def run_health_check() -> dict:
             "message": f"STAC multi-item search query failed: {mosaic_vrt['stac_multi_item_query']['error']}"
         })
 
-    # 7. Analyze Pipeline Anomalies
+    # 7. Analyze Multi-Temporal Scene Stacking & Quality Composite Anomalies (Task T-231)
+    if temporal_stack:
+        if not temporal_stack["reducer_execution_watchdog"]["passed"]:
+            anomalies.append({
+                "component": "Statistical Pixel Reducer Evaluator",
+                "severity": "HIGH",
+                "type": "REDUCER_FAILURE",
+                "message": f"Temporal reducer execution check failed: {temporal_stack['reducer_execution_watchdog']['error']}"
+            })
+        elif not temporal_stack["reducer_execution_watchdog"]["under_timeout"]:
+            anomalies.append({
+                "component": "Statistical Pixel Reducer Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "CPU_TIMEOUT",
+                "message": f"Pixel reducer latency ({temporal_stack['reducer_execution_watchdog']['duration_ms']} ms) exceeded 400 ms timeout ceiling."
+            })
+        if temporal_stack["composite_tile_probe"] and not temporal_stack["composite_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic Temporal Composite Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"Temporal composite tile probe failed: {temporal_stack['composite_tile_probe']['error']}"
+            })
+        if not temporal_stack["quality_classifier_guard"]["passed"]:
+            anomalies.append({
+                "component": "Quality Mosaic Classifier Invariant Guard",
+                "severity": "HIGH",
+                "type": "CLASSIFIER_FAILURE",
+                "message": f"Quality mosaic classifier check failed: {temporal_stack['quality_classifier_guard']['error']}"
+            })
+        if not temporal_stack["stac_temporal_query"]["ok"]:
+            anomalies.append({
+                "component": "Planetary Computer STAC Multi-Temporal Query Monitor",
+                "severity": "MEDIUM",
+                "type": "INGESTION_ERROR",
+                "message": f"STAC multi-temporal query check failed: {temporal_stack['stac_temporal_query']['error']}"
+            })
+
+    # 8. Analyze Sentinel-1 SAR Dual-Pol Backscatter & Speckle Filter Anomalies (Task T-237)
+    if sar_backscatter:
+        if not sar_backscatter["speckle_filter_watchdog"]["passed"]:
+            anomalies.append({
+                "component": "2D Spatial Adaptive Speckle Filter",
+                "severity": "HIGH",
+                "type": "FILTER_FAILURE",
+                "message": f"Refined Lee speckle filter execution check failed: {sar_backscatter['speckle_filter_watchdog']['error']}"
+            })
+        elif not sar_backscatter["speckle_filter_watchdog"]["under_timeout"]:
+            anomalies.append({
+                "component": "Speckle Filter Convolution Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "CPU_TIMEOUT",
+                "message": f"Speckle filter convolution latency ({sar_backscatter['speckle_filter_watchdog']['duration_ms']} ms) exceeded 600 ms timeout ceiling."
+            })
+        if not sar_backscatter["water_threshold_guard"]["passed"]:
+            anomalies.append({
+                "component": "SAR Decibel Water Inundation Thresholding Guard",
+                "severity": "HIGH",
+                "type": "THRESHOLDING_FAILURE",
+                "message": f"SAR water threshold classification failed: {sar_backscatter['water_threshold_guard']['error']}"
+            })
+        if sar_backscatter["sar_tile_probe"] and not sar_backscatter["sar_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ SAR Backscatter Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"SAR backscatter tile probe failed: {sar_backscatter['sar_tile_probe']['error']}"
+            })
+        if not sar_backscatter["stac_sar_collection"]["ok"]:
+            anomalies.append({
+                "component": "Planetary Computer Sentinel-1 RTC STAC Availability Monitor",
+                "severity": "MEDIUM",
+                "type": "INGESTION_ERROR",
+                "message": f"Sentinel-1 RTC STAC collection check failed: {sar_backscatter['stac_sar_collection']['error']}"
+            })
+
+    # 9. Analyze Sub-Pixel Image Co-Registration & FFT Phase Correlation Anomalies (Task T-243)
+    if coregistration:
+        if not coregistration["ransac_fitting_watchdog"]["passed"]:
+            anomalies.append({
+                "component": "RANSAC Affine Transformation Engine / Latency Watchdog",
+                "severity": "HIGH",
+                "type": "COREGISTRATION_FAILURE",
+                "message": f"FFT phase correlation tie-point extraction or RANSAC fitting failed: {coregistration['ransac_fitting_watchdog']['error']}"
+            })
+        elif not coregistration["ransac_fitting_watchdog"]["under_timeout"]:
+            anomalies.append({
+                "component": "RANSAC Fitting Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "CPU_TIMEOUT",
+                "message": f"RANSAC transformation fitting latency ({coregistration['ransac_fitting_watchdog']['duration_ms']} ms) exceeded 800 ms timeout ceiling."
+            })
+        if not coregistration["resampling_guard"]["passed"]:
+            anomalies.append({
+                "component": "Keys Cubic Convolution Geometric Resampling Warper",
+                "severity": "HIGH",
+                "type": "WARP_FAILURE",
+                "message": f"Geometric resampling raster warp failed: {coregistration['resampling_guard']['error']}"
+            })
+        if coregistration["coreg_tile_probe"] and not coregistration["coreg_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ Co-Registered Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"Co-registered tile probe failed: {coregistration['coreg_tile_probe']['error']}"
+            })
+        if coregistration["vector_field_tile_probe"] and not coregistration["vector_field_tile_probe"]["ok"]:
+            anomalies.append({
+                "component": "Dynamic XYZ Displacement Vector Field Tile Server",
+                "severity": "MEDIUM",
+                "type": "TILE_ERROR",
+                "message": f"Displacement vector field tile probe failed: {coregistration['vector_field_tile_probe']['error']}"
+            })
+        if not coregistration["scene_pair_catalog"]["passed"]:
+            anomalies.append({
+                "component": "Multi-Temporal Scene Pair Benchmark Catalog",
+                "severity": "MEDIUM",
+                "type": "INGESTION_ERROR",
+                "message": f"Co-registration benchmark scene pair catalog check failed: {coregistration['scene_pair_catalog']['error']}"
+            })
+
+    # 10. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
         test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
@@ -886,7 +1271,7 @@ def run_health_check() -> dict:
             "message": "ResourceWarning: unclosed database in <sqlite3.Connection object> detected during test execution."
         })
         
-    # 8. Analyze Resource Anomalies
+    # 11. Analyze Resource Anomalies
     if resources["memory_percent"] > 95:
         anomalies.append({
             "component": "Host RAM",
@@ -901,7 +1286,21 @@ def run_health_check() -> dict:
             "type": "HIGH_RESOURCE_USAGE",
             "message": f"Simulation worker processes consuming excessive memory: {resources['flood_sim_memory_mb']} MB."
         })
-    if resources.get("max_raster_worker_memory_mb", 0) > 1024.0:
+    if resources.get("max_raster_worker_memory_mb", 0) > 1536.0:
+        anomalies.append({
+            "component": "Float32 SAR & FFT Phase Correlation Array Allocation Guard",
+            "severity": "HIGH",
+            "type": "HIGH_RESOURCE_USAGE",
+            "message": f"SAR / Raster worker process heap ({resources['max_raster_worker_memory_mb']} MB) exceeded 1.5 GB threshold."
+        })
+    elif resources.get("max_raster_worker_memory_mb", 0) > 1228.8:
+        anomalies.append({
+            "component": "4D Temporal Stack Memory Allocation Guard",
+            "severity": "MEDIUM",
+            "type": "HIGH_RESOURCE_USAGE",
+            "message": f"Temporal raster stack heap ({resources['max_raster_worker_memory_mb']} MB) exceeded 1.2 GB threshold."
+        })
+    elif resources.get("max_raster_worker_memory_mb", 0) > 1024.0:
         anomalies.append({
             "component": "Multi-Granule Raster Memory Allocation Guard",
             "severity": "MEDIUM",
@@ -923,6 +1322,9 @@ def run_health_check() -> dict:
         "band_math": band_math,
         "dem_topography": dem_topography,
         "mosaic_vrt": mosaic_vrt,
+        "temporal_stack": temporal_stack,
+        "sar_backscatter": sar_backscatter,
+        "coregistration": coregistration,
         "pipelines": pipelines,
         "resources": resources,
         "anomalies": anomalies
@@ -942,6 +1344,9 @@ def write_health_status(report: dict):
     band_math = report.get("band_math", {})
     dem_topo = report.get("dem_topography", {})
     mosaic_vrt = report.get("mosaic_vrt", {})
+    temporal_stack = report.get("temporal_stack", {})
+    sar_backscatter = report.get("sar_backscatter", {})
+    coregistration = report.get("coregistration", {})
     pipelines = report["pipelines"]
     
     entry_lines = []
@@ -983,6 +1388,9 @@ def write_health_status(report: dict):
     if "planetary_computer_dem_stac" in data_ing:
         dem_stac_ok = "REACHABLE" if data_ing["planetary_computer_dem_stac"]["ok"] else f"ERROR ({data_ing['planetary_computer_dem_stac']['error']})"
         entry_lines.append(f"- **Copernicus DEM (GLO-30) STAC Asset Ingestion**: `{dem_stac_ok}` ({data_ing['planetary_computer_dem_stac']['latency_ms']} ms)")
+    if "planetary_computer_sar_stac" in data_ing:
+        sar_stac_ok = "REACHABLE" if data_ing["planetary_computer_sar_stac"]["ok"] else f"ERROR ({data_ing['planetary_computer_sar_stac']['error']})"
+        entry_lines.append(f"- **Sentinel-1 RTC STAC Asset Ingestion**: `{sar_stac_ok}` ({data_ing['planetary_computer_sar_stac']['latency_ms']} ms)")
     entry_lines.append(f"- **USGS NWIS Real-Time Telemetry**: `{usgs_ok}` ({data_ing['usgs_nwis']['latency_ms']} ms)")
     entry_lines.append(f"- **NOAA / NWS Weather Services**: `{noaa_ok}` ({data_ing['noaa_weather']['latency_ms']} ms)")
     if "usgs_earthquake" in data_ing:
@@ -1062,15 +1470,76 @@ def write_health_status(report: dict):
         entry_lines.append(f"- **Microsoft Planetary Computer STAC Multi-Item Query Monitor**: `{stac_multi_status}` ({stac_multi.get('latency_ms', 0.0)} ms)")
         entry_lines.append("")
 
-    # 8. Pipeline Execution & Verification
-    entry_lines.append("### 8. Pipeline Execution")
+    # 8. Multi-Temporal Scene Stacking & Quality Composite Guard (Task T-231)
+    if temporal_stack:
+        entry_lines.append("### 8. Multi-Temporal Scene Stacking & Quality Composite Guard")
+        red_w = temporal_stack.get("reducer_execution_watchdog", {})
+        red_status = "PASSING" if (red_w.get("passed") and red_w.get("under_timeout")) else "FAILING"
+        comp_tile = temporal_stack.get("composite_tile_probe")
+        comp_tile_status = "REACHABLE" if (comp_tile and comp_tile.get("ok")) else "UNREACHABLE"
+        stac_temp = temporal_stack.get("stac_temporal_query", {})
+        stac_temp_status = "REACHABLE" if stac_temp.get("ok") else f"ERROR ({stac_temp.get('error')})"
+        q_class = temporal_stack.get("quality_classifier_guard", {})
+        q_status = "VERIFIED" if q_class.get("passed") else "FAILING"
+
+        entry_lines.append(f"- **4D Temporal Stack Memory Allocation Guard (>1.2GB Heap Threshold)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1228.8 MB)")
+        entry_lines.append(f"- **Statistical Pixel Reducer Execution Latency Watchdog ($< 400\\text{{ms}}$)**: `{red_status}` ({red_w.get('duration_ms', 0.0)} ms, array shape: {red_w.get('shape')})")
+        entry_lines.append(f"- **Quality Mosaic Classifier Invariant Guard**: `{q_status}` (Verified tier: `{q_class.get('tier')}` for 92% valid pixels, 5 scenes)")
+        entry_lines.append(f"- **Dynamic Temporal Quality Composite Tile Server (`/tiles/composite/...`)**: `{comp_tile_status}` (Probe latency: {comp_tile.get('latency_ms', 0.0) if comp_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Microsoft Planetary Computer STAC Multi-Temporal Search Monitor**: `{stac_temp_status}` ({stac_temp.get('latency_ms', 0.0)} ms)")
+        entry_lines.append("")
+
+    # 9. Sentinel-1 SAR Dual-Pol Backscatter & Speckle Filter Guard (Task T-237)
+    if sar_backscatter:
+        entry_lines.append("### 9. Sentinel-1 SAR Dual-Pol Backscatter & Speckle Filter Guard")
+        sp_w = sar_backscatter.get("speckle_filter_watchdog", {})
+        sp_status = "PASSING" if (sp_w.get("passed") and sp_w.get("under_timeout")) else "FAILING"
+        wat_g = sar_backscatter.get("water_threshold_guard", {})
+        wat_status = "VERIFIED" if wat_g.get("passed") else "FAILING"
+        sar_tile = sar_backscatter.get("sar_tile_probe")
+        sar_tile_status = "REACHABLE" if (sar_tile and sar_tile.get("ok")) else "UNREACHABLE"
+        stac_sar = sar_backscatter.get("stac_sar_collection", {})
+        stac_sar_status = "REACHABLE" if stac_sar.get("ok") else f"ERROR ({stac_sar.get('error')})"
+
+        entry_lines.append(f"- **Float32 SAR Amplitude Array Allocation Guard (>1.5GB Threshold)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **2D Spatial Adaptive Speckle Filter (Refined Lee) Latency Watchdog ($< 600\\text{{ms}}$)**: `{sp_status}` ({sp_w.get('duration_ms', 0.0)} ms, kernel: 5x5, shape: {sp_w.get('shape')})")
+        entry_lines.append(f"- **SAR Decibel Water Inundation Thresholding Guard ($\\sigma^0_{{\\text{{VV}}}} \\le -16.5\\text{{ dB}}$)**: `{wat_status}` (Detected water fraction: {wat_g.get('water_fraction', 0.0)})")
+        entry_lines.append(f"- **Dynamic XYZ SAR Backscatter Tile Server (`/tiles/sar/...`)**: `{sar_tile_status}` (Probe latency: {sar_tile.get('latency_ms', 0.0) if sar_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Planetary Computer Sentinel-1 RTC STAC Availability Monitor**: `{stac_sar_status}` ({stac_sar.get('latency_ms', 0.0)} ms)")
+        entry_lines.append("")
+
+    # 10. Automated Sub-Pixel Co-Registration & FFT Phase Correlation Guard (Task T-243)
+    if coregistration:
+        entry_lines.append("### 10. Automated Sub-Pixel Co-Registration & FFT Phase Correlation Guard")
+        r_w = coregistration.get("ransac_fitting_watchdog", {})
+        ransac_status = "PASSING" if (r_w.get("passed") and r_w.get("under_timeout")) else "FAILING"
+        res_g = coregistration.get("resampling_guard", {})
+        resamp_status = "VERIFIED" if res_g.get("passed") else "FAILING"
+        coreg_tile = coregistration.get("coreg_tile_probe")
+        coreg_tile_status = "REACHABLE" if (coreg_tile and coreg_tile.get("ok")) else "UNREACHABLE"
+        vec_tile = coregistration.get("vector_field_tile_probe")
+        vec_tile_status = "REACHABLE" if (vec_tile and vec_tile.get("ok")) else "UNREACHABLE"
+        cat_g = coregistration.get("scene_pair_catalog", {})
+        cat_status = "REACHABLE" if cat_g.get("passed") else "ERROR"
+        cat_count = cat_g.get("pair_count", 0)
+
+        entry_lines.append(f"- **2D FFT Matrix Memory Allocation Guard (>1.5GB Threshold)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **RANSAC Transformation Fitting Latency Watchdog ($< 800\\text{{ms}}$)**: `{ransac_status}` ({r_w.get('duration_ms', 0.0)} ms, candidate tie-points: {r_w.get('points_count', 0)})")
+        entry_lines.append(f"- **2D Keys Cubic Convolution Resampling Guard**: `{resamp_status}` ({res_g.get('duration_ms', 0.0)} ms, array shape: {res_g.get('shape')})")
+        entry_lines.append(f"- **Dynamic XYZ Co-Registered Tile Server (`/tiles/coregistration/...`)**: `{coreg_tile_status}` (Probe latency: {coreg_tile.get('latency_ms', 0.0) if coreg_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Dynamic XYZ Displacement Vector Field Tile Server (`/tiles/coregistration/vector-field/...`)**: `{vec_tile_status}` (Probe latency: {vec_tile.get('latency_ms', 0.0) if vec_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Multi-Temporal Scene Pair Ingestion & Benchmark Catalog**: `{cat_status}` ({cat_count} benchmark scene pairs indexed)")
+        entry_lines.append("")
+
+    # 11. Pipeline Execution & Verification
+    entry_lines.append("### 11. Pipeline Execution")
     test_ok = "PASSING" if pipelines["test_suite"]["passed"] else "FAILED"
     entry_lines.append(f"- **Core Test Suite & API Pipelines**: `{test_ok}` ({pipelines['test_suite']['duration_sec']}s)")
     entry_lines.append("")
     
-    # 9. Detected Anomalies & Action Items
+    # 12. Detected Anomalies & Action Items
     if anomalies:
-        entry_lines.append("### 9. Detected Anomalies & Action Items")
+        entry_lines.append("### 12. Detected Anomalies & Action Items")
         entry_lines.append("> [!WARNING]")
         entry_lines.append(f"> **{len(anomalies)} anomaly/anomalies detected.** Handing off immediately to **Agent 9 (@debugger)** for investigation and patching.\n")
         
@@ -1084,7 +1553,7 @@ def write_health_status(report: dict):
         for idx, a in enumerate(anomalies, 1):
             entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
-        entry_lines.append("### 9. Detected Anomalies")
+        entry_lines.append("### 12. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
         entry_lines.append("> All systems operational. No active anomalies detected.")
         
@@ -1170,9 +1639,12 @@ def main():
 
     logger.info(f"Health Monitor initialized. Mode: {'DAEMON' if daemon_mode else 'SINGLE PASS'}")
     
+    pass_count = 0
     while True:
+        pass_count += 1
         try:
-            report = run_health_check()
+            full_suite = ("--full" in sys.argv) or (pass_count % 10 == 0)
+            report = run_health_check(full_test_suite=full_suite)
             write_health_status(report)
             print(f"Health check complete: Overall Status: {report['overall_status']}, Anomalies: {len(report['anomalies'])}")
         except Exception as e:

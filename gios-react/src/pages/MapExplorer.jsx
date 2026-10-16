@@ -211,6 +211,8 @@ import ThermalLSTModal from '../components/ThermalLSTModal';
 import BYOCStorageModal from '../components/BYOCStorageModal';
 import PointCloudCHMModal from '../components/PointCloudCHMModal';
 import CoRegistrationModal from '../components/CoRegistrationModal';
+import AquaticQualityModal from '../components/AquaticQualityModal';
+import TopographicCorrectionModal from '../components/TopographicCorrectionModal';
 import BiophysicalHazardsModal from '../components/BiophysicalHazardsModal';
 import GeotechnicalHazardsModal from '../components/GeotechnicalHazardsModal';
 import EnvironmentalDiagnosticsModal from '../components/EnvironmentalDiagnosticsModal';
@@ -343,7 +345,19 @@ import {
   SAR_DAMAGE_TIER_CONFIGS,
   buildDamageProxyTileUrlTemplate,
   PHENOLOGY_ANOMALY_TIER_CONFIGS,
-  buildPhenologyAnomalyTileUrlTemplate
+  buildPhenologyAnomalyTileUrlTemplate,
+  buildCoregistrationTileUrlTemplate,
+  buildCoregistrationVectorFieldTileUrlTemplate,
+  COREGISTRATION_QUALITY_TIER_CONFIGS,
+  COREGISTRATION_METHOD_CONFIGS,
+  RESAMPLING_KERNEL_CONFIGS,
+  COREGISTRATION_BENCHMARK_PAIRS,
+  buildAquaticTileUrlTemplate,
+  buildAquaticHabTileUrlTemplate,
+  EUTROPHICATION_TIER_CONFIGS,
+  AQUATIC_BENCHMARK_SCENES,
+  buildTopographicTileUrlTemplate,
+  buildTopographicIlluminationTileUrlTemplate
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -744,17 +758,79 @@ export default function MapExplorer() {
   const [bapResult, setBapResult] = useState(null);
   const [loadingBap, setLoadingBap] = useState(false);
 
-  // T-79 & T-81 Sub-Pixel Geometric Co-Registration (AROSICS) State
+  // T-79/T-81 & T-240/T-242 Sub-Pixel Geometric Co-Registration (Cycle v2.5.30) State
   const [coregModalOpen, setCoregModalOpen] = useState(false);
-  const [coregTargetItemId, setCoregTargetItemId] = useState('LC09_L2SP_044034_20260810');
-  const [coregReferenceItemId, setCoregReferenceItemId] = useState('S2A_MSIL2A_20260820');
+  const [coregTargetItemId, setCoregTargetItemId] = useState('S2B_MSIL2A_20260716T183919_T10SEJ');
+  const [coregReferenceItemId, setCoregReferenceItemId] = useState('S2A_MSIL2A_20260701T183921_T10SEJ');
   const [coregTargetBand, setCoregTargetBand] = useState('B04');
   const [coregReferenceBand, setCoregReferenceBand] = useState('B04');
-  const [coregWindowSizePx, setCoregWindowSizePx] = useState(128);
+  const [coregWindowSizePx, setCoregWindowSizePx] = useState(64);
   const [coregMaxShiftPx, setCoregMaxShiftPx] = useState(5.0);
   const [coregResamplingKernel, setCoregResamplingKernel] = useState(COREGISTRATION_RESAMPLING_KERNELS?.BILINEAR || 'bilinear');
   const [coregResult, setCoregResult] = useState(null);
   const [loadingCoreg, setLoadingCoreg] = useState(false);
+  const [showCoregTileLayer, setShowCoregTileLayer] = useState(false);
+  const [coregRenderMode, setCoregRenderMode] = useState('aligned'); // 'aligned' | 'diff_pre' | 'diff_post' | 'vector_field'
+  const [coregResamplingKernelName, setCoregResamplingKernelName] = useState('cubic_convolution');
+  const [coregColormap, setCoregColormap] = useState('spectral');
+  const [coregOpacity, setCoregOpacity] = useState(0.90);
+  const [coregBlendMode, setCoregBlendMode] = useState('normal');
+  const [coregTileUrlTemplate, setCoregTileUrlTemplate] = useState('');
+  const [showCoregVectorFieldLayer, setShowCoregVectorFieldLayer] = useState(false);
+  const [coregVectorFieldTileUrlTemplate, setCoregVectorFieldTileUrlTemplate] = useState('');
+  const [coregArrowScale, setCoregArrowScale] = useState(1.5);
+  const [coregAnalysisId, setCoregAnalysisId] = useState('COREG-S2-SANLUIS');
+  const [coregQualityTier, setCoregQualityTier] = useState('subpixel_excellent');
+  const [coregRmsePixels, setCoregRmsePixels] = useState(0.16);
+  const [coregMeanShiftX, setCoregMeanShiftX] = useState(-0.32);
+  const [coregMeanShiftY, setCoregMeanShiftY] = useState(0.44);
+  const [coregFalseChangeRiskPct, setCoregFalseChangeRiskPct] = useState(3.2);
+  const [coregInlierFraction, setCoregInlierFraction] = useState(0.92);
+  const [coregTiePoints, setCoregTiePoints] = useState([]);
+
+  // Cycle v2.5.31 Aquatic Quality & Harmful Algal Bloom (HAB) Studio State (Task T-248)
+  const [aquaticModalOpen, setAquaticModalOpen] = useState(false);
+  const [showAquaticTileLayer, setShowAquaticTileLayer] = useState(false);
+  const [showAquaticHabAlertLayer, setShowAquaticHabAlertLayer] = useState(false);
+  const [aquaticSceneId, setAquaticSceneId] = useState('S2A_MSIL2A_20260814T160901_LAKE_ERIE');
+  const [aquaticCollection, setAquaticCollection] = useState('sentinel-2-l2a');
+  const [aquaticWaterBodyName, setAquaticWaterBodyName] = useState('Lake Erie');
+  const [aquaticMetric, setAquaticMetric] = useState('ndci');
+  const [aquaticColormap, setAquaticColormap] = useState('spectral');
+  const [aquaticOpacity, setAquaticOpacity] = useState(0.85);
+  const [aquaticRescale, setAquaticRescale] = useState('-0.1,0.4');
+  const [aquaticTileUrlTemplate, setAquaticTileUrlTemplate] = useState('');
+  const [aquaticHabTileUrlTemplate, setAquaticHabTileUrlTemplate] = useState('');
+  const [, setAquaticAnalysisId] = useState('AQUA-LIVE');
+  const [aquaticMeanNdci, setAquaticMeanNdci] = useState(0.28);
+  const [aquaticMeanChla, setAquaticMeanChla] = useState(36.4);
+  const [aquaticMeanTurbidity, setAquaticMeanTurbidity] = useState(14.8);
+  const [aquaticDominantTier, setAquaticDominantTier] = useState('hypertrophic');
+  const [aquaticWhoAlert, setAquaticWhoAlert] = useState('High Public Health Hazard');
+
+  // Cycle v2.5.32 Topographic Solar Illumination Correction & SCS+C Studio State (Task T-254)
+  const [topographicModalOpen, setTopographicModalOpen] = useState(false);
+  const [showTopographicTileLayer, setShowTopographicTileLayer] = useState(false);
+  const [showTopographicIlluminationLayer, setShowTopographicIlluminationLayer] = useState(false);
+  const [topographicSceneId, setTopographicSceneId] = useState('S2A_MSIL2A_20260815T185921_T10TEK');
+  const [topographicCollection, setTopographicCollection] = useState('sentinel-2-l2a');
+  const [topographicMethod, setTopographicMethod] = useState('scs_c');
+  const [topographicMetric, setTopographicMetric] = useState('corrected_reflectance');
+  const [topographicColormap, setTopographicColormap] = useState('spectral');
+  const [topographicOpacity, setTopographicOpacity] = useState(0.85);
+  const [topographicRescale, setTopographicRescale] = useState('0.0,0.5');
+  const [topographicSolarZenith, setTopographicSolarZenith] = useState(34.2);
+  const [topographicSolarAzimuth, setTopographicSolarAzimuth] = useState(148.5);
+  const [topographicCFactor, setTopographicCFactor] = useState(0.08);
+  const [topographicMinnaertK, setTopographicMinnaertK] = useState(0.68);
+  const [topographicTileUrlTemplate, setTopographicTileUrlTemplate] = useState('');
+  const [topographicIlluminationTileUrlTemplate, setTopographicIlluminationTileUrlTemplate] = useState('');
+  const [, setTopographicAnalysisId] = useState('TOPO-LIVE');
+  const [topographicMeanCosI, setTopographicMeanCosI] = useState(0.7842);
+  const [topographicSunlitPct, setTopographicSunlitPct] = useState(82.5);
+  const [topographicShadedPct, setTopographicShadedPct] = useState(12.8);
+  const [topographicSelfShadowPct, setTopographicSelfShadowPct] = useState(4.7);
+  const [topographicVarianceReductionPct, setTopographicVarianceReductionPct] = useState(41.8);
 
   // T-79 & T-81 Dense Point Cloud Filtering & Canopy Height Model (CHM) State
   const [pointCloudModalOpen, setPointCloudModalOpen] = useState(false);
@@ -4691,6 +4767,148 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={437}
+              />
+            )}
+
+            {/* T-240/T-242: Sub-Pixel Automated Image Co-Registration & Warped Aligned Tile Layer (Cycle v2.5.30) */}
+            {showCoregTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`coreg-tile-${coregReferenceItemId}-${coregTargetItemId}-${coregRenderMode}-${coregResamplingKernelName}-${coregColormap}-${coregOpacity}-${coregBlendMode}`}
+                url={coregTileUrlTemplate || buildCoregistrationTileUrlTemplate({
+                  referenceSceneId: coregReferenceItemId,
+                  targetSceneId: coregTargetItemId,
+                  mode: coregRenderMode,
+                  kernel: coregResamplingKernelName,
+                  colormap: coregColormap
+                })}
+                opacity={coregOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={438}
+              />
+            )}
+
+            {/* T-240/T-242: Sub-Pixel Co-Registration Displacement Vector Field Tile Layer (Cycle v2.5.30) */}
+            {showCoregVectorFieldLayer && !curtainActive && (
+              <TileLayer 
+                key={`coreg-vector-field-${coregAnalysisId}-${coregArrowScale}-${coregOpacity}`}
+                url={coregVectorFieldTileUrlTemplate || buildCoregistrationVectorFieldTileUrlTemplate({
+                  analysisId: coregAnalysisId,
+                  arrowScale: coregArrowScale
+                })}
+                opacity={Math.min(1.0, coregOpacity + 0.1)}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={439}
+              />
+            )}
+
+            {/* T-240/T-242: Sub-Pixel Tie-Points Map Markers (Cycle v2.5.30) */}
+            {showCoregVectorFieldLayer && coregTiePoints.length > 0 && coregTiePoints.slice(0, 16).map((tp, idx) => {
+              const lat = 37.05 + (tp.ry - 240) * 0.001;
+              const lng = -121.05 + (tp.rx - 240) * 0.001;
+              return (
+                <CircleMarker
+                  key={`tp-marker-${tp.point_id || idx}`}
+                  center={[lat, lng]}
+                  radius={tp.is_inlier ? 4 : 5}
+                  pathOptions={{
+                    color: tp.is_inlier ? '#06b6d4' : '#ef4444',
+                    fillColor: tp.is_inlier ? '#22d3ee' : '#f87171',
+                    fillOpacity: 0.85,
+                    weight: 1.5
+                  }}
+                >
+                  <Popup>
+                    <div className="p-1 font-mono text-xs text-slate-100">
+                      <div className="font-bold text-cyan-300">{tp.point_id}</div>
+                      <div>Shift: ({tp.shift_x}px, {tp.shift_y}px)</div>
+                      <div>Residual: ±{tp.residual_pixels}px</div>
+                      <div>R-score: {tp.correlation_score}</div>
+                      <div className={tp.is_inlier ? 'text-emerald-400' : 'text-rose-400 font-bold'}>
+                        {tp.is_inlier ? 'RANSAC Inlier' : 'RANSAC Outlier'}
+                      </div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
+            {/* Cycle v2.5.31 Aquatic Quality & Harmful Algal Bloom TileLayer (Task T-248) */}
+            {showAquaticTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`aquatic-tile-${aquaticSceneId}-${aquaticMetric}-${aquaticColormap}-${aquaticOpacity}-${aquaticRescale}`}
+                url={aquaticTileUrlTemplate || buildAquaticTileUrlTemplate({
+                  collection: aquaticCollection,
+                  metric: aquaticMetric,
+                  colormap: aquaticColormap,
+                  rescale: aquaticRescale
+                })}
+                opacity={aquaticOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={440}
+              />
+            )}
+
+            {/* Cycle v2.5.31 Harmful Algal Bloom Hazard Mask TileLayer (Task T-248) */}
+            {showAquaticHabAlertLayer && !curtainActive && (
+              <TileLayer 
+                key={`aquatic-hab-tile-${aquaticSceneId}-${aquaticOpacity}`}
+                url={aquaticHabTileUrlTemplate || buildAquaticHabTileUrlTemplate({
+                  collection: aquaticCollection,
+                  colormap: 'plasma'
+                })}
+                opacity={Math.min(1.0, aquaticOpacity + 0.1)}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={441}
+              />
+            )}
+
+            {/* Cycle v2.5.32 Topographic Solar Illumination & SCS+C Corrected TileLayer (Task T-254) */}
+            {showTopographicTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`topo-corrected-${topographicSceneId}-${topographicMethod}-${topographicMetric}-${topographicColormap}-${topographicOpacity}-${topographicRescale}`}
+                url={topographicTileUrlTemplate || buildTopographicTileUrlTemplate({
+                  collection: topographicCollection,
+                  itemId: topographicSceneId,
+                  method: topographicMethod,
+                  metric: topographicMetric,
+                  solarZenith: topographicSolarZenith,
+                  solarAzimuth: topographicSolarAzimuth,
+                  cFactor: topographicCFactor,
+                  minnaertK: topographicMinnaertK,
+                  colormap: topographicColormap,
+                  rescale: topographicRescale
+                })}
+                opacity={topographicOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={442}
+              />
+            )}
+
+            {/* Cycle v2.5.32 Topographic Solar Incidence Hillshade TileLayer (Task T-254) */}
+            {showTopographicIlluminationLayer && !curtainActive && (
+              <TileLayer 
+                key={`topo-illumination-${topographicSceneId}-${topographicSolarZenith}-${topographicSolarAzimuth}-${topographicOpacity}`}
+                url={topographicIlluminationTileUrlTemplate || buildTopographicIlluminationTileUrlTemplate({
+                  collection: topographicCollection,
+                  itemId: topographicSceneId,
+                  solarZenith: topographicSolarZenith,
+                  solarAzimuth: topographicSolarAzimuth
+                })}
+                opacity={Math.min(1.0, topographicOpacity + 0.1)}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={443}
               />
             )}
 
@@ -9074,6 +9292,8 @@ export default function MapExplorer() {
                   <span className="text-amber-400 font-bold">{sarRatioDb} dB</span>
                   <span className="text-zinc-500 uppercase ml-1">Threshold:</span>
                   <span className="text-cyan-300 font-bold">{sarFloodThresholdDb} dB</span>
+                  <span className="text-zinc-500 uppercase ml-1">ENL:</span>
+                  <span className="text-slate-300 font-bold">{sarNumLooks}L</span>
                   <span className="text-zinc-500 uppercase ml-1">Water:</span>
                   <span className="text-violet-300 font-bold">{sarWaterAreaHa.toLocaleString()} ha ({(sarWaterFraction * 100).toFixed(1)}%)</span>
                 </div>
@@ -9098,6 +9318,318 @@ export default function MapExplorer() {
                   <span className="text-zinc-300 font-bold uppercase">{sarColormap}</span>
                   <span className="text-zinc-500 uppercase ml-1">Blend:</span>
                   <span className="text-zinc-300 font-bold uppercase">{sarBlendMode}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* T-240/T-242: Floating Sub-Pixel Co-Registration HUD Card (Cycle v2.5.30) */}
+          {showCoregTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-cyan-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[580px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Crosshair className="w-4 h-4 text-cyan-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[240px]">
+                    Co-Registration: {coregTargetItemId}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    {coregRenderMode}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {RESAMPLING_KERNEL_CONFIGS[coregResamplingKernelName]?.badge || coregResamplingKernelName}
+                  </span>
+                  <span 
+                    className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase"
+                    style={{
+                      backgroundColor: `${COREGISTRATION_QUALITY_TIER_CONFIGS[coregQualityTier]?.color || '#10b981'}25`,
+                      color: COREGISTRATION_QUALITY_TIER_CONFIGS[coregQualityTier]?.color || '#10b981',
+                      border: `1px solid ${COREGISTRATION_QUALITY_TIER_CONFIGS[coregQualityTier]?.color || '#10b981'}50`
+                    }}
+                  >
+                    {COREGISTRATION_QUALITY_TIER_CONFIGS[coregQualityTier]?.badge?.replace('Sub-Pixel ', '') || coregQualityTier}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setCoregModalOpen(true)}
+                    className="px-2 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowCoregTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Co-Registration Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">Mean ΔX:</span>
+                  <span className="text-cyan-400 font-bold">{coregMeanShiftX} px</span>
+                  <span className="text-zinc-500 uppercase ml-1">Mean ΔY:</span>
+                  <span className="text-cyan-400 font-bold">{coregMeanShiftY} px</span>
+                  <span className="text-zinc-500 uppercase ml-1">RMSE:</span>
+                  <span className="text-amber-400 font-bold">±{coregRmsePixels} px</span>
+                  <span className="text-zinc-500 uppercase ml-1">False Change Risk:</span>
+                  <span className="text-emerald-400 font-bold">{coregFalseChangeRiskPct}%</span>
+                  <span className="text-zinc-500 uppercase ml-1">Inliers:</span>
+                  <span className="text-slate-300 font-bold">{(coregInlierFraction * 100).toFixed(1)}%</span>
+                </div>
+              </div>
+
+              {/* Quick Mode Toggle & Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1">
+                  {[
+                    { id: 'aligned', label: 'Aligned' },
+                    { id: 'diff_pre', label: 'Pre-Diff' },
+                    { id: 'diff_post', label: 'Post-Diff' },
+                    { id: 'vector_field', label: 'Vectors' }
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => setCoregRenderMode(m.id)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase transition-all ${
+                        coregRenderMode === m.id
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-zinc-900 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1 text-[10px] text-slate-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showCoregVectorFieldLayer}
+                      onChange={(e) => setShowCoregVectorFieldLayer(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded accent-cyan-500"
+                    />
+                    <span>Vector Overlay</span>
+                  </label>
+
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={coregOpacity}
+                      onChange={(e) => setCoregOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-cyan-500 cursor-pointer"
+                    />
+                    <span className="text-cyan-400 font-bold">{Math.round(coregOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cycle v2.5.31 Floating Aquatic Quality & HAB HUD Card (Task T-248) */}
+          {showAquaticTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-teal-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[580px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Waves className="w-4 h-4 text-teal-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[220px]">
+                    Aquatic Quality: {aquaticWaterBodyName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                    {aquaticMetric.toUpperCase()}
+                  </span>
+                  <span 
+                    className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase"
+                    style={{
+                      backgroundColor: `${EUTROPHICATION_TIER_CONFIGS?.[aquaticDominantTier]?.color || '#10b981'}25`,
+                      color: EUTROPHICATION_TIER_CONFIGS?.[aquaticDominantTier]?.color || '#10b981',
+                      border: `1px solid ${EUTROPHICATION_TIER_CONFIGS?.[aquaticDominantTier]?.color || '#10b981'}50`
+                    }}
+                  >
+                    {aquaticDominantTier.toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setAquaticModalOpen(true)}
+                    className="px-2 py-1 bg-teal-950 hover:bg-teal-900 border border-teal-500/40 text-teal-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowAquaticTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Aquatic Quality Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">NDCI:</span>
+                  <span className="text-teal-400 font-bold">{aquaticMeanNdci}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Chl-a:</span>
+                  <span className="text-cyan-400 font-bold">{aquaticMeanChla} µg/L</span>
+                  <span className="text-zinc-500 uppercase ml-1">Turbidity:</span>
+                  <span className="text-amber-400 font-bold">{aquaticMeanTurbidity} NTU</span>
+                  <span className="text-zinc-500 uppercase ml-1">WHO Alert:</span>
+                  <span className={aquaticMeanChla > 25.0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
+                    {aquaticWhoAlert}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-2 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Metric:</span>
+                  {['ndci', 'chla', 'fai', 'turbidity_tss'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setAquaticMetric(m)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        aquaticMetric === m
+                          ? 'bg-teal-500/30 text-teal-300 border border-teal-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {m === 'turbidity_tss' ? 'Turb' : m}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1 text-[10px] cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={showAquaticHabAlertLayer}
+                      onChange={(e) => setShowAquaticHabAlertLayer(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded accent-teal-500"
+                    />
+                    <span>HAB Alert Mask</span>
+                  </label>
+
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={aquaticOpacity}
+                      onChange={(e) => setAquaticOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-teal-500 cursor-pointer"
+                    />
+                    <span className="text-teal-400 font-bold">{Math.round(aquaticOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cycle v2.5.32 Floating Topographic Solar Illumination & SCS+C HUD Card (Task T-254) */}
+          {showTopographicTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-amber-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[600px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Sun className="w-4 h-4 text-amber-400 animate-spin-slow" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[220px]">
+                    Topographic SCS+C: {topographicSceneId}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    {topographicMethod.toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    {topographicMetric.replace('_', ' ').toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setTopographicModalOpen(true)}
+                    className="px-2 py-1 bg-amber-950 hover:bg-amber-900 border border-amber-500/40 text-amber-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowTopographicTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Topographic Correction Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">cos(i):</span>
+                  <span className="text-amber-400 font-bold">{topographicMeanCosI.toFixed(3)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Sunlit:</span>
+                  <span className="text-emerald-400 font-bold">{topographicSunlitPct}%</span>
+                  <span className="text-zinc-500 uppercase ml-1">Shaded:</span>
+                  <span className="text-amber-400 font-bold">{topographicShadedPct}%</span>
+                  <span className="text-zinc-500 uppercase ml-1">Self-Shadow:</span>
+                  <span className="text-rose-400 font-bold">{topographicSelfShadowPct}%</span>
+                  <span className="text-zinc-500 uppercase ml-1">Var Reduction:</span>
+                  <span className="text-cyan-400 font-bold">-{topographicVarianceReductionPct}%</span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-2 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Method:</span>
+                  {['scs_c', 'c_correction', 'minnaert', 'cosine', 'none'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setTopographicMethod(m)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        topographicMethod === m
+                          ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {m === 'scs_c' ? 'SCS+C' : m === 'c_correction' ? 'C-Corr' : m}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1 text-[10px] cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={showTopographicIlluminationLayer}
+                      onChange={(e) => setShowTopographicIlluminationLayer(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded accent-amber-500"
+                    />
+                    <span>Hillshade Overlay</span>
+                  </label>
+
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={topographicOpacity}
+                      onChange={(e) => setTopographicOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-amber-500 cursor-pointer"
+                    />
+                    <span className="text-amber-400 font-bold">{Math.round(topographicOpacity * 100)}%</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -10016,6 +10548,42 @@ export default function MapExplorer() {
               >
                 <Radio className="w-3.5 h-3.5 text-violet-400" />
                 <span>SAR Radar (v2.5.29)</span>
+              </button>
+
+              {/* T-240/T-242 Automated Sub-Pixel Co-Registration Studio Shortcut (Cycle v2.5.30) */}
+              <button
+                onClick={() => setCoregModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  coregModalOpen || showCoregTileLayer ? 'bg-cyan-600 text-white font-extrabold shadow-[0_0_12px_rgba(6,182,212,0.6)]' : ''
+                }`}
+                title="Automated Sub-Pixel Co-Registration Studio, FFT Phase Correlation, Tie-Point Vector Field & Resampling Warper (Cycle v2.5.30)"
+              >
+                <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Co-Registration (v2.5.30)</span>
+              </button>
+
+              {/* Cycle v2.5.31 Aquatic Quality & Harmful Algal Bloom Studio Shortcut (Task T-248) */}
+              <button
+                onClick={() => setAquaticModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-teal-300 hover:text-white hover:bg-teal-500/20 border border-teal-500/30 ${
+                  aquaticModalOpen || showAquaticTileLayer ? 'bg-teal-600 text-white font-extrabold shadow-[0_0_12px_rgba(20,184,166,0.6)]' : ''
+                }`}
+                title="Aquatic Quality & Harmful Algal Bloom Studio, Bio-Optical Inversion (NDCI/FAI/Turbidity) & WHO Health Hazards (Cycle v2.5.31)"
+              >
+                <Waves className="w-3.5 h-3.5 text-teal-400" />
+                <span>Aquatic Quality (v2.5.31)</span>
+              </button>
+
+              {/* Cycle v2.5.32 Topographic Solar Illumination & SCS+C Studio Shortcut (Task T-254) */}
+              <button
+                onClick={() => setTopographicModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-amber-300 hover:text-white hover:bg-amber-500/20 border border-amber-500/30 ${
+                  topographicModalOpen || showTopographicTileLayer ? 'bg-amber-600 text-white font-extrabold shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
+                }`}
+                title="Topographic Solar Illumination Studio, SCS+C Inversion, Slope-Aspect Hillshade & Empirical C-Correction (Cycle v2.5.32)"
+              >
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
+                <span>Topographic SCS+C (v2.5.32)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -21383,10 +21951,109 @@ export default function MapExplorer() {
         initialItemId={lstItemId}
       />
 
-      {/* Sub-Pixel Geometric Co-Registration (AROSICS Phase Correlation) Modal (T-79/T-81) */}
+      {/* Sub-Pixel Geometric Co-Registration (Cycle v2.5.30, Task T-242) */}
       <CoRegistrationModal
         isOpen={coregModalOpen}
         onClose={() => setCoregModalOpen(false)}
+        onApply={(payload) => {
+          setCoregAnalysisId(payload.analysisId || `COREG-${Date.now()}`);
+          setCoregReferenceItemId(payload.referenceSceneId || 'S2A_MSIL2A_20260701T183921_T10SEJ');
+          setCoregTargetItemId(payload.targetSceneId || 'S2B_MSIL2A_20260716T183919_T10SEJ');
+          setCoregRenderMode(payload.renderMode || 'aligned');
+          setCoregResamplingKernelName(payload.kernel || 'cubic_convolution');
+          setCoregColormap(payload.colormap || 'spectral');
+          setCoregOpacity(payload.opacity ?? 0.90);
+          setCoregBlendMode(payload.blendMode || 'normal');
+          setCoregArrowScale(payload.arrowScale ?? 1.5);
+          setCoregTileUrlTemplate(payload.tileUrlTemplate || '');
+          setShowCoregVectorFieldLayer(Boolean(payload.showVectorField));
+          setCoregVectorFieldTileUrlTemplate(payload.vectorFieldTileUrlTemplate || '');
+          if (payload.summary) {
+            setCoregMeanShiftX(payload.summary.mean_shift_x_pixels ?? -0.32);
+            setCoregMeanShiftY(payload.summary.mean_shift_y_pixels ?? 0.44);
+            setCoregRmsePixels(payload.summary.rmse_pixels ?? 0.16);
+            setCoregQualityTier(payload.summary.quality_tier || 'subpixel_excellent');
+            setCoregFalseChangeRiskPct(payload.summary.false_change_risk_pct ?? 3.2);
+            setCoregInlierFraction(payload.summary.inlier_fraction ?? 0.92);
+          }
+          if (payload.tiePoints) {
+            setCoregTiePoints(payload.tiePoints);
+          }
+          setShowCoregTileLayer(true);
+        }}
+        onLaunchCurtain={({ referenceSceneId: rId, targetSceneId: tId }) => {
+          setCoregReferenceItemId(rId);
+          setCoregTargetItemId(tId);
+          setSwipeComparisonMode('pre_vs_post');
+          setCurtainActive(true);
+        }}
+      />
+
+      {/* Aquatic Quality & Harmful Algal Bloom Studio (Cycle v2.5.31, Task T-248) */}
+      <AquaticQualityModal
+        isOpen={aquaticModalOpen}
+        onClose={() => setAquaticModalOpen(false)}
+        onApply={(payload) => {
+          setAquaticAnalysisId(payload.analysisId || `AQUA-${Date.now()}`);
+          setAquaticSceneId(payload.sceneId || 'S2A_MSIL2A_20260814T160901_LAKE_ERIE');
+          setAquaticCollection(payload.collection || 'sentinel-2-l2a');
+          setAquaticWaterBodyName(payload.waterBodyName || 'Lake Erie');
+          setAquaticMetric(payload.metric || 'ndci');
+          setAquaticColormap(payload.colormap || 'spectral');
+          setAquaticOpacity(payload.opacity ?? 0.85);
+          setAquaticRescale(payload.rescale || '-0.1,0.4');
+          setShowAquaticHabAlertLayer(Boolean(payload.showHabAlert));
+          setAquaticTileUrlTemplate(payload.tileUrlTemplate || '');
+          setAquaticHabTileUrlTemplate(payload.habTileUrlTemplate || '');
+          if (payload.summary) {
+            setAquaticMeanNdci(payload.summary.mean_ndci ?? 0.28);
+            setAquaticMeanChla(payload.summary.mean_chla_ug_l ?? 36.4);
+            setAquaticMeanTurbidity(payload.summary.mean_turbidity_ntu ?? 14.8);
+            setAquaticDominantTier(payload.summary.dominant_tier || 'hypertrophic');
+            setAquaticWhoAlert(payload.summary.who_cyanobacteria_alert || 'High Public Health Hazard');
+          }
+          setShowAquaticTileLayer(true);
+        }}
+        onLaunchCurtain={({ referenceSceneId: rId }) => {
+          setAquaticSceneId(rId);
+          setSwipeComparisonMode('pre_vs_post');
+          setCurtainActive(true);
+        }}
+      />
+
+      {/* Topographic Solar Illumination & SCS+C Correction Studio (Cycle v2.5.32, Task T-254) */}
+      <TopographicCorrectionModal
+        isOpen={topographicModalOpen}
+        onClose={() => setTopographicModalOpen(false)}
+        onApply={(payload) => {
+          setTopographicAnalysisId(payload.analysisId || `TOPO-${Date.now()}`);
+          setTopographicSceneId(payload.sceneId || 'S2A_MSIL2A_20260815T185921_T10TEK');
+          setTopographicCollection(payload.collection || 'sentinel-2-l2a');
+          setTopographicMethod(payload.method || 'scs_c');
+          setTopographicMetric(payload.metric || 'corrected_reflectance');
+          setTopographicColormap(payload.colormap || 'spectral');
+          setTopographicOpacity(payload.opacity ?? 0.85);
+          setTopographicRescale(payload.rescale || '0.0,0.5');
+          setTopographicSolarZenith(payload.solarZenith ?? 34.2);
+          setTopographicSolarAzimuth(payload.solarAzimuth ?? 148.5);
+          setTopographicCFactor(payload.cFactor ?? 0.08);
+          setTopographicMinnaertK(payload.minnaertK ?? 0.68);
+          setTopographicTileUrlTemplate(payload.tileUrlTemplate || '');
+          setTopographicIlluminationTileUrlTemplate(payload.illuminationTileUrlTemplate || '');
+          if (payload.summary) {
+            setTopographicMeanCosI(payload.summary.mean_cos_i ?? 0.7842);
+            setTopographicSunlitPct(payload.summary.sunlit_pixel_pct ?? 82.5);
+            setTopographicShadedPct(payload.summary.shaded_pixel_pct ?? 12.8);
+            setTopographicSelfShadowPct(payload.summary.self_shadow_pixel_pct ?? 4.7);
+            setTopographicVarianceReductionPct(payload.summary.radiance_std_reduction_pct ?? 41.8);
+          }
+          setShowTopographicTileLayer(true);
+        }}
+        onLaunchCurtain={({ referenceSceneId: rId }) => {
+          setTopographicSceneId(rId);
+          setSwipeComparisonMode('pre_vs_post');
+          setCurtainActive(true);
+        }}
       />
 
       {/* Point Cloud Ground Filtering (CSF) & Canopy Height Model (CHM) Modal (T-79/T-81) */}
@@ -21933,6 +22600,38 @@ export default function MapExplorer() {
           setTemporalClearPixelPct(payload.clearPixelPct ?? 96.5);
           setTemporalScenesIncluded(payload.scenesIncluded ?? 6);
           setShowTemporalLayer(true);
+        }}
+      />
+
+      {/* T-234/T-236: SAR All-Weather Radar Studio Modal (Cycle v2.5.29) */}
+      <SarRadarStudioModal
+        isOpen={sarRadarModalOpen}
+        onClose={() => setSarRadarModalOpen(false)}
+        _activeBbox={
+          customPolygonVertices.length >= 3 
+            ? bboxFromPoints(customPolygonVertices) 
+            : (selectedEvent ? [selectedEvent.lng - 0.04, selectedEvent.lat - 0.04, selectedEvent.lng + 0.04, selectedEvent.lat + 0.04] : [-121.25, 36.90, -120.65, 37.45])
+        }
+        onApply={(payload) => {
+          setSarSceneId(payload.sceneId || 'S1A_IW_GRDH_1SDV_20260910T140023_RTC');
+          setSarCollection(payload.collection || 'sentinel-1-rtc');
+          setSarPolarization(payload.polarization || 'vv');
+          setSarDisplayMode(payload.displayMode || 'backscatter');
+          setSarSpeckleFilter(payload.speckleFilter || 'refined_lee');
+          setSarKernelSize(payload.kernelSize ?? 5);
+          setSarNumLooks(payload.numLooks ?? 4.4);
+          setSarFloodThresholdDb(payload.floodThresholdDb ?? -16.5);
+          setSarColormap(payload.colormap || 'gray');
+          setSarRescale(payload.rescale || '-25.0,0.0');
+          setSarOpacity(payload.opacity ?? 0.90);
+          setSarBlendMode(payload.blendMode || 'normal');
+          setSarTileUrlTemplate(payload.tileUrlTemplate || '');
+          setSarWaterFraction(payload.waterFraction ?? 0.084);
+          setSarWaterAreaHa(payload.waterAreaHa ?? 142.5);
+          setSarMeanVvDb(payload.meanVvDb ?? -11.8);
+          setSarMeanVhDb(payload.meanVhDb ?? -18.4);
+          setSarRatioDb(payload.ratioDb ?? -6.6);
+          setShowSarRadarLayer(true);
         }}
       />
 

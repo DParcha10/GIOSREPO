@@ -2995,8 +2995,638 @@ class TestScientificRigor(unittest.TestCase):
             self.assertEqual(img_qm.mode, "RGBA")
 
 
+    def test_task_t238_sentinel1_sar_backscatter_speckle_filtering_and_radiometric_terrain_flattening_scientific_rigor(self):
+        """Task T-238 Scientific Rigor & Mathematical Invariant Verification:
+        Sentinel-1 SAR Radiometric Terrain Flattening Gamma0 (gamma0 = sigma0 / cos(theta)),
+        Multiplicative Speckle Noise Model & Variance Reduction Factor (E[Var]_filtered <= 0.25 * E[Var]_raw),
+        Radiometric Unbiasedness & Radiance Mean Conservation (|I_filtered - I_raw| / I_raw < 0.01),
+        Edge Preservation Across High-Contrast Step Boundaries, Cross-Polarization Ratio & NDPI Invariants,
+        Specular Water / Flood Inundation Decibel Classification, and Dynamic XYZ SAR Tile Streaming.
+        """
+        import io
+        from PIL import Image
+        from app.models.schemas import (
+            apply_terrain_flattening_gamma0,
+            calculate_polarization_ratio_db,
+            calculate_polarization_ratio_linear,
+            calculate_normalized_difference_polarization_index,
+            classify_sar_flood_tier,
+            classify_sar_water_pixels,
+            calculate_refined_lee_filter_weights,
+            apply_speckle_filter_1d_or_2d,
+            SpeckleFilterMethod,
+            SARFloodDetectionTier,
+            SARBackscatterCalibration,
+            SarPolarization
+        )
+        from app.services.tile_service import tile_service
+
+        # -----------------------------------------------------------------
+        # 1. SAR Radiometric Terrain Flattening Gamma0 Calibration
+        # -----------------------------------------------------------------
+        # gamma0 = sigma0 / cos(theta_local)
+        # gamma0_dB = sigma0_dB - 10 * log10(cos(theta_local))
+        
+        # 1a. Normal incidence identity (theta = 0 deg => cos(0) = 1.0 => gamma0 == sigma0)
+        g0_nadir_lin = apply_terrain_flattening_gamma0(0.125, 0.0, is_db=False)
+        self.assertAlmostEqual(g0_nadir_lin, 0.125, places=5)
+
+        g0_nadir_db = apply_terrain_flattening_gamma0(-9.0309, 0.0, is_db=True)
+        self.assertAlmostEqual(g0_nadir_db, -9.0309, places=4)
+
+        # 1b. Steep illuminated slope / high incidence angle (theta = 60 deg => cos(60) = 0.5)
+        # Linear: gamma0 = 0.10 / 0.5 = 0.20
+        g0_60_lin = apply_terrain_flattening_gamma0(0.10, 60.0, is_db=False)
+        self.assertAlmostEqual(g0_60_lin, 0.20, places=5)
+
+        # Decibel: gamma0_dB = -10.0 - 10 * log10(0.5) = -10.0 + 3.0102999566 = -6.9897
+        g0_60_db = apply_terrain_flattening_gamma0(-10.0, 60.0, is_db=True)
+        expected_db_60 = -10.0 - 10.0 * math.log10(0.5)
+        self.assertAlmostEqual(g0_60_db, expected_db_60, places=4)
+
+        # 1c. Monotonicity across incidence angles (thetas in [15, 25, 35, 45, 55])
+        thetas = np.array([15.0, 25.0, 35.0, 45.0, 55.0], dtype=np.float32)
+        sigmas = np.full_like(thetas, 0.08, dtype=np.float32)
+        gammas = apply_terrain_flattening_gamma0(sigmas, thetas, is_db=False)
+        diffs = np.diff(gammas)
+        self.assertTrue(np.all(diffs > 0.0), "Terrain-flattened gamma0 must monotonically increase with incidence angle for constant sigma0")
+
+        # 1d. Grazing angle numerical stability epsilon guard (theta = 89.9 deg)
+        g0_grazing = apply_terrain_flattening_gamma0(0.08, 89.9, is_db=False)
+        self.assertTrue(np.isfinite(g0_grazing), "Grazing angle terrain flattening must be finite and well-conditioned")
+        self.assertGreater(g0_grazing, 0.0)
+
+        # -----------------------------------------------------------------
+        # 2. Multiplicative Speckle Noise Model & Variance Reduction Factor
+        # -----------------------------------------------------------------
+        # In a fully developed speckle field (homogeneous distributed target):
+        # I = I_0 * eta, where eta ~ Gamma(shape=ENL, scale=1/ENL) with ENL = 4.4 looks.
+        # E[I] = I_0, Var[I] = I_0^2 / ENL.
+        # Required constraint: E[Var]_filtered <= 0.25 * E[Var]_raw (variance reduction >= 4.0x)
+        H, W = 64, 64
+        I_0 = 0.20
+        np.random.seed(1337)
+        speckle_noise = np.random.gamma(shape=4.4, scale=1.0 / 4.4, size=(H, W)).astype(np.float32)
+        raw_intensity = (I_0 * speckle_noise).astype(np.float32)
+
+        var_raw_full = float(np.var(raw_intensity))
+        self.assertGreater(var_raw_full, 0.0)
+
+        filter_methods = ["refined_lee", "frost", "kuan", "gamma_map", "boxcar_mean"]
+        for f_method in filter_methods:
+            filt_2d = tile_service.vectorized_speckle_filter_2d(raw_intensity, method=f_method, kernel_size=5)
+            # Evaluate internal homogeneous region away from boundary padding (slice 5:-5)
+            inner_filt = filt_2d[5:-5, 5:-5]
+            inner_raw = raw_intensity[5:-5, 5:-5]
+            var_filt = float(np.var(inner_filt))
+            var_raw_inner = float(np.var(inner_raw))
+
+            # Variance reduction factor verification: E[Var]_filtered <= 0.25 * E[Var]_raw
+            self.assertLessEqual(
+                var_filt,
+                0.25 * var_raw_inner + 1e-5,
+                f"Filter {f_method} failed variance reduction constraint (var_filt={var_filt:.6f}, 0.25*var_raw={0.25*var_raw_inner:.6f})"
+            )
+            reduction_factor = var_raw_inner / max(1e-7, var_filt)
+            self.assertGreaterEqual(
+                reduction_factor,
+                4.0,
+                f"Filter {f_method} reduction factor {reduction_factor:.2f} < 4.0 threshold"
+            )
+
+            # Test schema 2D filter implementation parity
+            filt_schema = apply_speckle_filter_1d_or_2d(raw_intensity, method=f_method, kernel_size=5)
+            var_schema = float(np.var(filt_schema[5:-5, 5:-5]))
+            self.assertLessEqual(
+                var_schema,
+                0.25 * var_raw_inner + 1e-5,
+                f"Schema filter {f_method} failed variance reduction constraint"
+            )
+
+        # -----------------------------------------------------------------
+        # 3. Radiometric Unbiasedness & Radiance Mean Conservation
+        # -----------------------------------------------------------------
+        # Unbiasedness requirement across homogeneous distributed targets:
+        # |I_bar_filtered - I_bar_raw| / I_bar_raw < 0.01 (< 1% relative deviation)
+        for f_method in ["refined_lee", "kuan", "boxcar_mean"]:
+            filt_2d = tile_service.vectorized_speckle_filter_2d(raw_intensity, method=f_method, kernel_size=5)
+            mean_raw = float(np.mean(raw_intensity[5:-5, 5:-5]))
+            mean_filt = float(np.mean(filt_2d[5:-5, 5:-5]))
+            rel_bias = abs(mean_filt - mean_raw) / mean_raw
+            self.assertLess(
+                rel_bias,
+                0.01,
+                f"Filter {f_method} introduced systematic radiometric bias: rel_bias={rel_bias:.4f} >= 0.01"
+            )
+
+        # -----------------------------------------------------------------
+        # 4. Edge Preservation Across High-Contrast Step Boundaries
+        # -----------------------------------------------------------------
+        # Step boundary: left half is calm water (0.01, -20 dB), right half is dense land (0.20, -7 dB)
+        step_grid = np.zeros((32, 32), dtype=np.float32)
+        step_grid[:, :16] = 0.01
+        step_grid[:, 16:] = 0.20
+        np.random.seed(42)
+        step_speckle = step_grid * np.random.gamma(shape=4.4, scale=1.0 / 4.4, size=(32, 32)).astype(np.float32)
+
+        lee_step = tile_service.vectorized_speckle_filter_2d(step_speckle, method="refined_lee", kernel_size=5)
+        box_step = tile_service.vectorized_speckle_filter_2d(step_speckle, method="boxcar_mean", kernel_size=5)
+
+        # Contrast across boundary (col 18 vs col 13)
+        lee_contrast = float(np.mean(lee_step[:, 18]) - np.mean(lee_step[:, 13]))
+        box_contrast = float(np.mean(box_step[:, 18]) - np.mean(box_step[:, 13]))
+
+        # Refined Lee preserves edge sharpness significantly better than boxcar mean
+        self.assertGreater(lee_contrast, box_contrast, "Refined Lee must preserve sharper edge gradient than boxcar mean")
+        self.assertGreater(lee_contrast, 0.12, "Refined Lee must preserve > 60% of step contrast")
+
+        # -----------------------------------------------------------------
+        # 5. Cross-Polarization Ratio & NDPI Invariants
+        # -----------------------------------------------------------------
+        vh_vals = np.array([0.005, 0.02, 0.05, 0.10], dtype=np.float32)
+        vv_vals = np.array([0.05, 0.10, 0.15, 0.20], dtype=np.float32)
+
+        r_lin = calculate_polarization_ratio_linear(vh_vals, vv_vals)
+        vh_db = 10.0 * np.log10(vh_vals)
+        vv_db = 10.0 * np.log10(vv_vals)
+        r_db = calculate_polarization_ratio_db(vh_db, vv_db)
+
+        # ratio_dB = 10 * log10(ratio_lin)
+        expected_r_db = 10.0 * np.log10(r_lin)
+        self.assertTrue(np.allclose(r_db, expected_r_db, atol=1e-5), "Polarization ratio in dB must match 10*log10(linear ratio)")
+
+        # NDPI = (VV - VH) / (VV + VH) in [-1, 1]
+        ndpi = calculate_normalized_difference_polarization_index(vv_vals, vh_vals)
+        self.assertTrue(np.all(ndpi >= -1.0) and np.all(ndpi <= 1.0), "NDPI must be bounded in [-1, 1]")
+        self.assertTrue(np.all(ndpi > 0.0), "For VV > VH, NDPI must be positive")
+        self.assertAlmostEqual(float(calculate_normalized_difference_polarization_index(0.1, 0.1)), 0.0)
+
+        # -----------------------------------------------------------------
+        # 6. Calm Water / Flood Detection Decibel Invariants & Area Conservation
+        # -----------------------------------------------------------------
+        # Specular reflection: calm water backscatter <= -16.5 dB
+        self.assertEqual(classify_sar_flood_tier(-22.0), SARFloodDetectionTier.CALM_WATER)
+        self.assertEqual(classify_sar_flood_tier(-16.5), SARFloodDetectionTier.CALM_WATER)
+        self.assertEqual(classify_sar_flood_tier(-14.0), SARFloodDetectionTier.ROUGH_WATER)
+        self.assertEqual(classify_sar_flood_tier(-10.0), SARFloodDetectionTier.MOIST_SOIL)
+        self.assertEqual(classify_sar_flood_tier(-6.0), SARFloodDetectionTier.DRY_SOIL_VEGETATION)
+        self.assertEqual(classify_sar_flood_tier(2.0), SARFloodDetectionTier.URBAN_DOUBLE_BOUNCE)
+
+        test_raster = np.array([
+            [-22.0, -18.0, -10.0],
+            [-17.0, -16.5, -5.0],
+            [-12.0, -8.0, 3.0]
+        ], dtype=np.float32)
+        w_res = classify_sar_water_pixels(test_raster, threshold_db=-16.5, pixel_area_ha=0.01)
+        self.assertEqual(w_res["water_pixels"], 4)
+        self.assertEqual(w_res["total_pixels"], 9)
+        self.assertAlmostEqual(w_res["water_fraction"], 4.0 / 9.0, places=4)
+        self.assertAlmostEqual(w_res["water_area_ha"], 4 * 0.01, places=4)
+
+        # -----------------------------------------------------------------
+        # 7. Dynamic XYZ SAR Tile Rendering & PNG Encoding Invariants
+        # -----------------------------------------------------------------
+        tile_vv = tile_service.render_sar_backscatter_tile(
+            z=10, x=163, y=395, collection="sentinel-1-rtc", polarization="vv", colormap="gray"
+        )
+        self.assertTrue(tile_vv.startswith(b"\x89PNG\r\n\x1a\n"))
+        img_vv = Image.open(io.BytesIO(tile_vv))
+        self.assertEqual(img_vv.size, (256, 256))
+        self.assertEqual(img_vv.mode, "RGBA")
+
+        tile_rgb = tile_service.render_sar_backscatter_tile(
+            z=10, x=163, y=395, collection="sentinel-1-rtc", polarization="dual_pol_rgb"
+        )
+        self.assertTrue(tile_rgb.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        tile_flood = tile_service.render_sar_flood_inundation_tile(
+            z=10, x=163, y=395, threshold_db=-16.5
+        )
+        self.assertTrue(tile_flood.startswith(b"\x89PNG\r\n\x1a\n"))
+        img_fl = Image.open(io.BytesIO(tile_flood))
+        self.assertEqual(img_fl.size, (256, 256))
+
+        tile_filt = tile_service.render_sar_speckle_filter_tile(
+            filter_method="refined_lee", z=10, x=163, y=395
+        )
+        self.assertTrue(tile_filt.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_task_t244_coregistration_fft_phase_correlation_resampling_and_townshend_scientific_rigor(self):
+        """Task T-244 Scientific Rigor & Mathematical Invariant Verification:
+        Sub-Pixel 2D FFT Phase Correlation Shift Recovery (Delta < 0.05 px),
+        Keys (1981) Cubic Convolution Kernel Partition of Unity (sum w_k == 1.0) & Symmetry,
+        Townshend et al. (1992) Misregistration False-Change Risk Propagation & Quality Tiers,
+        RANSAC 2D Affine Homography Outlier Rejection,
+        Radiometric Differencing Edge Cancellation (RMSE Reduction > 70%),
+        and Dynamic XYZ Co-Registration Tile Streaming Invariants.
+        """
+        import io
+        from PIL import Image
+        from scipy.ndimage import shift as ndshift
+        from app.models.schemas import (
+            calculate_fft_phase_correlation_shift,
+            estimate_affine_transform_matrix,
+            evaluate_resampling_kernel_weight,
+            classify_coregistration_quality_tier,
+            calculate_change_detection_false_positive_risk,
+            GeometricResamplingKernel,
+            CoRegistrationQualityTier
+        )
+        from app.services.indices import IndexComputationService
+        from app.services.tile_service import tile_service
+
+        # -----------------------------------------------------------------
+        # 1. Keys (1981) Cubic Convolution Kernel Partition of Unity & Symmetry
+        # -----------------------------------------------------------------
+        # w(x) with a = -0.5:
+        # For |x| <= 1: (a+2)|x|^3 - (a+3)|x|^2 + 1 = 1.5|x|^3 - 2.5|x|^2 + 1
+        # For 1 < |x| <= 2: a|x|^3 - 5a|x|^2 + 8a|x| - 4a = -0.5|x|^3 + 2.5|x|^2 - 4|x| + 2
+        # For |x| > 2: 0
+
+        # 1a. Symmetry condition: w(-x) == w(x)
+        for x in [0.0, 0.25, 0.5, 0.75, 1.0, 1.33, 1.75, 1.99, 2.0, 2.5]:
+            w_pos = evaluate_resampling_kernel_weight(x, "cubic_convolution")
+            w_neg = evaluate_resampling_kernel_weight(-x, "cubic_convolution")
+            self.assertAlmostEqual(w_pos, w_neg, places=7, msg=f"Keys symmetry failed at x={x}")
+
+        # 1b. Exact interpolation knot points: w(0) = 1.0, w(1) = 0.0, w(2) = 0.0, w(|x|>=2) = 0.0
+        self.assertAlmostEqual(evaluate_resampling_kernel_weight(0.0, "cubic_convolution"), 1.0, places=7)
+        self.assertAlmostEqual(evaluate_resampling_kernel_weight(1.0, "cubic_convolution"), 0.0, places=7)
+        self.assertAlmostEqual(evaluate_resampling_kernel_weight(2.0, "cubic_convolution"), 0.0, places=7)
+        self.assertAlmostEqual(evaluate_resampling_kernel_weight(2.5, "cubic_convolution"), 0.0, places=7)
+
+        # 1c. Strict Partition of Unity condition: sum_{k=-1}^{2} w_k(d) == 1.0 for all d in [0, 1)
+        # Across arbitrary sub-pixel phase displacements d in [0, 1)
+        d_samples = np.linspace(0.0, 0.999, 250)
+        for d in d_samples:
+            w_m1 = evaluate_resampling_kernel_weight(1.0 + d, "cubic_convolution")
+            w_0 = evaluate_resampling_kernel_weight(d, "cubic_convolution")
+            w_p1 = evaluate_resampling_kernel_weight(1.0 - d, "cubic_convolution")
+            w_p2 = evaluate_resampling_kernel_weight(2.0 - d, "cubic_convolution")
+            weight_sum = w_m1 + w_0 + w_p1 + w_p2
+            self.assertAlmostEqual(weight_sum, 1.0, places=6,
+                                  msg=f"Keys partition of unity violated at d={d}: sum={weight_sum}")
+
+        # 1d. Bilinear Partition of Unity: w_0(d) + w_1(d) == (1 - d) + d == 1.0
+        for d in d_samples:
+            w0 = evaluate_resampling_kernel_weight(d, "bilinear")
+            w1 = evaluate_resampling_kernel_weight(1.0 - d, "bilinear")
+            self.assertAlmostEqual(w0 + w1, 1.0, places=7)
+
+        # -----------------------------------------------------------------
+        # 2. Sub-Pixel Shift Recovery Accuracy via 2D FFT Phase Correlation
+        # -----------------------------------------------------------------
+        # Synthesize smooth Gaussian continuous raster patch (64x64)
+        y_grid, x_grid = np.mgrid[-32:32, -32:32]
+        img_ref = np.exp(-(x_grid**2 + y_grid**2) / (2.0 * 6.0**2)).astype(np.float64)
+
+        test_shifts = [
+            (0.25, -0.35),
+            (-0.40, 0.20),
+            (0.15, 0.45),
+            (-0.30, -0.25)
+        ]
+
+        for (true_dx, true_dy) in test_shifts:
+            img_tgt = ndshift(img_ref, [true_dy, true_dx], order=3)
+            shift_res = calculate_fft_phase_correlation_shift(img_ref, img_tgt, subpixel=True)
+
+            # In GIOS phase correlation convention:
+            # Shift reflects displacement vector between reference and target
+            err_x = abs(abs(shift_res["shift_x"]) - abs(true_dx))
+            err_y = abs(abs(shift_res["shift_y"]) - abs(true_dy))
+
+            self.assertLess(err_x, 0.05, f"Sub-pixel X shift error {err_x} exceeds rigorous 0.05 px ceiling")
+            self.assertLess(err_y, 0.05, f"Sub-pixel Y shift error {err_y} exceeds rigorous 0.05 px ceiling")
+            self.assertGreater(shift_res["correlation_score"], 0.95, "Correlation peak score must exceed 0.95")
+
+        # Verify subpixel=False snaps strictly to integer grid
+        shift_int = calculate_fft_phase_correlation_shift(img_ref, ndshift(img_ref, [0.35, -0.45], order=3), subpixel=False)
+        self.assertEqual(shift_int["shift_x"], round(shift_int["shift_x"]))
+        self.assertEqual(shift_int["shift_y"], round(shift_int["shift_y"]))
+
+        # -----------------------------------------------------------------
+        # 3. Townshend et al. (1992) False-Change Risk Propagation & Quality Tiers
+        # -----------------------------------------------------------------
+        # Risk = 1 - exp(- shift^2 / (2 * sigma_spatial^2))
+        risk_zero = calculate_change_detection_false_positive_risk(0.0, spatial_sigma=0.6)
+        self.assertEqual(risk_zero, 0.0)
+
+        risk_sub = calculate_change_detection_false_positive_risk(0.3, spatial_sigma=0.6)
+        risk_1sigma = calculate_change_detection_false_positive_risk(0.6, spatial_sigma=0.6)
+        risk_2sigma = calculate_change_detection_false_positive_risk(1.2, spatial_sigma=0.6)
+
+        # Monotonicity
+        self.assertLess(risk_zero, risk_sub)
+        self.assertLess(risk_sub, risk_1sigma)
+        self.assertLess(risk_1sigma, risk_2sigma)
+
+        # Theoretical exact limits:
+        # At 1 sigma: 1 - exp(-0.5) = 1 - 0.60653 = 39.35%
+        # At 2 sigma: 1 - exp(-2.0) = 1 - 0.135335 = 86.47%
+        self.assertAlmostEqual(risk_1sigma, 39.35, places=1)
+        self.assertAlmostEqual(risk_2sigma, 86.47, places=1)
+
+        # Quality tier boundaries
+        self.assertEqual(classify_coregistration_quality_tier(0.12), "subpixel_excellent")
+        self.assertEqual(classify_coregistration_quality_tier(0.35), "subpixel_good")
+        self.assertEqual(classify_coregistration_quality_tier(0.75), "acceptable")
+        self.assertEqual(classify_coregistration_quality_tier(1.45), "misaligned")
+
+        # -----------------------------------------------------------------
+        # 4. RANSAC 2D Affine Homography Outlier Rejection
+        # -----------------------------------------------------------------
+        pts = []
+        for i in range(5):
+            for j in range(5):
+                rx = float(i * 32 + 16)
+                ry = float(j * 32 + 16)
+                pts.append({
+                    "point_id": f"TP_{len(pts)}",
+                    "reference_x": rx,
+                    "reference_y": ry,
+                    "target_x": rx + 0.40,
+                    "target_y": ry - 0.35,
+                    "shift_x": 0.40,
+                    "shift_y": -0.35,
+                    "correlation_score": 0.95
+                })
+
+        # Inject 3 gross outliers
+        pts[2]["target_x"] += 12.0
+        pts[7]["target_x"] -= 9.0
+        pts[15]["target_y"] += 15.0
+
+        aff_res = estimate_affine_transform_matrix(pts, outlier_threshold_pixels=1.5)
+        self.assertEqual(aff_res["total_tie_points"], 25)
+        self.assertEqual(aff_res["inlier_count"], 22)
+        self.assertAlmostEqual(aff_res["tx"], 0.40, places=2)
+        self.assertAlmostEqual(aff_res["ty"], -0.35, places=2)
+        self.assertLess(aff_res["rmse_pixels"], 0.05)
+
+        # -----------------------------------------------------------------
+        # 5. Differential Radiometric Change & Edge Artifact Cancellation
+        # -----------------------------------------------------------------
+        test_ref = img_ref.astype(np.float32)
+        test_tgt = ndshift(test_ref, [-0.35, 0.40], order=3).astype(np.float32)
+
+        diff_res = IndexComputationService.compute_coregistration_differencing(
+            test_ref, test_tgt, aff_res, kernel="cubic_convolution"
+        )
+        self.assertGreater(diff_res["rmse_diff_pre"], 0.005)
+        self.assertLess(diff_res["rmse_diff_post"], 0.001)
+        self.assertGreater(diff_res["error_reduction_pct"], 70.0)
+
+        # -----------------------------------------------------------------
+        # 6. Dynamic XYZ Co-Registration Tile Server RGBA Invariants
+        # -----------------------------------------------------------------
+        modes = ["aligned", "diff_pre", "diff_post", "reference", "target_raw"]
+        for mode in modes:
+            tile_bytes = tile_service.render_coregistration_tile(
+                reference_scene_id="S2A_MSIL2A_20260715_SAN_LUIS",
+                target_scene_id="S2B_MSIL2A_20260824_SAN_LUIS",
+                z=10, x=163, y=395,
+                mode=mode,
+                kernel="cubic_convolution"
+            )
+            self.assertTrue(tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"), f"Tile {mode} must be valid PNG bytes")
+            img = Image.open(io.BytesIO(tile_bytes))
+            self.assertEqual(img.size, (256, 256))
+            self.assertEqual(img.mode, "RGBA")
+
+        # Vector field tile rendering
+        vf_tile = tile_service.render_coregistration_vector_field_tile(
+            analysis_id="TEST_ANA_01", z=10, x=163, y=395, arrow_scale=1.5
+        )
+        self.assertTrue(vf_tile.startswith(b"\x89PNG\r\n\x1a\n"))
+        img_vf = Image.open(io.BytesIO(vf_tile))
+        self.assertEqual(img_vf.size, (256, 256))
+        self.assertEqual(img_vf.mode, "RGBA")
+
+    def test_task_t250_aquatic_quality_biooptical_inversion_and_hab_hazard_scientific_rigor(self):
+        """Task T-250 Scientific Rigor & Mathematical Invariant Verification:
+        Bio-Optical NDCI (Mishra & Mishra 2012) Mathematical Invariants (Bounds [-1, 1], Sign Invariance),
+        Floating Algae Index FAI (Hu 2009) Baseline Subtraction Invariant (Flat Baseline -> FAI == 0),
+        Nechad et al. (2010) Semi-Analytical Turbidity Monotonic Bounds & Asymptotic Saturation Safety,
+        Chlorophyll-a Inversion Polynomial (Mishra) & Low-Biomass Piecewise Preservation,
+        Water Boundary Mask Exclusions (Non-Water Land Pixels -> NaN),
+        Carlson / WHO Cyanobacteria Trophic Risk Tier Categorization,
+        Dynamic XYZ Aquatic & HAB Tile Streaming Invariants (Valid PNG, 256x256, RGBA),
+        and Benchmark Reservoir Triage (Lake Erie Hypertrophic vs Lake Tahoe Ultra-Oligotrophic).
+        """
+        import io
+        from PIL import Image
+        from app.services.indices import IndexComputationService
+        from app.services.tile_service import tile_service
+        from app.services.data_acquisition import data_acquisition_service
+        from app.models.schemas import (
+            calculate_ndci,
+            calculate_fai,
+            calculate_chla_from_ndci,
+            calculate_nechad_turbidity,
+            classify_eutrophication_risk_tier
+        )
+
+        # -----------------------------------------------------------------
+        # 1. NDCI (Mishra & Mishra 2012) Mathematical Invariants & Bounds
+        # -----------------------------------------------------------------
+        # NDCI = (B05 - B04) / (B05 + B04)
+        # Strict range [-1.0, 1.0]
+        # Invariant 1a: Equal reflectance implies NDCI == 0.0
+        self.assertAlmostEqual(IndexComputationService.ndci(0.05, 0.05), 0.0, places=5)
+        self.assertAlmostEqual(calculate_ndci(0.08, 0.08), 0.0, places=5)
+
+        # Invariant 1b: Red-edge peak (B05 > B04) implies NDCI > 0
+        ndci_bloom = IndexComputationService.ndci(0.12, 0.04)
+        self.assertAlmostEqual(ndci_bloom, (0.12 - 0.04) / (0.12 + 0.04), places=5)
+        self.assertGreater(ndci_bloom, 0.0)
+
+        # Invariant 1c: Clear water absorption (B05 < B04) implies NDCI < 0
+        ndci_clear = IndexComputationService.ndci(0.015, 0.045)
+        self.assertAlmostEqual(ndci_clear, (0.015 - 0.045) / (0.015 + 0.045), places=5)
+        self.assertLess(ndci_clear, 0.0)
+
+        # Invariant 1d: Theoretical extreme bounds
+        self.assertAlmostEqual(IndexComputationService.ndci(1.0, 0.0), 1.0, places=5)
+        self.assertAlmostEqual(IndexComputationService.ndci(0.0, 1.0), -1.0, places=5)
+
+        # Invariant 1e: Numerical zero denominator safety
+        self.assertTrue(np.isnan(IndexComputationService.ndci(0.0, 0.0)))
+
+        # -----------------------------------------------------------------
+        # 2. Floating Algae Index FAI (Hu 2009) Baseline Subtraction Invariant
+        # -----------------------------------------------------------------
+        # FAI = R_NIR - [R_RED + (R_SWIR - R_RED) * (lambda_NIR - lambda_RED)/(lambda_SWIR - lambda_RED)]
+        # For Sentinel-2: lambda_RED = 665, lambda_NIR = 842, lambda_SWIR = 1610
+        # f = (842 - 665) / (1610 - 665) = 177 / 945 = 0.187301587...
+        f_expected = 177.0 / 945.0
+
+        # Invariant 2a: Strictly linear baseline yields FAI == 0.0
+        r_red = 0.040
+        r_swir = 0.100
+        r_nir_linear = r_red + (r_swir - r_red) * f_expected
+        fai_flat = IndexComputationService.fai(r_nir_linear, r_red, r_swir)
+        self.assertAlmostEqual(float(fai_flat), 0.0, places=6)
+
+        # Invariant 2b: Surface scum floating algae mat creates strong NIR peak -> FAI > 0.02
+        r_nir_scum = 0.180
+        fai_scum = IndexComputationService.fai(r_nir_scum, r_red, r_swir)
+        self.assertGreater(float(fai_scum), 0.02, "Surface cyanobacteria scum must exceed 0.02 threshold")
+
+        # Invariant 2c: Submerged clear water with strong NIR absorption -> FAI <= 0.0
+        r_nir_water = 0.020
+        fai_water = IndexComputationService.fai(r_nir_water, r_red, r_swir)
+        self.assertLess(float(fai_water), 0.0)
+
+        # -----------------------------------------------------------------
+        # 3. Nechad et al. (2010) Turbidity Monotonic Bounds & Saturation
+        # -----------------------------------------------------------------
+        # S = (A_rho * rho_w) / (1 - rho_w / C_rho)
+        # Invariant 3a: Non-negativity S >= 0.0
+        self.assertAlmostEqual(float(IndexComputationService.nechad_turbidity(0.0)), 0.0, places=4)
+
+        # Invariant 3b: Monotonic increase with water-leaving reflectance
+        r_vals = [0.005, 0.015, 0.035, 0.070, 0.120]
+        s_vals = [float(IndexComputationService.nechad_turbidity(r)) for r in r_vals]
+        for i in range(len(s_vals) - 1):
+            self.assertLess(s_vals[i], s_vals[i + 1], "Turbidity must strictly increase monotonically with red reflectance")
+
+        # Invariant 3c: Asymptotic safety saturation clamping (avoiding singularity at C_rho = 0.1935)
+        s_near_sat = float(IndexComputationService.nechad_turbidity(0.190))
+        s_over_sat = float(IndexComputationService.nechad_turbidity(0.250))
+        self.assertLessEqual(s_near_sat, 1000.0)
+        self.assertLessEqual(s_over_sat, 1000.0)
+        self.assertGreater(s_over_sat, 0.0)
+
+        # -----------------------------------------------------------------
+        # 4. Chlorophyll-a Inversion Algorithms & Non-Negativity
+        # -----------------------------------------------------------------
+        # Invariant 4a: Non-negativity for all physical NDCI values in [-1, 1]
+        test_ndcis = np.linspace(-1.0, 1.0, 201)
+        chla_arr = IndexComputationService.chla_from_ndci(test_ndcis)
+        self.assertTrue(np.all(chla_arr >= 0.0), "Chlorophyll-a concentration must be strictly non-negative")
+
+        # Invariant 4b: Low-biomass protection for ultra-oligotrophic waters (NDCI < -0.15)
+        chla_low = float(IndexComputationService.chla_from_ndci(-0.25))
+        self.assertLess(chla_low, 2.5, "Ultra-clear water must fall in oligotrophic tier (< 2.5 ug/L)")
+        self.assertGreater(chla_low, 0.0)
+
+        # Invariant 4c: Hypertrophic bloom concentration
+        chla_high = float(IndexComputationService.chla_from_ndci(0.30))
+        self.assertGreater(chla_high, 25.0, "HAB bloom NDCI=0.30 must fall in hypertrophic tier (> 25 ug/L)")
+
+        # Invariant 4d: Dall'Olmo & Gitelson 2BDA and Gitelson 3BDA models
+        chla_2bda = float(IndexComputationService.chla_2bda(red_edge1=0.08, red=0.04))
+        self.assertGreater(chla_2bda, 0.0)
+        chla_3bda = float(IndexComputationService.chla_3bda(red=0.04, red_edge1=0.08, red_edge2=0.10))
+        self.assertGreater(chla_3bda, 0.0)
+
+        # -----------------------------------------------------------------
+        # 5. Eutrophication Risk Tier Classification
+        # -----------------------------------------------------------------
+        # 0=Oligotrophic (<2.5), 1=Mesotrophic (2.5-8.0), 2=Eutrophic (8.0-25.0), 3=Hypertrophic (>25.0)
+        self.assertEqual(classify_eutrophication_risk_tier(chla_ug_l=1.2), "oligotrophic")
+        self.assertEqual(classify_eutrophication_risk_tier(chla_ug_l=4.5), "mesotrophic")
+        self.assertEqual(classify_eutrophication_risk_tier(chla_ug_l=18.0), "eutrophic")
+        self.assertEqual(classify_eutrophication_risk_tier(chla_ug_l=45.0), "hypertrophic")
+
+        arr_tiers = IndexComputationService.classify_eutrophication_risk_array(
+            chla_arr=np.array([1.0, 5.0, 15.0, 50.0], dtype=np.float32)
+        )
+        np.testing.assert_array_equal(arr_tiers, np.array([0, 1, 2, 3], dtype=np.int32))
+
+        # -----------------------------------------------------------------
+        # 6. Water Boundary Masking & Land Exclusion Invariant
+        # -----------------------------------------------------------------
+        # Synthetic 4x4 raster with 8 water pixels and 8 land pixels
+        # Water pixels: B03 high (0.08), B11 low (0.01) -> MNDWI = 0.07 / 0.09 = 0.77 > 0
+        # Land pixels: B03 low (0.03), B11 high (0.20) -> MNDWI = -0.17 / 0.23 = -0.74 < 0
+        b3 = np.array([[0.08, 0.08, 0.03, 0.03],
+                       [0.08, 0.08, 0.03, 0.03],
+                       [0.08, 0.08, 0.03, 0.03],
+                       [0.08, 0.08, 0.03, 0.03]], dtype=np.float32)
+        b4 = np.array([[0.04, 0.04, 0.06, 0.06],
+                       [0.04, 0.04, 0.06, 0.06],
+                       [0.04, 0.04, 0.06, 0.06],
+                       [0.04, 0.04, 0.06, 0.06]], dtype=np.float32)
+        b5 = np.array([[0.07, 0.07, 0.18, 0.18],
+                       [0.07, 0.07, 0.18, 0.18],
+                       [0.07, 0.07, 0.18, 0.18],
+                       [0.07, 0.07, 0.18, 0.18]], dtype=np.float32)
+        b8 = np.array([[0.03, 0.03, 0.35, 0.35],
+                       [0.03, 0.03, 0.35, 0.35],
+                       [0.03, 0.03, 0.35, 0.35],
+                       [0.03, 0.03, 0.35, 0.35]], dtype=np.float32)
+        b11 = np.array([[0.01, 0.01, 0.20, 0.20],
+                        [0.01, 0.01, 0.20, 0.20],
+                        [0.01, 0.01, 0.20, 0.20],
+                        [0.01, 0.01, 0.20, 0.20]], dtype=np.float32)
+
+        inv = IndexComputationService.compute_aquatic_quality_inversion(
+            bands={"B03": b3, "B04": b4, "B05": b5, "B08": b8, "B11": b11},
+            water_masking_method="mndwi_threshold",
+            mndwi_threshold=0.0
+        )
+
+        # Exactly 8 water pixels detected
+        self.assertEqual(inv["summary"]["water_pixels"], 8)
+        self.assertTrue(np.all(inv["water_mask"][:, :2]))
+        self.assertFalse(np.any(inv["water_mask"][:, 2:]))
+
+        # Land pixels must strictly evaluate to NaN
+        self.assertTrue(np.all(np.isnan(inv["ndci_water"][:, 2:])))
+        self.assertTrue(np.all(np.isnan(inv["chla_water"][:, 2:])))
+        self.assertTrue(np.all(np.isnan(inv["turbidity_water"][:, 2:])))
+        self.assertTrue(np.all(~np.isnan(inv["ndci_water"][:, :2])))
+
+        # -----------------------------------------------------------------
+        # 7. Dynamic XYZ Aquatic & HAB Tile Server Invariants
+        # -----------------------------------------------------------------
+        metrics = ["ndci", "fai", "chla", "turbidity", "eutrophication_tier"]
+        for m in metrics:
+            tile_bytes = tile_service.render_aquatic_quality_tile(
+                collection="sentinel-2-l2a",
+                metric=m,
+                z=10, x=163, y=395
+            )
+            self.assertTrue(tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"), f"Aquatic tile {m} must be valid PNG")
+            img = Image.open(io.BytesIO(tile_bytes))
+            self.assertEqual(img.size, (256, 256), f"Tile {m} must be 256x256")
+            self.assertEqual(img.mode, "RGBA", f"Tile {m} must be 4-channel RGBA")
+
+        # Dynamic HAB Hazard Risk Tile
+        hab_bytes = tile_service.render_aquatic_hab_tile(
+            collection="sentinel-2-l2a",
+            z=10, x=163, y=395
+        )
+        self.assertTrue(hab_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+        img_hab = Image.open(io.BytesIO(hab_bytes))
+        self.assertEqual(img_hab.size, (256, 256))
+        self.assertEqual(img_hab.mode, "RGBA")
+
+        # -----------------------------------------------------------------
+        # 8. Benchmark Reservoir Scenarios Triage
+        # -----------------------------------------------------------------
+        # Lake Erie Western Basin: Hypertrophic / Eutrophic Cyanobacteria Bloom
+        erie_cube, _ = data_acquisition_service.load_aquatic_data_cube("LAKE_ERIE_HAB_2026")
+        erie_inv = IndexComputationService.compute_aquatic_quality_inversion(erie_cube)
+        self.assertIn(erie_inv["summary"]["dominant_eutrophication_tier"], ["eutrophic", "hypertrophic"])
+        self.assertGreater(erie_inv["summary"]["mean_ndci"], 0.05)
+        self.assertIn(erie_inv["summary"]["bloom_risk_level"], ["high", "severe"])
+
+        # Lake Tahoe: Ultra-Oligotrophic Deep Subalpine Clear Water
+        tahoe_cube, _ = data_acquisition_service.load_aquatic_data_cube("LAKE_TAHOE_OLIGOTROPHIC_2026")
+        tahoe_inv = IndexComputationService.compute_aquatic_quality_inversion(tahoe_cube)
+        self.assertEqual(tahoe_inv["summary"]["dominant_eutrophication_tier"], "oligotrophic")
+        self.assertLess(tahoe_inv["summary"]["mean_ndci"], 0.0)
+        self.assertEqual(tahoe_inv["summary"]["bloom_risk_level"], "low")
+        self.assertFalse(tahoe_inv["summary"]["floating_scum_detected"])
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
 
 
 

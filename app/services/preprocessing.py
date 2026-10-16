@@ -1,7 +1,7 @@
 """Sensor-specific masking and normalisation service."""
 import gc
 import math
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, Tuple, List
 import numpy as np
 from scipy.ndimage import binary_dilation
 
@@ -476,4 +476,315 @@ class PreprocessingService:
         arr = np.asarray(reflectance, dtype=np.float32)
         return np.clip(arr * factor_clamped, 0.0, 1.0)
 
+    @staticmethod
+    def compute_dem_slope_aspect_arrays(
+        elevation: np.ndarray,
+        cell_size_x: float = 30.0,
+        cell_size_y: float = 30.0,
+        z_factor: float = 1.0
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Calculates pixel-wise slope (degrees), aspect (degrees from North), and unit surface normal vectors.
+
+        Uses Horn's 3x3 finite-difference convolution kernels:
+            p = dz/dx, q = dz/dy
+            slope = arctan(sqrt(p^2 + q^2)) in degrees [0, 90]
+            aspect = (degrees(arctan2(-p, -q))) % 360 (-1 for flat terrain)
+            normal_vector = (-p, -q, 1) / sqrt(1 + p^2 + q^2)
+
+        Parameters:
+            elevation: 2D float32 raster array of DEM elevations (m)
+            cell_size_x: East-West grid pixel spacing in meters (default: 30.0m)
+            cell_size_y: North-South grid pixel spacing in meters (default: 30.0m)
+            z_factor: Vertical exaggeration scaling factor (default: 1.0)
+
+        Returns:
+            Tuple of (slope_deg, aspect_deg, normal_vectors) where normal_vectors has shape (H, W, 3).
+        """
+        from scipy.ndimage import correlate
+
+        elev_arr = np.asarray(elevation, dtype=np.float32)
+        dx = max(float(cell_size_x), 0.1)
+        dy = max(float(cell_size_y), 0.1)
+        zf = max(float(z_factor), 1e-4)
+
+        # Horn's 3x3 convolution weights
+        kx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32) / (8.0 * dx) * zf
+        ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], dtype=np.float32) / (8.0 * dy) * zf
+
+        dz_dx = correlate(elev_arr, kx, mode="nearest")
+        dz_dy = correlate(elev_arr, ky, mode="nearest")
+
+        mag = np.sqrt(dz_dx**2 + dz_dy**2)
+        slope_rad = np.arctan(mag)
+        slope_deg = np.degrees(slope_rad).astype(np.float32)
+
+        # Downhill aspect clockwise from North [0, 360], -1 for flat terrain
+        aspect_deg = np.where(mag < 1e-7, -1.0, (np.degrees(np.arctan2(-dz_dx, -dz_dy))) % 360.0).astype(np.float32)
+
+        # Unit surface normal vectors: n = (-p, -q, 1) / sqrt(1 + p^2 + q^2)
+        norm_denom = np.sqrt(1.0 + dz_dx**2 + dz_dy**2)
+        nx = (-dz_dx / norm_denom).astype(np.float32)
+        ny = (-dz_dy / norm_denom).astype(np.float32)
+        nz = (1.0 / norm_denom).astype(np.float32)
+        normal_vectors = np.stack([nx, ny, nz], axis=-1)
+
+        return slope_deg, aspect_deg, normal_vectors
+
+    @staticmethod
+    def compute_local_incidence_array(
+        slope_deg: np.ndarray,
+        aspect_deg: np.ndarray,
+        solar_zenith_deg: float,
+        solar_azimuth_deg: float
+    ) -> np.ndarray:
+        """Calculates pixel-wise local solar incidence cosine cos(i) on sloping terrain.
+
+        Formula:
+            cos(i) = cos(theta_s) * cos(alpha) + sin(theta_s) * sin(alpha) * cos(phi_s - beta)
+
+        Parameters:
+            slope_deg: 2D array of terrain slope angles in degrees [0, 90]
+            aspect_deg: 2D array of terrain downhill aspect in degrees [0, 360] (-1 for flat)
+            solar_zenith_deg: Solar zenith angle theta_s in degrees [0, 90]
+            solar_azimuth_deg: Solar azimuth angle phi_s in degrees clockwise from North [0, 360]
+
+        Returns:
+            2D float32 array of cos(i) values clamped strictly to [-1.0, 1.0].
+            Values <= 0 indicate self-shadow slopes facing away from the sun.
+        """
+        zenith_rad = math.radians(max(0.0, min(90.0, float(solar_zenith_deg))))
+        sun_azimuth_rad = math.radians(float(solar_azimuth_deg) % 360.0)
+
+        s_arr = np.asarray(slope_deg, dtype=np.float32)
+        a_arr = np.asarray(aspect_deg, dtype=np.float32)
+
+        slope_rad = np.radians(np.clip(s_arr, 0.0, 90.0))
+        aspect_rad = np.radians(np.clip(a_arr, 0.0, 360.0))
+
+        cos_zenith = math.cos(zenith_rad)
+        sin_zenith = math.sin(zenith_rad)
+
+        cos_i = cos_zenith * np.cos(slope_rad) + sin_zenith * np.sin(slope_rad) * np.cos(sun_azimuth_rad - aspect_rad)
+
+        # On flat terrain (slope <= 1e-6 or aspect < 0), cos(i) = cos(theta_s)
+        flat_mask = (s_arr <= 1e-6) | (a_arr < 0.0)
+        cos_i = np.where(flat_mask, cos_zenith, cos_i)
+
+        return np.clip(cos_i, -1.0, 1.0).astype(np.float32)
+
+    @staticmethod
+    def estimate_band_c_factor(
+        radiance: np.ndarray,
+        cos_i: np.ndarray,
+        valid_mask: Optional[np.ndarray] = None,
+        default_c: float = 0.08,
+        min_cos_i: float = 0.05,
+        max_cos_i: float = 0.95
+    ) -> float:
+        """Estimates empirical C parameter c = b/m via ordinary least squares regression L = m * cos(i) + b.
+
+        Parameters:
+            radiance: 2D array of band surface reflectance / radiance
+            cos_i: 2D array of local incidence cosines
+            valid_mask: Optional boolean mask of valid pixels (e.g. non-water, non-cloud)
+            default_c: Fallback C value if regression is singular or slope is non-positive
+            min_cos_i: Lower cos(i) bound for regression sample selection
+            max_cos_i: Upper cos(i) bound for regression sample selection
+
+        Returns:
+            Empirical c factor bounded in [0.001, 1.0].
+        """
+        rad_flat = np.asarray(radiance, dtype=np.float32).ravel()
+        cos_flat = np.asarray(cos_i, dtype=np.float32).ravel()
+
+        mask = np.isfinite(rad_flat) & np.isfinite(cos_flat) & (rad_flat > 0.001) & (cos_flat >= min_cos_i) & (cos_flat <= max_cos_i)
+        if valid_mask is not None:
+            mask = mask & np.asarray(valid_mask, dtype=bool).ravel()
+
+        y = rad_flat[mask]
+        x = cos_flat[mask]
+
+        if len(y) < 10:
+            return default_c
+
+        # Subsample if large array for high performance
+        if len(y) > 5000:
+            step = len(y) // 5000
+            y = y[::step]
+            x = x[::step]
+
+        n = float(len(y))
+        sum_x = float(np.sum(x))
+        sum_y = float(np.sum(y))
+        sum_xx = float(np.sum(x * x))
+        sum_xy = float(np.sum(x * y))
+
+        denom = n * sum_xx - sum_x * sum_x
+        if abs(denom) < 1e-9:
+            return default_c
+
+        m = (n * sum_xy - sum_x * sum_y) / denom
+        b = (sum_y - m * sum_x) / n
+
+        if m > 1e-6 and b >= 0.0:
+            c = b / m
+            return round(float(max(0.001, min(1.0, c))), 4)
+
+        return default_c
+
+    @staticmethod
+    def estimate_band_minnaert_k(
+        radiance: np.ndarray,
+        cos_i: np.ndarray,
+        solar_zenith_deg: float,
+        valid_mask: Optional[np.ndarray] = None,
+        default_k: float = 0.65,
+        min_cos_i: float = 0.05
+    ) -> float:
+        """Estimates Minnaert empirical exponent k via logarithmic linear regression:
+        ln(L) = ln(L_n) + k * ln(cos(i) / cos(theta_s)).
+        """
+        zenith_rad = math.radians(max(0.0, min(89.0, float(solar_zenith_deg))))
+        cos_sz = math.cos(zenith_rad)
+
+        rad_flat = np.asarray(radiance, dtype=np.float32).ravel()
+        cos_flat = np.asarray(cos_i, dtype=np.float32).ravel()
+
+        mask = np.isfinite(rad_flat) & np.isfinite(cos_flat) & (rad_flat > 0.001) & (cos_flat >= min_cos_i)
+        if valid_mask is not None:
+            mask = mask & np.asarray(valid_mask, dtype=bool).ravel()
+
+        y_raw = rad_flat[mask]
+        x_raw = cos_flat[mask]
+
+        if len(y_raw) < 10:
+            return default_k
+
+        if len(y_raw) > 5000:
+            step = len(y_raw) // 5000
+            y_raw = y_raw[::step]
+            x_raw = x_raw[::step]
+
+        # Log transform
+        y = np.log(np.maximum(1e-5, y_raw))
+        x = np.log(np.maximum(1e-5, x_raw / cos_sz))
+
+        n = float(len(y))
+        sum_x = float(np.sum(x))
+        sum_y = float(np.sum(y))
+        sum_xx = float(np.sum(x * x))
+        sum_xy = float(np.sum(x * y))
+
+        denom = n * sum_xx - sum_x * sum_x
+        if abs(denom) < 1e-9:
+            return default_k
+
+        k = (n * sum_xy - sum_x * sum_y) / denom
+        if k > 0.01:
+            return round(float(max(0.05, min(1.0, k))), 4)
+
+        return default_k
+
+    @classmethod
+    def apply_topographic_solar_correction(
+        cls,
+        reflectance: Any,
+        cos_i: Any,
+        slope_deg: Any,
+        solar_zenith_deg: float,
+        method: str = "c_correction",
+        c_factor: float = 0.08,
+        minnaert_k: float = 0.65,
+        cos_i_min: float = 0.05,
+        mask_self_shadow: bool = True,
+        mask: Optional[np.ndarray] = None
+    ) -> Any:
+        """Applies vectorized topographic solar illumination correction across arbitrary raster arrays.
+
+        Supported algorithms:
+            - 'none': Unmodified surface reflectance baseline
+            - 'cosine', 'cosine_lambertian': Teillet et al. (1982) Lambertian cosine correction
+            - 'c_correction': Teillet et al. (1982) semi-empirical diffuse skylight C-correction
+            - 'minnaert': Minnaert (1941) / Smith et al. (1980) empirical power law
+            - 'scs_c', 'scs_plus_c': Soenen et al. (2005) Sun-Canopy-Sensor with C-correction
+            - 'scs': Gu & Gillespie (1998) Sun-Canopy-Sensor canopy sunlit projection
+
+        Parameters:
+            reflectance: Surface reflectance raster array or scalar
+            cos_i: Local solar incidence cosine array or scalar in [-1.0, 1.0]
+            slope_deg: Terrain slope angle array or scalar in degrees [0, 90]
+            solar_zenith_deg: Solar zenith angle theta_s in degrees [0, 90]
+            method: Topographic correction algorithm identifier
+            c_factor: Semi-empirical C parameter (c = b/m)
+            minnaert_k: Minnaert constant k in (0, 1]
+            cos_i_min: Minimum denominator threshold to prevent division-by-zero
+            mask_self_shadow: Whether pixels facing away from sun (cos_i <= 0) are zeroed out
+            mask: Optional boolean exclusion mask (e.g. water bodies) left uncorrected
+
+        Returns:
+            Corrected surface reflectance array or scalar in [0.0, 1.0].
+        """
+        m_lower = str(method).lower().strip()
+        if m_lower == "none":
+            return reflectance
+
+        zenith_rad = math.radians(max(0.0, min(89.9, float(solar_zenith_deg))))
+        cos_sz = math.cos(zenith_rad)
+
+        rad_arr = np.asarray(reflectance, dtype=np.float32)
+        ci_arr = np.asarray(cos_i, dtype=np.float32)
+        sl_arr = np.asarray(slope_deg, dtype=np.float32)
+        c_val = max(0.0, float(c_factor))
+        k_val = max(0.01, min(1.0, float(minnaert_k)))
+        ci_floor = max(0.001, float(cos_i_min))
+
+        slope_rad = np.radians(np.clip(sl_arr, 0.0, 90.0))
+        cos_slope = np.cos(slope_rad)
+
+        if m_lower in ("cosine", "cosine_lambertian"):
+            denom = np.maximum(ci_floor, ci_arr)
+            factor = cos_sz / denom
+        elif m_lower == "minnaert":
+            denom = np.maximum(ci_floor, ci_arr)
+            ratio = np.maximum(0.0, cos_sz / denom)
+            factor = np.power(ratio, k_val)
+        elif m_lower in ("scs_c", "scs_plus_c"):
+            if c_val <= 1e-7:
+                denom = np.maximum(ci_floor, ci_arr)
+                factor = (cos_sz * cos_slope) / denom
+            else:
+                denom = np.maximum(1e-6, ci_arr + c_val)
+                factor = (cos_sz * cos_slope + c_val) / denom
+        elif m_lower == "scs":
+            denom = np.maximum(ci_floor, ci_arr)
+            factor = (cos_sz * cos_slope) / denom
+        else:  # default to c_correction
+            if c_val <= 1e-7:
+                denom = np.maximum(ci_floor, ci_arr)
+                factor = cos_sz / denom
+            else:
+                denom = np.maximum(1e-6, ci_arr + c_val)
+                factor = (cos_sz + c_val) / denom
+
+        # Bounding factor to avoid extreme numerical explosion on grazing angles
+        factor = np.clip(factor, 0.0, 8.0)
+        corrected = np.clip(rad_arr * factor, 0.0, 1.0)
+
+        # Self-shadow suppression
+        if mask_self_shadow:
+            self_shadow_mask = (ci_arr <= 0.0)
+            corrected = np.where(self_shadow_mask, 0.0, corrected)
+
+        # Preserve uncorrected pixels where mask is False (e.g. water bodies)
+        if mask is not None:
+            m = np.asarray(mask, dtype=bool)
+            corrected = np.where(m, corrected, rad_arr)
+
+        if isinstance(reflectance, (int, float, np.number)):
+            return float(corrected)
+
+        return corrected.astype(np.float32)
+
+
 preprocessing_service = PreprocessingService()
+

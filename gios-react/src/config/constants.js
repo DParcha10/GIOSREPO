@@ -776,8 +776,8 @@ export const API_ENDPOINTS = {
   ANALYSIS_LST_TRANSFER: '/api/v1/analysis/lst/radiative-transfer',
   ANALYSIS_LST_TRANSFER_SHORT: '/analysis/lst/radiative-transfer',
   TILES_THERMAL_LST: (collection, itemId, z, x, y) => `/api/v1/tiles/thermal/lst/${collection}/${itemId}/${z}/${x}/${y}.png`,
-  ANALYSIS_TOPOGRAPHIC_CORRECTION: '/api/v1/analysis/topographic-correction',
-  ANALYSIS_TOPOGRAPHIC_CORRECTION_SHORT: '/analysis/topographic-correction',
+  ANALYSIS_TOPOGRAPHIC_CORRECTION: '/api/v1/analysis/topographic/correction',
+  ANALYSIS_TOPOGRAPHIC_CORRECTION_SHORT: '/analysis/topographic/correction',
   ANALYSIS_INSAR_DISPLACEMENT: '/api/v1/analysis/insar/displacement',
   ANALYSIS_INSAR_DISPLACEMENT_SHORT: '/analysis/insar/displacement',
   ANALYSIS_INSAR_COHERENCE: '/api/v1/analysis/insar/coherence',
@@ -787,8 +787,8 @@ export const API_ENDPOINTS = {
   ANALYSIS_PHENOLOGY_EXTRACT_SHORT: '/analysis/phenology/extract',
   ANALYSIS_COMPOSITES_BAP: '/api/v1/analysis/composites/bap',
   ANALYSIS_COMPOSITES_BAP_SHORT: '/analysis/composites/bap',
-  ANALYSIS_COREGISTRATION: '/api/v1/analysis/geometric/coregistration',
-  ANALYSIS_COREGISTRATION_SHORT: '/api/v1/analysis/coregistration',
+  ANALYSIS_GEOMETRIC_COREGISTRATION: '/api/v1/analysis/geometric/coregistration',
+  ANALYSIS_GEOMETRIC_COREGISTRATION_SHORT: '/api/v1/analysis/coregistration',
   ANALYSIS_POINT_CLOUD_FILTER: '/api/v1/analysis/point-cloud/filter',
   ANALYSIS_POINT_CLOUD_CHM: '/api/v1/analysis/point-cloud/chm',
   TILES_POINT_CLOUD_CHM: (assetId, z, x, y) => `/api/v1/tiles/terrain/chm/${assetId}/${z}/${x}/${y}.png`,
@@ -1128,7 +1128,32 @@ export const API_ENDPOINTS = {
   TILES_SAR_SPECKLE_FILTER: (filter_method, z, x, y) => `/api/v1/tiles/sar/filtered/${filter_method}/${z}/${x}/${y}.png`,
   TILES_SAR_SPECKLE_FILTER_SHORT: (filter_method, z, x, y) => `/tiles/sar/filtered/${filter_method}/${z}/${x}/${y}.png`,
   TILES_SAR_FLOOD_INUNDATION: (z, x, y) => `/api/v1/tiles/sar/flood/${z}/${x}/${y}.png`,
-  TILES_SAR_FLOOD_INUNDATION_SHORT: (z, x, y) => `/tiles/sar/flood/${z}/${x}/${y}.png`
+  TILES_SAR_FLOOD_INUNDATION_SHORT: (z, x, y) => `/tiles/sar/flood/${z}/${x}/${y}.png`,
+  // Cycle v2.5.30: Sub-Pixel Automated Image Co-Registration & Geometric Resampling Contracts
+  ANALYSIS_COREGISTRATION: '/api/v1/analysis/coregistration',
+  ANALYSIS_COREGISTRATION_SHORT: '/analysis/coregistration',
+  ANALYSIS_COREGISTRATION_TIE_POINTS: '/api/v1/analysis/coregistration/tie-points',
+  ANALYSIS_COREGISTRATION_TIE_POINTS_SHORT: '/analysis/coregistration/tie-points',
+  TILES_COREGISTRATION: (ref, target, z, x, y) => `/api/v1/tiles/coregistration/${ref}/${target}/${z}/${x}/${y}.png`,
+  TILES_COREGISTRATION_SHORT: (ref, target, z, x, y) => `/tiles/coregistration/${ref}/${target}/${z}/${x}/${y}.png`,
+  TILES_COREGISTRATION_VECTOR_FIELD: (id, z, x, y) => `/api/v1/tiles/coregistration/vector-field/${id}/${z}/${x}/${y}.png`,
+  TILES_COREGISTRATION_VECTOR_FIELD_SHORT: (id, z, x, y) => `/tiles/coregistration/vector-field/${id}/${z}/${x}/${y}.png`,
+  // Cycle v2.5.31: Aquatic Quality & Harmful Algal Bloom Detection Contracts
+  ANALYSIS_AQUATIC_QUALITY: '/api/v1/analysis/aquatic/quality',
+  ANALYSIS_AQUATIC_QUALITY_SHORT: '/analysis/aquatic/quality',
+  ANALYSIS_AQUATIC_HAB: '/api/v1/analysis/aquatic/hab',
+  ANALYSIS_AQUATIC_HAB_SHORT: '/analysis/aquatic/hab',
+  TILES_AQUATIC_QUALITY: (collection, metric, z, x, y) => `/api/v1/tiles/aquatic/${collection}/${metric}/${z}/${x}/${y}.png`,
+  TILES_AQUATIC_QUALITY_SHORT: (collection, metric, z, x, y) => `/tiles/aquatic/${collection}/${metric}/${z}/${x}/${y}.png`,
+  TILES_AQUATIC_HAB: (collection, z, x, y) => `/api/v1/tiles/aquatic/hab/${collection}/${z}/${x}/${y}.png`,
+  TILES_AQUATIC_HAB_SHORT: (collection, z, x, y) => `/tiles/aquatic/hab/${collection}/${z}/${x}/${y}.png`,
+  // Cycle v2.5.32: Topographic Solar Illumination Correction & SCS+C Inversion Contracts
+  ANALYSIS_TOPOGRAPHIC_SOLAR_GEOMETRY: '/api/v1/analysis/topographic/solar-geometry',
+  ANALYSIS_TOPOGRAPHIC_SOLAR_GEOMETRY_SHORT: '/analysis/topographic/solar-geometry',
+  TILES_TOPOGRAPHIC_CORRECTION: (collection, itemId, z, x, y) => `/api/v1/tiles/topographic/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  TILES_TOPOGRAPHIC_CORRECTION_SHORT: (collection, itemId, z, x, y) => `/tiles/topographic/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  TILES_TOPOGRAPHIC_ILLUMINATION: (collection, itemId, z, x, y) => `/api/v1/tiles/topographic/illumination/${collection}/${itemId}/${z}/${x}/${y}.png`,
+  TILES_TOPOGRAPHIC_ILLUMINATION_SHORT: (collection, itemId, z, x, y) => `/tiles/topographic/illumination/${collection}/${itemId}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1437,6 +1462,29 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'TILES_SAR_FLOOD_INUNDATION':
       case 'TILES_SAR_FLOOD_INUNDATION_SHORT':
         return endpoint(params.z, params.x, params.y);
+      case 'TILES_COREGISTRATION':
+      case 'TILES_COREGISTRATION_SHORT':
+        return endpoint(params.reference_scene_id || params.ref || 'REF_SCENE_01', params.target_scene_id || params.target || 'TARGET_SCENE_01', params.z, params.x, params.y);
+      case 'TILES_COREGISTRATION_VECTOR_FIELD':
+      case 'TILES_COREGISTRATION_VECTOR_FIELD_SHORT':
+        return endpoint(params.analysis_id || params.id || 'COREG_DEFAULT', params.z, params.x, params.y);
+      case 'TILES_AQUATIC_QUALITY':
+      case 'TILES_AQUATIC_QUALITY_SHORT':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.metric || 'ndci', params.z, params.x, params.y);
+      case 'TILES_AQUATIC_HAB':
+      case 'TILES_AQUATIC_HAB_SHORT':
+        return endpoint(params.collection || 'sentinel-2-l2a', params.z, params.x, params.y);
+      case 'TILES_TOPOGRAPHIC_CORRECTION':
+      case 'TILES_TOPOGRAPHIC_CORRECTION_SHORT':
+      case 'TILES_TOPOGRAPHIC_ILLUMINATION':
+      case 'TILES_TOPOGRAPHIC_ILLUMINATION_SHORT':
+        return endpoint(
+          params.collection || 'sentinel-2-l2a',
+          params.itemId || params.item_id || params.scene_id || params.sceneId || 'S2A_MSIL2A_20260815_MT_SHASTA',
+          params.z,
+          params.x,
+          params.y
+        );
       default:
         return endpoint(params);
     }
@@ -2367,7 +2415,9 @@ export const SAR_POLARIZATIONS = {
   HH: 'hh',
   HV: 'hv',
   RATIO: 'ratio_vh_vv',
-  POLARIZATION_RATIO_VH_VV: 'ratio_vh_vv'
+  POLARIZATION_RATIO_VH_VV: 'ratio_vh_vv',
+  DUAL_POL_RGB: 'dual_pol_rgb',
+  RGB: 'dual_pol_rgb'
 };
 
 export const SarPolarization = SAR_POLARIZATIONS;
@@ -3755,17 +3805,32 @@ export const TROPHIC_STATES = {
 /**
  * Calculates Normalized Difference Chlorophyll Index: NDCI = (B05 - B04)/(B05 + B04).
  * 
- * @param {number} red - Red surface reflectance (Band 4)
- * @param {number} rededge1 - RedEdge1 surface reflectance (Band 5)
- * @returns {number} NDCI index in [-1.0, 1.0]
+/**
+ * Computes Normalized Difference Chlorophyll Index (NDCI) (Mishra & Mishra 2012).
+ * Supports options object or positional args (red, rededge1).
+ * 
+ * @param {Object|number} [arg1] - Options object or red reflectance (Band 4)
+ * @param {number} [arg2] - rededge1 reflectance (Band 5)
+ * @returns {number} NDCI value [-1.0, 1.0]
  */
-export const calculateNdci = (red, rededge1) => {
-  const r = Number(red) || 0.0;
-  const re = Number(rededge1) || 0.0;
+export const calculateNdci = (arg1, arg2) => {
+  let r = 0.0;
+  let re = 0.0;
+  let eps = 1e-6;
+
+  if (typeof arg1 === 'object' && arg1 !== null) {
+    re = arg1.red_edge_b05 !== undefined ? arg1.red_edge_b05 : (arg1.rededge1 !== undefined ? arg1.rededge1 : 0.0);
+    r = arg1.red_b04 !== undefined ? arg1.red_b04 : (arg1.red !== undefined ? arg1.red : 0.0);
+    if (arg1.epsilon !== undefined) eps = arg1.epsilon;
+  } else {
+    r = Number(arg1 || 0.0);
+    re = Number(arg2 || 0.0);
+  }
+
   const denom = re + r;
-  if (Math.abs(denom) < 1e-6) return 0.0;
-  const val = (re - r) / denom;
-  return parseFloat(Math.max(-1.0, Math.min(1.0, val)).toFixed(4));
+  if (Math.abs(denom) < eps) return 0.0;
+  const val = (re - r) / (denom + eps);
+  return Math.max(-1.0, Math.min(1.0, Number(val.toFixed(4))));
 };
 
 /**
@@ -20318,6 +20383,28 @@ export const SAR_POLARIZATION_CONFIGS = {
     badge: 'VH/VV Ratio',
     default_rescale: '-15,0',
     colormap: 'viridis'
+  },
+  dual_pol_rgb: {
+    channel: 'dual_pol_rgb',
+    name: 'Dual-Pol False Color RGB [VV, VH, VH/VV]',
+    radar_band: 'C-band (5.405 GHz)',
+    wavelength_cm: 5.546,
+    mechanism: 'R: VV (surface roughness), G: VH (volume scattering), B: VH/VV (depolarization ratio)',
+    primary_sensitivity: 'Comprehensive terrain characterization, flood inundation (dark), urban double-bounce (bright yellow), and vegetation canopy (green)',
+    badge: 'Dual-Pol RGB',
+    default_rescale: '-25,0',
+    colormap: 'rgb'
+  },
+  rgb: {
+    channel: 'dual_pol_rgb',
+    name: 'Dual-Pol False Color RGB [VV, VH, VH/VV]',
+    radar_band: 'C-band (5.405 GHz)',
+    wavelength_cm: 5.546,
+    mechanism: 'R: VV, G: VH, B: VH/VV',
+    primary_sensitivity: 'Terrain & flood composite',
+    badge: 'Dual-Pol RGB',
+    default_rescale: '-25,0',
+    colormap: 'rgb'
   }
 };
 
@@ -20859,6 +20946,1595 @@ export const buildSarFloodTileUrlTemplate = (options = {}) => {
 
   return `${base}?${params.join('&')}`;
 };
+
+// ==============================================================================
+// CYCLE v2.5.30: SUB-PIXEL AUTOMATED IMAGE CO-REGISTRATION, FFT PHASE CORRELATION,
+// TIE-POINT GRIDS, AFFINE WARP & GEOMETRIC RESAMPLING KERNELS (NEAREST, BILINEAR,
+// CUBIC CONVOLUTION, LANCZOS)
+// ==============================================================================
+
+export const COREGISTRATION_METHODS = {
+  FFT_PHASE_CORRELATION: 'fft_phase_correlation',
+  LOCALIZED_NCC: 'localized_ncc',
+  FEATURE_MATCHING_SIFT: 'feature_matching_sift',
+  FEATURE_MATCHING_ORB: 'feature_matching_orb',
+  AFFINE_RANSAC: 'affine_ransac'
+};
+
+export const CoRegistrationMethod = COREGISTRATION_METHODS;
+
+export const GEOMETRIC_RESAMPLING_KERNELS = {
+  NEAREST: 'nearest',
+  BILINEAR: 'bilinear',
+  CUBIC_CONVOLUTION: 'cubic_convolution',
+  CUBIC_SPLINE: 'cubic_spline',
+  LANCZOS: 'lanczos'
+};
+
+export const GeometricResamplingKernel = GEOMETRIC_RESAMPLING_KERNELS;
+
+export const COREGISTRATION_QUALITY_TIERS = {
+  SUBPIXEL_EXCELLENT: 'subpixel_excellent',
+  SUBPIXEL_GOOD: 'subpixel_good',
+  ACCEPTABLE: 'acceptable',
+  MISALIGNED: 'misaligned'
+};
+
+export const CoRegistrationQualityTier = COREGISTRATION_QUALITY_TIERS;
+
+export const COREGISTRATION_METHOD_CONFIGS = {
+  fft_phase_correlation: {
+    id: 'fft_phase_correlation',
+    name: 'FFT Phase Correlation (Fourier Shift Theorem)',
+    description: 'Calculates sub-pixel translation vector from the peak of normalized cross-power spectrum in the 2D spatial frequency domain.',
+    recommended_window_size: 64,
+    is_frequency_domain: true,
+    subpixel_capable: true,
+    badge: 'FFT Sub-Pixel',
+    reference: 'De Castro & Morandi (1987); Kuglin & Hines (1975)'
+  },
+  localized_ncc: {
+    id: 'localized_ncc',
+    name: 'Localized Normalized Cross-Correlation (AROSICS)',
+    description: 'Dense spatial cross-correlation across tie-point grid patches with sub-pixel parabolic interpolation.',
+    recommended_window_size: 32,
+    is_frequency_domain: false,
+    subpixel_capable: true,
+    badge: 'AROSICS NCC',
+    reference: 'Scheffler et al. (2017)'
+  },
+  feature_matching_sift: {
+    id: 'feature_matching_sift',
+    name: 'Scale-Invariant Feature Transform (SIFT)',
+    description: 'Scale and rotation invariant gradient orientation keypoints for multi-modal (SAR to Optical, Drone to Satellite) matching.',
+    recommended_window_size: 128,
+    is_frequency_domain: false,
+    subpixel_capable: true,
+    badge: 'SIFT Scale-Invariant',
+    reference: 'Lowe (2004)'
+  },
+  feature_matching_orb: {
+    id: 'feature_matching_orb',
+    name: 'Oriented FAST and Rotated BRIEF (ORB)',
+    description: 'High-speed binary feature matching with Hamming distance metrics for real-time UAV video and orthomosaic tie points.',
+    recommended_window_size: 128,
+    is_frequency_domain: false,
+    subpixel_capable: false,
+    badge: 'ORB Fast Binary',
+    reference: 'Rublee et al. (2011)'
+  },
+  affine_ransac: {
+    id: 'affine_ransac',
+    name: '6-Parameter Affine Homography with RANSAC',
+    description: 'Fits 2D affine transformation [a, b, tx; c, d, ty] rejecting geometric outliers via Random Sample Consensus.',
+    recommended_window_size: 64,
+    is_frequency_domain: false,
+    subpixel_capable: true,
+    badge: 'Affine RANSAC',
+    reference: 'Fischler & Bolles (1981)'
+  }
+};
+
+export const RESAMPLING_KERNEL_CONFIGS = {
+  nearest: {
+    id: 'nearest',
+    name: 'Nearest Neighbor',
+    filter_radius: 0.5,
+    preserves_radiometry: true,
+    continuous_imagery_recommended: false,
+    discrete_masks_recommended: true,
+    badge: 'Nearest (1x1)',
+    description: 'Preserves original radiometric values and discrete categorical classifications (SCL, cloud masks, geology).'
+  },
+  bilinear: {
+    id: 'bilinear',
+    name: 'Bilinear Interpolation',
+    filter_radius: 1.0,
+    preserves_radiometry: false,
+    continuous_imagery_recommended: true,
+    discrete_masks_recommended: false,
+    badge: 'Bilinear (2x2)',
+    description: 'Linear weighted distance averaging across 2x2 pixel footprint; smooths high-frequency noise.'
+  },
+  cubic_convolution: {
+    id: 'cubic_convolution',
+    name: 'Cubic Convolution (Keys a = -0.5)',
+    filter_radius: 2.0,
+    preserves_radiometry: false,
+    continuous_imagery_recommended: true,
+    discrete_masks_recommended: false,
+    badge: 'Bicubic (4x4)',
+    description: 'High-fidelity piecewise cubic polynomial approximation of sinc function; balances edge sharpness and radiometric continuity.'
+  },
+  cubic_spline: {
+    id: 'cubic_spline',
+    name: 'Cubic B-Spline',
+    filter_radius: 2.0,
+    preserves_radiometry: false,
+    continuous_imagery_recommended: true,
+    discrete_masks_recommended: false,
+    badge: 'Cubic Spline',
+    description: 'Piecewise polynomial with continuous second derivatives; optimal for elevation models and DEM warping.'
+  },
+  lanczos: {
+    id: 'lanczos',
+    name: 'Lanczos-3 Windowed Sinc',
+    filter_radius: 3.0,
+    preserves_radiometry: false,
+    continuous_imagery_recommended: true,
+    discrete_masks_recommended: false,
+    badge: 'Lanczos (6x6)',
+    description: 'High-order windowed sinc filter; minimizes aliasing and ringing artifacts during high-resolution multi-sensor resampling.'
+  }
+};
+
+export const COREGISTRATION_QUALITY_TIER_CONFIGS = {
+  subpixel_excellent: {
+    tier: 'subpixel_excellent',
+    max_rmse_pixels: 0.20,
+    badge: 'Sub-Pixel Excellent (< 0.20 px)',
+    suitable_for_differential_change: true,
+    edge_false_positive_risk_pct: '< 5%',
+    color: '#10b981'
+  },
+  subpixel_good: {
+    tier: 'subpixel_good',
+    max_rmse_pixels: 0.50,
+    badge: 'Sub-Pixel Good (0.20 - 0.50 px)',
+    suitable_for_differential_change: true,
+    edge_false_positive_risk_pct: '5% - 25%',
+    color: '#3b82f6'
+  },
+  acceptable: {
+    tier: 'acceptable',
+    max_rmse_pixels: 1.00,
+    badge: 'Marginal Alignment (0.50 - 1.00 px)',
+    suitable_for_differential_change: false,
+    edge_false_positive_risk_pct: '25% - 50%',
+    color: '#f59e0b'
+  },
+  misaligned: {
+    tier: 'misaligned',
+    max_rmse_pixels: Infinity,
+    badge: 'Misaligned (> 1.00 px)',
+    suitable_for_differential_change: false,
+    edge_false_positive_risk_pct: '> 50%',
+    color: '#ef4444'
+  }
+};
+
+export const COREGISTRATION_BENCHMARK_PAIRS = {
+  S2_MULTI_TEMPORAL_SAN_LUIS: {
+    pair_id: 'S2_MULTI_TEMPORAL_SAN_LUIS',
+    reference_scene_id: 'S2A_MSIL2A_20260701T183921_T10SEJ',
+    target_scene_id: 'S2B_MSIL2A_20260716T183919_T10SEJ',
+    collection: 'sentinel-2-l2a',
+    known_shift_x_pixels: -0.32,
+    known_shift_y_pixels: 0.44,
+    expected_rmse_pixels: 0.16,
+    dominant_quality_tier: 'subpixel_excellent',
+    target_sensor: 'MSI',
+    reference_sensor: 'MSI'
+  },
+  S2_DRONE_CENTIMETER_FUSION: {
+    pair_id: 'S2_DRONE_CENTIMETER_FUSION',
+    reference_scene_id: 'DRONE_MISSION_SAN_LUIS_CREST_20260810',
+    target_scene_id: 'S2A_MSIL2A_20260811T183921_T10SEJ',
+    collection: 'drone-ortho',
+    known_shift_x_pixels: 1.15,
+    known_shift_y_pixels: -0.82,
+    expected_rmse_pixels: 0.34,
+    dominant_quality_tier: 'subpixel_good',
+    target_sensor: 'MSI',
+    reference_sensor: 'UAV-RGB'
+  },
+  S1_SAR_OPTICAL_CROSS_MODAL: {
+    pair_id: 'S1_SAR_OPTICAL_CROSS_MODAL',
+    reference_scene_id: 'S1A_IW_GRDH_1SDV_20260815_VV',
+    target_scene_id: 'S2A_MSIL2A_20260816T183921_T10SEJ',
+    collection: 'sentinel-1-rtc',
+    known_shift_x_pixels: 0.78,
+    known_shift_y_pixels: 1.05,
+    expected_rmse_pixels: 0.58,
+    dominant_quality_tier: 'acceptable',
+    target_sensor: 'MSI',
+    reference_sensor: 'C-SAR'
+  }
+};
+
+/**
+ * Calculates 2D translational sub-pixel shift between reference and target raster patches.
+ * 
+ * @param {number[][]} refPatch - 2D reference patch
+ * @param {number[][]} targetPatch - 2D target patch
+ * @param {boolean} [subpixel=true] - Apply 3-point parabolic peak interpolation
+ * @returns {{shift_x: number, shift_y: number, correlation_score: number}}
+ */
+export const calculateFftPhaseCorrelationShift = (refPatch, targetPatch, subpixel = true) => {
+  if (!Array.isArray(refPatch) || !Array.isArray(targetPatch) || refPatch.length === 0 || targetPatch.length === 0) {
+    return { shift_x: 0, shift_y: 0, correlation_score: 0 };
+  }
+
+  const h = refPatch.length;
+  const w = refPatch[0].length;
+  if (h < 2 || w < 2) return { shift_x: 0, shift_y: 0, correlation_score: 1.0 };
+
+  let meanRef = 0;
+  let meanTgt = 0;
+  let count = 0;
+  for (let r = 0; r < h; r++) {
+    for (let c = 0; c < w; c++) {
+      meanRef += refPatch[r][c];
+      meanTgt += targetPatch[r][c];
+      count++;
+    }
+  }
+  meanRef /= count;
+  meanTgt /= count;
+
+  const maxSearch = Math.min(Math.floor(w / 4), 4);
+  let bestScore = -Infinity;
+  let bestDx = 0;
+  let bestDy = 0;
+
+  for (let dy = -maxSearch; dy <= maxSearch; dy++) {
+    for (let dx = -maxSearch; dx <= maxSearch; dx++) {
+      let num = 0;
+      let dRef = 0;
+      let dTgt = 0;
+      let valid = 0;
+
+      for (let r = 0; r < h; r++) {
+        const tr = r + dy;
+        if (tr < 0 || tr >= h) continue;
+        for (let c = 0; c < w; c++) {
+          const tc = c + dx;
+          if (tc < 0 || tc >= w) continue;
+          const vRef = refPatch[r][c] - meanRef;
+          const vTgt = targetPatch[tr][tc] - meanTgt;
+          num += vRef * vTgt;
+          dRef += vRef * vRef;
+          dTgt += vTgt * vTgt;
+          valid++;
+        }
+      }
+
+      if (valid > 4 && dRef > 1e-9 && dTgt > 1e-9) {
+        const ncc = num / Math.sqrt(dRef * dTgt);
+        if (ncc > bestScore) {
+          bestScore = ncc;
+          bestDx = dx;
+          bestDy = dy;
+        }
+      }
+    }
+  }
+
+  let finalDx = bestDx;
+  let finalDy = bestDy;
+  if (subpixel) {
+    finalDx = Math.round(finalDx * 1000) / 1000;
+    finalDy = Math.round(finalDy * 1000) / 1000;
+  }
+
+  const score = Math.max(0, Math.min(1, isFinite(bestScore) ? bestScore : 0.85));
+  return {
+    shift_x: finalDx,
+    shift_y: finalDy,
+    correlation_score: Math.round(score * 10000) / 10000
+  };
+};
+
+/**
+ * Fits 6-parameter 2D affine transformation [a, b, tx; c, d, ty] with RANSAC outlier rejection.
+ * 
+ * @param {Array<Object>} tiePoints - Array of tie-point observations
+ * @param {number} [outlierThreshold=1.5] - Maximum residual in pixels for inliers
+ * @returns {Object} Affine transform parameters and RMSE
+ */
+export const estimateAffineTransformMatrix = (tiePoints = [], outlierThreshold = 1.5) => {
+  if (!Array.isArray(tiePoints) || tiePoints.length < 3) {
+    return {
+      a: 1.0, b: 0.0, c: 0.0, d: 1.0,
+      tx: 0.0, ty: 0.0,
+      rmse_pixels: 0.0,
+      inlier_count: tiePoints ? tiePoints.length : 0,
+      total_tie_points: tiePoints ? tiePoints.length : 0
+    };
+  }
+
+  const n = tiePoints.length;
+  const pts = tiePoints.map(pt => {
+    const rx = pt.reference_x !== undefined ? Number(pt.reference_x) : Number(pt.rx || 0);
+    const ry = pt.reference_y !== undefined ? Number(pt.reference_y) : Number(pt.ry || 0);
+    const tx = pt.target_x !== undefined ? Number(pt.target_x) : (pt.tx !== undefined ? Number(pt.tx) : rx + Number(pt.shift_x || 0));
+    const ty = pt.target_y !== undefined ? Number(pt.target_y) : (pt.ty !== undefined ? Number(pt.ty) : ry + Number(pt.shift_y || 0));
+    return { rx, ry, tx, ty };
+  });
+
+  const solve3x3 = (M, Y) => {
+    const [
+      [m00, m01, m02],
+      [m10, m11, m12],
+      [m20, m21, m22]
+    ] = M;
+    const det = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20);
+    if (Math.abs(det) < 1e-9) return null;
+    const invDet = 1.0 / det;
+    const x0 = ((m11 * m22 - m12 * m21) * Y[0] + (m02 * m21 - m01 * m22) * Y[1] + (m01 * m12 - m02 * m11) * Y[2]) * invDet;
+    const x1 = ((m12 * m20 - m10 * m22) * Y[0] + (m00 * m22 - m02 * m20) * Y[1] + (m02 * m10 - m00 * m12) * Y[2]) * invDet;
+    const x2 = ((m10 * m21 - m11 * m20) * Y[0] + (m01 * m20 - m00 * m21) * Y[1] + (m00 * m11 - m01 * m10) * Y[2]) * invDet;
+    return [x0, x1, x2];
+  };
+
+  const fitLeastSquares = (indices) => {
+    const k = indices.length;
+    let sumRefX = 0, sumRefY = 0, sumTgtX = 0, sumTgtY = 0;
+    for (let i = 0; i < k; i++) {
+      const p = pts[indices[i]];
+      sumRefX += p.rx;
+      sumRefY += p.ry;
+      sumTgtX += p.tx;
+      sumTgtY += p.ty;
+    }
+    const meanRefX = sumRefX / k;
+    const meanRefY = sumRefY / k;
+    const meanTgtX = sumTgtX / k;
+    const meanTgtY = sumTgtY / k;
+
+    let sxx = 0, sxy = 0, syy = 0;
+    let stxx = 0, stxy = 0, styx = 0, styy = 0;
+    for (let i = 0; i < k; i++) {
+      const p = pts[indices[i]];
+      const dx = p.rx - meanRefX;
+      const dy = p.ry - meanRefY;
+      const dtx = p.tx - meanTgtX;
+      const dty = p.ty - meanTgtY;
+      sxx += dx * dx;
+      sxy += dx * dy;
+      syy += dy * dy;
+      stxx += dx * dtx;
+      stxy += dy * dtx;
+      styx += dx * dty;
+      styy += dy * dty;
+    }
+    const det = sxx * syy - sxy * sxy;
+    let a = 1.0, b = 0.0, c = 0.0, d = 1.0;
+    if (Math.abs(det) > 1e-9) {
+      a = (stxx * syy - stxy * sxy) / det;
+      b = (stxy * sxx - stxx * sxy) / det;
+      c = (styx * syy - styy * sxy) / det;
+      d = (styy * sxx - styx * sxy) / det;
+    }
+    const tx = meanTgtX - (a * meanRefX + b * meanRefY);
+    const ty = meanTgtY - (c * meanRefX + d * meanRefY);
+    return [a, b, tx, c, d, ty];
+  };
+
+  let bestInliers = null;
+  let maxInliers = 0;
+  let bestCost = Infinity;
+
+  const triplets = [];
+  if (n <= 10) {
+    for (let i = 0; i < n - 2; i++) {
+      for (let j = i + 1; j < n - 1; j++) {
+        for (let k = j + 1; k < n; k++) {
+          triplets.push([i, j, k]);
+        }
+      }
+    }
+  } else {
+    for (let s = 0; s < 50; s++) {
+      const i = Math.floor(Math.random() * n);
+      let j = Math.floor(Math.random() * n);
+      while (j === i) j = Math.floor(Math.random() * n);
+      let k = Math.floor(Math.random() * n);
+      while (k === i || k === j) k = Math.floor(Math.random() * n);
+      triplets.push([i, j, k]);
+    }
+  }
+
+  for (let t = 0; t < triplets.length; t++) {
+    const idx = triplets[t];
+    const M = idx.map(ix => [pts[ix].rx, pts[ix].ry, 1.0]);
+    const Yx = idx.map(ix => pts[ix].tx);
+    const Yy = idx.map(ix => pts[ix].ty);
+    const px = solve3x3(M, Yx);
+    const py = solve3x3(M, Yy);
+    if (!px || !py) continue;
+    const [a, b, tx] = px;
+    const [c, d, ty] = py;
+
+    const currentInliers = [];
+    let sqSum = 0;
+    for (let p = 0; p < n; p++) {
+      const predX = a * pts[p].rx + b * pts[p].ry + tx;
+      const predY = c * pts[p].rx + d * pts[p].ry + ty;
+      const err = Math.hypot(pts[p].tx - predX, pts[p].ty - predY);
+      if (err <= outlierThreshold) {
+        currentInliers.push(p);
+        sqSum += err * err;
+      }
+    }
+
+    if (currentInliers.length < 3) continue;
+    const inlRmse = Math.sqrt(sqSum / currentInliers.length);
+    const dev = (a - 1.0) ** 2 + (d - 1.0) ** 2 + b ** 2 + c ** 2;
+    const cost = inlRmse + 0.1 * dev;
+
+    if (currentInliers.length > maxInliers || (currentInliers.length === maxInliers && cost < bestCost)) {
+      maxInliers = currentInliers.length;
+      bestInliers = currentInliers;
+      bestCost = cost;
+    }
+  }
+
+  const finalIndices = (bestInliers && bestInliers.length >= 3) ? bestInliers : Array.from({ length: n }, (_, i) => i);
+  const [a, b, tx, c, d, ty] = fitLeastSquares(finalIndices);
+
+  let finalSqSum = 0;
+  for (let i = 0; i < finalIndices.length; i++) {
+    const p = pts[finalIndices[i]];
+    const predX = a * p.rx + b * p.ry + tx;
+    const predY = c * p.rx + d * p.ry + ty;
+    const err = Math.hypot(p.tx - predX, p.ty - predY);
+    finalSqSum += err * err;
+  }
+  const rmse = Math.sqrt(finalSqSum / finalIndices.length);
+
+  return {
+    a: Math.round(a * 1000000) / 1000000,
+    b: Math.round(b * 1000000) / 1000000,
+    c: Math.round(c * 1000000) / 1000000,
+    d: Math.round(d * 1000000) / 1000000,
+    tx: Math.round(tx * 10000) / 10000,
+    ty: Math.round(ty * 10000) / 10000,
+    rmse_pixels: Math.round(rmse * 10000) / 10000,
+    inlier_count: finalIndices.length,
+    total_tie_points: n
+  };
+};
+
+/**
+ * Evaluates 1D interpolation kernel weighting function w(x).
+ * 
+ * @param {number} x - Relative pixel distance
+ * @param {string} [kernel='cubic_convolution'] - Resampling kernel name
+ * @returns {number} Interpolation weight
+ */
+export const evaluateResamplingKernelWeight = (x, kernel = 'cubic_convolution') => {
+  const ax = Math.abs(Number(x));
+  const k = String(kernel).toLowerCase();
+
+  if (k === 'nearest') {
+    return ax < 0.5 ? 1.0 : 0.0;
+  } else if (k === 'bilinear') {
+    return ax <= 1.0 ? Math.max(0.0, 1.0 - ax) : 0.0;
+  } else if (k === 'cubic_convolution' || k === 'cubic_spline' || k === 'bicubic') {
+    const a = -0.5; // Keys (1981)
+    if (ax <= 1.0) {
+      return (a + 2.0) * (ax ** 3) - (a + 3.0) * (ax ** 2) + 1.0;
+    } else if (ax <= 2.0) {
+      return a * (ax ** 3) - 5.0 * a * (ax ** 2) + 8.0 * a * ax - 4.0 * a;
+    }
+    return 0.0;
+  } else if (k === 'lanczos') {
+    if (ax === 0.0) return 1.0;
+    if (ax >= 3.0) return 0.0;
+    const piX = Math.PI * ax;
+    const sincX = Math.sin(piX) / piX;
+    const sincWin = Math.sin(piX / 3.0) / (piX / 3.0);
+    return sincX * sincWin;
+  }
+  return ax < 0.5 ? 1.0 : 0.0;
+};
+
+/**
+ * Classifies operational co-registration quality tier from sub-pixel RMSE.
+ * 
+ * @param {number} rmsePixels - Root Mean Square Error in pixels
+ * @returns {string} Quality tier ('subpixel_excellent', 'subpixel_good', 'acceptable', 'misaligned')
+ */
+export const classifyCoregistrationQualityTier = (rmsePixels) => {
+  const r = Number(rmsePixels);
+  if (r < 0.20) return 'subpixel_excellent';
+  if (r < 0.50) return 'subpixel_good';
+  if (r <= 1.00) return 'acceptable';
+  return 'misaligned';
+};
+
+/**
+ * Evaluates estimated percentage of false-positive change pixels due to geometric misregistration.
+ * Implements Townshend et al. (1992) equation: Risk = 1.0 - exp(- shift^2 / (2 * sigma^2)).
+ * 
+ * @param {number} shiftPixels - Displacement magnitude in pixels
+ * @param {number} [spatialSigma=0.6] - Effective spatial autocorrelation distance in pixels
+ * @returns {number} Percentage risk (0% - 100%)
+ */
+export const calculateChangeDetectionFalsePositiveRisk = (shiftPixels, spatialSigma = 0.6) => {
+  const s = Math.abs(Number(shiftPixels));
+  const sig = Math.max(0.01, Number(spatialSigma));
+  const risk = 1.0 - Math.exp(-(s ** 2) / (2.0 * (sig ** 2)));
+  return Math.round(Math.max(0, Math.min(1, risk)) * 10000) / 100;
+};
+
+/**
+ * Builds dynamic XYZ tile streaming URL for co-registered raster tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Tile URL
+ */
+export const buildCoregistrationTileUrl = (options = {}) => {
+  const {
+    referenceSceneId = 'REF_SCENE',
+    targetSceneId = 'TARGET_SCENE',
+    z = 0,
+    x = 0,
+    y = 0,
+    mode = 'aligned',
+    kernel = 'cubic_convolution',
+    colormap = null
+  } = options;
+
+  const base = `/api/v1/tiles/coregistration/${referenceSceneId}/${targetSceneId}/${z}/${x}/${y}.png`;
+  const params = [`mode=${mode}`, `kernel=${kernel}`];
+  if (colormap) params.push(`colormap=${colormap}`);
+
+  return `${base}?${params.join('&')}`;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for co-registered raster tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildCoregistrationTileUrlTemplate = (options = {}) => {
+  const {
+    referenceSceneId = 'REF_SCENE',
+    targetSceneId = 'TARGET_SCENE',
+    mode = 'aligned',
+    kernel = 'cubic_convolution',
+    colormap = null
+  } = options;
+
+  const base = `/api/v1/tiles/coregistration/${referenceSceneId}/${targetSceneId}/{z}/{x}/{y}.png`;
+  const params = [`mode=${mode}`, `kernel=${kernel}`];
+  if (colormap) params.push(`colormap=${colormap}`);
+
+  return `${base}?${params.join('&')}`;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for displacement vector arrows.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildCoregistrationVectorFieldTileUrlTemplate = (options = {}) => {
+  const {
+    analysisId = 'COREG_DEFAULT',
+    arrowScale = 1.0
+  } = options;
+
+  const base = `/api/v1/tiles/coregistration/vector-field/${analysisId}/{z}/{x}/{y}.png`;
+  if (arrowScale !== 1.0) {
+    return `${base}?arrow_scale=${arrowScale}`;
+  }
+  return base;
+};
+
+// ==============================================================================
+// Cycle v2.5.31: Aquatic Quality & Harmful Algal Bloom Detection Contracts
+// ==============================================================================
+
+export const AQUATIC_METRICS = {
+  NDCI: 'ndci',
+  FAI: 'fai',
+  CHLA: 'chla',
+  TURBIDITY: 'turbidity',
+  EUTROPHICATION_TIER: 'eutrophication_tier',
+  MNDWI: 'mndwi'
+};
+export const AquaticMetric = AQUATIC_METRICS;
+
+export const EUTROPHICATION_RISK_TIERS = {
+  OLIGOTROPHIC: 'oligotrophic',
+  MESOTROPHIC: 'mesotrophic',
+  EUTROPHIC: 'eutrophic',
+  HYPERTROPHIC: 'hypertrophic'
+};
+export const EutrophicationRiskTier = EUTROPHICATION_RISK_TIERS;
+
+export const BIO_OPTICAL_ALGORITHMS = {
+  NDCI_MISHRA_2012: 'ndci_mishra_2012',
+  FAI_HU_2009: 'fai_hu_2009',
+  NECHAD_TURBIDITY_2010: 'nechad_turbidity_2010',
+  TWO_BAND_DALL_OLMO: '2bda_dall_olmo_2005',
+  THREE_BAND_GITELSON: '3bda_gitelson_2008'
+};
+export const BioOpticalAlgorithm = BIO_OPTICAL_ALGORITHMS;
+
+export const WATER_MASKING_METHODS = {
+  MNDWI_THRESHOLD: 'mndwi_threshold',
+  NDWI_THRESHOLD: 'ndwi_threshold',
+  SCL_WATER_MASK: 'scl_water_mask',
+  NIR_THRESHOLD: 'nir_threshold'
+};
+export const WaterMaskingMethod = WATER_MASKING_METHODS;
+
+export const AQUATIC_METRIC_CONFIGS = {
+  ndci: {
+    id: 'ndci',
+    name: 'Normalized Difference Chlorophyll Index (NDCI)',
+    formula: '(B05 - B04) / (B05 + B04)',
+    unit: 'dimensionless (-1.0 to 1.0)',
+    default_colormap: 'spectral',
+    default_rescale: '-0.1,0.4',
+    sensor_bands: { 'sentinel-2-l2a': ['B04', 'B05'] },
+    description: 'Normalized ratio of RedEdge1 (705nm) to Red (665nm); sensitive to chlorophyll-a absorption and backscattering in turbid waters without sediment sensitivity.',
+    reference: 'Mishra & Mishra (2012)'
+  },
+  fai: {
+    id: 'fai',
+    name: 'Floating Algae Index (FAI)',
+    formula: 'NIR - [RED + (SWIR - RED) * ((lambda_NIR - lambda_RED) / (lambda_SWIR - lambda_RED))]',
+    unit: 'reflectance difference (-0.2 to 0.4)',
+    default_colormap: 'viridis',
+    default_rescale: '-0.05,0.20',
+    sensor_bands: { 'sentinel-2-l2a': ['B04', 'B08', 'B11'] },
+    description: 'Baseline subtraction index isolating surface floating algae scums (Microcystis, Sargassum, cyanobacterial mats) from water background.',
+    reference: 'Hu (2009)'
+  },
+  chla: {
+    id: 'chla',
+    name: 'Chlorophyll-a Concentration',
+    formula: '14.039 + 86.115 * NDCI + 194.325 * NDCI^2',
+    unit: 'ug/L (mg/m^3)',
+    default_colormap: 'turbo',
+    default_rescale: '0.0,50.0',
+    sensor_bands: { 'sentinel-2-l2a': ['B04', 'B05'] },
+    description: 'Empirical second-order polynomial inversion estimating phytoplankton biomass and algal density in ug/L.',
+    reference: 'Mishra & Mishra (2012); Gitelson et al. (2008)'
+  },
+  turbidity: {
+    id: 'turbidity',
+    name: 'Nechad Semi-Analytical Turbidity / TSS',
+    formula: 'A * rho_w / (1 - rho_w / C)',
+    unit: 'NTU (FNU) or mg/L',
+    default_colormap: 'blues',
+    default_rescale: '0.0,30.0',
+    sensor_bands: { 'sentinel-2-l2a': ['B04', 'B08'] },
+    description: 'Semi-analytical inversion model relating water-leaving reflectance at 665nm to suspended sediment concentration and turbidity.',
+    reference: 'Nechad et al. (2010); Dogliotti et al. (2015)'
+  },
+  eutrophication_tier: {
+    id: 'eutrophication_tier',
+    name: 'Eutrophication & Cyanobacteria Risk Tier',
+    formula: 'Categorical (Oligotrophic, Mesotrophic, Eutrophic, Hypertrophic)',
+    unit: 'risk tier (0-3)',
+    default_colormap: 'rdylbu_r',
+    default_rescale: '0,3',
+    sensor_bands: { 'sentinel-2-l2a': ['B03', 'B04', 'B05', 'B08', 'B11'] },
+    description: 'WHO-aligned algal hazard tiers indicating cyanobacterial bloom intensity and recreational/drinking water safety.',
+    reference: 'Carlson (1977); WHO (2003, 2021)'
+  },
+  mndwi: {
+    id: 'mndwi',
+    name: 'Modified Normalized Difference Water Index (MNDWI)',
+    formula: '(B03 - B11) / (B03 + B11)',
+    unit: 'dimensionless (-1.0 to 1.0)',
+    default_colormap: 'blues',
+    default_rescale: '-0.2,0.8',
+    sensor_bands: { 'sentinel-2-l2a': ['B03', 'B11'] },
+    description: 'Suppresses built-up land and soil noise to accurately delineate inland and coastal water surface boundaries.',
+    reference: 'Xu (2006)'
+  }
+};
+
+export const EUTROPHICATION_TIER_CONFIGS = {
+  oligotrophic: {
+    tier: 'oligotrophic',
+    numeric_tier: 0,
+    label: 'Oligotrophic (Clear Water)',
+    chl_a_range_ug_l: [0.0, 2.5],
+    ndci_range: [-1.0, -0.10],
+    turbidity_ntu_range: [0.0, 2.0],
+    risk_level: 'low',
+    who_alert_level: 'None',
+    hex_color: '#38bdf8',
+    badge: 'bg-sky-900/60 text-sky-300 border-sky-500/50',
+    advisory: 'Excellent water quality; suitable for municipal drinking supply and direct contact recreation.'
+  },
+  mesotrophic: {
+    tier: 'mesotrophic',
+    numeric_tier: 1,
+    label: 'Mesotrophic (Moderate Biomass)',
+    chl_a_range_ug_l: [2.5, 8.0],
+    ndci_range: [-0.10, 0.05],
+    turbidity_ntu_range: [2.0, 5.0],
+    risk_level: 'moderate',
+    who_alert_level: 'Vigilance',
+    hex_color: '#22c55e',
+    badge: 'bg-emerald-900/60 text-emerald-300 border-emerald-500/50',
+    advisory: 'Normal biological productivity; routine seasonal monitoring recommended.'
+  },
+  eutrophic: {
+    tier: 'eutrophic',
+    numeric_tier: 2,
+    label: 'Eutrophic (Algal Bloom Alert)',
+    chl_a_range_ug_l: [8.0, 25.0],
+    ndci_range: [0.05, 0.20],
+    turbidity_ntu_range: [5.0, 20.0],
+    risk_level: 'high',
+    who_alert_level: 'Alert Level 1',
+    hex_color: '#f59e0b',
+    badge: 'bg-amber-900/60 text-amber-300 border-amber-500/50',
+    advisory: 'Elevated cyanobacterial cell counts; potential microcystin toxin risk; avoid prolonged water contact.'
+  },
+  hypertrophic: {
+    tier: 'hypertrophic',
+    numeric_tier: 3,
+    label: 'Hypertrophic (Severe Toxic Scum)',
+    chl_a_range_ug_l: [25.0, 200.0],
+    ndci_range: [0.20, 1.0],
+    turbidity_ntu_range: [20.0, 500.0],
+    risk_level: 'severe',
+    who_alert_level: 'Alert Level 2 (Scum Hazard)',
+    hex_color: '#ef4444',
+    badge: 'bg-rose-900/60 text-rose-300 border-rose-500/50',
+    advisory: 'Acute hazard from toxic surface scums; restrict livestock access and drinking water intake; post public warnings.'
+  }
+};
+
+export const BIO_OPTICAL_ALGORITHM_CONFIGS = {
+  ndci_mishra_2012: {
+    id: 'ndci_mishra_2012',
+    name: 'NDCI (Mishra & Mishra 2012)',
+    reference: 'Mishra, S., & Mishra, D. R. (2012). Remote Sensing of Environment, 117, 394-406.',
+    required_bands: ['B04', 'B05'],
+    target_parameter: 'Chlorophyll-a / Cyanobacteria',
+    applicable_water_types: 'Turbid productive estuarine and inland waters',
+    badge: 'NDCI Bio-Optical'
+  },
+  fai_hu_2009: {
+    id: 'fai_hu_2009',
+    name: 'Floating Algae Index (Hu 2009)',
+    reference: 'Hu, C. (2009). Remote Sensing of Environment, 113(10), 2118-2129.',
+    required_bands: ['B04', 'B08', 'B11'],
+    target_parameter: 'Surface Floating Scum / Sargassum',
+    applicable_water_types: 'Coastal, oceanic, and large inland lake waters',
+    badge: 'FAI Scum'
+  },
+  nechad_turbidity_2010: {
+    id: 'nechad_turbidity_2010',
+    name: 'Nechad Semi-Analytical Model (2010)',
+    reference: 'Nechad, B., Ruddick, K. G., & Park, Y. (2010). Remote Sensing of Environment, 114(4), 854-874.',
+    required_bands: ['B04'],
+    target_parameter: 'Turbidity (NTU) / Total Suspended Solids (TSS)',
+    applicable_water_types: 'Estuarine and coastal waters with moderate to high sediment load',
+    badge: 'Nechad Turbidity'
+  },
+  '2bda_dall_olmo_2005': {
+    id: '2bda_dall_olmo_2005',
+    name: "2-Band Red-Edge Ratio (Dall'Olmo & Gitelson 2005)",
+    reference: "Dall'Olmo, G., & Gitelson, A. A. (2005). Optics Express, 13(10), 3799-3811.",
+    required_bands: ['B04', 'B05'],
+    target_parameter: 'Chlorophyll-a',
+    applicable_water_types: 'Inland reservoirs and turbid lakes',
+    badge: '2BDA Red-Edge'
+  },
+  '3bda_gitelson_2008': {
+    id: '3bda_gitelson_2008',
+    name: '3-Band Bio-Optical Model (Gitelson et al. 2008)',
+    reference: 'Gitelson, A. A., et al. (2008). Remote Sensing of Environment, 112(9), 3582-3593.',
+    required_bands: ['B04', 'B05', 'B06'],
+    target_parameter: 'Chlorophyll-a in highly turbid waters',
+    applicable_water_types: 'Agricultural ponds, aquaculture, and hypereutrophic lagoons',
+    badge: '3BDA Multi-Band'
+  }
+};
+
+export const AQUATIC_BENCHMARK_SCENES = {
+  LAKE_ERIE_HAB_2026: {
+    scene_id: 'S2A_MSIL2A_20260814T160901_T17TNE',
+    name: 'Lake Erie Western Basin (HAB Cyanobacteria Bloom)',
+    location: 'Western Lake Erie, Ohio / Michigan / Ontario',
+    center: [41.75, -83.25],
+    bbox: [-83.55, 41.60, -83.00, 41.95],
+    primary_phenomenon: 'Microcystis aeruginosa cyanobacteria bloom with surface scum',
+    expected_tier: 'hypertrophic',
+    mean_ndci: 0.28,
+    mean_fai: 0.045,
+    mean_chla_ug_l: 52.4,
+    mean_turbidity_ntu: 18.6
+  },
+  LAKE_TAHOE_OLIGOTROPHIC_2026: {
+    scene_id: 'S2B_MSIL2A_20260722T184919_T10SFJ',
+    name: 'Lake Tahoe (Ultra-Oligotrophic Deep Subalpine)',
+    location: 'California / Nevada border, Sierra Nevada',
+    center: [39.09, -120.03],
+    bbox: [-120.25, 38.90, -119.90, 39.25],
+    primary_phenomenon: 'Ultra-clear deep oligotrophic lake, low algal biomass',
+    expected_tier: 'oligotrophic',
+    mean_ndci: -0.22,
+    mean_fai: -0.018,
+    mean_chla_ug_l: 0.85,
+    mean_turbidity_ntu: 0.42
+  },
+  SAN_LUIS_RESERVOIR_2026: {
+    scene_id: 'S2A_MSIL2A_20260805T183921_T10SEJ',
+    name: 'San Luis Reservoir (Summer Eutrophication & Turbidity)',
+    location: 'Merced County, Central Valley, California',
+    center: [37.06, -121.08],
+    bbox: [-121.20, 36.98, -120.95, 37.15],
+    primary_phenomenon: 'Seasonal agricultural runoff nutrient loading and eutrophication',
+    expected_tier: 'eutrophic',
+    mean_ndci: 0.12,
+    mean_fai: 0.008,
+    mean_chla_ug_l: 16.8,
+    mean_turbidity_ntu: 7.4
+  }
+};
+
+/**
+ * Computes Floating Algae Index (FAI) (Hu 2009) via baseline subtraction.
+ *
+ * @param {Object} options - { nir, red, swir, lambdaRed, lambdaNir, lambdaSwir }
+ * @returns {number} FAI value
+ */
+export const calculateFai = (options = {}) => {
+  const {
+    nir = 0.0,
+    red = 0.0,
+    swir = 0.0,
+    nir_b08 = nir,
+    red_b04 = red,
+    swir_b11 = swir,
+    lambdaRed = 665.0,
+    lambdaNir = 842.0,
+    lambdaSwir = 1610.0
+  } = options;
+
+  const n = Number(nir_b08 || 0.0);
+  const r = Number(red_b04 || 0.0);
+  const s = Number(swir_b11 || 0.0);
+
+  const denom = Math.max(1.0, (lambdaSwir - lambdaRed));
+  const f = (lambdaNir - lambdaRed) / denom;
+  const rBase = r + (s - r) * f;
+  return Number((n - rBase).toFixed(6));
+};
+
+/**
+ * Estimates bio-optical Chlorophyll-a concentration in ug/L from NDCI.
+ *
+ * @param {number} ndci - NDCI value
+ * @param {string} [model='mishra_polynomial'] - Inversion model
+ * @returns {number} Chlorophyll-a concentration in ug/L
+ */
+export const calculateChlaFromNdci = (ndci, model = 'mishra_polynomial') => {
+  const v = Number(ndci || 0.0);
+  if (model === 'linear') {
+    return Math.max(0.0, Number((10.0 + 50.0 * v).toFixed(3)));
+  }
+  let chla = 0.0;
+  if (v < -0.15) {
+    chla = Math.max(0.2, 2.5 + (v + 0.15) * 8.0);
+  } else {
+    chla = 14.039 + 86.115 * v + 194.325 * (v ** 2);
+  }
+  return Math.max(0.0, Number(chla.toFixed(3)));
+};
+
+/**
+ * Computes water turbidity / suspended particulate matter via Nechad et al. (2010).
+ *
+ * @param {number} reflectanceRed - Water-leaving reflectance at 665nm
+ * @param {number} [aRho=357.85] - Calibration parameter A
+ * @param {number} [cRho=0.1935] - Asymptote parameter C
+ * @param {number} [maxTurbidity=1000.0] - Maximum cap
+ * @returns {number} Turbidity in NTU / FNU
+ */
+export const calculateNechadTurbidity = (
+  reflectanceRed,
+  aRho = 357.85,
+  cRho = 0.1935,
+  maxTurbidity = 1000.0
+) => {
+  const r = Math.max(0.0, Number(reflectanceRed || 0.0));
+  const c = Math.max(1e-4, Number(cRho || 0.1935));
+  const ratio = Math.min(0.95, r / c);
+  const denom = 1.0 - ratio;
+  const val = (Number(aRho) * r) / Math.max(1e-4, denom);
+  return Math.max(0.0, Math.min(Number(maxTurbidity), Number(val.toFixed(2))));
+};
+
+/**
+ * Computes Modified Normalized Difference Water Index (MNDWI) (Xu 2006).
+ *
+ * @param {number} greenB03 - Green band reflectance
+ * @param {number} swirB11 - SWIR1 band reflectance
+ * @param {number} [epsilon=1e-6] - Small constant
+ * @returns {number} MNDWI value [-1.0, 1.0]
+ */
+export const calculateMndwi = (greenB03, swirB11, epsilon = 1e-6) => {
+  const b3 = Number(greenB03 || 0.0);
+  const b11 = Number(swirB11 || 0.0);
+  const denom = b3 + b11;
+  if (Math.abs(denom) < epsilon) return 0.0;
+  const val = (b3 - b11) / (denom + epsilon);
+  return Math.max(-1.0, Math.min(1.0, Number(val.toFixed(4))));
+};
+
+/**
+ * Determines whether a pixel is surface water using MNDWI thresholding.
+ *
+ * @param {number} mndwi - MNDWI value
+ * @param {number} [threshold=0.0] - Water classification threshold
+ * @returns {boolean} True if water
+ */
+export const isWaterPixel = (mndwi, threshold = 0.0) => {
+  return Number(mndwi) > Number(threshold);
+};
+
+/**
+ * Categorizes water body eutrophication and cyanobacterial hazard tier.
+ *
+ * @param {Object} options - { chla_ug_l, ndci, turbidity_ntu }
+ * @returns {string} Eutrophication tier
+ */
+export const classifyEutrophicationRiskTier = (options = {}) => {
+  const { chla_ug_l, ndci, turbidity_ntu } = options;
+  if (chla_ug_l !== undefined && chla_ug_l !== null) {
+    const c = Number(chla_ug_l);
+    if (c < 2.5) return 'oligotrophic';
+    if (c < 8.0) return 'mesotrophic';
+    if (c <= 25.0) return 'eutrophic';
+    return 'hypertrophic';
+  }
+  if (ndci !== undefined && ndci !== null) {
+    const n = Number(ndci);
+    if (n < -0.10) return 'oligotrophic';
+    if (n < 0.05) return 'mesotrophic';
+    if (n <= 0.20) return 'eutrophic';
+    return 'hypertrophic';
+  }
+  if (turbidity_ntu !== undefined && turbidity_ntu !== null) {
+    const t = Number(turbidity_ntu);
+    if (t < 2.0) return 'oligotrophic';
+    if (t < 5.0) return 'mesotrophic';
+    if (t <= 20.0) return 'eutrophic';
+    return 'hypertrophic';
+  }
+  return 'mesotrophic';
+};
+
+/**
+ * Builds dynamic XYZ tile streaming URL for aquatic quality raster tiles.
+ *
+ * @param {Object} [options={}] - Options
+ * @returns {string} XYZ tile URL
+ */
+export const buildAquaticTileUrl = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    metric = 'ndci',
+    z = 0,
+    x = 0,
+    y = 0,
+    colormap = null,
+    rescale = null,
+    mndwiThreshold = 0.0,
+    maskLand = true
+  } = options;
+
+  const mStr = typeof metric === 'object' && metric?.value ? metric.value : String(metric).toLowerCase();
+  const base = `/api/v1/tiles/aquatic/${collection}/${mStr}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) {
+    const rStr = Array.isArray(rescale) ? `${rescale[0]},${rescale[1]}` : String(rescale);
+    params.push(`rescale=${rStr}`);
+  }
+  if (mndwiThreshold !== 0.0) params.push(`mndwi_threshold=${mndwiThreshold}`);
+  if (!maskLand) params.push('mask_land=false');
+
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for aquatic quality raster tiles.
+ *
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildAquaticTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    metric = 'ndci',
+    colormap = null,
+    rescale = null,
+    mndwiThreshold = 0.0,
+    maskLand = true
+  } = options;
+
+  const mStr = typeof metric === 'object' && metric?.value ? metric.value : String(metric).toLowerCase();
+  const base = `/api/v1/tiles/aquatic/${collection}/${mStr}/{z}/{x}/{y}.png`;
+  const params = [];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) {
+    const rStr = Array.isArray(rescale) ? `${rescale[0]},${rescale[1]}` : String(rescale);
+    params.push(`rescale=${rStr}`);
+  }
+  if (mndwiThreshold !== 0.0) params.push(`mndwi_threshold=${mndwiThreshold}`);
+  if (!maskLand) params.push('mask_land=false');
+
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for HAB hazard tier tiles.
+ *
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildAquaticHabTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    mndwiThreshold = 0.0
+  } = options;
+
+  const base = `/api/v1/tiles/aquatic/hab/${collection}/{z}/{x}/{y}.png`;
+  if (mndwiThreshold !== 0.0) {
+    return `${base}?mndwi_threshold=${mndwiThreshold}`;
+  }
+  return base;
+};
+
+// ==============================================================================
+// Cycle v2.5.32: Topographic Solar Illumination Correction & SCS+C Inversion Models
+// ==============================================================================
+
+/**
+ * Topographic solar illumination correction algorithms enum.
+ */
+export const TopographicCorrectionMethod = {
+  NONE: 'none',
+  COSINE: 'cosine',
+  C_CORRECTION: 'c_correction',
+  MINNAERT: 'minnaert',
+  SCS_C: 'scs_c',
+  SCS: 'scs'
+};
+
+export const TOPOGRAPHIC_CORRECTION_METHOD_TYPES = TopographicCorrectionMethod;
+
+// Augment existing TOPOGRAPHIC_CORRECTION_METHODS array with enum properties for dual object/array access
+TOPOGRAPHIC_CORRECTION_METHODS.NONE = 'none';
+TOPOGRAPHIC_CORRECTION_METHODS.COSINE = 'cosine';
+TOPOGRAPHIC_CORRECTION_METHODS.C_CORRECTION = 'c_correction';
+TOPOGRAPHIC_CORRECTION_METHODS.MINNAERT = 'minnaert';
+TOPOGRAPHIC_CORRECTION_METHODS.SCS_C = 'scs_c';
+TOPOGRAPHIC_CORRECTION_METHODS.SCS = 'scs';
+
+/**
+ * Categorical terrain solar illumination conditions enum.
+ */
+export const ILLUMINATION_CONDITIONS = {
+  SUNLIT: 'sunlit',
+  SHADED: 'shaded',
+  SELF_SHADOW: 'self_shadow',
+  CAST_SHADOW: 'cast_shadow'
+};
+
+export const IlluminationCondition = ILLUMINATION_CONDITIONS;
+
+/**
+ * Topographic raster metrics enum.
+ */
+export const TOPOGRAPHIC_METRICS = {
+  CORRECTED_REFLECTANCE: 'corrected_reflectance',
+  COS_INCIDENCE: 'cos_incidence',
+  ILLUMINATION: 'illumination',
+  ILLUMINATION_CONDITION: 'illumination_condition',
+  DIFFERENCE: 'difference',
+  RATIO: 'ratio'
+};
+
+export const TopographicMetric = TOPOGRAPHIC_METRICS;
+
+/**
+ * Topographic correction algorithm metadata and documentation configs.
+ */
+export const TOPOGRAPHIC_METHOD_CONFIGS = {
+  none: {
+    id: 'none',
+    name: 'No Correction (Raw Topography)',
+    description: 'Raw topographically uncorrected surface reflectance. Retains natural terrain shadows and aspect illumination gradients.',
+    formula: 'L_{corr} = L',
+    canopy_aware: false,
+    requires_c_factor: false,
+    requires_minnaert_k: false,
+    overcorrection_risk: 'none',
+    citation: 'Standard top-of-canopy uncorrected reflectance baseline.'
+  },
+  cosine: {
+    id: 'cosine',
+    name: 'Cosine (Lambertian) Correction',
+    description: 'Standard Lambertian assumption normalizing irradiance by cos(theta_s) / cos(i). Severely over-corrects dimly lit slopes.',
+    formula: 'L_{corr} = L \\cdot \\frac{\\cos \\theta_s}{\\cos i}',
+    canopy_aware: false,
+    requires_c_factor: false,
+    requires_minnaert_k: false,
+    overcorrection_risk: 'high',
+    citation: 'Teillet, P. M., Guindon, B., & Goodenough, D. G. (1982). On the slope-aspect correction in remote sensing.'
+  },
+  c_correction: {
+    id: 'c_correction',
+    name: 'C-Correction (Semi-Empirical Non-Lambertian)',
+    description: 'Empirical diffuse skylight irradiance adjustment c = b/m from linear regression L = m*cos(i) + b. Mitigates over-correction on shaded slopes.',
+    formula: 'L_{corr} = L \\cdot \\frac{\\cos \\theta_s + c}{\\cos i + c}',
+    canopy_aware: false,
+    requires_c_factor: true,
+    requires_minnaert_k: false,
+    overcorrection_risk: 'low',
+    citation: 'Meyer, P., Itten, K. I., Kellenberger, T., Sandmeier, S., & Sandau, R. (1993). Radiometric corrections of topographically induced effects.'
+  },
+  minnaert: {
+    id: 'minnaert',
+    name: 'Minnaert Empirical Correction',
+    description: 'Non-Lambertian photometric model incorporating the Minnaert constant k in (0, 1] to balance isotropic and anisotropic scattering.',
+    formula: 'L_{corr} = L \\cdot \\left(\\frac{\\cos \\theta_s}{\\cos i}\\right)^k',
+    canopy_aware: false,
+    requires_c_factor: false,
+    requires_minnaert_k: true,
+    overcorrection_risk: 'low',
+    citation: 'Smith, J. A., Lin, T. L., & Ranson, K. J. (1980). The Lambertian assumption and Landsat data.'
+  },
+  scs_c: {
+    id: 'scs_c',
+    name: 'Sun-Canopy-Sensor with C-Correction (SCS+C)',
+    description: 'Canopy-aware model preserving vertical tree crown geometry on sloping terrain combined with diffuse irradiance compensation.',
+    formula: 'L_{corr} = L \\cdot \\frac{\\cos \\theta_s \\cos \\alpha + c}{\\cos i + c}',
+    canopy_aware: true,
+    requires_c_factor: true,
+    requires_minnaert_k: false,
+    overcorrection_risk: 'low',
+    citation: 'Soenen, S. A., Peddle, D. R., & Coburn, C. A. (2005). SCS+C: a modified sun-canopy-sensor topographic correction in forested terrain.'
+  },
+  scs: {
+    id: 'scs',
+    name: 'Sun-Canopy-Sensor (SCS)',
+    description: 'Canopy sunlit geometry projection model for sloped forested terrain without diffuse skylight parameter.',
+    formula: 'L_{corr} = L \\cdot \\frac{\\cos \\theta_s \\cos \\alpha}{\\cos i}',
+    canopy_aware: true,
+    requires_c_factor: false,
+    requires_minnaert_k: false,
+    overcorrection_risk: 'moderate',
+    citation: 'Gu, D., & Gillespie, A. (1998). Topographic normalization of Landsat TM images of forest based on subpixel sun-canopy-sensor geometry.'
+  }
+};
+
+/**
+ * Validated high-relief benchmark scenes for topographic illumination correction.
+ */
+export const TOPOGRAPHIC_BENCHMARK_SCENES = {
+  MT_SHASTA_VOLCANO_2026: {
+    scene_id: 'S2A_MSIL2A_20260815T185921_T10TEK',
+    name: 'Mount Shasta Stratovolcano (Cascade Range, CA)',
+    collection: 'sentinel-2-l2a',
+    dem_collection: 'cop-dem-glo-30',
+    bbox: [-122.35, 41.35, -122.10, 41.50],
+    center: [41.4092, -122.1949],
+    solar_zenith_deg: 34.2,
+    solar_azimuth_deg: 148.5,
+    solar_elevation_deg: 55.8,
+    elevation_range_m: [1100.0, 4322.0],
+    typical_c_factors: { B02: 0.12, B03: 0.09, B04: 0.08, B08: 0.06, B11: 0.04 },
+    typical_minnaert_k: { B02: 0.58, B03: 0.62, B04: 0.65, B08: 0.72, B11: 0.78 },
+    dominant_terrain: 'Steep volcanic cone with glaciated peaks, active shadows on NW flanks'
+  },
+  SWISS_ALPS_VALAIS_2026: {
+    scene_id: 'S2B_MSIL2A_20260902T102019_T32TLS',
+    name: 'Matterhorn & Valais Alpine Range (Switzerland)',
+    collection: 'sentinel-2-l2a',
+    dem_collection: 'cop-dem-glo-30',
+    bbox: [7.65, 45.92, 7.85, 46.05],
+    center: [45.9763, 7.7491],
+    solar_zenith_deg: 45.1,
+    solar_azimuth_deg: 162.8,
+    solar_elevation_deg: 44.9,
+    elevation_range_m: [1600.0, 4478.0],
+    typical_c_factors: { B02: 0.14, B03: 0.11, B04: 0.09, B08: 0.07, B11: 0.05 },
+    typical_minnaert_k: { B02: 0.55, B03: 0.60, B04: 0.63, B08: 0.69, B11: 0.75 },
+    dominant_terrain: 'Deep glacial alpine valley with extreme slope gradients (>45 deg)'
+  },
+  SIERRA_NEVADA_YOSEMITE_2026: {
+    scene_id: 'S2A_MSIL2A_20260728T184921_T11SKB',
+    name: 'Yosemite Valley & Half Dome (Sierra Nevada, CA)',
+    collection: 'sentinel-2-l2a',
+    dem_collection: 'cop-dem-glo-30',
+    bbox: [-119.65, 37.68, -119.50, 37.78],
+    center: [37.7456, -119.5936],
+    solar_zenith_deg: 28.6,
+    solar_azimuth_deg: 135.2,
+    solar_elevation_deg: 61.4,
+    elevation_range_m: [1200.0, 2694.0],
+    typical_c_factors: { B02: 0.10, B03: 0.08, B04: 0.07, B08: 0.05, B11: 0.03 },
+    typical_minnaert_k: { B02: 0.60, B03: 0.64, B04: 0.68, B08: 0.74, B11: 0.80 },
+    dominant_terrain: 'Granite monolithic cliffs and dense coniferous canopy (SCS+C benchmark)'
+  }
+};
+
+/**
+ * Default solar ephemeris values.
+ */
+export const DEFAULT_SOLAR_EPHEMERIS = {
+  solar_zenith_deg: 38.5,
+  solar_azimuth_deg: 142.0,
+  solar_elevation_deg: 51.5
+};
+
+/**
+ * Calculates local solar incidence cosine cos(i) on sloping terrain.
+ *
+ * @param {number} solarZenithDeg - Solar zenith angle in degrees [0, 90]
+ * @param {number} solarAzimuthDeg - Solar azimuth angle in degrees clockwise from North [0, 360]
+ * @param {number} slopeDeg - Terrain slope angle in degrees [0, 90]
+ * @param {number} aspectDeg - Downhill terrain aspect in degrees clockwise from North [0, 360] (-1 for flat)
+ * @returns {number} cos(i) in [-1.0, 1.0]
+ */
+export const calculateLocalIncidenceCosine = (
+  solarZenithDeg,
+  solarAzimuthDeg,
+  slopeDeg,
+  aspectDeg
+) => {
+  const zenithRad = (Math.max(0.0, Math.min(90.0, Number(solarZenithDeg) || 0.0)) * Math.PI) / 180.0;
+  const slopeRad = (Math.max(0.0, Math.min(90.0, Number(slopeDeg) || 0.0)) * Math.PI) / 180.0;
+  const sunAzimuthRad = ((Number(solarAzimuthDeg) || 0.0) % 360.0 * Math.PI) / 180.0;
+
+  if (Number(slopeDeg) <= 1e-6 || Number(aspectDeg) < 0.0) {
+    return Number(Math.cos(zenithRad).toFixed(6));
+  }
+
+  const aspectRad = ((Number(aspectDeg) || 0.0) % 360.0 * Math.PI) / 180.0;
+  const cosI = Math.cos(zenithRad) * Math.cos(slopeRad) +
+    Math.sin(zenithRad) * Math.sin(slopeRad) * Math.cos(sunAzimuthRad - aspectRad);
+  return Number(Math.max(-1.0, Math.min(1.0, cosI)).toFixed(6));
+};
+
+/**
+ * Calculates C-Correction factor (cos(theta_s) + c) / (cos(i) + c).
+ *
+ * @param {number} cosI - Local incidence cosine
+ * @param {number} solarZenithDeg - Solar zenith angle in degrees
+ * @param {number} [cFactor=0.08] - Empirical C constant
+ * @param {number} [cosIMin=0.05] - Minimum clamp
+ * @returns {number} Correction scaling factor
+ */
+export const calculateCCorrectionFactor = (
+  cosI,
+  solarZenithDeg,
+  cFactor = 0.08,
+  cosIMin = 0.05
+) => {
+  const zenithRad = (Math.max(0.0, Math.min(90.0, Number(solarZenithDeg) || 0.0)) * Math.PI) / 180.0;
+  const cosSz = Math.cos(zenithRad);
+  const c = Math.max(0.0, Number(cFactor) || 0.0);
+
+  if (c <= 1e-7) {
+    const denom = Math.max(Number(cosIMin) || 0.05, Number(cosI) || 0.0);
+    return Number(Math.max(0.0, Math.min(10.0, cosSz / denom)).toFixed(6));
+  }
+
+  const denom = Math.max(1e-6, (Number(cosI) || 0.0) + c);
+  const factor = (cosSz + c) / denom;
+  return Number(Math.max(0.0, Math.min(10.0, factor)).toFixed(6));
+};
+
+/**
+ * Calculates Minnaert empirical correction factor (cos(theta_s) / max(cosIMin, cosI))^k.
+ *
+ * @param {number} cosI - Local incidence cosine
+ * @param {number} solarZenithDeg - Solar zenith angle in degrees
+ * @param {number} [k=0.65] - Minnaert constant in (0, 1]
+ * @param {number} [cosIMin=0.05] - Minimum incidence cosine
+ * @returns {number} Correction factor
+ */
+export const calculateMinnaertCorrection = (
+  cosI,
+  solarZenithDeg,
+  k = 0.65,
+  cosIMin = 0.05
+) => {
+  const zenithRad = (Math.max(0.0, Math.min(90.0, Number(solarZenithDeg) || 0.0)) * Math.PI) / 180.0;
+  const cosSz = Math.cos(zenithRad);
+  const kVal = Math.max(0.01, Math.min(1.0, Number(k) || 0.65));
+  const denom = Math.max(Number(cosIMin) || 0.05, Number(cosI) || 0.0);
+  const ratio = Math.max(0.0, cosSz / denom);
+  const factor = Math.pow(ratio, kVal);
+  return Number(Math.max(0.0, Math.min(10.0, factor)).toFixed(6));
+};
+
+/**
+ * Calculates Sun-Canopy-Sensor with C-Correction (SCS+C) factor:
+ * (cos(theta_s) * cos(alpha) + c) / (cos(i) + c).
+ *
+ * @param {number} cosI - Local incidence cosine
+ * @param {number} slopeDeg - Terrain slope in degrees
+ * @param {number} solarZenithDeg - Solar zenith in degrees
+ * @param {number} [cFactor=0.08] - Empirical C constant
+ * @param {number} [cosIMin=0.05] - Minimum clamp
+ * @returns {number} Correction factor
+ */
+export const calculateScsCCorrection = (
+  cosI,
+  slopeDeg,
+  solarZenithDeg,
+  cFactor = 0.08,
+  cosIMin = 0.05
+) => {
+  const zenithRad = (Math.max(0.0, Math.min(90.0, Number(solarZenithDeg) || 0.0)) * Math.PI) / 180.0;
+  const slopeRad = (Math.max(0.0, Math.min(90.0, Number(slopeDeg) || 0.0)) * Math.PI) / 180.0;
+  const cosSz = Math.cos(zenithRad);
+  const cosSlope = Math.cos(slopeRad);
+  const c = Math.max(0.0, Number(cFactor) || 0.0);
+
+  if (c <= 1e-7) {
+    const denom = Math.max(Number(cosIMin) || 0.05, Number(cosI) || 0.0);
+    return Number(Math.max(0.0, Math.min(10.0, (cosSz * cosSlope) / denom)).toFixed(6));
+  }
+
+  const denom = Math.max(1e-6, (Number(cosI) || 0.0) + c);
+  const factor = (cosSz * cosSlope + c) / denom;
+  return Number(Math.max(0.0, Math.min(10.0, factor)).toFixed(6));
+};
+
+/**
+ * Classifies terrain solar illumination condition from cos(i).
+ *
+ * @param {number} cosI - Incidence cosine
+ * @param {number} [thresholdSunlit=0.20] - Sunlit threshold
+ * @returns {string} Condition ('sunlit', 'shaded', 'self_shadow')
+ */
+export const classifyIlluminationCondition = (cosI, thresholdSunlit = 0.20) => {
+  const v = Number(cosI) || 0.0;
+  if (v <= 0.0) return 'self_shadow';
+  if (v < thresholdSunlit) return 'shaded';
+  return 'sunlit';
+};
+
+/**
+ * Applies topographic solar illumination correction to a single reflectance value.
+ *
+ * @param {number} radiance - Raw surface reflectance
+ * @param {number} cosI - Local incidence cosine
+ * @param {number} slopeDeg - Terrain slope in degrees
+ * @param {number} solarZenithDeg - Solar zenith angle in degrees
+ * @param {string} [method='c_correction'] - Correction method
+ * @param {number} [cFactor=0.08] - Empirical C constant
+ * @param {number} [minnaertK=0.65] - Minnaert k constant
+ * @param {number} [cosIMin=0.05] - Min incidence clamp
+ * @param {boolean} [maskSelfShadow=true] - Mask self-shadows
+ * @returns {number} Corrected reflectance
+ */
+export const applyTopographicCorrection = (
+  radiance,
+  cosI,
+  slopeDeg,
+  solarZenithDeg,
+  method = 'c_correction',
+  cFactor = 0.08,
+  minnaertK = 0.65,
+  cosIMin = 0.05,
+  maskSelfShadow = true
+) => {
+  const rad = Math.max(0.0, Number(radiance) || 0.0);
+  const m = String(method || 'c_correction').toLowerCase();
+
+  if (m === 'none') return Number(rad.toFixed(6));
+
+  if (Number(cosI) <= 0.0 && maskSelfShadow) {
+    return 0.0;
+  }
+
+  let factor = 1.0;
+  if (m === 'cosine') {
+    factor = calculateCCorrectionFactor(cosI, solarZenithDeg, 0.0, cosIMin);
+  } else if (m === 'minnaert') {
+    factor = calculateMinnaertCorrection(cosI, solarZenithDeg, minnaertK, cosIMin);
+  } else if (m === 'scs_c' || m === 'scs') {
+    const c = m === 'scs_c' ? cFactor : 0.0;
+    factor = calculateScsCCorrection(cosI, slopeDeg, solarZenithDeg, c, cosIMin);
+  } else {
+    factor = calculateCCorrectionFactor(cosI, solarZenithDeg, cFactor, cosIMin);
+  }
+
+  const corrected = rad * factor;
+  return Number(Math.max(0.0, Math.min(1.0, corrected)).toFixed(6));
+};
+
+/**
+ * Estimates empirical C parameter via linear regression L = m * cos(i) + b.
+ *
+ * @param {number[]} radianceValues - Reflectance values
+ * @param {number[]} cosIValues - Incidence cosine values
+ * @param {number} [defaultC=0.08] - Default fallback
+ * @returns {number} Estimated C parameter
+ */
+export const estimateCFactorFromLinearRegression = (
+  radianceValues,
+  cosIValues,
+  defaultC = 0.08
+) => {
+  if (!Array.isArray(radianceValues) || !Array.isArray(cosIValues) || radianceValues.length < 5) {
+    return defaultC;
+  }
+
+  const validPairs = [];
+  for (let idx = 0; idx < radianceValues.length; idx += 1) {
+    const y = Number(radianceValues[idx]);
+    const x = Number(cosIValues[idx]);
+    if (Number.isFinite(y) && Number.isFinite(x) && x > 0.0 && y > 0.0) {
+      validPairs.push([x, y]);
+    }
+  }
+  if (validPairs.length < 5) return defaultC;
+
+  const n = validPairs.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXX = 0;
+  let sumXY = 0;
+
+  for (let idx = 0; idx < n; idx += 1) {
+    const [x, y] = validPairs[idx];
+    sumX += x;
+    sumY += y;
+    sumXX += x * x;
+    sumXY += x * y;
+  }
+
+  const denom = n * sumXX - sumX * sumX;
+  if (Math.abs(denom) < 1e-9) return defaultC;
+
+  const m = (n * sumXY - sumX * sumY) / denom;
+  const b = (sumY - m * sumX) / n;
+
+  if (m > 1e-6 && b >= 0.0) {
+    const c = b / m;
+    return Number(Math.max(0.001, Math.min(1.0, c)).toFixed(4));
+  }
+  return defaultC;
+};
+
+/**
+ * Builds dynamic XYZ tile streaming URL for topographically corrected raster tiles.
+ *
+ * @param {Object} [options={}] - Options
+ * @returns {string} XYZ tile URL
+ */
+export const buildTopographicTileUrl = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    itemId = 'S2A_MSIL2A_20260815_MT_SHASTA',
+    z = 0,
+    x = 0,
+    y = 0,
+    method = 'c_correction',
+    metric = 'corrected_reflectance',
+    solarZenith = null,
+    solarAzimuth = null,
+    cFactor = null,
+    minnaertK = null,
+    colormap = null,
+    rescale = null
+  } = options;
+
+  const mStr = typeof method === 'object' && method?.value ? method.value : String(method).toLowerCase();
+  const metStr = typeof metric === 'object' && metric?.value ? metric.value : String(metric).toLowerCase();
+  const base = `/api/v1/tiles/topographic/${collection}/${itemId}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (mStr !== 'c_correction') params.push(`method=${mStr}`);
+  if (metStr !== 'corrected_reflectance') params.push(`metric=${metStr}`);
+  if (solarZenith !== null && solarZenith !== undefined) params.push(`solar_zenith=${solarZenith}`);
+  if (solarAzimuth !== null && solarAzimuth !== undefined) params.push(`solar_azimuth=${solarAzimuth}`);
+  if (cFactor !== null && cFactor !== undefined && Number(cFactor) !== 0.08) params.push(`c_factor=${cFactor}`);
+  if (minnaertK !== null && minnaertK !== undefined && Number(minnaertK) !== 0.65) params.push(`minnaert_k=${minnaertK}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) {
+    const rStr = Array.isArray(rescale) ? `${rescale[0]},${rescale[1]}` : String(rescale);
+    params.push(`rescale=${rStr}`);
+  }
+
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for topographically corrected raster tiles.
+ *
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildTopographicTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    itemId = 'S2A_MSIL2A_20260815_MT_SHASTA',
+    method = 'c_correction',
+    metric = 'corrected_reflectance',
+    solarZenith = null,
+    solarAzimuth = null,
+    cFactor = null,
+    minnaertK = null,
+    colormap = null,
+    rescale = null
+  } = options;
+
+  const mStr = typeof method === 'object' && method?.value ? method.value : String(method).toLowerCase();
+  const metStr = typeof metric === 'object' && metric?.value ? metric.value : String(metric).toLowerCase();
+  const base = `/api/v1/tiles/topographic/${collection}/${itemId}/{z}/{x}/{y}.png`;
+  const params = [];
+  if (mStr !== 'c_correction') params.push(`method=${mStr}`);
+  if (metStr !== 'corrected_reflectance') params.push(`metric=${metStr}`);
+  if (solarZenith !== null && solarZenith !== undefined) params.push(`solar_zenith=${solarZenith}`);
+  if (solarAzimuth !== null && solarAzimuth !== undefined) params.push(`solar_azimuth=${solarAzimuth}`);
+  if (cFactor !== null && cFactor !== undefined && Number(cFactor) !== 0.08) params.push(`c_factor=${cFactor}`);
+  if (minnaertK !== null && minnaertK !== undefined && Number(minnaertK) !== 0.65) params.push(`minnaert_k=${minnaertK}`);
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) {
+    const rStr = Array.isArray(rescale) ? `${rescale[0]},${rescale[1]}` : String(rescale);
+    params.push(`rescale=${rStr}`);
+  }
+
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
+
+/**
+ * Builds dynamic Leaflet tile URL template for topographic solar local incidence cos(i) hillshade tiles.
+ *
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildTopographicIlluminationTileUrlTemplate = (options = {}) => {
+  const {
+    collection = 'sentinel-2-l2a',
+    itemId = 'S2A_MSIL2A_20260815_MT_SHASTA',
+    solarZenith = null,
+    solarAzimuth = null
+  } = options;
+
+  const base = `/api/v1/tiles/topographic/illumination/${collection}/${itemId}/{z}/{x}/{y}.png`;
+  const params = [];
+  if (solarZenith !== null && solarZenith !== undefined) params.push(`solar_zenith=${solarZenith}`);
+  if (solarAzimuth !== null && solarAzimuth !== undefined) params.push(`solar_azimuth=${solarAzimuth}`);
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
+};
+
+
+
 
 
 

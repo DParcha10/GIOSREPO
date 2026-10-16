@@ -156,6 +156,67 @@ class TestTileServer(unittest.TestCase):
         self.assertEqual(img.mode, "RGBA")
 
 
+    def test_render_sar_backscatter_and_flood_tile(self):
+        """Task T-235 / T-238: Verify dynamic XYZ SAR backscatter, speckle-filtered, and flood tiles."""
+        # 1. Backscatter tile in VV polarization with grayscale
+        t0 = time.time()
+        tile_vv = tile_service.render_sar_backscatter_tile(
+            z=10,
+            x=163,
+            y=395,
+            collection="sentinel-1-rtc",
+            polarization="vv",
+            speckle_filter="refined_lee",
+            calibration="gamma0",
+            colormap="gray"
+        )
+        elapsed_ms = (time.time() - t0) * 1000
+        self.assertIsInstance(tile_vv, bytes)
+        self.assertEqual(tile_vv[:4], b"\x89PNG")
+        img_vv = Image.open(io.BytesIO(tile_vv))
+        self.assertEqual(img_vv.size, (256, 256))
+        self.assertEqual(img_vv.mode, "RGBA")
+        self.assertLess(elapsed_ms, 500.0, f"SAR tile render ({elapsed_ms:.1f}ms) exceeded 500ms target")
+
+        # 2. Dual-pol RGB composite tile
+        tile_rgb = tile_service.render_sar_backscatter_tile(
+            z=10,
+            x=163,
+            y=395,
+            collection="sentinel-1-rtc",
+            polarization="dual_pol_rgb"
+        )
+        self.assertIsInstance(tile_rgb, bytes)
+        self.assertEqual(tile_rgb[:4], b"\x89PNG")
+        img_rgb = Image.open(io.BytesIO(tile_rgb))
+        self.assertEqual(img_rgb.size, (256, 256))
+        self.assertEqual(img_rgb.mode, "RGBA")
+
+        # 3. Filtered tile across filter methods
+        for f_m in ["frost", "kuan", "gamma_map", "boxcar_mean"]:
+            tile_f = tile_service.render_sar_speckle_filter_tile(
+                filter_method=f_m,
+                z=10,
+                x=163,
+                y=395
+            )
+            self.assertIsInstance(tile_f, bytes)
+            self.assertEqual(tile_f[:4], b"\x89PNG")
+
+        # 4. Flood inundation tile
+        tile_fl = tile_service.render_sar_flood_inundation_tile(
+            z=10,
+            x=163,
+            y=395,
+            threshold_db=-16.5
+        )
+        self.assertIsInstance(tile_fl, bytes)
+        self.assertEqual(tile_fl[:4], b"\x89PNG")
+        img_fl = Image.open(io.BytesIO(tile_fl))
+        self.assertEqual(img_fl.size, (256, 256))
+        self.assertEqual(img_fl.mode, "RGBA")
+
+
 if __name__ == "__main__":
     unittest.main()
 

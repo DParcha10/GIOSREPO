@@ -3719,6 +3719,153 @@ class TestGIOSApi(unittest.TestCase):
             self.assertTrue(res_t.content.startswith(b"\x89PNG"))
 
 
+    def test_sar_backscatter_and_speckle_filtering_api(self):
+        """Task T-235 / T-238: Test POST /api/v1/analysis/sar/backscatter, unversioned aliases, and dynamic XYZ SAR tiles."""
+        # 1. Standard VV backscatter analysis request
+        payload = {
+            "bbox": [-121.20, 36.90, -120.65, 37.45],
+            "collection": "sentinel-1-rtc",
+            "polarization": "vv",
+            "speckle_filter": "refined_lee",
+            "filter_kernel_size": 5,
+            "calibration": "gamma0",
+            "start_date": "2026-09-01",
+            "end_date": "2026-09-30",
+            "water_threshold_db": -16.5,
+            "target_resolution_m": 10.0
+        }
+        res = self.client.post("/api/v1/analysis/sar/backscatter", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["collection"], "sentinel-1-rtc")
+        self.assertEqual(data["polarization"], "vv")
+        self.assertEqual(data["speckle_filter"], "refined_lee")
+        self.assertEqual(data["calibration"], "gamma0")
+        self.assertEqual(data["filter_kernel_size"], 5)
+        self.assertEqual(data["status"], "completed")
+        self.assertIn("analysis_id", data)
+        self.assertIn("summary", data)
+        self.assertIn("tile_url_template", data)
+
+        summary = data["summary"]
+        self.assertIn("mean_backscatter_db", summary)
+        self.assertIn("median_backscatter_db", summary)
+        self.assertIn("speckle_variance_reduction_ratio", summary)
+        self.assertGreaterEqual(summary["speckle_variance_reduction_ratio"], 1.0)
+        self.assertIn("water_fraction", summary)
+        self.assertIn("water_area_ha", summary)
+        self.assertIn("dominant_tier", summary)
+
+        # 2. Unversioned route alias & sar_router alias
+        res_alias1 = self.client.post("/analysis/sar/backscatter", json=payload)
+        self.assertEqual(res_alias1.status_code, 200)
+        res_alias2 = self.client.post("/api/v1/sar/backscatter", json=payload)
+        self.assertEqual(res_alias2.status_code, 200)
+        res_alias3 = self.client.post("/sar/backscatter", json=payload)
+        self.assertEqual(res_alias3.status_code, 200)
+
+        # 3. Dual-pol RGB composite request
+        payload_rgb = {
+            "bbox": [-121.20, 36.90, -120.65, 37.45],
+            "collection": "sentinel-1-rtc",
+            "polarization": "dual_pol_rgb",
+            "speckle_filter": "frost",
+            "calibration": "gamma0"
+        }
+        res_rgb = self.client.post("/api/v1/analysis/sar/backscatter", json=payload_rgb)
+        self.assertEqual(res_rgb.status_code, 200)
+        data_rgb = res_rgb.json()
+        self.assertEqual(data_rgb["polarization"], "dual_pol_rgb")
+        self.assertEqual(data_rgb["speckle_filter"], "frost")
+
+        # 4. Cross-polarization ratio request
+        payload_ratio = {
+            "bbox": [-121.20, 36.90, -120.65, 37.45],
+            "polarization": "ratio_vh_vv",
+            "speckle_filter": "kuan"
+        }
+        res_ratio = self.client.post("/api/v1/analysis/sar/backscatter", json=payload_ratio)
+        self.assertEqual(res_ratio.status_code, 200)
+        self.assertEqual(res_ratio.json()["polarization"], "ratio_vh_vv")
+
+        # 5. Dynamic XYZ SAR Tile Endpoints
+        sar_tile_urls = [
+            "/api/v1/tiles/sar/sentinel-1-rtc/vv/10/163/395.png",
+            "/api/v1/tiles/sar/sentinel-1-rtc/vh/10/163/395.png",
+            "/api/v1/tiles/sar/sentinel-1-rtc/ratio_vh_vv/10/163/395.png",
+            "/api/v1/tiles/sar/sentinel-1-rtc/dual_pol_rgb/10/163/395.png",
+            "/api/v1/tiles/sar/sentinel-1-rtc/10/163/395.png?polarization=vv",
+            "/api/v1/tiles/sar/filtered/refined_lee/10/163/395.png?polarization=vv",
+            "/api/v1/tiles/sar/filtered/frost/10/163/395.png",
+            "/api/v1/tiles/sar/filtered/kuan/10/163/395.png",
+            "/api/v1/tiles/sar/filtered/gamma_map/10/163/395.png",
+            "/api/v1/tiles/sar/flood/10/163/395.png",
+            "/tiles/sar/sentinel-1-rtc/vv/10/163/395.png",
+            "/tiles/sar/flood/10/163/395.png"
+        ]
+        for url in sar_tile_urls:
+            res_t = self.client.get(url)
+            self.assertEqual(res_t.status_code, 200, f"Failed SAR tile: {url}")
+            self.assertEqual(res_t.headers.get("content-type"), "image/png")
+            self.assertTrue(res_t.content.startswith(b"\x89PNG"))
+
+    def test_aquatic_quality_and_hab_hazard_api(self):
+        """Test POST /api/v1/analysis/aquatic/quality, /aquatic/hab, /aquatic/scenes, and dynamic XYZ tiles."""
+        # 1. Quality Analysis Endpoint
+        payload_erie = {
+            "scene_id": "LAKE_ERIE_HAB_2026",
+            "collection": "sentinel-2-l2a",
+            "algorithm": "ndci_mishra_2012",
+            "water_masking_method": "mndwi_threshold",
+            "mndwi_threshold": 0.0
+        }
+        res_erie = self.client.post("/api/v1/analysis/aquatic/quality", json=payload_erie)
+        self.assertEqual(res_erie.status_code, 200)
+        data_erie = res_erie.json()
+        self.assertEqual(data_erie["scene_id"], "LAKE_ERIE_HAB_2026")
+        self.assertEqual(data_erie["status"], "completed")
+        self.assertIn("analysis_id", data_erie)
+        self.assertIn("summary", data_erie)
+        self.assertIn("tile_url_template", data_erie)
+        self.assertIn("hab_tile_url_template", data_erie)
+        self.assertIn(data_erie["summary"]["dominant_eutrophication_tier"], ["eutrophic", "hypertrophic"])
+        self.assertGreater(data_erie["summary"]["water_pixels"], 0)
+
+        # 2. HAB Hazard Analysis Endpoint
+        payload_tahoe = {
+            "scene_id": "LAKE_TAHOE_OLIGOTROPHIC_2026",
+            "collection": "sentinel-2-l2a"
+        }
+        res_tahoe = self.client.post("/api/v1/analysis/aquatic/hab", json=payload_tahoe)
+        self.assertEqual(res_tahoe.status_code, 200)
+        data_tahoe = res_tahoe.json()
+        self.assertEqual(data_tahoe["summary"]["dominant_eutrophication_tier"], "oligotrophic")
+        self.assertEqual(data_tahoe["summary"]["bloom_risk_level"], "low")
+
+        # 3. Available Benchmark Scenes Endpoint
+        res_scenes = self.client.get("/api/v1/analysis/aquatic/scenes")
+        self.assertEqual(res_scenes.status_code, 200)
+        scenes_data = res_scenes.json()
+        self.assertEqual(scenes_data["status"], "success")
+        self.assertGreaterEqual(scenes_data["total"], 3)
+
+        # 4. Dynamic XYZ Aquatic Quality & HAB Tile Streaming Endpoints
+        tile_routes = [
+            "/api/v1/tiles/aquatic/sentinel-2-l2a/ndci/10/163/395.png",
+            "/api/v1/tiles/aquatic/sentinel-2-l2a/fai/10/163/395.png",
+            "/api/v1/tiles/aquatic/sentinel-2-l2a/chla/10/163/395.png",
+            "/api/v1/tiles/aquatic/sentinel-2-l2a/turbidity/10/163/395.png",
+            "/api/v1/tiles/aquatic/hab/sentinel-2-l2a/10/163/395.png",
+            "/tiles/aquatic/sentinel-2-l2a/ndci/10/163/395.png",
+            "/tiles/aquatic/hab/sentinel-2-l2a/10/163/395.png"
+        ]
+        for url in tile_routes:
+            res_t = self.client.get(url)
+            self.assertEqual(res_t.status_code, 200, f"Failed tile endpoint: {url}")
+            self.assertEqual(res_t.headers.get("content-type"), "image/png")
+            self.assertTrue(res_t.content.startswith(b"\x89PNG\r\n\x1a\n"))
+
+
 if __name__ == "__main__":
     unittest.main()
 

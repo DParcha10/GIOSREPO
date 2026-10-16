@@ -939,6 +939,44 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_sar_speckle_filter_short": "/tiles/sar/filtered/{filter_method}/{z}/{x}/{y}.png",
     "tiles_sar_flood_inundation": "/api/v1/tiles/sar/flood/{z}/{x}/{y}.png",
     "tiles_sar_flood_inundation_short": "/tiles/sar/flood/{z}/{x}/{y}.png",
+    # Cycle v2.5.30: Sub-Pixel Automated Image Co-Registration & Geometric Resampling Contracts
+    "analysis_coregistration": "/api/v1/analysis/coregistration",
+    "analysis_coregistration_short": "/analysis/coregistration",
+    "analysis_coregistration_tie_points": "/api/v1/analysis/coregistration/tie-points",
+    "analysis_coregistration_tie_points_short": "/analysis/coregistration/tie-points",
+    "tiles_coregistration": "/api/v1/tiles/coregistration/{reference_scene_id}/{target_scene_id}/{z}/{x}/{y}.png",
+    "tiles_coregistration_short": "/tiles/coregistration/{reference_scene_id}/{target_scene_id}/{z}/{x}/{y}.png",
+    "tiles_coregistration_vector_field": "/api/v1/tiles/coregistration/vector-field/{analysis_id}/{z}/{x}/{y}.png",
+    "tiles_coregistration_vector_field_short": "/tiles/coregistration/vector-field/{analysis_id}/{z}/{x}/{y}.png",
+    # Cycle v2.5.31: Aquatic Quality & Harmful Algal Bloom Detection Contracts
+    "analysis_aquatic_quality": "/api/v1/analysis/aquatic/quality",
+    "analysis_aquatic_quality_short": "/analysis/aquatic/quality",
+    "analysis_aquatic_hab": "/api/v1/analysis/aquatic/hab",
+    "analysis_aquatic_hab_short": "/analysis/aquatic/hab",
+    "tiles_aquatic_quality": "/api/v1/tiles/aquatic/{collection}/{metric}/{z}/{x}/{y}.png",
+    "tiles_aquatic_quality_short": "/tiles/aquatic/{collection}/{metric}/{z}/{x}/{y}.png",
+    "tiles_aquatic_hab": "/api/v1/tiles/aquatic/hab/{collection}/{z}/{x}/{y}.png",
+    "tiles_aquatic_hab_short": "/tiles/aquatic/hab/{collection}/{z}/{x}/{y}.png",
+    # Cycle v2.5.32: Topographic Solar Illumination Correction & SCS+C Inversion Contracts
+    "analysis_topographic_correction": "/api/v1/analysis/topographic/correction",
+    "analysis_topographic_correction_short": "/analysis/topographic/correction",
+    "analysis_topographic_solar_geometry": "/api/v1/analysis/topographic/solar-geometry",
+    "analysis_topographic_solar_geometry_short": "/analysis/topographic/solar-geometry",
+    "tiles_topographic_correction": "/api/v1/tiles/topographic/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "tiles_topographic_correction_short": "/tiles/topographic/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "tiles_topographic_illumination": "/api/v1/tiles/topographic/illumination/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "tiles_topographic_illumination_short": "/tiles/topographic/illumination/{collection}/{item_id}/{z}/{x}/{y}.png",
+    # Cycle v2.5.33: Harmonized Landsat Sentinel-2 (HLS) Principles, NBAR & Cross-Sensor Harmonization Contracts
+    "analysis_hls_harmonization": "/api/v1/analysis/hls/harmonization",
+    "analysis_hls_harmonization_short": "/analysis/hls/harmonization",
+    "analysis_hls_brdf_geometry": "/api/v1/analysis/hls/brdf-geometry",
+    "analysis_hls_brdf_geometry_short": "/analysis/hls/brdf-geometry",
+    "analysis_hls_bandpass": "/api/v1/analysis/hls/bandpass",
+    "analysis_hls_bandpass_short": "/analysis/hls/bandpass",
+    "tiles_hls": "/api/v1/tiles/hls/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "tiles_hls_short": "/tiles/hls/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "tiles_hls_nbar": "/api/v1/tiles/hls/nbar/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "tiles_hls_nbar_short": "/tiles/hls/nbar/{collection}/{item_id}/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1099,6 +1137,44 @@ def format_api_route(route_name: str, **kwargs) -> str:
             kwargs["filter_method"] = kwargs["filter_method"].value
     elif route_name in ("tiles_sar_flood_inundation", "tiles_sar_flood_inundation_short"):
         pass
+    elif route_name in ("tiles_coregistration", "tiles_coregistration_short"):
+        if "reference_scene_id" not in kwargs:
+            kwargs["reference_scene_id"] = kwargs.get("ref", "REF_SCENE_01")
+        if "target_scene_id" not in kwargs:
+            kwargs["target_scene_id"] = kwargs.get("target", "TARGET_SCENE_01")
+    elif route_name in ("tiles_coregistration_vector_field", "tiles_coregistration_vector_field_short"):
+        if "analysis_id" not in kwargs:
+            kwargs["analysis_id"] = kwargs.get("id", "COREG_DEFAULT")
+    elif route_name in ("tiles_aquatic_quality", "tiles_aquatic_quality_short"):
+        if "collection" not in kwargs:
+            kwargs["collection"] = "sentinel-2-l2a"
+        if "metric" not in kwargs:
+            kwargs["metric"] = "ndci"
+        elif hasattr(kwargs["metric"], "value"):
+            kwargs["metric"] = kwargs["metric"].value
+    elif route_name in ("tiles_aquatic_hab", "tiles_aquatic_hab_short"):
+        if "collection" not in kwargs:
+            kwargs["collection"] = "sentinel-2-l2a"
+    elif route_name in ("tiles_topographic_correction", "tiles_topographic_correction_short", "tiles_topographic_illumination", "tiles_topographic_illumination_short"):
+        if "collection" not in kwargs:
+            kwargs["collection"] = "sentinel-2-l2a"
+        if "item_id" not in kwargs:
+            for alt in ("itemId", "scene_id", "sceneId", "id"):
+                if alt in kwargs:
+                    kwargs["item_id"] = kwargs[alt]
+                    break
+            if "item_id" not in kwargs:
+                kwargs["item_id"] = "S2A_MSIL2A_20260815_MT_SHASTA"
+    elif route_name in ("tiles_hls", "tiles_hls_short", "tiles_hls_nbar", "tiles_hls_nbar_short"):
+        if "collection" not in kwargs:
+            kwargs["collection"] = "landsat-c2-l2"
+        if "item_id" not in kwargs:
+            for alt in ("itemId", "scene_id", "sceneId", "id"):
+                if alt in kwargs:
+                    kwargs["item_id"] = kwargs[alt]
+                    break
+            if "item_id" not in kwargs:
+                kwargs["item_id"] = "LC09_L2SP_044034_20260718_02_T1"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -28703,6 +28779,28 @@ SAR_POLARIZATION_CONFIGS: Dict[str, Dict[str, Any]] = {
         "badge": "VH/VV Ratio",
         "default_rescale": "-15,0",
         "colormap": "viridis"
+    },
+    "dual_pol_rgb": {
+        "channel": "dual_pol_rgb",
+        "name": "Dual-Pol False Color RGB [VV, VH, VH/VV]",
+        "radar_band": "C-band (5.405 GHz)",
+        "wavelength_cm": 5.546,
+        "mechanism": "R: VV (surface roughness), G: VH (volume scattering), B: VH/VV (depolarization ratio)",
+        "primary_sensitivity": "Comprehensive terrain characterization, flood inundation (dark), urban double-bounce (bright yellow), and vegetation canopy (green)",
+        "badge": "Dual-Pol RGB",
+        "default_rescale": "-25,0",
+        "colormap": "rgb"
+    },
+    "rgb": {
+        "channel": "dual_pol_rgb",
+        "name": "Dual-Pol False Color RGB [VV, VH, VH/VV]",
+        "radar_band": "C-band (5.405 GHz)",
+        "wavelength_cm": 5.546,
+        "mechanism": "R: VV, G: VH, B: VH/VV",
+        "primary_sensitivity": "Terrain & flood composite",
+        "badge": "Dual-Pol RGB",
+        "default_rescale": "-25,0",
+        "colormap": "rgb"
     }
 }
 
@@ -28895,6 +28993,7 @@ class SARBackscatterAnalysisResponse(BaseModel):
     filter_kernel_size: int = Field(5, description="Filter kernel size")
     summary: SARBackscatterSummary = Field(..., description="Statistical summary metrics")
     tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for radar rendering")
+    flood_tile_url_template: Optional[str] = Field(None, description="Dynamic XYZ tile URL template for flood inundation mask")
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO 8601 execution timestamp")
     status: str = Field("completed", description="Analysis status")
 
@@ -29343,4 +29442,2206 @@ def build_sar_flood_tile_url_template(
     return f"{base}?{'&'.join(params)}"
 
 
+# ==============================================================================
+# CYCLE v2.5.30: SUB-PIXEL AUTOMATED IMAGE CO-REGISTRATION, FFT PHASE CORRELATION,
+# TIE-POINT GRIDS, AFFINE WARP & GEOMETRIC RESAMPLING KERNELS (NEAREST, BILINEAR,
+# CUBIC CONVOLUTION, LANCZOS)
+# ==============================================================================
 
+class CoRegistrationMethod(str, Enum):
+    """Automated sub-pixel geometric co-registration and shift estimation algorithms."""
+    FFT_PHASE_CORRELATION = "fft_phase_correlation"          # Normalized cross-power spectrum peak (Fourier shift theorem)
+    LOCALIZED_NCC = "localized_ncc"                          # Normalized Cross-Correlation (AROSICS tie-point grid)
+    FEATURE_MATCHING_SIFT = "feature_matching_sift"          # Scale-Invariant Feature Transform keypoint matching
+    FEATURE_MATCHING_ORB = "feature_matching_orb"            # Oriented FAST and Rotated BRIEF binary descriptor matching
+    AFFINE_RANSAC = "affine_ransac"                          # 6-parameter affine homography with RANSAC outlier filtering
+
+
+class GeometricResamplingKernel(str, Enum):
+    """Interpolation resampling kernels for raster geometric warping and sub-pixel shift correction."""
+    NEAREST = "nearest"                        # 1x1 nearest neighbor; strictly preserves discrete classes and radiometric DNs
+    BILINEAR = "bilinear"                      # 2x2 bilinear linear distance-weighted interpolation
+    CUBIC_CONVOLUTION = "cubic_convolution"    # 4x4 cubic convolution (Keys 1981, a = -0.5); optimal spectral sharpness
+    CUBIC_SPLINE = "cubic_spline"              # B-spline piecewise polynomial continuous smoothing
+    LANCZOS = "lanczos"                        # 6x6 Lanczos-3 windowed sinc kernel; superior anti-aliasing for multi-sensor fusion
+
+
+class CoRegistrationQualityTier(str, Enum):
+    """Operational alignment tiers based on sub-pixel Root Mean Square Error (RMSE)."""
+    SUBPIXEL_EXCELLENT = "subpixel_excellent"    # RMSE < 0.20 px (Optimal for biophysical differencing, InSAR, centimeter drone fusion)
+    SUBPIXEL_GOOD = "subpixel_good"              # 0.20 <= RMSE < 0.50 px (Operational standard for Sentinel-2/Landsat-8 multi-temporal change detection)
+    ACCEPTABLE = "acceptable"                    # 0.50 <= RMSE <= 1.00 px (Marginal; structural edge false positive risk up to 30%)
+    MISALIGNED = "misaligned"                    # RMSE > 1.00 px (Unusable for automated differencing; requires manual GCP tie points)
+
+
+COREGISTRATION_METHOD_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "fft_phase_correlation": {
+        "id": "fft_phase_correlation",
+        "name": "FFT Phase Correlation (Fourier Shift Theorem)",
+        "description": "Calculates sub-pixel translation vector from the peak of normalized cross-power spectrum in the 2D spatial frequency domain.",
+        "recommended_window_size": 64,
+        "is_frequency_domain": True,
+        "subpixel_capable": True,
+        "badge": "FFT Sub-Pixel",
+        "reference": "De Castro & Morandi (1987); Kuglin & Hines (1975)"
+    },
+    "localized_ncc": {
+        "id": "localized_ncc",
+        "name": "Localized Normalized Cross-Correlation (AROSICS)",
+        "description": "Dense spatial cross-correlation across tie-point grid patches with sub-pixel parabolic interpolation.",
+        "recommended_window_size": 32,
+        "is_frequency_domain": False,
+        "subpixel_capable": True,
+        "badge": "AROSICS NCC",
+        "reference": "Scheffler et al. (2017)"
+    },
+    "feature_matching_sift": {
+        "id": "feature_matching_sift",
+        "name": "Scale-Invariant Feature Transform (SIFT)",
+        "description": "Scale and rotation invariant gradient orientation keypoints for multi-modal (SAR to Optical, Drone to Satellite) matching.",
+        "recommended_window_size": 128,
+        "is_frequency_domain": False,
+        "subpixel_capable": True,
+        "badge": "SIFT Scale-Invariant",
+        "reference": "Lowe (2004)"
+    },
+    "feature_matching_orb": {
+        "id": "feature_matching_orb",
+        "name": "Oriented FAST and Rotated BRIEF (ORB)",
+        "description": "High-speed binary feature matching with Hamming distance metrics for real-time UAV video and orthomosaic tie points.",
+        "recommended_window_size": 128,
+        "is_frequency_domain": False,
+        "subpixel_capable": False,
+        "badge": "ORB Fast Binary",
+        "reference": "Rublee et al. (2011)"
+    },
+    "affine_ransac": {
+        "id": "affine_ransac",
+        "name": "6-Parameter Affine Homography with RANSAC",
+        "description": "Fits 2D affine transformation [a, b, tx; c, d, ty] rejecting geometric outliers via Random Sample Consensus.",
+        "recommended_window_size": 64,
+        "is_frequency_domain": False,
+        "subpixel_capable": True,
+        "badge": "Affine RANSAC",
+        "reference": "Fischler & Bolles (1981)"
+    }
+}
+
+
+RESAMPLING_KERNEL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "nearest": {
+        "id": "nearest",
+        "name": "Nearest Neighbor",
+        "filter_radius": 0.5,
+        "preserves_radiometry": True,
+        "continuous_imagery_recommended": False,
+        "discrete_masks_recommended": True,
+        "badge": "Nearest (1x1)",
+        "description": "Preserves original radiometric values and discrete categorical classifications (SCL, cloud masks, geology)."
+    },
+    "bilinear": {
+        "id": "bilinear",
+        "name": "Bilinear Interpolation",
+        "filter_radius": 1.0,
+        "preserves_radiometry": False,
+        "continuous_imagery_recommended": True,
+        "discrete_masks_recommended": False,
+        "badge": "Bilinear (2x2)",
+        "description": "Linear weighted distance averaging across 2x2 pixel footprint; smooths high-frequency noise."
+    },
+    "cubic_convolution": {
+        "id": "cubic_convolution",
+        "name": "Cubic Convolution (Keys a = -0.5)",
+        "filter_radius": 2.0,
+        "preserves_radiometry": False,
+        "continuous_imagery_recommended": True,
+        "discrete_masks_recommended": False,
+        "badge": "Bicubic (4x4)",
+        "description": "High-fidelity piecewise cubic polynomial approximation of sinc function; balances edge sharpness and radiometric continuity."
+    },
+    "cubic_spline": {
+        "id": "cubic_spline",
+        "name": "Cubic B-Spline",
+        "filter_radius": 2.0,
+        "preserves_radiometry": False,
+        "continuous_imagery_recommended": True,
+        "discrete_masks_recommended": False,
+        "badge": "Cubic Spline",
+        "description": "Piecewise polynomial with continuous second derivatives; optimal for elevation models and DEM warping."
+    },
+    "lanczos": {
+        "id": "lanczos",
+        "name": "Lanczos-3 Windowed Sinc",
+        "filter_radius": 3.0,
+        "preserves_radiometry": False,
+        "continuous_imagery_recommended": True,
+        "discrete_masks_recommended": False,
+        "badge": "Lanczos (6x6)",
+        "description": "High-order windowed sinc filter; minimizes aliasing and ringing artifacts during high-resolution multi-sensor resampling."
+    }
+}
+
+
+COREGISTRATION_QUALITY_TIER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "subpixel_excellent": {
+        "tier": "subpixel_excellent",
+        "max_rmse_pixels": 0.20,
+        "badge": "Sub-Pixel Excellent (< 0.20 px)",
+        "suitable_for_differential_change": True,
+        "edge_false_positive_risk_pct": "< 5%",
+        "color": "#10b981"
+    },
+    "subpixel_good": {
+        "tier": "subpixel_good",
+        "max_rmse_pixels": 0.50,
+        "badge": "Sub-Pixel Good (0.20 - 0.50 px)",
+        "suitable_for_differential_change": True,
+        "edge_false_positive_risk_pct": "5% - 25%",
+        "color": "#3b82f6"
+    },
+    "acceptable": {
+        "tier": "acceptable",
+        "max_rmse_pixels": 1.00,
+        "badge": "Marginal Alignment (0.50 - 1.00 px)",
+        "suitable_for_differential_change": False,
+        "edge_false_positive_risk_pct": "25% - 50%",
+        "color": "#f59e0b"
+    },
+    "misaligned": {
+        "tier": "misaligned",
+        "max_rmse_pixels": float("inf"),
+        "badge": "Misaligned (> 1.00 px)",
+        "suitable_for_differential_change": False,
+        "edge_false_positive_risk_pct": "> 50%",
+        "color": "#ef4444"
+    }
+}
+
+
+COREGISTRATION_BENCHMARK_PAIRS: Dict[str, Dict[str, Any]] = {
+    "S2_MULTI_TEMPORAL_SAN_LUIS": {
+        "pair_id": "S2_MULTI_TEMPORAL_SAN_LUIS",
+        "reference_scene_id": "S2A_MSIL2A_20260701T183921_T10SEJ",
+        "target_scene_id": "S2B_MSIL2A_20260716T183919_T10SEJ",
+        "collection": "sentinel-2-l2a",
+        "known_shift_x_pixels": -0.32,
+        "known_shift_y_pixels": 0.44,
+        "expected_rmse_pixels": 0.16,
+        "dominant_quality_tier": "subpixel_excellent",
+        "target_sensor": "MSI",
+        "reference_sensor": "MSI"
+    },
+    "S2_DRONE_CENTIMETER_FUSION": {
+        "pair_id": "S2_DRONE_CENTIMETER_FUSION",
+        "reference_scene_id": "DRONE_MISSION_SAN_LUIS_CREST_20260810",
+        "target_scene_id": "S2A_MSIL2A_20260811T183921_T10SEJ",
+        "collection": "drone-ortho",
+        "known_shift_x_pixels": 1.15,
+        "known_shift_y_pixels": -0.82,
+        "expected_rmse_pixels": 0.34,
+        "dominant_quality_tier": "subpixel_good",
+        "target_sensor": "MSI",
+        "reference_sensor": "UAV-RGB"
+    },
+    "S1_SAR_OPTICAL_CROSS_MODAL": {
+        "pair_id": "S1_SAR_OPTICAL_CROSS_MODAL",
+        "reference_scene_id": "S1A_IW_GRDH_1SDV_20260815_VV",
+        "target_scene_id": "S2A_MSIL2A_20260816T183921_T10SEJ",
+        "collection": "sentinel-1-rtc",
+        "known_shift_x_pixels": 0.78,
+        "known_shift_y_pixels": 1.05,
+        "expected_rmse_pixels": 0.58,
+        "dominant_quality_tier": "acceptable",
+        "target_sensor": "MSI",
+        "reference_sensor": "C-SAR"
+    }
+}
+
+
+def calculate_fft_phase_correlation_shift(
+    ref_patch: Union[List[List[float]], Any],
+    target_patch: Union[List[List[float]], Any],
+    subpixel: bool = True
+) -> Dict[str, float]:
+    """Calculates 2D translational sub-pixel shift between reference and target raster patches.
+    
+    Implements the Fourier Shift Theorem via Normalized Cross-Power Spectrum:
+        R(u, v) = (F_1(u, v) * F_2^*(u, v)) / (|F_1(u, v) * F_2^*(u, v)| + eps)
+        r(x, y) = F^-1 { R(u, v) }
+        
+    Peak location in r(x, y) identifies the integer displacement, refined with 3-point
+    parabolic peak interpolation for sub-pixel accuracy.
+    """
+    try:
+        import numpy as np
+        arr_ref = np.asarray(ref_patch, dtype=np.float64)
+        arr_tgt = np.asarray(target_patch, dtype=np.float64)
+        
+        if arr_ref.ndim != 2 or arr_tgt.ndim != 2 or arr_ref.shape != arr_tgt.shape:
+            return {"shift_x": 0.0, "shift_y": 0.0, "correlation_score": 0.0}
+            
+        h, w = arr_ref.shape
+        if h < 2 or w < 2:
+            return {"shift_x": 0.0, "shift_y": 0.0, "correlation_score": 1.0}
+            
+        # Subtract spatial means
+        arr_ref = arr_ref - np.mean(arr_ref)
+        arr_tgt = arr_tgt - np.mean(arr_tgt)
+        
+        # 2D FFT
+        F1 = np.fft.fft2(arr_ref)
+        F2 = np.fft.fft2(arr_tgt)
+        
+        # Cross-power spectrum with active mask normalization
+        cross_power = F1 * np.conj(F2)
+        abs_cp = np.abs(cross_power)
+        mask = abs_cp > 1e-9
+        R = np.zeros_like(cross_power, dtype=np.complex128)
+        np.divide(cross_power, abs_cp, out=R, where=mask)
+        
+        # Inverse 2D FFT
+        corr = np.fft.ifft2(R).real
+        corr = np.fft.fftshift(corr)
+        
+        max_idx = np.unravel_index(np.argmax(corr), corr.shape)
+        cy, cx = int(max_idx[0]), int(max_idx[1])
+        center_y, center_x = h // 2, w // 2
+        
+        raw_dy = float(cy - center_y)
+        raw_dx = float(cx - center_x)
+        
+        # Sub-pixel 3-point parabolic interpolation around peak
+        sub_dx = raw_dx
+        sub_dy = raw_dy
+        if subpixel:
+            if 0 < cx < w - 1:
+                denom_x = 2.0 * (2.0 * corr[cy, cx] - corr[cy, cx - 1] - corr[cy, cx + 1])
+                if abs(denom_x) > 1e-9:
+                    sub_dx = raw_dx + (corr[cy, cx + 1] - corr[cy, cx - 1]) / denom_x
+            if 0 < cy < h - 1:
+                denom_y = 2.0 * (2.0 * corr[cy, cx] - corr[cy - 1, cx] - corr[cy + 1, cx])
+                if abs(denom_y) > 1e-9:
+                    sub_dy = raw_dy + (corr[cy + 1, cx] - corr[cy - 1, cx]) / denom_y
+                    
+        peak_score = float(np.max(corr))
+        active_frac = float(np.mean(mask))
+        normalized_score = peak_score / active_frac if active_frac > 0 else peak_score
+        score = max(0.0, min(1.0, normalized_score))
+        return {
+            "shift_x": round(float(sub_dx), 4),
+            "shift_y": round(float(sub_dy), 4),
+            "correlation_score": round(score, 4)
+        }
+    except Exception:
+        return {"shift_x": 0.0, "shift_y": 0.0, "correlation_score": 0.5}
+
+
+def estimate_affine_transform_matrix(
+    tie_points: List[Dict[str, Any]],
+    outlier_threshold_pixels: float = 1.5
+) -> Dict[str, Any]:
+    """Fits 6-parameter 2D affine transformation [a, b, tx; c, d, ty] with RANSAC-style outlier rejection.
+    
+    Transforms coordinates:
+        x' = a * x + b * y + tx
+        y' = c * x + d * y + ty
+    """
+    if not tie_points or len(tie_points) < 3:
+        return {
+            "a": 1.0, "b": 0.0, "c": 0.0, "d": 1.0,
+            "tx": 0.0, "ty": 0.0,
+            "rmse_pixels": 0.0,
+            "inlier_count": len(tie_points) if tie_points else 0,
+            "total_tie_points": len(tie_points) if tie_points else 0
+        }
+        
+    try:
+        import numpy as np
+        import itertools
+        
+        pts_ref = []
+        pts_tgt = []
+        for pt in tie_points:
+            rx = pt.get("reference_x", pt.get("rx", 0.0))
+            ry = pt.get("reference_y", pt.get("ry", 0.0))
+            tx = pt.get("target_x", pt.get("tx", rx + pt.get("shift_x", 0.0)))
+            ty = pt.get("target_y", pt.get("ty", ry + pt.get("shift_y", 0.0)))
+            pts_ref.append([rx, ry])
+            pts_tgt.append([tx, ty])
+            
+        pts_ref = np.array(pts_ref, dtype=np.float64)
+        pts_tgt = np.array(pts_tgt, dtype=np.float64)
+        n = len(pts_ref)
+        
+        def fit_affine_subset(indices: List[int]):
+            k = len(indices)
+            A = np.zeros((2 * k, 6), dtype=np.float64)
+            b = np.zeros(2 * k, dtype=np.float64)
+            for i, idx in enumerate(indices):
+                A[2 * i] = [pts_ref[idx, 0], pts_ref[idx, 1], 1.0, 0.0, 0.0, 0.0]
+                b[2 * i] = pts_tgt[idx, 0]
+                A[2 * i + 1] = [0.0, 0.0, 0.0, pts_ref[idx, 0], pts_ref[idx, 1], 1.0]
+                b[2 * i + 1] = pts_tgt[idx, 1]
+            params, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+            return params
+
+        best_inliers = None
+        max_inlier_count = 0
+        best_cost = float("inf")
+        
+        if n <= 10:
+            candidates = list(itertools.combinations(range(n), 3))
+        else:
+            rng = np.random.RandomState(42)
+            candidates = [rng.choice(n, 3, replace=False).tolist() for _ in range(50)]
+            candidates.append(list(range(n)))
+            
+        for cand in candidates:
+            try:
+                p = fit_affine_subset(cand)
+                a, b_val, tx, c, d, ty = p
+                pred_x = a * pts_ref[:, 0] + b_val * pts_ref[:, 1] + tx
+                pred_y = c * pts_ref[:, 0] + d * pts_ref[:, 1] + ty
+                res = np.sqrt((pts_tgt[:, 0] - pred_x) ** 2 + (pts_tgt[:, 1] - pred_y) ** 2)
+                inliers = res <= outlier_threshold_pixels
+                inlier_cnt = int(np.sum(inliers))
+                if inlier_cnt < 3:
+                    continue
+                inl_rmse = float(np.sqrt(np.mean(res[inliers] ** 2)))
+                dev = float((a - 1.0) ** 2 + (d - 1.0) ** 2 + b_val ** 2 + c ** 2)
+                cost = inl_rmse + 0.1 * dev
+                if inlier_cnt > max_inlier_count or (inlier_cnt == max_inlier_count and cost < best_cost):
+                    max_inlier_count = inlier_cnt
+                    best_inliers = inliers
+                    best_cost = cost
+            except Exception:
+                continue
+                
+        if best_inliers is not None and max_inlier_count >= 3:
+            inlier_indices = np.where(best_inliers)[0].tolist()
+            params = fit_affine_subset(inlier_indices)
+            a, b_val, tx, c, d, ty = params
+            pred_x = a * pts_ref[best_inliers, 0] + b_val * pts_ref[best_inliers, 1] + tx
+            pred_y = c * pts_ref[best_inliers, 0] + d * pts_ref[best_inliers, 1] + ty
+            final_rmse = float(np.sqrt(np.mean((pts_tgt[best_inliers, 0] - pred_x) ** 2 + (pts_tgt[best_inliers, 1] - pred_y) ** 2)))
+            final_inlier_count = max_inlier_count
+        else:
+            params = fit_affine_subset(list(range(n)))
+            a, b_val, tx, c, d, ty = params
+            pred_x = a * pts_ref[:, 0] + b_val * pts_ref[:, 1] + tx
+            pred_y = c * pts_ref[:, 0] + d * pts_ref[:, 1] + ty
+            final_rmse = float(np.sqrt(np.mean((pts_tgt[:, 0] - pred_x) ** 2 + (pts_tgt[:, 1] - pred_y) ** 2)))
+            final_inlier_count = n
+            
+        return {
+            "a": round(float(a), 6),
+            "b": round(float(b_val), 6),
+            "c": round(float(c), 6),
+            "d": round(float(d), 6),
+            "tx": round(float(tx), 4),
+            "ty": round(float(ty), 4),
+            "rmse_pixels": round(final_rmse, 4),
+            "inlier_count": final_inlier_count,
+            "total_tie_points": n
+        }
+    except Exception:
+        return {
+            "a": 1.0, "b": 0.0, "c": 0.0, "d": 1.0,
+            "tx": 0.0, "ty": 0.0,
+            "rmse_pixels": 0.0,
+            "inlier_count": len(tie_points),
+            "total_tie_points": len(tie_points)
+        }
+
+
+def evaluate_resampling_kernel_weight(
+    x: float,
+    kernel: Union[str, GeometricResamplingKernel] = "cubic_convolution"
+) -> float:
+    """Evaluates 1D interpolation kernel weighting function w(x).
+    
+    Supports:
+        - nearest: 1.0 if |x| < 0.5 else 0.0
+        - bilinear: max(0.0, 1.0 - |x|)
+        - cubic_convolution: Keys (1981) cubic convolution with a = -0.5
+        - lanczos: Lanczos-3 windowed sinc function
+    """
+    k_str = kernel.value if isinstance(kernel, GeometricResamplingKernel) else str(kernel).lower()
+    ax = abs(float(x))
+    
+    if k_str == "nearest":
+        return 1.0 if ax < 0.5 else 0.0
+    elif k_str == "bilinear":
+        return max(0.0, 1.0 - ax) if ax <= 1.0 else 0.0
+    elif k_str in ("cubic_convolution", "cubic_spline", "bicubic"):
+        a = -0.5  # Standard Keys parameter preserving 3rd-order Taylor series accuracy
+        if ax <= 1.0:
+            return (a + 2.0) * (ax ** 3) - (a + 3.0) * (ax ** 2) + 1.0
+        elif 1.0 < ax <= 2.0:
+            return a * (ax ** 3) - 5.0 * a * (ax ** 2) + 8.0 * a * ax - 4.0 * a
+        return 0.0
+    elif k_str == "lanczos":
+        if ax == 0.0:
+            return 1.0
+        elif ax >= 3.0:
+            return 0.0
+        import math
+        pi_x = math.pi * ax
+        sinc_x = math.sin(pi_x) / pi_x
+        sinc_window = math.sin(pi_x / 3.0) / (pi_x / 3.0)
+        return sinc_x * sinc_window
+    return 1.0 if ax < 0.5 else 0.0
+
+
+def classify_coregistration_quality_tier(rmse_pixels: float) -> str:
+    """Classifies operational co-registration quality tier from sub-pixel RMSE."""
+    r = float(rmse_pixels)
+    if r < 0.20:
+        return "subpixel_excellent"
+    elif r < 0.50:
+        return "subpixel_good"
+    elif r <= 1.00:
+        return "acceptable"
+    return "misaligned"
+
+
+def calculate_change_detection_false_positive_risk(
+    shift_pixels: float,
+    spatial_sigma: float = 0.6
+) -> float:
+    """Evaluates estimated percentage of false-positive change pixels due to geometric misregistration.
+    
+    Implements Townshend et al. (1992) misregistration error propagation model:
+        Risk = 1.0 - exp(- shift^2 / (2 * sigma_spatial^2))
+    """
+    import math
+    s = abs(float(shift_pixels))
+    sig = max(0.01, float(spatial_sigma))
+    risk = 1.0 - math.exp(-(s ** 2) / (2.0 * (sig ** 2)))
+    return round(max(0.0, min(1.0, risk)) * 100.0, 2)
+
+
+class TiePoint(BaseModel):
+    """Tie-point observation with measured sub-pixel spatial displacement."""
+    point_id: str = Field(..., description="Unique tie-point identifier")
+    reference_x: float = Field(..., description="Reference pixel column coordinate")
+    reference_y: float = Field(..., description="Reference pixel row coordinate")
+    target_x: float = Field(..., description="Target pixel column coordinate")
+    target_y: float = Field(..., description="Target pixel row coordinate")
+    shift_x: float = Field(..., description="Estimated horizontal shift dx in pixels")
+    shift_y: float = Field(..., description="Estimated vertical shift dy in pixels")
+    correlation_score: float = Field(..., ge=0.0, le=1.0, description="Normalized cross-correlation confidence score")
+    is_inlier: bool = Field(True, description="Flag indicating if tie-point passed RANSAC outlier filtering")
+    residual_pixels: Optional[float] = Field(None, description="Geometric residual error in pixels relative to fitted affine model")
+
+
+class AffineTransformMatrix(BaseModel):
+    """Fitted 6-parameter 2D affine transformation homography matrix."""
+    a: float = Field(1.0, description="Scale / rotation parameter a (x' = a*x + b*y + tx)")
+    b: float = Field(0.0, description="Shear / rotation parameter b")
+    c: float = Field(0.0, description="Shear / rotation parameter c (y' = c*x + d*y + ty)")
+    d: float = Field(1.0, description="Scale / rotation parameter d")
+    tx: float = Field(0.0, description="Horizontal translation in pixels")
+    ty: float = Field(0.0, description="Vertical translation in pixels")
+    rmse_pixels: float = Field(0.0, description="Root Mean Square Error across inlier tie points")
+    inlier_count: int = Field(0, description="Number of inlier tie points used in fit")
+    total_tie_points: int = Field(0, description="Total candidate tie points evaluated")
+
+
+class CoRegistrationAnalysisRequest(BaseModel):
+    """Payload to request automated sub-pixel co-registration and affine shift estimation."""
+    reference_scene_id: str = Field(..., description="Primary reference scene ID (e.g. S2A_20260701_T10SEJ)")
+    target_scene_id: str = Field(..., description="Warp target scene ID to align with reference")
+    bbox: Optional[Union[List[float], Dict[str, float], str, BoundingBox]] = Field(None, description="AOI bounding box [min_lon, min_lat, max_lon, max_lat]")
+    method: Union[CoRegistrationMethod, str] = Field(CoRegistrationMethod.FFT_PHASE_CORRELATION, description="Co-registration algorithm")
+    kernel: Union[GeometricResamplingKernel, str] = Field(GeometricResamplingKernel.CUBIC_CONVOLUTION, description="Geometric resampling interpolation kernel")
+    grid_spacing_pixels: int = Field(64, ge=16, le=512, description="Grid interval in pixels between candidate tie-point patches")
+    min_correlation: float = Field(0.60, ge=0.0, le=1.0, description="Minimum correlation threshold for valid tie-point acceptance")
+    outlier_threshold_pixels: float = Field(1.5, ge=0.1, le=10.0, description="RANSAC residual outlier threshold in pixels")
+
+
+class CoRegistrationSummary(BaseModel):
+    """Statistical summary of geometric co-registration quality and residual error."""
+    mean_shift_x_pixels: float = Field(..., description="Average horizontal translation dx in pixels")
+    mean_shift_y_pixels: float = Field(..., description="Average vertical translation dy in pixels")
+    rmse_pixels: float = Field(..., description="Overall geometric alignment RMSE in pixels")
+    max_shift_pixels: float = Field(..., description="Maximum recorded displacement magnitude in pixels")
+    mean_correlation: float = Field(..., ge=0.0, le=1.0, description="Mean correlation confidence across tie points")
+    inlier_fraction: float = Field(..., ge=0.0, le=1.0, description="Fraction of tie points retained after RANSAC filtering")
+    quality_tier: CoRegistrationQualityTier = Field(..., description="Operational alignment tier")
+    false_change_risk_pct: float = Field(..., description="Estimated percentage of false-positive change pixels due to residual misregistration")
+
+
+class CoRegistrationAnalysisResponse(BaseModel):
+    """Response payload containing fitted affine transformation, tie points, and tile contracts."""
+    analysis_id: str = Field(..., description="Unique co-registration execution identifier")
+    reference_scene_id: str = Field(..., description="Reference scene ID")
+    target_scene_id: str = Field(..., description="Target scene ID")
+    method: str = Field(..., description="Applied co-registration method")
+    kernel: str = Field(..., description="Applied geometric resampling kernel")
+    affine_matrix: AffineTransformMatrix = Field(..., description="Fitted 2D affine transformation parameters")
+    summary: CoRegistrationSummary = Field(..., description="Statistical summary metrics")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for aligned raster tiles")
+    vector_field_tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for displacement vector arrows")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO 8601 execution timestamp")
+    status: str = Field("completed", description="Analysis execution status")
+
+
+class CoRegistrationTileRequestParams(BaseModel):
+    """Parameters for dynamic XYZ co-registered raster tile streaming."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level")
+    x: int = Field(..., ge=0, description="Slippy map tile column")
+    y: int = Field(..., ge=0, description="Slippy map tile row")
+    reference_scene_id: str = Field(..., description="Reference scene ID")
+    target_scene_id: str = Field(..., description="Target scene ID")
+    mode: str = Field("aligned", description="Rendering mode ('aligned', 'diff_pre', 'diff_post', 'vector_field')")
+    kernel: Union[GeometricResamplingKernel, str] = Field(GeometricResamplingKernel.CUBIC_CONVOLUTION, description="Resampling kernel")
+    colormap: Optional[str] = Field("spectral", description="Colormap for difference visualization")
+
+
+def build_coregistration_tile_url(
+    reference_scene_id: str = "REF_SCENE",
+    target_scene_id: str = "TARGET_SCENE",
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    mode: str = "aligned",
+    kernel: Union[str, GeometricResamplingKernel] = "cubic_convolution",
+    colormap: Optional[str] = None
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for co-registered raster tiles."""
+    k_str = kernel.value if isinstance(kernel, GeometricResamplingKernel) else str(kernel).lower()
+    base = f"/api/v1/tiles/coregistration/{reference_scene_id}/{target_scene_id}/{z}/{x}/{y}.png"
+    params: List[str] = [f"mode={mode}", f"kernel={k_str}"]
+    if colormap:
+        params.append(f"colormap={colormap}")
+    return f"{base}?{'&'.join(params)}"
+
+
+def build_coregistration_tile_url_template(
+    reference_scene_id: str = "REF_SCENE",
+    target_scene_id: str = "TARGET_SCENE",
+    mode: str = "aligned",
+    kernel: Union[str, GeometricResamplingKernel] = "cubic_convolution",
+    colormap: Optional[str] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for co-registered raster tiles."""
+    k_str = kernel.value if isinstance(kernel, GeometricResamplingKernel) else str(kernel).lower()
+    base = f"/api/v1/tiles/coregistration/{reference_scene_id}/{target_scene_id}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = [f"mode={mode}", f"kernel={k_str}"]
+    if colormap:
+        params.append(f"colormap={colormap}")
+    return f"{base}?{'&'.join(params)}"
+
+
+def build_coregistration_vector_field_tile_url_template(
+    analysis_id: str = "COREG_DEFAULT",
+    arrow_scale: float = 1.0
+) -> str:
+    """Builds dynamic Leaflet tile URL template for displacement vector arrows."""
+    base = f"/api/v1/tiles/coregistration/vector-field/{analysis_id}/{{z}}/{{x}}/{{y}}.png"
+    if arrow_scale != 1.0:
+        return f"{base}?arrow_scale={arrow_scale}"
+    return base
+
+
+# ==============================================================================
+# Cycle v2.5.31: Aquatic Quality & Harmful Algal Bloom Detection Contracts
+# ==============================================================================
+
+class AquaticMetric(str, Enum):
+    """Bio-optical aquatic quality, chlorophyll-a, turbidity, and algal hazard metrics."""
+    NDCI = "ndci"                              # Normalized Difference Chlorophyll Index (Mishra & Mishra 2012)
+    FAI = "fai"                                # Floating Algae Index (Hu 2009)
+    CHLA = "chla"                              # Bio-optical Chlorophyll-a Concentration in ug/L
+    TURBIDITY = "turbidity"                    # Nechad (2010) Semi-Analytical Turbidity / TSS in NTU (FNU) or mg/L
+    EUTROPHICATION_TIER = "eutrophication_tier"# Trophic state and WHO cyanobacterial risk categorization
+    MNDWI = "mndwi"                            # Modified Normalized Difference Water Index (Xu 2006) for water masking
+
+
+class EutrophicationRiskTier(str, Enum):
+    """Carlson Trophic State Index & WHO cyanobacteria advisory tiers for inland and coastal waters."""
+    OLIGOTROPHIC = "oligotrophic"              # Low productivity / Ultra-clear (Chl-a < 2.5 ug/L, NDCI < -0.10, Turbidity < 2.0 NTU)
+    MESOTROPHIC = "mesotrophic"                # Moderate productivity / Normal inland waters (Chl-a 2.5 - 8.0 ug/L, NDCI -0.10 - 0.05, Turbidity 2.0 - 5.0 NTU)
+    EUTROPHIC = "eutrophic"                    # High productivity / Algal bloom alert (Chl-a 8.0 - 25.0 ug/L, NDCI 0.05 - 0.20, Turbidity 5.0 - 20.0 NTU)
+    HYPERTROPHIC = "hypertrophic"              # Severe cyanobacteria bloom / Toxic scum (Chl-a > 25.0 ug/L, NDCI > 0.20, Turbidity > 20.0 NTU)
+
+
+class BioOpticalAlgorithm(str, Enum):
+    """Bio-optical models for water surface reflectance and aquatic constituent inversion."""
+    NDCI_MISHRA_2012 = "ndci_mishra_2012"      # Mishra & Mishra (2012) RedEdge1 / Red band ratio
+    FAI_HU_2009 = "fai_hu_2009"                # Hu (2009) baseline subtraction for floating macroalgae & cyanobacteria scums
+    NECHAD_TURBIDITY_2010 = "nechad_turbidity_2010" # Nechad et al. (2010) semi-analytical water-leaving reflectance inversion
+    TWO_BAND_DALL_OLMO = "2bda_dall_olmo_2005" # Dall'Olmo & Gitelson (2005) 2-band Red-Edge ratio [R(705)/R(665)]
+    THREE_BAND_GITELSON = "3bda_gitelson_2008" # Gitelson et al. (2008) 3-band bio-optical inversion [(1/R(665) - 1/R(705)) * R(740)]
+
+
+class WaterMaskingMethod(str, Enum):
+    """Water boundary extraction and non-aquatic pixel masking strategies."""
+    MNDWI_THRESHOLD = "mndwi_threshold"        # Modified NDWI: (Green - SWIR1)/(Green + SWIR1) > threshold
+    NDWI_THRESHOLD = "ndwi_threshold"          # McFeeters NDWI: (Green - NIR)/(Green + NIR) > threshold
+    SCL_WATER_MASK = "scl_water_mask"          # Sentinel-2 Scene Classification Layer (SCL == 6: Water)
+    NIR_THRESHOLD = "nir_threshold"            # Strict surface water NIR reflectance absorption (NIR < 0.10)
+
+
+AQUATIC_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "ndci": {
+        "id": "ndci",
+        "name": "Normalized Difference Chlorophyll Index (NDCI)",
+        "formula": "(B05 - B04) / (B05 + B04)",
+        "unit": "dimensionless (-1.0 to 1.0)",
+        "default_colormap": "spectral",
+        "default_rescale": "-0.1,0.4",
+        "sensor_bands": {"sentinel-2-l2a": ["B04", "B05"]},
+        "description": "Normalized ratio of RedEdge1 (705nm) to Red (665nm); sensitive to chlorophyll-a absorption and backscattering in turbid waters without sediment sensitivity.",
+        "reference": "Mishra & Mishra (2012)"
+    },
+    "fai": {
+        "id": "fai",
+        "name": "Floating Algae Index (FAI)",
+        "formula": "NIR - [RED + (SWIR - RED) * ((lambda_NIR - lambda_RED) / (lambda_SWIR - lambda_RED))]",
+        "unit": "reflectance difference (-0.2 to 0.4)",
+        "default_colormap": "viridis",
+        "default_rescale": "-0.05,0.20",
+        "sensor_bands": {"sentinel-2-l2a": ["B04", "B08", "B11"]},
+        "description": "Baseline subtraction index isolating surface floating algae scums (Microcystis, Sargassum, cyanobacterial mats) from water background.",
+        "reference": "Hu (2009)"
+    },
+    "chla": {
+        "id": "chla",
+        "name": "Chlorophyll-a Concentration",
+        "formula": "14.039 + 86.115 * NDCI + 194.325 * NDCI^2",
+        "unit": "ug/L (mg/m^3)",
+        "default_colormap": "turbo",
+        "default_rescale": "0.0,50.0",
+        "sensor_bands": {"sentinel-2-l2a": ["B04", "B05"]},
+        "description": "Empirical second-order polynomial inversion estimating phytoplankton biomass and algal density in ug/L.",
+        "reference": "Mishra & Mishra (2012); Gitelson et al. (2008)"
+    },
+    "turbidity": {
+        "id": "turbidity",
+        "name": "Nechad Semi-Analytical Turbidity / TSS",
+        "formula": "A * rho_w / (1 - rho_w / C)",
+        "unit": "NTU (FNU) or mg/L",
+        "default_colormap": "blues",
+        "default_rescale": "0.0,30.0",
+        "sensor_bands": {"sentinel-2-l2a": ["B04", "B08"]},
+        "description": "Semi-analytical inversion model relating water-leaving reflectance at 665nm to suspended sediment concentration and turbidity.",
+        "reference": "Nechad et al. (2010); Dogliotti et al. (2015)"
+    },
+    "eutrophication_tier": {
+        "id": "eutrophication_tier",
+        "name": "Eutrophication & Cyanobacteria Risk Tier",
+        "formula": "Categorical (Oligotrophic, Mesotrophic, Eutrophic, Hypertrophic)",
+        "unit": "risk tier (0-3)",
+        "default_colormap": "rdylbu_r",
+        "default_rescale": "0,3",
+        "sensor_bands": {"sentinel-2-l2a": ["B03", "B04", "B05", "B08", "B11"]},
+        "description": "WHO-aligned algal hazard tiers indicating cyanobacterial bloom intensity and recreational/drinking water safety.",
+        "reference": "Carlson (1977); WHO (2003, 2021)"
+    },
+    "mndwi": {
+        "id": "mndwi",
+        "name": "Modified Normalized Difference Water Index (MNDWI)",
+        "formula": "(B03 - B11) / (B03 + B11)",
+        "unit": "dimensionless (-1.0 to 1.0)",
+        "default_colormap": "blues",
+        "default_rescale": "-0.2,0.8",
+        "sensor_bands": {"sentinel-2-l2a": ["B03", "B11"]},
+        "description": "Suppresses built-up land and soil noise to accurately delineate inland and coastal water surface boundaries.",
+        "reference": "Xu (2006)"
+    }
+}
+
+
+EUTROPHICATION_TIER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "oligotrophic": {
+        "tier": "oligotrophic",
+        "numeric_tier": 0,
+        "label": "Oligotrophic (Clear Water)",
+        "chl_a_range_ug_l": [0.0, 2.5],
+        "ndci_range": [-1.0, -0.10],
+        "turbidity_ntu_range": [0.0, 2.0],
+        "risk_level": "low",
+        "who_alert_level": "None",
+        "hex_color": "#38bdf8",
+        "badge": "bg-sky-900/60 text-sky-300 border-sky-500/50",
+        "advisory": "Excellent water quality; suitable for municipal drinking supply and direct contact recreation."
+    },
+    "mesotrophic": {
+        "tier": "mesotrophic",
+        "numeric_tier": 1,
+        "label": "Mesotrophic (Moderate Biomass)",
+        "chl_a_range_ug_l": [2.5, 8.0],
+        "ndci_range": [-0.10, 0.05],
+        "turbidity_ntu_range": [2.0, 5.0],
+        "risk_level": "moderate",
+        "who_alert_level": "Vigilance",
+        "hex_color": "#22c55e",
+        "badge": "bg-emerald-900/60 text-emerald-300 border-emerald-500/50",
+        "advisory": "Normal biological productivity; routine seasonal monitoring recommended."
+    },
+    "eutrophic": {
+        "tier": "eutrophic",
+        "numeric_tier": 2,
+        "label": "Eutrophic (Algal Bloom Alert)",
+        "chl_a_range_ug_l": [8.0, 25.0],
+        "ndci_range": [0.05, 0.20],
+        "turbidity_ntu_range": [5.0, 20.0],
+        "risk_level": "high",
+        "who_alert_level": "Alert Level 1",
+        "hex_color": "#f59e0b",
+        "badge": "bg-amber-900/60 text-amber-300 border-amber-500/50",
+        "advisory": "Elevated cyanobacterial cell counts; potential microcystin toxin risk; avoid prolonged water contact."
+    },
+    "hypertrophic": {
+        "tier": "hypertrophic",
+        "numeric_tier": 3,
+        "label": "Hypertrophic (Severe Toxic Scum)",
+        "chl_a_range_ug_l": [25.0, 200.0],
+        "ndci_range": [0.20, 1.0],
+        "turbidity_ntu_range": [20.0, 500.0],
+        "risk_level": "severe",
+        "who_alert_level": "Alert Level 2 (Scum Hazard)",
+        "hex_color": "#ef4444",
+        "badge": "bg-rose-900/60 text-rose-300 border-rose-500/50",
+        "advisory": "Acute hazard from toxic surface scums; restrict livestock access and drinking water intake; post public warnings."
+    }
+}
+
+
+BIO_OPTICAL_ALGORITHM_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "ndci_mishra_2012": {
+        "id": "ndci_mishra_2012",
+        "name": "NDCI (Mishra & Mishra 2012)",
+        "reference": "Mishra, S., & Mishra, D. R. (2012). Remote Sensing of Environment, 117, 394-406.",
+        "required_bands": ["B04", "B05"],
+        "target_parameter": "Chlorophyll-a / Cyanobacteria",
+        "applicable_water_types": "Turbid productive estuarine and inland waters",
+        "badge": "NDCI Bio-Optical"
+    },
+    "fai_hu_2009": {
+        "id": "fai_hu_2009",
+        "name": "Floating Algae Index (Hu 2009)",
+        "reference": "Hu, C. (2009). Remote Sensing of Environment, 113(10), 2118-2129.",
+        "required_bands": ["B04", "B08", "B11"],
+        "target_parameter": "Surface Floating Scum / Sargassum",
+        "applicable_water_types": "Coastal, oceanic, and large inland lake waters",
+        "badge": "FAI Scum"
+    },
+    "nechad_turbidity_2010": {
+        "id": "nechad_turbidity_2010",
+        "name": "Nechad Semi-Analytical Model (2010)",
+        "reference": "Nechad, B., Ruddick, K. G., & Park, Y. (2010). Remote Sensing of Environment, 114(4), 854-874.",
+        "required_bands": ["B04"],
+        "target_parameter": "Turbidity (NTU) / Total Suspended Solids (TSS)",
+        "applicable_water_types": "Estuarine and coastal waters with moderate to high sediment load",
+        "badge": "Nechad Turbidity"
+    },
+    "2bda_dall_olmo_2005": {
+        "id": "2bda_dall_olmo_2005",
+        "name": "2-Band Red-Edge Ratio (Dall'Olmo & Gitelson 2005)",
+        "reference": "Dall'Olmo, G., & Gitelson, A. A. (2005). Optics Express, 13(10), 3799-3811.",
+        "required_bands": ["B04", "B05"],
+        "target_parameter": "Chlorophyll-a",
+        "applicable_water_types": "Inland reservoirs and turbid lakes",
+        "badge": "2BDA Red-Edge"
+    },
+    "3bda_gitelson_2008": {
+        "id": "3bda_gitelson_2008",
+        "name": "3-Band Bio-Optical Model (Gitelson et al. 2008)",
+        "reference": "Gitelson, A. A., et al. (2008). Remote Sensing of Environment, 112(9), 3582-3593.",
+        "required_bands": ["B04", "B05", "B06"],
+        "target_parameter": "Chlorophyll-a in highly turbid waters",
+        "applicable_water_types": "Agricultural ponds, aquaculture, and hypereutrophic lagoons",
+        "badge": "3BDA Multi-Band"
+    }
+}
+
+
+AQUATIC_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "LAKE_ERIE_HAB_2026": {
+        "scene_id": "S2A_MSIL2A_20260814T160901_T17TNE",
+        "name": "Lake Erie Western Basin (HAB Cyanobacteria Bloom)",
+        "location": "Western Lake Erie, Ohio / Michigan / Ontario",
+        "center": [41.75, -83.25],
+        "bbox": [-83.55, 41.60, -83.00, 41.95],
+        "primary_phenomenon": "Microcystis aeruginosa cyanobacteria bloom with surface scum",
+        "expected_tier": "hypertrophic",
+        "mean_ndci": 0.28,
+        "mean_fai": 0.045,
+        "mean_chla_ug_l": 52.4,
+        "mean_turbidity_ntu": 18.6
+    },
+    "LAKE_TAHOE_OLIGOTROPHIC_2026": {
+        "scene_id": "S2B_MSIL2A_20260722T184919_T10SFJ",
+        "name": "Lake Tahoe (Ultra-Oligotrophic Deep Subalpine)",
+        "location": "California / Nevada border, Sierra Nevada",
+        "center": [39.09, -120.03],
+        "bbox": [-120.25, 38.90, -119.90, 39.25],
+        "primary_phenomenon": "Ultra-clear deep oligotrophic lake, low algal biomass",
+        "expected_tier": "oligotrophic",
+        "mean_ndci": -0.22,
+        "mean_fai": -0.018,
+        "mean_chla_ug_l": 0.85,
+        "mean_turbidity_ntu": 0.42
+    },
+    "SAN_LUIS_RESERVOIR_2026": {
+        "scene_id": "S2A_MSIL2A_20260805T183921_T10SEJ",
+        "name": "San Luis Reservoir (Summer Eutrophication & Turbidity)",
+        "location": "Merced County, Central Valley, California",
+        "center": [37.06, -121.08],
+        "bbox": [-121.20, 36.98, -120.95, 37.15],
+        "primary_phenomenon": "Seasonal agricultural runoff nutrient loading and eutrophication",
+        "expected_tier": "eutrophic",
+        "mean_ndci": 0.12,
+        "mean_fai": 0.008,
+        "mean_chla_ug_l": 16.8,
+        "mean_turbidity_ntu": 7.4
+    }
+}
+
+
+def calculate_ndci(
+    red: Optional[float] = None,
+    rededge1: Optional[float] = None,
+    red_edge_b05: Optional[float] = None,
+    red_b04: Optional[float] = None,
+    epsilon: float = 1e-6
+) -> float:
+    """Computes Normalized Difference Chlorophyll Index (NDCI) (Mishra & Mishra 2012).
+    
+    Formula:
+        NDCI = (RedEdge1 - Red) / (RedEdge1 + Red)
+        where RedEdge1 is Sentinel-2 B05 (~705 nm) and Red is B04 (~665 nm).
+    Supports keyword arguments:
+        calculate_ndci(red=0.04, rededge1=0.06)
+        calculate_ndci(red_edge_b05=0.06, red_b04=0.04)
+        calculate_ndci(0.04, 0.06)  # red, rededge1
+    """
+    re = red_edge_b05 if red_edge_b05 is not None else rededge1
+    r = red_b04 if red_b04 is not None else red
+    if re is None and r is not None:
+        re = r
+        r = 0.0
+    re = float(re if re is not None else 0.0)
+    r = float(r if r is not None else 0.0)
+    denom = re + r
+    if abs(denom) < epsilon:
+        return 0.0
+    val = (re - r) / (denom + epsilon)
+    return float(max(-1.0, min(1.0, round(val, 4))))
+
+
+def calculate_fai(
+    nir_b08: float,
+    red_b04: float,
+    swir_b11: float,
+    lambda_red: float = 665.0,
+    lambda_nir: float = 842.0,
+    lambda_swir: float = 1610.0
+) -> float:
+    """Computes Floating Algae Index (FAI) (Hu 2009) via baseline subtraction.
+    
+    Formula:
+        FAI = R_NIR - [R_RED + (R_SWIR - R_RED) * ((lambda_NIR - lambda_RED) / (lambda_SWIR - lambda_RED))]
+    """
+    nir = float(nir_b08)
+    red = float(red_b04)
+    swir = float(swir_b11)
+    denom = max(1.0, (lambda_swir - lambda_red))
+    f = (lambda_nir - lambda_red) / denom
+    r_base = red + (swir - red) * f
+    return float(round(nir - r_base, 6))
+
+
+def calculate_chla_from_ndci(ndci: float, model: str = "mishra_polynomial") -> float:
+    """Estimates bio-optical Chlorophyll-a concentration in ug/L from NDCI.
+    
+    Implements Mishra & Mishra (2012) calibration:
+        Chl-a = 14.039 + 86.115 * NDCI + 194.325 * NDCI^2
+    """
+    v = float(ndci)
+    if model == "linear":
+        return float(max(0.0, round(10.0 + 50.0 * v, 3)))
+    if v < -0.15:
+        chla = max(0.2, 2.5 + (v + 0.15) * 8.0)
+    else:
+        chla = 14.039 + 86.115 * v + 194.325 * (v ** 2)
+    return float(max(0.0, round(chla, 3)))
+
+
+def calculate_nechad_turbidity(
+    reflectance_red: float,
+    a_rho: float = 357.85,
+    c_rho: float = 0.1935,
+    max_turbidity: float = 1000.0
+) -> float:
+    """Computes water turbidity / suspended particulate matter via Nechad et al. (2010).
+    
+    Formula:
+        S = (A_rho * rho_w) / (1 - rho_w / C_rho)
+    """
+    r = max(0.0, float(reflectance_red))
+    c = max(1e-4, float(c_rho))
+    ratio = min(0.95, r / c)
+    denom = 1.0 - ratio
+    val = (float(a_rho) * r) / max(1e-4, denom)
+    return float(max(0.0, min(float(max_turbidity), round(val, 2))))
+
+
+def calculate_mndwi(green_b03: float, swir_b11: float, epsilon: float = 1e-6) -> float:
+    """Computes Modified Normalized Difference Water Index (MNDWI) (Xu 2006).
+    
+    Formula:
+        MNDWI = (B03 - B11) / (B03 + B11)
+    """
+    b3 = float(green_b03)
+    b11 = float(swir_b11)
+    denom = b3 + b11
+    if abs(denom) < epsilon:
+        return 0.0
+    val = (b3 - b11) / (denom + epsilon)
+    return float(max(-1.0, min(1.0, val)))
+
+
+def is_water_pixel(mndwi: float, threshold: float = 0.0) -> bool:
+    """Determines whether a pixel is surface water using MNDWI thresholding."""
+    return float(mndwi) > float(threshold)
+
+
+def classify_eutrophication_risk_tier(
+    chla_ug_l: Optional[float] = None,
+    ndci: Optional[float] = None,
+    turbidity_ntu: Optional[float] = None
+) -> str:
+    """Categorizes water body eutrophication and cyanobacterial hazard tier."""
+    if chla_ug_l is not None:
+        c = float(chla_ug_l)
+        if c < 2.5:
+            return "oligotrophic"
+        elif c < 8.0:
+            return "mesotrophic"
+        elif c <= 25.0:
+            return "eutrophic"
+        return "hypertrophic"
+    if ndci is not None:
+        n = float(ndci)
+        if n < -0.10:
+            return "oligotrophic"
+        elif n < 0.05:
+            return "mesotrophic"
+        elif n <= 0.20:
+            return "eutrophic"
+        return "hypertrophic"
+    if turbidity_ntu is not None:
+        t = float(turbidity_ntu)
+        if t < 2.0:
+            return "oligotrophic"
+        elif t < 5.0:
+            return "mesotrophic"
+        elif t <= 20.0:
+            return "eutrophic"
+        return "hypertrophic"
+    return "mesotrophic"
+
+
+class AquaticQualityAnalysisRequest(BaseModel):
+    """Payload to request multi-spectral bio-optical water quality and HAB analysis."""
+    scene_id: str = Field(..., description="Sentinel-2 L2A scene ID (e.g. S2A_MSIL2A_20260814T160901_T17TNE)")
+    bbox: Optional[Union[List[float], Dict[str, float], str, BoundingBox]] = Field(None, description="Spatial bounding box [min_lon, min_lat, max_lon, max_lat]")
+    collection: str = Field("sentinel-2-l2a", description="Satellite collection identifier")
+    metrics: List[Union[AquaticMetric, str]] = Field(
+        default=["ndci", "fai", "chla", "turbidity", "eutrophication_tier"],
+        description="List of aquatic bio-optical metrics to compute"
+    )
+    water_masking_method: Union[WaterMaskingMethod, str] = Field(
+        WaterMaskingMethod.MNDWI_THRESHOLD,
+        description="Strategy for delineating water pixels and excluding land"
+    )
+    mndwi_threshold: float = Field(0.0, ge=-0.5, le=0.5, description="MNDWI threshold for water boundary classification")
+    algorithm: Union[BioOpticalAlgorithm, str] = Field(
+        BioOpticalAlgorithm.NDCI_MISHRA_2012,
+        description="Bio-optical model for chlorophyll-a and algal bloom estimation"
+    )
+
+
+class AquaticWaterBodySummary(BaseModel):
+    """Statistical summary of surface water quality, turbidity, and bloom risk."""
+    water_pixels: int = Field(..., description="Number of valid surface water pixels evaluated")
+    water_surface_area_ha: float = Field(..., description="Total water surface area in hectares")
+    mean_ndci: float = Field(..., description="Mean Normalized Difference Chlorophyll Index (-1.0 to 1.0)")
+    mean_fai: float = Field(..., description="Mean Floating Algae Index")
+    mean_chla_ug_l: float = Field(..., description="Estimated mean Chlorophyll-a concentration in ug/L")
+    mean_turbidity_ntu: float = Field(..., description="Estimated mean turbidity in NTU / FNU")
+    dominant_eutrophication_tier: EutrophicationRiskTier = Field(..., description="Dominant trophic / risk classification")
+    bloom_extent_ha: float = Field(..., description="Surface area in hectares exceeding eutrophic threshold")
+    bloom_risk_level: str = Field(..., description="Overall alert status: low, moderate, high, severe")
+    floating_scum_detected: bool = Field(False, description="Flag indicating presence of floating surface algal mats (FAI > 0.02)")
+    tier_distribution: Dict[str, float] = Field(default_factory=dict, description="Percentage of water pixels in each trophic tier")
+
+
+class AquaticQualityAnalysisResponse(BaseModel):
+    """Response payload containing bio-optical metrics, HAB risk tier, and tile streaming contracts."""
+    analysis_id: str = Field(..., description="Unique aquatic analysis execution identifier")
+    scene_id: str = Field(..., description="Evaluated satellite scene ID")
+    collection: str = Field("sentinel-2-l2a", description="Satellite collection identifier")
+    algorithm: str = Field(..., description="Applied bio-optical algorithm")
+    water_masking_method: str = Field(..., description="Applied water boundary masking method")
+    mndwi_threshold: float = Field(0.0, description="MNDWI water boundary cut-off threshold")
+    summary: AquaticWaterBodySummary = Field(..., description="Aquatic constituent and bloom risk summary")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for aquatic quality tiles")
+    hab_tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for HAB hazard tier tiles")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO 8601 execution timestamp")
+    status: str = Field("completed", description="Execution status")
+
+
+class AquaticTileRequestParams(BaseModel):
+    """Parameters for dynamic XYZ aquatic quality raster tile streaming."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level")
+    x: int = Field(..., ge=0, description="Slippy map tile column")
+    y: int = Field(..., ge=0, description="Slippy map tile row")
+    collection: str = Field("sentinel-2-l2a", description="Satellite collection")
+    metric: Union[AquaticMetric, str] = Field("ndci", description="Aquatic metric ('ndci', 'fai', 'chla', 'turbidity', 'eutrophication_tier')")
+    colormap: Optional[str] = Field("spectral", description="Colormap for rendering")
+    rescale: Optional[Union[List[float], Tuple[float, float], str]] = Field(None, description="Min/max contrast stretch bounds")
+    mndwi_threshold: float = Field(0.0, description="MNDWI threshold for masking non-water pixels")
+    mask_land: bool = Field(True, description="Whether non-water land pixels are masked to transparent")
+
+
+def build_aquatic_tile_url(
+    collection: str = "sentinel-2-l2a",
+    metric: Union[str, AquaticMetric] = "ndci",
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    colormap: Optional[str] = None,
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None,
+    mndwi_threshold: float = 0.0,
+    mask_land: bool = True
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for aquatic quality raster tiles."""
+    m_str = metric.value if isinstance(metric, AquaticMetric) else str(metric).lower()
+    base = f"/api/v1/tiles/aquatic/{collection}/{m_str}/{z}/{x}/{y}.png"
+    params: List[str] = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        r_str = f"{rescale[0]},{rescale[1]}" if isinstance(rescale, (list, tuple)) else str(rescale)
+        params.append(f"rescale={r_str}")
+    if mndwi_threshold != 0.0:
+        params.append(f"mndwi_threshold={mndwi_threshold}")
+    if not mask_land:
+        params.append("mask_land=false")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_aquatic_tile_url_template(
+    collection: str = "sentinel-2-l2a",
+    metric: Union[str, AquaticMetric] = "ndci",
+    colormap: Optional[str] = None,
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None,
+    mndwi_threshold: float = 0.0,
+    mask_land: bool = True
+) -> str:
+    """Builds dynamic Leaflet tile URL template for aquatic quality raster tiles."""
+    m_str = metric.value if isinstance(metric, AquaticMetric) else str(metric).lower()
+    base = f"/api/v1/tiles/aquatic/{collection}/{m_str}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        r_str = f"{rescale[0]},{rescale[1]}" if isinstance(rescale, (list, tuple)) else str(rescale)
+        params.append(f"rescale={r_str}")
+    if mndwi_threshold != 0.0:
+        params.append(f"mndwi_threshold={mndwi_threshold}")
+    if not mask_land:
+        params.append("mask_land=false")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_aquatic_hab_tile_url_template(
+    collection: str = "sentinel-2-l2a",
+    mndwi_threshold: float = 0.0
+) -> str:
+    """Builds dynamic Leaflet tile URL template for HAB hazard tier tiles."""
+    base = f"/api/v1/tiles/aquatic/hab/{collection}/{{z}}/{{x}}/{{y}}.png"
+    if mndwi_threshold != 0.0:
+        return f"{base}?mndwi_threshold={mndwi_threshold}"
+    return base
+
+
+# ==============================================================================
+# Cycle v2.5.32: Topographic Solar Illumination Correction & SCS+C Inversion Models
+# ==============================================================================
+
+class TopographicCorrectionMethod(str, Enum):
+    """Algorithms for solar illumination and topographic relief normalization in complex terrain."""
+    NONE = "none"                              # Unmodified surface reflectance with raw terrain illumination
+    COSINE = "cosine"                          # Teillet et al. (1982) Lambertian cosine correction: cos(theta_s) / cos(i)
+    COSINE_LAMBERTIAN = "cosine_lambertian"    # Standard Lambertian cosine normalization alias
+    C_CORRECTION = "c_correction"              # Teillet et al. (1982) semi-empirical non-Lambertian: (cos(theta_s) + c) / (cos(i) + c)
+    MINNAERT = "minnaert"                      # Minnaert (1941) / Smith et al. (1980) empirical power law: (cos(theta_s) / cos(i))^k
+    SCS_C = "scs_c"                            # Soenen, Peddle, & Coburn (2005) Sun-Canopy-Sensor with C-correction
+    SCS_PLUS_C = "scs_plus_c"                  # Sun-Canopy-Sensor with empirical C-correction alias
+    SCS = "scs"                                # Gu & Gillespie (1998) Sun-Canopy-Sensor canopy sunlit projection
+
+
+class IlluminationCondition(str, Enum):
+    """Categorical solar illumination conditions across complex topographic relief."""
+    SUNLIT = "sunlit"                          # Directly illuminated slopes: cos(i) >= 0.20
+    SHADED = "shaded"                          # Dimly lit / grazing incidence: 0.0 < cos(i) < 0.20
+    SELF_SHADOW = "self_shadow"                # Topographic self-shadow (facing away from sun): cos(i) <= 0.0
+    CAST_SHADOW = "cast_shadow"                # Sun occluded by adjacent higher terrain relief
+
+
+class TopographicMetric(str, Enum):
+    """Metrics produced by topographic solar illumination correction workflows."""
+    CORRECTED_REFLECTANCE = "corrected_reflectance" # Topographically normalized surface reflectance (BOA)
+    COS_INCIDENCE = "cos_incidence"            # Pixel-wise local incidence cosine: cos(i) in [-1.0, 1.0]
+    ILLUMINATION = "illumination"              # Analytical Lambertian hillshade illumination: 255 * max(0, cos(i))
+    ILLUMINATION_CONDITION = "illumination_condition" # Categorical classification mask (sunlit, shaded, self_shadow)
+    DIFFERENCE = "difference"                  # Absolute difference: |L_corrected - L_raw|
+    RATIO = "ratio"                            # Correction scaling ratio: L_corrected / (L_raw + epsilon)
+
+
+class TopographicSolarGeometry(BaseModel):
+    """Solar illumination geometry and ephemeris angles at satellite acquisition time."""
+    solar_zenith_deg: float = Field(..., ge=0.0, le=90.0, description="Solar zenith angle theta_s in degrees")
+    solar_azimuth_deg: float = Field(..., ge=0.0, le=360.0, description="Solar azimuth angle phi_s in degrees clockwise from North")
+    solar_elevation_deg: float = Field(..., ge=0.0, le=90.0, description="Solar elevation angle gamma_s = 90 - theta_s in degrees")
+    earth_sun_distance_au: Optional[float] = Field(1.0, ge=0.9, le=1.1, description="Earth-sun distance in astronomical units")
+
+
+class TopographicCorrectionConfig(BaseModel):
+    """Hyperparameters and thresholds for topographic solar illumination correction."""
+    method: Union[TopographicCorrectionMethod, str] = Field(
+        TopographicCorrectionMethod.C_CORRECTION,
+        description="Topographic correction algorithm to apply"
+    )
+    c_factor: float = Field(0.08, ge=0.0, description="Empirical C constant (c = b/m) for diffuse skylight irradiance")
+    minnaert_k: float = Field(0.65, gt=0.0, le=1.0, description="Minnaert limb-darkening constant k in (0, 1]")
+    cos_i_min: float = Field(0.05, ge=0.001, le=0.5, description="Minimum cos(i) threshold to prevent division-by-zero in cosine/SCS")
+    mask_self_shadow: bool = Field(True, description="Whether self-shadow slopes (cos(i) <= 0) are masked or preserved")
+    mask_water: bool = Field(True, description="Whether water pixels (MNDWI > 0) are excluded from topographic adjustment")
+    bands: List[str] = Field(
+        default_factory=lambda: ["B02", "B03", "B04", "B08", "B11", "B12"],
+        description="Spectral bands to apply topographic illumination correction to"
+    )
+
+
+# Configuration metadata for topographic correction methods
+TOPOGRAPHIC_METHOD_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "none": {
+        "id": "none",
+        "name": "No Correction (Raw Topography)",
+        "description": "Raw topographically uncorrected surface reflectance. Retains natural terrain shadows and aspect illumination gradients.",
+        "formula": "L_{corr} = L",
+        "canopy_aware": False,
+        "requires_c_factor": False,
+        "requires_minnaert_k": False,
+        "overcorrection_risk": "none",
+        "citation": "Standard top-of-canopy uncorrected reflectance baseline."
+    },
+    "cosine": {
+        "id": "cosine",
+        "name": "Cosine (Lambertian) Correction",
+        "description": "Standard Lambertian assumption normalizing irradiance by cos(theta_s) / cos(i). Severely over-corrects dimly lit slopes.",
+        "formula": "L_{corr} = L \\cdot \\frac{\\cos \\theta_s}{\\cos i}",
+        "canopy_aware": False,
+        "requires_c_factor": False,
+        "requires_minnaert_k": False,
+        "overcorrection_risk": "high",
+        "citation": "Teillet, P. M., Guindon, B., & Goodenough, D. G. (1982). On the slope-aspect correction in remote sensing."
+    },
+    "c_correction": {
+        "id": "c_correction",
+        "name": "C-Correction (Semi-Empirical Non-Lambertian)",
+        "description": "Empirical diffuse skylight irradiance adjustment c = b/m from linear regression L = m*cos(i) + b. Mitigates over-correction on shaded slopes.",
+        "formula": "L_{corr} = L \\cdot \\frac{\\cos \\theta_s + c}{\\cos i + c}",
+        "canopy_aware": False,
+        "requires_c_factor": True,
+        "requires_minnaert_k": False,
+        "overcorrection_risk": "low",
+        "citation": "Meyer, P., Itten, K. I., Kellenberger, T., Sandmeier, S., & Sandau, R. (1993). Radiometric corrections of topographically induced effects."
+    },
+    "minnaert": {
+        "id": "minnaert",
+        "name": "Minnaert Empirical Correction",
+        "description": "Non-Lambertian photometric model incorporating the Minnaert constant k in (0, 1] to balance isotropic and anisotropic scattering.",
+        "formula": "L_{corr} = L \\cdot \\left(\\frac{\\cos \\theta_s}{\\cos i}\\right)^k",
+        "canopy_aware": False,
+        "requires_c_factor": False,
+        "requires_minnaert_k": True,
+        "overcorrection_risk": "low",
+        "citation": "Smith, J. A., Lin, T. L., & Ranson, K. J. (1980). The Lambertian assumption and Landsat data."
+    },
+    "scs_c": {
+        "id": "scs_c",
+        "name": "Sun-Canopy-Sensor with C-Correction (SCS+C)",
+        "description": "Canopy-aware model preserving vertical tree crown geometry on sloping terrain combined with diffuse irradiance compensation.",
+        "formula": "L_{corr} = L \\cdot \\frac{\\cos \\theta_s \\cos \\alpha + c}{\\cos i + c}",
+        "canopy_aware": True,
+        "requires_c_factor": True,
+        "requires_minnaert_k": False,
+        "overcorrection_risk": "low",
+        "citation": "Soenen, S. A., Peddle, D. R., & Coburn, C. A. (2005). SCS+C: a modified sun-canopy-sensor topographic correction in forested terrain."
+    },
+    "scs": {
+        "id": "scs",
+        "name": "Sun-Canopy-Sensor (SCS)",
+        "description": "Canopy sunlit geometry projection model for sloped forested terrain without diffuse skylight parameter.",
+        "formula": "L_{corr} = L \\cdot \\frac{\\cos \\theta_s \\cos \\alpha}{\\cos i}",
+        "canopy_aware": True,
+        "requires_c_factor": False,
+        "requires_minnaert_k": False,
+        "overcorrection_risk": "moderate",
+        "citation": "Gu, D., & Gillespie, A. (1998). Topographic normalization of Landsat TM images of forest based on subpixel sun-canopy-sensor geometry."
+    }
+}
+
+
+# Validated high-relief benchmark scenes for topographic illumination correction
+TOPOGRAPHIC_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "MT_SHASTA_VOLCANO_2026": {
+        "scene_id": "S2A_MSIL2A_20260815T185921_T10TEK",
+        "name": "Mount Shasta Stratovolcano (Cascade Range, CA)",
+        "collection": "sentinel-2-l2a",
+        "dem_collection": "cop-dem-glo-30",
+        "bbox": [-122.35, 41.35, -122.10, 41.50],
+        "center": [41.4092, -122.1949],
+        "solar_zenith_deg": 34.2,
+        "solar_azimuth_deg": 148.5,
+        "solar_elevation_deg": 55.8,
+        "elevation_range_m": [1100.0, 4322.0],
+        "typical_c_factors": {"B02": 0.12, "B03": 0.09, "B04": 0.08, "B08": 0.06, "B11": 0.04},
+        "typical_minnaert_k": {"B02": 0.58, "B03": 0.62, "B04": 0.65, "B08": 0.72, "B11": 0.78},
+        "dominant_terrain": "Steep volcanic cone with glaciated peaks, active shadows on NW flanks"
+    },
+    "SWISS_ALPS_VALAIS_2026": {
+        "scene_id": "S2B_MSIL2A_20260902T102019_T32TLS",
+        "name": "Matterhorn & Valais Alpine Range (Switzerland)",
+        "collection": "sentinel-2-l2a",
+        "dem_collection": "cop-dem-glo-30",
+        "bbox": [7.65, 45.92, 7.85, 46.05],
+        "center": [45.9763, 7.7491],
+        "solar_zenith_deg": 45.1,
+        "solar_azimuth_deg": 162.8,
+        "solar_elevation_deg": 44.9,
+        "elevation_range_m": [1600.0, 4478.0],
+        "typical_c_factors": {"B02": 0.14, "B03": 0.11, "B04": 0.09, "B08": 0.07, "B11": 0.05},
+        "typical_minnaert_k": {"B02": 0.55, "B03": 0.60, "B04": 0.63, "B08": 0.69, "B11": 0.75},
+        "dominant_terrain": "Deep glacial alpine valley with extreme slope gradients (>45 deg)"
+    },
+    "SIERRA_NEVADA_YOSEMITE_2026": {
+        "scene_id": "S2A_MSIL2A_20260728T184921_T11SKB",
+        "name": "Yosemite Valley & Half Dome (Sierra Nevada, CA)",
+        "collection": "sentinel-2-l2a",
+        "dem_collection": "cop-dem-glo-30",
+        "bbox": [-119.65, 37.68, -119.50, 37.78],
+        "center": [37.7456, -119.5936],
+        "solar_zenith_deg": 28.6,
+        "solar_azimuth_deg": 135.2,
+        "solar_elevation_deg": 61.4,
+        "elevation_range_m": [1200.0, 2694.0],
+        "typical_c_factors": {"B02": 0.10, "B03": 0.08, "B04": 0.07, "B08": 0.05, "B11": 0.03},
+        "typical_minnaert_k": {"B02": 0.60, "B03": 0.64, "B04": 0.68, "B08": 0.74, "B11": 0.80},
+        "dominant_terrain": "Granite monolithic cliffs and dense coniferous canopy (SCS+C benchmark)"
+    }
+}
+
+
+# Mathematical Solvers & Invariants for Topographic Solar Illumination Correction
+
+def calculate_local_incidence_cosine(
+    solar_zenith_deg: float,
+    solar_azimuth_deg: float,
+    slope_deg: float,
+    aspect_deg: float
+) -> float:
+    """Calculates the local solar illumination incidence cosine cos(i) on sloping terrain.
+
+    Formula:
+        cos(i) = cos(theta_s) * cos(alpha) + sin(theta_s) * sin(alpha) * cos(phi_s - beta)
+
+    Parameters:
+        solar_zenith_deg: Solar zenith angle theta_s in degrees [0, 90]
+        solar_azimuth_deg: Solar azimuth angle phi_s in degrees clockwise from North [0, 360]
+        slope_deg: Terrain slope angle alpha in degrees [0, 90]
+        aspect_deg: Downhill terrain aspect azimuth beta in degrees clockwise from North [0, 360] (-1 for flat)
+
+    Returns:
+        cos(i) clamped strictly to [-1.0, 1.0]. Negative values indicate self-shadow.
+    """
+    zenith_rad = math.radians(max(0.0, min(90.0, float(solar_zenith_deg))))
+    slope_rad = math.radians(max(0.0, min(90.0, float(slope_deg))))
+    sun_azimuth_rad = math.radians(float(solar_azimuth_deg) % 360.0)
+
+    # Completely flat terrain or undefined aspect: cos(i) = cos(theta_s)
+    if slope_deg <= 1e-6 or aspect_deg < 0.0:
+        return round(float(math.cos(zenith_rad)), 6)
+
+    aspect_rad = math.radians(float(aspect_deg) % 360.0)
+    cos_i = (
+        math.cos(zenith_rad) * math.cos(slope_rad)
+        + math.sin(zenith_rad) * math.sin(slope_rad) * math.cos(sun_azimuth_rad - aspect_rad)
+    )
+    return round(float(max(-1.0, min(1.0, cos_i))), 6)
+
+
+def calculate_c_correction_factor(
+    cos_i: float,
+    solar_zenith_deg: float,
+    c_factor: float = 0.08,
+    cos_i_min: float = 0.05
+) -> float:
+    """Calculates the semi-empirical C-Correction factor (cos(theta_s) + c) / (cos(i) + c).
+
+    When c_factor == 0, falls back cleanly to the Lambertian cosine factor cos(theta_s) / max(cos_i_min, cos(i)).
+    """
+    zenith_rad = math.radians(max(0.0, min(90.0, float(solar_zenith_deg))))
+    cos_sz = math.cos(zenith_rad)
+    c = max(0.0, float(c_factor))
+
+    if c <= 1e-7:
+        denom = max(float(cos_i_min), float(cos_i))
+        factor = cos_sz / denom
+    else:
+        denom = max(1e-6, float(cos_i) + c)
+        factor = (cos_sz + c) / denom
+
+    return round(float(max(0.0, min(10.0, factor))), 6)
+
+
+def calculate_minnaert_correction(
+    cos_i: float,
+    solar_zenith_deg: float,
+    k: float = 0.65,
+    cos_i_min: float = 0.05
+) -> float:
+    """Calculates the Minnaert empirical correction factor (cos(theta_s) / max(cos_i_min, cos(i)))^k."""
+    zenith_rad = math.radians(max(0.0, min(90.0, float(solar_zenith_deg))))
+    cos_sz = math.cos(zenith_rad)
+    k_val = max(0.01, min(1.0, float(k)))
+    denom = max(float(cos_i_min), float(cos_i))
+    ratio = max(0.0, cos_sz / denom)
+    factor = math.pow(ratio, k_val)
+    return round(float(max(0.0, min(10.0, factor))), 6)
+
+
+def calculate_scs_c_correction(
+    cos_i: float,
+    slope_deg: float,
+    solar_zenith_deg: float,
+    c_factor: float = 0.08,
+    cos_i_min: float = 0.05
+) -> float:
+    """Calculates the Sun-Canopy-Sensor with C-Correction (SCS+C) factor:
+    (cos(theta_s) * cos(alpha) + c) / (cos(i) + c).
+
+    On flat terrain (alpha = 0), cos(alpha) = 1, reducing identically to C-Correction.
+    """
+    zenith_rad = math.radians(max(0.0, min(90.0, float(solar_zenith_deg))))
+    slope_rad = math.radians(max(0.0, min(90.0, float(slope_deg))))
+    cos_sz = math.cos(zenith_rad)
+    cos_slope = math.cos(slope_rad)
+    c = max(0.0, float(c_factor))
+
+    if c <= 1e-7:
+        denom = max(float(cos_i_min), float(cos_i))
+        factor = (cos_sz * cos_slope) / denom
+    else:
+        denom = max(1e-6, float(cos_i) + c)
+        factor = (cos_sz * cos_slope + c) / denom
+
+    return round(float(max(0.0, min(10.0, factor))), 6)
+
+
+def classify_illumination_condition(
+    cos_i: float,
+    threshold_sunlit: float = 0.20
+) -> IlluminationCondition:
+    """Classifies terrain solar illumination state from local incidence cosine."""
+    val = float(cos_i)
+    if val <= 0.0:
+        return IlluminationCondition.SELF_SHADOW
+    elif val < threshold_sunlit:
+        return IlluminationCondition.SHADED
+    return IlluminationCondition.SUNLIT
+
+
+def apply_topographic_correction(
+    radiance: float,
+    cos_i: float,
+    slope_deg: float,
+    solar_zenith_deg: float,
+    method: Union[TopographicCorrectionMethod, str] = "c_correction",
+    c_factor: float = 0.08,
+    minnaert_k: float = 0.65,
+    cos_i_min: float = 0.05,
+    mask_self_shadow: bool = True
+) -> float:
+    """Applies topographic solar illumination correction to a single surface reflectance value."""
+    rad = max(0.0, float(radiance))
+    m = method.value if isinstance(method, TopographicCorrectionMethod) else str(method).lower()
+
+    if m == "none":
+        return round(rad, 6)
+
+    # In self-shadow and masking enabled:
+    if float(cos_i) <= 0.0 and mask_self_shadow:
+        return 0.0
+
+    if m in ("cosine", "cosine_lambertian"):
+        factor = calculate_c_correction_factor(cos_i, solar_zenith_deg, c_factor=0.0, cos_i_min=cos_i_min)
+    elif m == "minnaert":
+        factor = calculate_minnaert_correction(cos_i, solar_zenith_deg, k=minnaert_k, cos_i_min=cos_i_min)
+    elif m in ("scs_c", "scs", "scs_plus_c"):
+        c = c_factor if m in ("scs_c", "scs_plus_c") else 0.0
+        factor = calculate_scs_c_correction(cos_i, slope_deg, solar_zenith_deg, c_factor=c, cos_i_min=cos_i_min)
+    else:  # default to c_correction
+        factor = calculate_c_correction_factor(cos_i, solar_zenith_deg, c_factor=c_factor, cos_i_min=cos_i_min)
+
+    corrected = rad * factor
+    return round(float(max(0.0, min(1.0, corrected))), 6)
+
+
+def estimate_c_factor_from_linear_regression(
+    radiance_values: List[float],
+    cos_i_values: List[float],
+    default_c: float = 0.08
+) -> float:
+    """Estimates the empirical C parameter c = b/m via linear regression L = m * cos(i) + b."""
+    if len(radiance_values) < 5 or len(radiance_values) != len(cos_i_values):
+        return default_c
+
+    valid_pairs = [
+        (float(y), float(x)) for y, x in zip(radiance_values, cos_i_values)
+        if math.isfinite(y) and math.isfinite(x) and x > 0.0 and y > 0.0
+    ]
+    if len(valid_pairs) < 5:
+        return default_c
+
+    n = len(valid_pairs)
+    sum_x = sum(x for _, x in valid_pairs)
+    sum_y = sum(y for y, _ in valid_pairs)
+    sum_xx = sum(x * x for _, x in valid_pairs)
+    sum_xy = sum(x * y for y, x in valid_pairs)
+
+    denom = (n * sum_xx - sum_x * sum_x)
+    if abs(denom) < 1e-9:
+        return default_c
+
+    m = (n * sum_xy - sum_x * sum_y) / denom
+    b = (sum_y - m * sum_x) / n
+
+    if m > 1e-6 and b >= 0.0:
+        c = b / m
+        return round(float(max(0.001, min(1.0, c))), 4)
+    return default_c
+
+
+# Pydantic Request & Response Schemas for Topographic Illumination Correction
+
+class TopographicCorrectionAnalysisRequest(BaseModel):
+    """Payload to request topographic solar illumination correction analysis."""
+    scene_id: str = Field(..., description="Sentinel-2 or Landsat scene ID")
+    collection: str = Field("sentinel-2-l2a", description="Optical satellite collection")
+    dem_collection: str = Field("cop-dem-glo-30", description="Digital Elevation Model collection")
+    bbox: Optional[Union[List[float], Dict[str, float], str, BoundingBox]] = Field(None, description="AOI bounding box [min_lon, min_lat, max_lon, max_lat]")
+    method: Union[TopographicCorrectionMethod, str] = Field(
+        TopographicCorrectionMethod.C_CORRECTION,
+        description="Topographic correction algorithm to execute"
+    )
+    solar_geometry: Optional[TopographicSolarGeometry] = Field(None, description="Custom solar illumination angles if overriding metadata")
+    config: Optional[TopographicCorrectionConfig] = Field(None, description="Correction parameters and thresholds")
+
+
+class TopographicCorrectionSummary(BaseModel):
+    """Statistical summary of solar illumination geometry and topographic radiance normalization."""
+    mean_cos_i: float = Field(..., description="Mean local solar incidence cosine across AOI")
+    min_cos_i: float = Field(..., description="Minimum local incidence cosine")
+    max_cos_i: float = Field(..., description="Maximum local incidence cosine")
+    sunlit_pixel_pct: float = Field(..., description="Percentage of directly sunlit pixels (cos(i) >= 0.20)")
+    shaded_pixel_pct: float = Field(..., description="Percentage of grazing/shaded pixels (0.0 < cos(i) < 0.20)")
+    self_shadow_pixel_pct: float = Field(..., description="Percentage of self-shadow pixels (cos(i) <= 0.0)")
+    estimated_c_factors: Dict[str, float] = Field(default_factory=dict, description="Estimated empirical C parameters per spectral band")
+    estimated_minnaert_k: Dict[str, float] = Field(default_factory=dict, description="Estimated Minnaert k constants per spectral band")
+    mean_radiance_uncalibrated: float = Field(..., description="Mean raw uncorrected surface reflectance across AOI")
+    mean_radiance_corrected: float = Field(..., description="Mean topographically normalized surface reflectance")
+    radiance_std_reduction_pct: float = Field(..., description="Percentage reduction in spectral variance/coefficient of variation across slopes")
+
+
+class TopographicCorrectionAnalysisResponse(BaseModel):
+    """Response payload containing topographic correction results and dynamic XYZ tile endpoints."""
+    analysis_id: str = Field(..., description="Unique topographic correction execution ID")
+    scene_id: str = Field(..., description="Evaluated optical satellite scene ID")
+    collection: str = Field("sentinel-2-l2a", description="Optical collection identifier")
+    dem_collection: str = Field("cop-dem-glo-30", description="Digital Elevation Model collection")
+    method: str = Field(..., description="Applied topographic illumination correction method")
+    solar_geometry: TopographicSolarGeometry = Field(..., description="Applied solar illumination geometry")
+    summary: TopographicCorrectionSummary = Field(..., description="Statistical summary of illumination and radiance adjustment")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for topographically corrected imagery")
+    illumination_tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for terrain local incidence cos(i) hillshade")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO 8601 execution timestamp")
+    status: str = Field("completed", description="Execution status")
+
+
+class TopographicTileRequestParams(BaseModel):
+    """Parameters for dynamic XYZ topographically corrected raster tile streaming."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level")
+    x: int = Field(..., ge=0, description="Slippy map tile column")
+    y: int = Field(..., ge=0, description="Slippy map tile row")
+    collection: str = Field("sentinel-2-l2a", description="Satellite collection")
+    item_id: str = Field(..., description="Scene or granule identifier")
+    method: Union[TopographicCorrectionMethod, str] = Field("c_correction", description="Correction algorithm ('none', 'c_correction', 'scs_c', 'minnaert', 'cosine')")
+    metric: Union[TopographicMetric, str] = Field("corrected_reflectance", description="Raster metric to render")
+    solar_zenith: Optional[float] = Field(None, ge=0.0, le=90.0, description="Solar zenith angle override")
+    solar_azimuth: Optional[float] = Field(None, ge=0.0, le=360.0, description="Solar azimuth angle override")
+    c_factor: Optional[float] = Field(0.08, ge=0.0, description="Empirical C parameter")
+    minnaert_k: Optional[float] = Field(0.65, gt=0.0, le=1.0, description="Minnaert k parameter")
+    colormap: Optional[str] = Field(None, description="Optional colormap for metric rendering")
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = Field(None, description="Contrast stretch bounds min,max")
+
+
+# Dynamic Tile URL Builders
+
+def build_topographic_tile_url(
+    collection: str = "sentinel-2-l2a",
+    item_id: str = "S2A_MSIL2A_20260815_MT_SHASTA",
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    method: Union[str, TopographicCorrectionMethod] = "c_correction",
+    metric: Union[str, TopographicMetric] = "corrected_reflectance",
+    solar_zenith: Optional[float] = None,
+    solar_azimuth: Optional[float] = None,
+    c_factor: Optional[float] = None,
+    minnaert_k: Optional[float] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None
+) -> str:
+    """Builds a dynamic XYZ tile streaming URL for topographically corrected raster tiles."""
+    m_str = method.value if isinstance(method, TopographicCorrectionMethod) else str(method).lower()
+    met_str = metric.value if isinstance(metric, TopographicMetric) else str(metric).lower()
+    base = f"/api/v1/tiles/topographic/{collection}/{item_id}/{z}/{x}/{y}.png"
+    params: List[str] = []
+    if m_str != "c_correction":
+        params.append(f"method={m_str}")
+    if met_str != "corrected_reflectance":
+        params.append(f"metric={met_str}")
+    if solar_zenith is not None:
+        params.append(f"solar_zenith={solar_zenith}")
+    if solar_azimuth is not None:
+        params.append(f"solar_azimuth={solar_azimuth}")
+    if c_factor is not None and c_factor != 0.08:
+        params.append(f"c_factor={c_factor}")
+    if minnaert_k is not None and minnaert_k != 0.65:
+        params.append(f"minnaert_k={minnaert_k}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        r_str = f"{rescale[0]},{rescale[1]}" if isinstance(rescale, (list, tuple)) else str(rescale)
+        params.append(f"rescale={r_str}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_topographic_tile_url_template(
+    collection: str = "sentinel-2-l2a",
+    item_id: str = "S2A_MSIL2A_20260815_MT_SHASTA",
+    method: Union[str, TopographicCorrectionMethod] = "c_correction",
+    metric: Union[str, TopographicMetric] = "corrected_reflectance",
+    solar_zenith: Optional[float] = None,
+    solar_azimuth: Optional[float] = None,
+    c_factor: Optional[float] = None,
+    minnaert_k: Optional[float] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for topographically corrected raster tiles."""
+    m_str = method.value if isinstance(method, TopographicCorrectionMethod) else str(method).lower()
+    met_str = metric.value if isinstance(metric, TopographicMetric) else str(metric).lower()
+    base = f"/api/v1/tiles/topographic/{collection}/{item_id}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = []
+    if m_str != "c_correction":
+        params.append(f"method={m_str}")
+    if met_str != "corrected_reflectance":
+        params.append(f"metric={met_str}")
+    if solar_zenith is not None:
+        params.append(f"solar_zenith={solar_zenith}")
+    if solar_azimuth is not None:
+        params.append(f"solar_azimuth={solar_azimuth}")
+    if c_factor is not None and c_factor != 0.08:
+        params.append(f"c_factor={c_factor}")
+    if minnaert_k is not None and minnaert_k != 0.65:
+        params.append(f"minnaert_k={minnaert_k}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        r_str = f"{rescale[0]},{rescale[1]}" if isinstance(rescale, (list, tuple)) else str(rescale)
+        params.append(f"rescale={r_str}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_topographic_illumination_tile_url_template(
+    collection: str = "sentinel-2-l2a",
+    item_id: str = "S2A_MSIL2A_20260815_MT_SHASTA",
+    solar_zenith: Optional[float] = None,
+    solar_azimuth: Optional[float] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for topographic solar local incidence cos(i) hillshade tiles."""
+    base = f"/api/v1/tiles/topographic/illumination/{collection}/{item_id}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = []
+    if solar_zenith is not None:
+        params.append(f"solar_zenith={solar_zenith}")
+    if solar_azimuth is not None:
+        params.append(f"solar_azimuth={solar_azimuth}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+# ==============================================================================
+# Cycle v2.5.33: Harmonized Landsat Sentinel-2 (HLS) Principles, NBAR & Cross-Sensor Harmonization Models
+# ==============================================================================
+
+class HlsSensorType(str, Enum):
+    """Satellite optical sensors harmonized within the HLS processing framework."""
+    LANDSAT_OLI = "landsat_oli"          # Landsat-8/9 Operational Land Imager (OLI)
+    SENTINEL_MSI = "sentinel_msi"        # Sentinel-2A/2B Multi-Spectral Instrument (MSI)
+    HARMONIZED_HLS = "harmonized_hls"    # Fully cross-sensor harmonized NBAR surface reflectance
+
+
+class BrdfKernelModel(str, Enum):
+    """Semi-empirical BRDF kernel models for Nadir BRDF-Adjusted Reflectance (NBAR)."""
+    ROSSTHICK_LISPARSE_R = "rossthick_lisparse_r" # Standard HLS Roujean/Wanner RossThick volumetric + LiSparse-R geometric
+    NONE = "none"                                  # Unadjusted observed surface reflectance (directional BOA)
+    LAMBERTIAN = "lambertian"                      # Isotropic Lambertian model without directional kernel corrections
+
+
+class HlsHarmonizationStage(str, Enum):
+    """Processing stage of Harmonized Landsat Sentinel-2 reflectance."""
+    RAW = "raw"                              # Raw top-of-canopy / surface reflectance (BOA)
+    NBAR = "nbar"                            # Nadir BRDF-Adjusted Reflectance (normalized to theta_v=0, theta_s=45)
+    SPECTRAL_ADJUSTED = "spectral_adjusted"  # Spectral bandpass adjusted reflectance
+    HARMONIZED = "harmonized"                # Fully harmonized (NBAR + cross-sensor bandpass adjusted)
+
+
+class HlsMetric(str, Enum):
+    """Raster metrics produced by Harmonized Landsat Sentinel-2 pipelines."""
+    HARMONIZED_REFLECTANCE = "harmonized_reflectance" # Fully harmonized surface reflectance (MSI-equivalent NBAR)
+    NBAR_REFLECTANCE = "nbar_reflectance"             # Nadir BRDF-Adjusted Reflectance
+    BRDF_ADJUSTMENT_FACTOR = "brdf_adjustment_factor" # Ratio c = rho(target) / rho(observed)
+    VOLUMETRIC_KERNEL = "volumetric_kernel"           # RossThick volumetric kernel k_vol
+    GEOMETRIC_KERNEL = "geometric_kernel"             # LiSparse-R geometric kernel k_geo
+    BANDPASS_DIFFERENCE = "bandpass_difference"       # Delta rho = rho_MSI - rho_OLI
+    NDVI = "ndvi"                                     # Normalized Difference Vegetation Index from harmonized bands
+    EVI = "evi"                                       # Enhanced Vegetation Index from harmonized bands
+
+
+# Claverie et al. (2018) Table 1 linear transformation coefficients: rho_MSI = c0 + c1 * rho_OLI
+HLS_BANDPASS_COEFFICIENTS: Dict[str, Dict[str, Any]] = {
+    "coastal": {"c0": -0.0002, "c1": 0.9959, "r_squared": 0.998, "rmse": 0.0055, "oli_band": "B1", "msi_band": "B01", "name": "Coastal Aerosol"},
+    "blue": {"c0": 0.0003, "c1": 0.9778, "r_squared": 0.997, "rmse": 0.0062, "oli_band": "B2", "msi_band": "B02", "name": "Blue"},
+    "green": {"c0": 0.0008, "c1": 1.0053, "r_squared": 0.998, "rmse": 0.0058, "oli_band": "B3", "msi_band": "B03", "name": "Green"},
+    "red": {"c0": 0.0019, "c1": 0.9765, "r_squared": 0.998, "rmse": 0.0060, "oli_band": "B4", "msi_band": "B04", "name": "Red"},
+    "nir": {"c0": -0.0001, "c1": 0.9983, "r_squared": 0.999, "rmse": 0.0045, "oli_band": "B5", "msi_band": "B8A", "name": "Near Infrared"},
+    "swir1": {"c0": 0.0004, "c1": 0.9987, "r_squared": 0.999, "rmse": 0.0041, "oli_band": "B6", "msi_band": "B11", "name": "Short-Wave Infrared 1"},
+    "swir2": {"c0": 0.0000, "c1": 1.0030, "r_squared": 0.999, "rmse": 0.0039, "oli_band": "B7", "msi_band": "B12", "name": "Short-Wave Infrared 2"},
+    # Band code aliases
+    "B01": {"c0": -0.0002, "c1": 0.9959, "r_squared": 0.998, "rmse": 0.0055, "oli_band": "B1", "msi_band": "B01", "name": "Coastal Aerosol"},
+    "B02": {"c0": 0.0003, "c1": 0.9778, "r_squared": 0.997, "rmse": 0.0062, "oli_band": "B2", "msi_band": "B02", "name": "Blue"},
+    "B03": {"c0": 0.0008, "c1": 1.0053, "r_squared": 0.998, "rmse": 0.0058, "oli_band": "B3", "msi_band": "B03", "name": "Green"},
+    "B04": {"c0": 0.0019, "c1": 0.9765, "r_squared": 0.998, "rmse": 0.0060, "oli_band": "B4", "msi_band": "B04", "name": "Red"},
+    "B05": {"c0": -0.0001, "c1": 0.9983, "r_squared": 0.999, "rmse": 0.0045, "oli_band": "B5", "msi_band": "B8A", "name": "Near Infrared"},
+    "B06": {"c0": 0.0004, "c1": 0.9987, "r_squared": 0.999, "rmse": 0.0041, "oli_band": "B6", "msi_band": "B11", "name": "Short-Wave Infrared 1"},
+    "B07": {"c0": 0.0000, "c1": 1.0030, "r_squared": 0.999, "rmse": 0.0039, "oli_band": "B7", "msi_band": "B12", "name": "Short-Wave Infrared 2"},
+    "B08": {"c0": -0.0001, "c1": 0.9983, "r_squared": 0.999, "rmse": 0.0045, "oli_band": "B5", "msi_band": "B8A", "name": "Near Infrared Broad"},
+    "B8A": {"c0": -0.0001, "c1": 0.9983, "r_squared": 0.999, "rmse": 0.0045, "oli_band": "B5", "msi_band": "B8A", "name": "Near Infrared Narrow"},
+    "B11": {"c0": 0.0004, "c1": 0.9987, "r_squared": 0.999, "rmse": 0.0041, "oli_band": "B6", "msi_band": "B11", "name": "Short-Wave Infrared 1"},
+    "B12": {"c0": 0.0000, "c1": 1.0030, "r_squared": 0.999, "rmse": 0.0039, "oli_band": "B7", "msi_band": "B12", "name": "Short-Wave Infrared 2"},
+}
+
+# Fixed global BRDF spectral shape coefficients (Roy et al., 2016; Claverie et al., 2018)
+HLS_BRDF_SPECTRAL_PARAMETERS: Dict[str, Dict[str, float]] = {
+    "coastal": {"f_iso": 0.0774, "f_vol": 0.0372, "f_geo": 0.0079},
+    "blue": {"f_iso": 0.0774, "f_vol": 0.0372, "f_geo": 0.0079},
+    "green": {"f_iso": 0.1306, "f_vol": 0.0580, "f_geo": 0.0178},
+    "red": {"f_iso": 0.1690, "f_vol": 0.0574, "f_geo": 0.0227},
+    "nir": {"f_iso": 0.3093, "f_vol": 0.1535, "f_geo": 0.0330},
+    "swir1": {"f_iso": 0.3430, "f_vol": 0.1154, "f_geo": 0.0453},
+    "swir2": {"f_iso": 0.2658, "f_vol": 0.0639, "f_geo": 0.0387},
+    "default": {"f_iso": 1.0000, "f_vol": 0.5000, "f_geo": 0.1000},
+    # Band aliases
+    "B01": {"f_iso": 0.0774, "f_vol": 0.0372, "f_geo": 0.0079},
+    "B02": {"f_iso": 0.0774, "f_vol": 0.0372, "f_geo": 0.0079},
+    "B03": {"f_iso": 0.1306, "f_vol": 0.0580, "f_geo": 0.0178},
+    "B04": {"f_iso": 0.1690, "f_vol": 0.0574, "f_geo": 0.0227},
+    "B05": {"f_iso": 0.3093, "f_vol": 0.1535, "f_geo": 0.0330},
+    "B08": {"f_iso": 0.3093, "f_vol": 0.1535, "f_geo": 0.0330},
+    "B8A": {"f_iso": 0.3093, "f_vol": 0.1535, "f_geo": 0.0330},
+    "B11": {"f_iso": 0.3430, "f_vol": 0.1154, "f_geo": 0.0453},
+    "B12": {"f_iso": 0.2658, "f_vol": 0.0639, "f_geo": 0.0387},
+}
+
+# Calibrated HLS Benchmark Scenes across canonical MGRS tiles
+HLS_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "MGRS_10TFK_SAN_FRANCISCO_2026": {
+        "id": "MGRS_10TFK_SAN_FRANCISCO_2026",
+        "name": "San Francisco Bay Area, California",
+        "mgrs_tile": "10TFK",
+        "description": "MGRS 10TFK coastal urban and agricultural transition zone with Sentinel-2 MSI and Landsat-9 OLI overlap.",
+        "landsat_scene_id": "LC09_L2SP_044034_20260718_02_T1",
+        "sentinel_scene_id": "S2A_MSIL2A_20260719T184921_N0500_R113_T10TFK",
+        "center": [37.7749, -122.4194],
+        "mean_solar_zenith_deg": 28.5,
+        "mean_solar_azimuth_deg": 134.2,
+        "mean_view_zenith_deg": 4.8,
+        "mean_view_azimuth_deg": 102.5,
+        "target_solar_zenith_deg": 45.0,
+        "target_view_zenith_deg": 0.0
+    },
+    "MGRS_14TPP_SALINA_KANSAS_2026": {
+        "id": "MGRS_14TPP_SALINA_KANSAS_2026",
+        "name": "Salina Agricultural Transect, Kansas",
+        "mgrs_tile": "14TPP",
+        "description": "MGRS 14TPP Great Plains agricultural cropland optimal for BRDF anisotropy characterization and cross-sensor normalization.",
+        "landsat_scene_id": "LC08_L2SP_029033_20260802_02_T1",
+        "sentinel_scene_id": "S2B_MSIL2A_20260803T170029_N0500_R069_T14TPP",
+        "center": [38.8403, -97.6114],
+        "mean_solar_zenith_deg": 31.2,
+        "mean_solar_azimuth_deg": 141.0,
+        "mean_view_zenith_deg": 6.2,
+        "mean_view_azimuth_deg": 98.4,
+        "target_solar_zenith_deg": 45.0,
+        "target_view_zenith_deg": 0.0
+    },
+    "MGRS_32UMU_MUNICH_BAVARIA_2026": {
+        "id": "MGRS_32UMU_MUNICH_BAVARIA_2026",
+        "name": "Munich & Bavarian Foreland, Germany",
+        "mgrs_tile": "32UMU",
+        "description": "MGRS 32UMU Central European temperate agricultural and mixed forest canopy cross-sensor validation zone.",
+        "landsat_scene_id": "LC09_L2SP_193026_20260625_02_T1",
+        "sentinel_scene_id": "S2A_MSIL2A_20260626T101031_N0500_R022_T32UMU",
+        "center": [48.1351, 11.5820],
+        "mean_solar_zenith_deg": 26.8,
+        "mean_solar_azimuth_deg": 152.3,
+        "mean_view_zenith_deg": 5.1,
+        "mean_view_azimuth_deg": 105.7,
+        "target_solar_zenith_deg": 45.0,
+        "target_view_zenith_deg": 0.0
+    }
+}
+
+
+# Mathematical BRDF & Harmonization Solvers
+
+def calculate_rossthick_volumetric_kernel(
+    solar_zenith_deg: float,
+    view_zenith_deg: float,
+    relative_azimuth_deg: float
+) -> float:
+    """Calculates the RossThick volumetric scattering BRDF kernel (Roujean et al. 1992, Wanner et al. 1995).
+    
+    Formula:
+        cos(xi) = cos(theta_s) * cos(theta_v) + sin(theta_s) * sin(theta_v) * cos(phi)
+        k_vol = ((pi/2 - xi) * cos(xi) + sin(xi)) / (cos(theta_s) + cos(theta_v)) - pi/4
+    
+    Invariants:
+        - Exact Helmholtz reciprocity: k_vol(theta_s, theta_v, phi) == k_vol(theta_v, theta_s, phi)
+        - Nadir-zenith illumination: k_vol(0, 0, 0) == 0.0
+    """
+    ts = math.radians(max(0.0, min(89.5, float(solar_zenith_deg))))
+    tv = math.radians(max(0.0, min(89.5, float(view_zenith_deg))))
+    phi = math.radians(float(relative_azimuth_deg))
+
+    cos_xi = math.cos(ts) * math.cos(tv) + math.sin(ts) * math.sin(tv) * math.cos(phi)
+    cos_xi = max(-1.0, min(1.0, cos_xi))
+    xi = math.acos(cos_xi)
+
+    denom = math.cos(ts) + math.cos(tv)
+    if denom <= 1e-7:
+        return 0.0
+    numer = (math.pi / 2.0 - xi) * cos_xi + math.sin(xi)
+    return float((numer / denom) - (math.pi / 4.0))
+
+
+def calculate_lisparse_geometric_kernel(
+    solar_zenith_deg: float,
+    view_zenith_deg: float,
+    relative_azimuth_deg: float,
+    crown_ratio: float = 1.0,
+    shape_ratio: float = 2.0
+) -> float:
+    """Calculates the LiSparse-R reciprocal geometric shadow-casting BRDF kernel (Wanner et al. 1995).
+    
+    Invariants:
+        - Exact Helmholtz reciprocity: k_geo(theta_s, theta_v, phi) == k_geo(theta_v, theta_s, phi)
+        - Nadir-zenith illumination: k_geo(0, 0, 0) == 0.0
+    """
+    ts = math.radians(max(0.0, min(89.5, float(solar_zenith_deg))))
+    tv = math.radians(max(0.0, min(89.5, float(view_zenith_deg))))
+    phi = math.radians(float(relative_azimuth_deg))
+
+    br = max(1e-4, float(crown_ratio))
+    hb = max(1e-4, float(shape_ratio))
+
+    tan_ts_prime = br * math.tan(ts)
+    tan_tv_prime = br * math.tan(tv)
+
+    ts_prime = math.atan(tan_ts_prime)
+    tv_prime = math.atan(tan_tv_prime)
+
+    cos_ts_prime = math.cos(ts_prime)
+    cos_tv_prime = math.cos(tv_prime)
+    sin_ts_prime = math.sin(ts_prime)
+    sin_tv_prime = math.sin(tv_prime)
+
+    cos_xi_prime = cos_ts_prime * cos_tv_prime + sin_ts_prime * sin_tv_prime * math.cos(phi)
+    cos_xi_prime = max(-1.0, min(1.0, cos_xi_prime))
+
+    sec_ts_prime = 1.0 / max(1e-6, cos_ts_prime)
+    sec_tv_prime = 1.0 / max(1e-6, cos_tv_prime)
+
+    d_sq = tan_ts_prime**2 + tan_tv_prime**2 - 2.0 * tan_ts_prime * tan_tv_prime * math.cos(phi)
+
+    term = math.sqrt(max(0.0, d_sq + (tan_ts_prime * tan_tv_prime * math.sin(phi))**2))
+    cos_t = hb * term / (sec_ts_prime + sec_tv_prime)
+    cos_t = max(-1.0, min(1.0, cos_t))
+    t = math.acos(cos_t)
+
+    overlap = (1.0 / math.pi) * (t - math.sin(t) * math.cos(t)) * (sec_ts_prime + sec_tv_prime)
+    k_geo = overlap - sec_ts_prime - sec_tv_prime + 0.5 * (1.0 + cos_xi_prime) * sec_ts_prime * sec_tv_prime
+    return float(k_geo)
+
+
+def calculate_nbar_brdf_factor(
+    solar_zenith_deg: float,
+    view_zenith_deg: float,
+    relative_azimuth_deg: float,
+    target_solar_zenith_deg: float = 45.0,
+    target_view_zenith_deg: float = 0.0,
+    band: str = "red",
+    f_iso: Optional[float] = None,
+    f_vol: Optional[float] = None,
+    f_geo: Optional[float] = None
+) -> float:
+    """Calculates the Nadir BRDF-Adjusted Reflectance (NBAR) scaling factor c = rho_target / rho_observed.
+    
+    Standard target geometry:
+        - View zenith theta_v = 0 deg (nadir view)
+        - Solar zenith theta_s = 45 deg (standard illumination)
+    """
+    band_key = str(band).lower()
+    spec = HLS_BRDF_SPECTRAL_PARAMETERS.get(band_key, HLS_BRDF_SPECTRAL_PARAMETERS.get(str(band).upper(), HLS_BRDF_SPECTRAL_PARAMETERS["default"]))
+    iso = float(f_iso if f_iso is not None else spec["f_iso"])
+    vol = float(f_vol if f_vol is not None else spec["f_vol"])
+    geo = float(f_geo if f_geo is not None else spec["f_geo"])
+
+    # Observed geometry
+    k_vol_obs = calculate_rossthick_volumetric_kernel(solar_zenith_deg, view_zenith_deg, relative_azimuth_deg)
+    k_geo_obs = calculate_lisparse_geometric_kernel(solar_zenith_deg, view_zenith_deg, relative_azimuth_deg)
+    rho_obs = iso + vol * k_vol_obs + geo * k_geo_obs
+
+    # Target geometry (view=0, relative azimuth=0)
+    k_vol_tgt = calculate_rossthick_volumetric_kernel(target_solar_zenith_deg, target_view_zenith_deg, 0.0)
+    k_geo_tgt = calculate_lisparse_geometric_kernel(target_solar_zenith_deg, target_view_zenith_deg, 0.0)
+    rho_tgt = iso + vol * k_vol_tgt + geo * k_geo_tgt
+
+    if rho_obs <= 1e-6:
+        return 1.0
+
+    c_brdf = rho_tgt / rho_obs
+    return float(max(0.5, min(2.0, c_brdf)))
+
+
+def apply_nbar_normalization(
+    reflectance: float,
+    solar_zenith_deg: float,
+    view_zenith_deg: float,
+    relative_azimuth_deg: float,
+    target_solar_zenith_deg: float = 45.0,
+    target_view_zenith_deg: float = 0.0,
+    band: str = "red"
+) -> float:
+    """Applies semi-empirical RossThick-LiSparse-R NBAR normalization to observed surface reflectance."""
+    if not math.isfinite(reflectance):
+        return float("nan")
+    c_factor = calculate_nbar_brdf_factor(
+        solar_zenith_deg=solar_zenith_deg,
+        view_zenith_deg=view_zenith_deg,
+        relative_azimuth_deg=relative_azimuth_deg,
+        target_solar_zenith_deg=target_solar_zenith_deg,
+        target_view_zenith_deg=target_view_zenith_deg,
+        band=band
+    )
+    return float(max(0.0, reflectance * c_factor))
+
+
+def apply_cross_sensor_bandpass_adjustment(
+    reflectance: float,
+    band: str,
+    source_sensor: Union[HlsSensorType, str] = "landsat_oli",
+    target_sensor: Union[HlsSensorType, str] = "sentinel_msi"
+) -> float:
+    """Applies cross-sensor spectral bandpass adjustment (Claverie et al. 2018).
+    
+    Transforms Landsat-8/9 OLI reflectance to equivalent Sentinel-2 MSI surface reflectance:
+        rho_MSI = c0 + c1 * rho_OLI
+    """
+    if not math.isfinite(reflectance):
+        return float("nan")
+
+    src = source_sensor.value if isinstance(source_sensor, HlsSensorType) else str(source_sensor).lower()
+    tgt = target_sensor.value if isinstance(target_sensor, HlsSensorType) else str(target_sensor).lower()
+
+    if src == tgt or (src == "landsat_oli" and tgt == "landsat_oli") or (src == "sentinel_msi" and tgt == "sentinel_msi"):
+        return float(max(0.0, reflectance))
+
+    band_key = str(band).lower()
+    coef = HLS_BANDPASS_COEFFICIENTS.get(band_key, HLS_BANDPASS_COEFFICIENTS.get(str(band).upper()))
+
+    if not coef:
+        return float(max(0.0, reflectance))
+
+    c0 = coef["c0"]
+    c1 = coef["c1"]
+
+    if src == "landsat_oli" and tgt in ("sentinel_msi", "harmonized_hls"):
+        rho_adj = c0 + c1 * reflectance
+    elif src == "sentinel_msi" and tgt == "landsat_oli":
+        rho_adj = (reflectance - c0) / c1 if abs(c1) > 1e-6 else reflectance
+    else:
+        rho_adj = reflectance
+
+    return float(max(0.0, rho_adj))
+
+
+def apply_hls_harmonization(
+    reflectance: float,
+    band: str,
+    solar_zenith_deg: float,
+    view_zenith_deg: float,
+    relative_azimuth_deg: float,
+    source_sensor: Union[HlsSensorType, str] = "landsat_oli",
+    target_sensor: Union[HlsSensorType, str] = "sentinel_msi",
+    target_solar_zenith_deg: float = 45.0,
+    target_view_zenith_deg: float = 0.0,
+    apply_bandpass: bool = True
+) -> float:
+    """Executes full Harmonized Landsat Sentinel-2 (HLS) transformation (NBAR + Bandpass adjustment)."""
+    if not math.isfinite(reflectance):
+        return float("nan")
+
+    # 1. Nadir BRDF adjustment
+    rho_nbar = apply_nbar_normalization(
+        reflectance=reflectance,
+        solar_zenith_deg=solar_zenith_deg,
+        view_zenith_deg=view_zenith_deg,
+        relative_azimuth_deg=relative_azimuth_deg,
+        target_solar_zenith_deg=target_solar_zenith_deg,
+        target_view_zenith_deg=target_view_zenith_deg,
+        band=band
+    )
+
+    # 2. Cross-sensor bandpass adjustment
+    if apply_bandpass:
+        return apply_cross_sensor_bandpass_adjustment(
+            reflectance=rho_nbar,
+            band=band,
+            source_sensor=source_sensor,
+            target_sensor=target_sensor
+        )
+    return rho_nbar
+
+
+# Pydantic Schemas for HLS Harmonization
+
+class BrdfGeometryParameters(BaseModel):
+    """View and illumination geometry angles for BRDF characterization."""
+    solar_zenith_deg: float = Field(..., ge=0.0, le=90.0, description="Solar zenith angle theta_s in degrees")
+    solar_azimuth_deg: float = Field(..., ge=0.0, le=360.0, description="Solar azimuth angle phi_s in degrees")
+    view_zenith_deg: float = Field(0.0, ge=0.0, le=90.0, description="Sensor view zenith angle theta_v in degrees")
+    view_azimuth_deg: float = Field(0.0, ge=0.0, le=360.0, description="Sensor view azimuth angle phi_v in degrees")
+    relative_azimuth_deg: Optional[float] = Field(None, ge=0.0, le=360.0, description="Relative azimuth angle phi = |phi_s - phi_v|")
+    target_solar_zenith_deg: float = Field(45.0, ge=0.0, le=90.0, description="NBAR target solar zenith (default 45.0 deg)")
+    target_view_zenith_deg: float = Field(0.0, ge=0.0, le=90.0, description="NBAR target view zenith (nadir = 0.0 deg)")
+
+    @model_validator(mode="after")
+    def _compute_relative_azimuth(self) -> "BrdfGeometryParameters":
+        if self.relative_azimuth_deg is None:
+            diff = abs(self.solar_azimuth_deg - self.view_azimuth_deg)
+            if diff > 180.0:
+                diff = 360.0 - diff
+            self.relative_azimuth_deg = float(diff)
+        return self
+
+
+class SpectralBandpassCoefficients(BaseModel):
+    """Linear regression coefficients for cross-sensor spectral bandpass translation."""
+    c0: float = Field(..., description="Linear offset coefficient")
+    c1: float = Field(..., description="Linear slope coefficient")
+    r_squared: float = Field(..., ge=0.0, le=1.0, description="Coefficient of determination R^2")
+    rmse: float = Field(..., ge=0.0, description="Root-Mean-Square Error of spectral transformation")
+    oli_band: Optional[str] = Field(None, description="Source Landsat-8/9 OLI band designation")
+    msi_band: Optional[str] = Field(None, description="Target Sentinel-2 MSI band designation")
+
+
+class HlsHarmonizationConfig(BaseModel):
+    """Configuration hyperparameters for Harmonized Landsat Sentinel-2 pipeline."""
+    source_sensor: Union[HlsSensorType, str] = Field(
+        HlsSensorType.LANDSAT_OLI,
+        description="Source sensor type ('landsat_oli' or 'sentinel_msi')"
+    )
+    target_sensor: Union[HlsSensorType, str] = Field(
+        HlsSensorType.SENTINEL_MSI,
+        description="Target reference sensor ('sentinel_msi' or 'harmonized_hls')"
+    )
+    brdf_model: Union[BrdfKernelModel, str] = Field(
+        BrdfKernelModel.ROSSTHICK_LISPARSE_R,
+        description="Semi-empirical BRDF kernel model"
+    )
+    target_solar_zenith_deg: float = Field(45.0, ge=0.0, le=90.0, description="Standard NBAR target solar zenith")
+    target_view_zenith_deg: float = Field(0.0, ge=0.0, le=90.0, description="Standard NBAR target view zenith (nadir)")
+    apply_bandpass_adjustment: bool = Field(True, description="Whether to apply cross-sensor bandpass regression")
+    bands: List[str] = Field(
+        default_factory=lambda: ["blue", "green", "red", "nir", "swir1", "swir2"],
+        description="Spectral bands to harmonize"
+    )
+    crown_ratio: float = Field(1.0, gt=0.0, description="LiSparse-R crown shape parameter b/r")
+    shape_ratio: float = Field(2.0, gt=0.0, description="LiSparse-R tree height-to-crown parameter h/b")
+
+
+class HlsHarmonizationAnalysisRequest(BaseModel):
+    """Request payload for multi-sensor HLS reflectance harmonization."""
+    scene_id: str = Field(..., description="Satellite scene or granule identifier")
+    sensor: Union[HlsSensorType, str] = Field(HlsSensorType.LANDSAT_OLI, description="Input optical sensor")
+    collection: str = Field("landsat-c2-l2", description="STAC collection identifier")
+    mgrs_tile: Optional[str] = Field(None, description="Military Grid Reference System (MGRS) tile identifier (e.g. '10TFK')")
+    geometry: BrdfGeometryParameters = Field(..., description="Solar and view acquisition geometry")
+    config: Optional[HlsHarmonizationConfig] = Field(None, description="Harmonization hyperparameters")
+    polygon: Optional[Dict[str, Any]] = Field(None, description="Optional GeoJSON clipping polygon")
+
+
+class HlsHarmonizationSummary(BaseModel):
+    """Statistical summary of cross-sensor BRDF and spectral harmonization."""
+    source_sensor: str = Field(..., description="Source sensor name")
+    target_sensor: str = Field(..., description="Target sensor name")
+    mgrs_tile: str = Field(..., description="Evaluated MGRS grid tile")
+    bands_processed: List[str] = Field(..., description="List of harmonized spectral bands")
+    mean_brdf_adjustment_factor: float = Field(..., description="Mean BRDF c-factor across processed pixels")
+    mean_source_reflectance: float = Field(..., description="Mean observed BOA surface reflectance")
+    mean_nbar_reflectance: float = Field(..., description="Mean Nadir BRDF-Adjusted Reflectance")
+    mean_harmonized_reflectance: float = Field(..., description="Mean fully harmonized reflectance")
+    cross_sensor_rmse: float = Field(..., description="Estimated cross-sensor residual RMSE")
+    mean_volumetric_kernel: float = Field(..., description="Mean RossThick kernel value")
+    mean_geometric_kernel: float = Field(..., description="Mean LiSparse-R kernel value")
+
+
+class HlsHarmonizationAnalysisResponse(BaseModel):
+    """Response payload containing HLS harmonization results and dynamic XYZ tile endpoints."""
+    analysis_id: str = Field(..., description="Unique HLS harmonization execution ID")
+    scene_id: str = Field(..., description="Evaluated satellite scene ID")
+    mgrs_tile: str = Field(..., description="Target MGRS tile")
+    source_sensor: str = Field(..., description="Source sensor")
+    target_sensor: str = Field(..., description="Target sensor")
+    geometry: BrdfGeometryParameters = Field(..., description="Applied geometry angles")
+    config: HlsHarmonizationConfig = Field(..., description="Harmonization configuration")
+    summary: HlsHarmonizationSummary = Field(..., description="Harmonization summary statistics")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for fully harmonized HLS reflectance")
+    nbar_tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for NBAR normalized reflectance")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO 8601 execution timestamp")
+    status: str = Field("completed", description="Execution status")
+
+
+class HlsTileRequestParams(BaseModel):
+    """Parameters for dynamic XYZ Harmonized Landsat Sentinel-2 raster tile streaming."""
+    z: int = Field(..., ge=0, le=24, description="Slippy map zoom level")
+    x: int = Field(..., ge=0, description="Slippy map tile column")
+    y: int = Field(..., ge=0, description="Slippy map tile row")
+    collection: str = Field("landsat-c2-l2", description="Satellite collection ('landsat-c2-l2' or 'sentinel-2-l2a')")
+    item_id: str = Field(..., description="Scene or granule identifier")
+    metric: Union[HlsMetric, str] = Field("harmonized_reflectance", description="Raster metric to render")
+    stage: Union[HlsHarmonizationStage, str] = Field("harmonized", description="Harmonization processing stage")
+    sensor: Optional[Union[HlsSensorType, str]] = Field(None, description="Sensor override")
+    target_solar_zenith: Optional[float] = Field(None, ge=0.0, le=90.0, description="Target solar zenith override")
+    target_view_zenith: Optional[float] = Field(None, ge=0.0, le=90.0, description="Target view zenith override")
+    colormap: Optional[str] = Field(None, description="Optional colormap for metric rendering")
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = Field(None, description="Contrast stretch bounds min,max")
+
+
+# Dynamic Tile URL Builders for HLS
+
+def build_hls_tile_url(
+    collection: str = "landsat-c2-l2",
+    item_id: str = "LC09_L2SP_044034_20260718_02_T1",
+    z: int = 0,
+    x: int = 0,
+    y: int = 0,
+    metric: Union[str, HlsMetric] = "harmonized_reflectance",
+    stage: Union[str, HlsHarmonizationStage] = "harmonized",
+    sensor: Optional[Union[str, HlsSensorType]] = None,
+    target_solar_zenith: Optional[float] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None
+) -> str:
+    """Builds a dynamic XYZ tile streaming URL for Harmonized Landsat Sentinel-2 imagery."""
+    met_str = metric.value if isinstance(metric, HlsMetric) else str(metric).lower()
+    stg_str = stage.value if isinstance(stage, HlsHarmonizationStage) else str(stage).lower()
+    base = f"/api/v1/tiles/hls/{collection}/{item_id}/{z}/{x}/{y}.png"
+    params: List[str] = []
+    if met_str != "harmonized_reflectance":
+        params.append(f"metric={met_str}")
+    if stg_str != "harmonized":
+        params.append(f"stage={stg_str}")
+    if sensor:
+        s_str = sensor.value if isinstance(sensor, HlsSensorType) else str(sensor).lower()
+        params.append(f"sensor={s_str}")
+    if target_solar_zenith is not None and target_solar_zenith != 45.0:
+        params.append(f"target_solar_zenith={target_solar_zenith}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        r_str = f"{rescale[0]},{rescale[1]}" if isinstance(rescale, (list, tuple)) else str(rescale)
+        params.append(f"rescale={r_str}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_hls_tile_url_template(
+    collection: str = "landsat-c2-l2",
+    item_id: str = "LC09_L2SP_044034_20260718_02_T1",
+    metric: Union[str, HlsMetric] = "harmonized_reflectance",
+    stage: Union[str, HlsHarmonizationStage] = "harmonized",
+    sensor: Optional[Union[str, HlsSensorType]] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for Harmonized Landsat Sentinel-2 raster tiles."""
+    met_str = metric.value if isinstance(metric, HlsMetric) else str(metric).lower()
+    stg_str = stage.value if isinstance(stage, HlsHarmonizationStage) else str(stage).lower()
+    base = f"/api/v1/tiles/hls/{collection}/{item_id}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = []
+    if met_str != "harmonized_reflectance":
+        params.append(f"metric={met_str}")
+    if stg_str != "harmonized":
+        params.append(f"stage={stg_str}")
+    if sensor:
+        s_str = sensor.value if isinstance(sensor, HlsSensorType) else str(sensor).lower()
+        params.append(f"sensor={s_str}")
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        r_str = f"{rescale[0]},{rescale[1]}" if isinstance(rescale, (list, tuple)) else str(rescale)
+        params.append(f"rescale={r_str}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
+def build_hls_nbar_tile_url_template(
+    collection: str = "landsat-c2-l2",
+    item_id: str = "LC09_L2SP_044034_20260718_02_T1",
+    target_solar_zenith: Optional[float] = None
+) -> str:
+    """Builds dynamic Leaflet tile URL template for NBAR normalized surface reflectance tiles."""
+    base = f"/api/v1/tiles/hls/nbar/{collection}/{item_id}/{{z}}/{{x}}/{{y}}.png"
+    params: List[str] = []
+    if target_solar_zenith is not None and target_solar_zenith != 45.0:
+        params.append(f"target_solar_zenith={target_solar_zenith}")
+    return f"{base}?{'&'.join(params)}" if params else base

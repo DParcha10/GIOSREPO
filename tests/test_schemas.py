@@ -1049,7 +1049,73 @@ from app.models.schemas import (
     build_sar_speckle_filter_tile_url,
     build_sar_speckle_filter_tile_url_template,
     build_sar_flood_tile_url,
-    build_sar_flood_tile_url_template
+    build_sar_flood_tile_url_template,
+    # Cycle v2.5.30: Sub-Pixel Automated Image Co-Registration & Geometric Resampling Contracts
+    CoRegistrationMethod,
+    GeometricResamplingKernel,
+    CoRegistrationQualityTier,
+    COREGISTRATION_METHOD_CONFIGS,
+    RESAMPLING_KERNEL_CONFIGS,
+    COREGISTRATION_QUALITY_TIER_CONFIGS,
+    COREGISTRATION_BENCHMARK_PAIRS,
+    calculate_fft_phase_correlation_shift,
+    estimate_affine_transform_matrix,
+    evaluate_resampling_kernel_weight,
+    classify_coregistration_quality_tier,
+    calculate_change_detection_false_positive_risk,
+    TiePoint,
+    AffineTransformMatrix,
+    CoRegistrationAnalysisRequest,
+    CoRegistrationSummary,
+    CoRegistrationAnalysisResponse,
+    CoRegistrationTileRequestParams,
+    build_coregistration_tile_url,
+    build_coregistration_tile_url_template,
+    build_coregistration_vector_field_tile_url_template,
+    # Cycle v2.5.31: Aquatic Quality & Harmful Algal Bloom Detection Contracts
+    AquaticMetric,
+    EutrophicationRiskTier,
+    BioOpticalAlgorithm,
+    WaterMaskingMethod,
+    AQUATIC_METRIC_CONFIGS,
+    EUTROPHICATION_TIER_CONFIGS,
+    BIO_OPTICAL_ALGORITHM_CONFIGS,
+    AQUATIC_BENCHMARK_SCENES,
+    calculate_fai,
+    calculate_chla_from_ndci,
+    calculate_nechad_turbidity,
+    calculate_mndwi,
+    is_water_pixel,
+    classify_eutrophication_risk_tier,
+    AquaticQualityAnalysisRequest,
+    AquaticWaterBodySummary,
+    AquaticQualityAnalysisResponse,
+    AquaticTileRequestParams,
+    build_aquatic_tile_url,
+    build_aquatic_tile_url_template,
+    build_aquatic_hab_tile_url_template,
+    # Cycle v2.5.32: Topographic Solar Illumination Correction & SCS+C Inversion Contracts
+    TopographicCorrectionMethod,
+    IlluminationCondition,
+    TopographicMetric,
+    TopographicSolarGeometry,
+    TopographicCorrectionConfig,
+    TOPOGRAPHIC_METHOD_CONFIGS,
+    TOPOGRAPHIC_BENCHMARK_SCENES,
+    calculate_local_incidence_cosine,
+    calculate_c_correction_factor,
+    calculate_minnaert_correction,
+    calculate_scs_c_correction,
+    classify_illumination_condition,
+    apply_topographic_correction,
+    estimate_c_factor_from_linear_regression,
+    TopographicCorrectionAnalysisRequest,
+    TopographicCorrectionSummary,
+    TopographicCorrectionAnalysisResponse,
+    TopographicTileRequestParams,
+    build_topographic_tile_url,
+    build_topographic_tile_url_template,
+    build_topographic_illumination_tile_url_template
 )
 from app.config import settings
 
@@ -11723,6 +11789,9 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(SarPolarization.HV.value, "hv")
         self.assertEqual(SarPolarization.POLARIZATION_RATIO_VH_VV.value, "ratio_vh_vv")
         self.assertEqual(SarPolarization.RATIO.value, "ratio_vh_vv")
+        self.assertEqual(SarPolarization.DUAL_POL_RGB.value, "dual_pol_rgb")
+        self.assertEqual(SarPolarization.RGB.value, "dual_pol_rgb")
+        self.assertIn("dual_pol_rgb", SAR_POLARIZATION_CONFIGS)
 
         self.assertEqual(SpeckleFilterMethod.REFINED_LEE.value, "refined_lee")
         self.assertEqual(SpeckleFilterMethod.FROST.value, "frost")
@@ -11877,10 +11946,12 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             calibration="gamma0",
             filter_kernel_size=5,
             summary=summary,
-            tile_url_template="/api/v1/tiles/sar/sentinel-1-rtc/vv/{z}/{x}/{y}.png?filter=refined_lee"
+            tile_url_template="/api/v1/tiles/sar/sentinel-1-rtc/vv/{z}/{x}/{y}.png?filter=refined_lee",
+            flood_tile_url_template="/api/v1/tiles/sar/flood/{z}/{x}/{y}.png?collection=sentinel-1-rtc&threshold_db=-16.5"
         )
         self.assertEqual(resp.analysis_id, "SAR-ANA-20261015-001")
         self.assertEqual(resp.summary.water_fraction, 0.084)
+        self.assertIn("/api/v1/tiles/sar/flood/", resp.flood_tile_url_template)
 
         # 9. Tile URL Builders & Leaflet Templates
         url_single = build_sar_backscatter_tile_url(
@@ -11944,6 +12015,677 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(
             format_api_route("tiles_sar_flood_inundation_short", z=10, x=163, y=395),
             "/tiles/sar/flood/10/163/395.png"
+        )
+
+    def test_task_t240_coregistration_fft_phase_correlation_and_resampling_contracts(self):
+        """Verify Task T-240 Sub-Pixel Automated Image Co-Registration, FFT Phase Correlation, Affine Warping & Geometric Resampling Contracts."""
+        # 1. Enums & Values
+        self.assertEqual(CoRegistrationMethod.FFT_PHASE_CORRELATION.value, "fft_phase_correlation")
+        self.assertEqual(CoRegistrationMethod.LOCALIZED_NCC.value, "localized_ncc")
+        self.assertEqual(CoRegistrationMethod.FEATURE_MATCHING_SIFT.value, "feature_matching_sift")
+        self.assertEqual(CoRegistrationMethod.FEATURE_MATCHING_ORB.value, "feature_matching_orb")
+        self.assertEqual(CoRegistrationMethod.AFFINE_RANSAC.value, "affine_ransac")
+
+        self.assertEqual(GeometricResamplingKernel.NEAREST.value, "nearest")
+        self.assertEqual(GeometricResamplingKernel.BILINEAR.value, "bilinear")
+        self.assertEqual(GeometricResamplingKernel.CUBIC_CONVOLUTION.value, "cubic_convolution")
+        self.assertEqual(GeometricResamplingKernel.CUBIC_SPLINE.value, "cubic_spline")
+        self.assertEqual(GeometricResamplingKernel.LANCZOS.value, "lanczos")
+
+        self.assertEqual(CoRegistrationQualityTier.SUBPIXEL_EXCELLENT.value, "subpixel_excellent")
+        self.assertEqual(CoRegistrationQualityTier.SUBPIXEL_GOOD.value, "subpixel_good")
+        self.assertEqual(CoRegistrationQualityTier.ACCEPTABLE.value, "acceptable")
+        self.assertEqual(CoRegistrationQualityTier.MISALIGNED.value, "misaligned")
+
+        # 2. Config Maps & Benchmark Scenes
+        self.assertIn("fft_phase_correlation", COREGISTRATION_METHOD_CONFIGS)
+        self.assertIn("localized_ncc", COREGISTRATION_METHOD_CONFIGS)
+        self.assertTrue(COREGISTRATION_METHOD_CONFIGS["fft_phase_correlation"]["subpixel_capable"])
+
+        self.assertIn("nearest", RESAMPLING_KERNEL_CONFIGS)
+        self.assertIn("cubic_convolution", RESAMPLING_KERNEL_CONFIGS)
+        self.assertTrue(RESAMPLING_KERNEL_CONFIGS["nearest"]["preserves_radiometry"])
+        self.assertFalse(RESAMPLING_KERNEL_CONFIGS["cubic_convolution"]["preserves_radiometry"])
+
+        self.assertIn("subpixel_excellent", COREGISTRATION_QUALITY_TIER_CONFIGS)
+        self.assertTrue(COREGISTRATION_QUALITY_TIER_CONFIGS["subpixel_excellent"]["suitable_for_differential_change"])
+        self.assertFalse(COREGISTRATION_QUALITY_TIER_CONFIGS["misaligned"]["suitable_for_differential_change"])
+
+        self.assertGreaterEqual(len(COREGISTRATION_BENCHMARK_PAIRS), 2)
+        self.assertIn("S2_MULTI_TEMPORAL_SAN_LUIS", COREGISTRATION_BENCHMARK_PAIRS)
+
+        # 3. FFT Phase Correlation Shift Solver
+        # Identical patches -> shift (0, 0), correlation ~ 1.0
+        synthetic_ref = [
+            [0.1, 0.2, 0.3, 0.2],
+            [0.2, 0.8, 0.9, 0.3],
+            [0.3, 0.9, 1.0, 0.4],
+            [0.1, 0.3, 0.4, 0.2]
+        ]
+        res_zero = calculate_fft_phase_correlation_shift(synthetic_ref, synthetic_ref, subpixel=True)
+        self.assertAlmostEqual(res_zero["shift_x"], 0.0, places=2)
+        self.assertAlmostEqual(res_zero["shift_y"], 0.0, places=2)
+        self.assertGreater(res_zero["correlation_score"], 0.9)
+
+        # 4. Affine Transformation Least-Squares Fit with RANSAC
+        test_tie_points = [
+            {"point_id": "P1", "reference_x": 10.0, "reference_y": 10.0, "target_x": 10.5, "target_y": 9.8},
+            {"point_id": "P2", "reference_x": 50.0, "reference_y": 10.0, "target_x": 50.5, "target_y": 9.8},
+            {"point_id": "P3", "reference_x": 10.0, "reference_y": 50.0, "target_x": 10.5, "target_y": 49.8},
+            {"point_id": "P4", "reference_x": 50.0, "reference_y": 50.0, "target_x": 100.0, "target_y": 100.0}
+        ]
+        affine_res = estimate_affine_transform_matrix(test_tie_points, outlier_threshold_pixels=1.5)
+        self.assertEqual(affine_res["total_tie_points"], 4)
+        self.assertEqual(affine_res["inlier_count"], 3)
+        self.assertAlmostEqual(affine_res["tx"], 0.5, delta=0.1)
+        self.assertAlmostEqual(affine_res["ty"], -0.2, delta=0.1)
+        self.assertLess(affine_res["rmse_pixels"], 0.20)
+
+        # 5. Resampling Kernel Weight Functions & Partition of Unity
+        # Nearest
+        self.assertEqual(evaluate_resampling_kernel_weight(0.0, kernel="nearest"), 1.0)
+        self.assertEqual(evaluate_resampling_kernel_weight(0.49, kernel="nearest"), 1.0)
+        self.assertEqual(evaluate_resampling_kernel_weight(0.51, kernel="nearest"), 0.0)
+
+        # Bilinear
+        self.assertEqual(evaluate_resampling_kernel_weight(0.0, kernel="bilinear"), 1.0)
+        self.assertEqual(evaluate_resampling_kernel_weight(0.5, kernel="bilinear"), 0.5)
+        self.assertEqual(evaluate_resampling_kernel_weight(1.0, kernel="bilinear"), 0.0)
+
+        # Cubic Convolution (Keys a = -0.5)
+        self.assertEqual(evaluate_resampling_kernel_weight(0.0, kernel="cubic_convolution"), 1.0)
+        self.assertEqual(evaluate_resampling_kernel_weight(1.0, kernel="cubic_convolution"), 0.0)
+        self.assertEqual(evaluate_resampling_kernel_weight(2.0, kernel="cubic_convolution"), 0.0)
+        test_x = 0.35
+        weights_sum = (
+            evaluate_resampling_kernel_weight(test_x + 1.0, kernel="cubic_convolution") +
+            evaluate_resampling_kernel_weight(test_x, kernel="cubic_convolution") +
+            evaluate_resampling_kernel_weight(test_x - 1.0, kernel="cubic_convolution") +
+            evaluate_resampling_kernel_weight(test_x - 2.0, kernel="cubic_convolution")
+        )
+        self.assertAlmostEqual(weights_sum, 1.0, places=5)
+
+        # Lanczos-3
+        self.assertEqual(evaluate_resampling_kernel_weight(0.0, kernel="lanczos"), 1.0)
+        self.assertAlmostEqual(evaluate_resampling_kernel_weight(1.0, kernel="lanczos"), 0.0, places=5)
+        self.assertAlmostEqual(evaluate_resampling_kernel_weight(2.0, kernel="lanczos"), 0.0, places=5)
+        self.assertAlmostEqual(evaluate_resampling_kernel_weight(3.0, kernel="lanczos"), 0.0, places=5)
+
+        # 6. Quality Tier Classification & Townshend Change Detection False Positive Risk
+        self.assertEqual(classify_coregistration_quality_tier(0.12), "subpixel_excellent")
+        self.assertEqual(classify_coregistration_quality_tier(0.35), "subpixel_good")
+        self.assertEqual(classify_coregistration_quality_tier(0.75), "acceptable")
+        self.assertEqual(classify_coregistration_quality_tier(1.45), "misaligned")
+
+        self.assertEqual(calculate_change_detection_false_positive_risk(0.0), 0.0)
+        risk_05 = calculate_change_detection_false_positive_risk(0.5, spatial_sigma=0.6)
+        self.assertAlmostEqual(risk_05, 29.35, delta=1.5)
+        risk_15 = calculate_change_detection_false_positive_risk(1.5, spatial_sigma=0.6)
+        self.assertGreater(risk_15, 90.0)
+
+        # 7. Pydantic Models Validation
+        tp = TiePoint(
+            point_id="TP-001",
+            reference_x=120.0,
+            reference_y=150.0,
+            target_x=119.68,
+            target_y=150.44,
+            shift_x=-0.32,
+            shift_y=0.44,
+            correlation_score=0.94,
+            is_inlier=True,
+            residual_pixels=0.08
+        )
+        self.assertEqual(tp.point_id, "TP-001")
+        self.assertTrue(tp.is_inlier)
+
+        mat = AffineTransformMatrix(
+            a=1.00001, b=-0.00001, c=0.00001, d=0.99999,
+            tx=-0.32, ty=0.44, rmse_pixels=0.16,
+            inlier_count=32, total_tie_points=36
+        )
+        self.assertAlmostEqual(mat.tx, -0.32)
+        self.assertEqual(mat.inlier_count, 32)
+
+        req = CoRegistrationAnalysisRequest(
+            reference_scene_id="S2A_MSIL2A_20260701T183921_T10SEJ",
+            target_scene_id="S2B_MSIL2A_20260716T183919_T10SEJ",
+            method=CoRegistrationMethod.FFT_PHASE_CORRELATION,
+            kernel=GeometricResamplingKernel.CUBIC_CONVOLUTION,
+            grid_spacing_pixels=64
+        )
+        self.assertEqual(req.method, CoRegistrationMethod.FFT_PHASE_CORRELATION)
+        self.assertEqual(req.grid_spacing_pixels, 64)
+
+        summary = CoRegistrationSummary(
+            mean_shift_x_pixels=-0.32,
+            mean_shift_y_pixels=0.44,
+            rmse_pixels=0.16,
+            max_shift_pixels=0.54,
+            mean_correlation=0.91,
+            inlier_fraction=0.8889,
+            quality_tier=CoRegistrationQualityTier.SUBPIXEL_EXCELLENT,
+            false_change_risk_pct=3.2
+        )
+        self.assertEqual(summary.quality_tier, CoRegistrationQualityTier.SUBPIXEL_EXCELLENT)
+
+        resp = CoRegistrationAnalysisResponse(
+            analysis_id="COREG-ANA-20261015-01",
+            reference_scene_id="S2A_MSIL2A_20260701T183921_T10SEJ",
+            target_scene_id="S2B_MSIL2A_20260716T183919_T10SEJ",
+            method="fft_phase_correlation",
+            kernel="cubic_convolution",
+            affine_matrix=mat,
+            summary=summary,
+            tile_url_template="/api/v1/tiles/coregistration/S2A/S2B/{z}/{x}/{y}.png?mode=aligned",
+            vector_field_tile_url_template="/api/v1/tiles/coregistration/vector-field/COREG-ANA-20261015-01/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.analysis_id, "COREG-ANA-20261015-01")
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.created_at)
+
+        # 8. Dynamic Tile URL Builders
+        single_url = build_coregistration_tile_url(
+            reference_scene_id="REF_01",
+            target_scene_id="TGT_01",
+            z=10, x=163, y=395,
+            mode="aligned",
+            kernel="cubic_convolution"
+        )
+        self.assertIn("/api/v1/tiles/coregistration/REF_01/TGT_01/10/163/395.png", single_url)
+        self.assertIn("mode=aligned", single_url)
+        self.assertIn("kernel=cubic_convolution", single_url)
+
+        tmpl_coreg = build_coregistration_tile_url_template(
+            reference_scene_id="REF_01",
+            target_scene_id="TGT_01",
+            mode="diff_post",
+            kernel="lanczos"
+        )
+        self.assertIn("/api/v1/tiles/coregistration/REF_01/TGT_01/{z}/{x}/{y}.png", tmpl_coreg)
+        self.assertIn("mode=diff_post", tmpl_coreg)
+        self.assertIn("kernel=lanczos", tmpl_coreg)
+
+        tmpl_vf = build_coregistration_vector_field_tile_url_template("ANA_99", arrow_scale=2.0)
+        self.assertEqual(tmpl_vf, "/api/v1/tiles/coregistration/vector-field/ANA_99/{z}/{x}/{y}.png?arrow_scale=2.0")
+
+        # 9. Canonical Route Contract Parity
+        self.assertEqual(format_api_route("analysis_coregistration"), "/api/v1/analysis/coregistration")
+        self.assertEqual(format_api_route("analysis_coregistration_short"), "/analysis/coregistration")
+        self.assertEqual(format_api_route("analysis_coregistration_tie_points"), "/api/v1/analysis/coregistration/tie-points")
+        self.assertEqual(format_api_route("analysis_coregistration_tie_points_short"), "/analysis/coregistration/tie-points")
+        self.assertEqual(
+            format_api_route("tiles_coregistration", reference_scene_id="S2A_01", target_scene_id="S2B_02", z=10, x=163, y=395),
+            "/api/v1/tiles/coregistration/S2A_01/S2B_02/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_coregistration_short", reference_scene_id="S2A_01", target_scene_id="S2B_02", z=10, x=163, y=395),
+            "/tiles/coregistration/S2A_01/S2B_02/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_coregistration_vector_field", analysis_id="ANA_TEST", z=10, x=163, y=395),
+            "/api/v1/tiles/coregistration/vector-field/ANA_TEST/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_coregistration_vector_field_short", analysis_id="ANA_TEST", z=10, x=163, y=395),
+            "/tiles/coregistration/vector-field/ANA_TEST/10/163/395.png"
+        )
+
+    def test_task_t246_aquatic_quality_and_hab_detection_contracts(self):
+        """Verify Task T-246 Aquatic Quality & HAB Detection Schemas, Bio-Optical Models & Aquatic Tile Contracts."""
+        # 1. Enums & Values
+        self.assertEqual(AquaticMetric.NDCI.value, "ndci")
+        self.assertEqual(AquaticMetric.FAI.value, "fai")
+        self.assertEqual(AquaticMetric.CHLA.value, "chla")
+        self.assertEqual(AquaticMetric.TURBIDITY.value, "turbidity")
+        self.assertEqual(AquaticMetric.EUTROPHICATION_TIER.value, "eutrophication_tier")
+        self.assertEqual(AquaticMetric.MNDWI.value, "mndwi")
+
+        self.assertEqual(EutrophicationRiskTier.OLIGOTROPHIC.value, "oligotrophic")
+        self.assertEqual(EutrophicationRiskTier.MESOTROPHIC.value, "mesotrophic")
+        self.assertEqual(EutrophicationRiskTier.EUTROPHIC.value, "eutrophic")
+        self.assertEqual(EutrophicationRiskTier.HYPERTROPHIC.value, "hypertrophic")
+
+        self.assertEqual(BioOpticalAlgorithm.NDCI_MISHRA_2012.value, "ndci_mishra_2012")
+        self.assertEqual(BioOpticalAlgorithm.FAI_HU_2009.value, "fai_hu_2009")
+        self.assertEqual(BioOpticalAlgorithm.NECHAD_TURBIDITY_2010.value, "nechad_turbidity_2010")
+        self.assertEqual(BioOpticalAlgorithm.TWO_BAND_DALL_OLMO.value, "2bda_dall_olmo_2005")
+        self.assertEqual(BioOpticalAlgorithm.THREE_BAND_GITELSON.value, "3bda_gitelson_2008")
+
+        self.assertEqual(WaterMaskingMethod.MNDWI_THRESHOLD.value, "mndwi_threshold")
+        self.assertEqual(WaterMaskingMethod.NDWI_THRESHOLD.value, "ndwi_threshold")
+        self.assertEqual(WaterMaskingMethod.SCL_WATER_MASK.value, "scl_water_mask")
+        self.assertEqual(WaterMaskingMethod.NIR_THRESHOLD.value, "nir_threshold")
+
+        # 2. Config Maps & Benchmark Scenes
+        self.assertIn("ndci", AQUATIC_METRIC_CONFIGS)
+        self.assertIn("fai", AQUATIC_METRIC_CONFIGS)
+        self.assertIn("chla", AQUATIC_METRIC_CONFIGS)
+        self.assertIn("turbidity", AQUATIC_METRIC_CONFIGS)
+        self.assertEqual(AQUATIC_METRIC_CONFIGS["ndci"]["default_colormap"], "spectral")
+
+        self.assertIn("oligotrophic", EUTROPHICATION_TIER_CONFIGS)
+        self.assertIn("hypertrophic", EUTROPHICATION_TIER_CONFIGS)
+        self.assertEqual(EUTROPHICATION_TIER_CONFIGS["hypertrophic"]["risk_level"], "severe")
+        self.assertEqual(EUTROPHICATION_TIER_CONFIGS["hypertrophic"]["numeric_tier"], 3)
+
+        self.assertIn("ndci_mishra_2012", BIO_OPTICAL_ALGORITHM_CONFIGS)
+        self.assertIn("fai_hu_2009", BIO_OPTICAL_ALGORITHM_CONFIGS)
+        self.assertIn("nechad_turbidity_2010", BIO_OPTICAL_ALGORITHM_CONFIGS)
+
+        self.assertGreaterEqual(len(AQUATIC_BENCHMARK_SCENES), 3)
+        self.assertIn("LAKE_ERIE_HAB_2026", AQUATIC_BENCHMARK_SCENES)
+        self.assertIn("LAKE_TAHOE_OLIGOTROPHIC_2026", AQUATIC_BENCHMARK_SCENES)
+        self.assertIn("SAN_LUIS_RESERVOIR_2026", AQUATIC_BENCHMARK_SCENES)
+
+        # 3. Mathematical Solvers & Bio-Optical Invariants
+        # NDCI: (B05 - B04) / (B05 + B04)
+        ndci_clear = calculate_ndci(red_edge_b05=0.030, red_b04=0.045)
+        self.assertAlmostEqual(ndci_clear, -0.200, places=3)
+        ndci_bloom = calculate_ndci(red_edge_b05=0.080, red_b04=0.040)
+        self.assertAlmostEqual(ndci_bloom, 0.3333, places=3)
+        # NDCI bounds clamping
+        self.assertLessEqual(calculate_ndci(red_edge_b05=1.0, red_b04=0.0), 1.0)
+        self.assertGreaterEqual(calculate_ndci(red_edge_b05=0.0, red_b04=1.0), -1.0)
+
+        # FAI: Baseline subtraction
+        # Clear water: NIR is lower than baseline
+        fai_clear = calculate_fai(nir_b08=0.015, red_b04=0.035, swir_b11=0.010)
+        self.assertLess(fai_clear, 0.0)
+        # Surface scum: strong NIR reflectance spike above baseline
+        fai_scum = calculate_fai(nir_b08=0.120, red_b04=0.040, swir_b11=0.015)
+        self.assertGreater(fai_scum, 0.05)
+
+        # Chlorophyll-a empirical polynomial inversion
+        chla_low = calculate_chla_from_ndci(-0.20)
+        self.assertLess(chla_low, 2.5)
+        chla_bloom = calculate_chla_from_ndci(0.25)
+        self.assertGreater(chla_bloom, 40.0)
+
+        # Nechad et al. (2010) semi-analytical turbidity
+        turb_clean = calculate_nechad_turbidity(reflectance_red=0.002)
+        self.assertLess(turb_clean, 2.0)
+        turb_turbid = calculate_nechad_turbidity(reflectance_red=0.050)
+        self.assertGreater(turb_turbid, 20.0)
+        # Asymptote saturation safety
+        turb_sat = calculate_nechad_turbidity(reflectance_red=0.300)
+        self.assertLessEqual(turb_sat, 1000.0)
+
+        # MNDWI & Water Pixel Classification
+        mndwi_water = calculate_mndwi(green_b03=0.080, swir_b11=0.010)
+        self.assertGreater(mndwi_water, 0.5)
+        self.assertTrue(is_water_pixel(mndwi_water, threshold=0.0))
+        mndwi_land = calculate_mndwi(green_b03=0.060, swir_b11=0.180)
+        self.assertLess(mndwi_land, 0.0)
+        self.assertFalse(is_water_pixel(mndwi_land, threshold=0.0))
+
+        # Trophic / Cyanobacteria Tier Classification
+        self.assertEqual(classify_eutrophication_risk_tier(chla_ug_l=1.2), "oligotrophic")
+        self.assertEqual(classify_eutrophication_risk_tier(chla_ug_l=5.5), "mesotrophic")
+        self.assertEqual(classify_eutrophication_risk_tier(chla_ug_l=18.0), "eutrophic")
+        self.assertEqual(classify_eutrophication_risk_tier(chla_ug_l=65.0), "hypertrophic")
+        self.assertEqual(classify_eutrophication_risk_tier(ndci=-0.15), "oligotrophic")
+        self.assertEqual(classify_eutrophication_risk_tier(ndci=0.28), "hypertrophic")
+
+        # 4. Pydantic Models Validation
+        req = AquaticQualityAnalysisRequest(
+            scene_id="S2A_MSIL2A_20260814T160901_T17TNE",
+            bbox=[-83.55, 41.60, -83.00, 41.95],
+            collection="sentinel-2-l2a",
+            metrics=[AquaticMetric.NDCI, AquaticMetric.FAI, AquaticMetric.CHLA],
+            water_masking_method=WaterMaskingMethod.MNDWI_THRESHOLD,
+            mndwi_threshold=0.0,
+            algorithm=BioOpticalAlgorithm.NDCI_MISHRA_2012
+        )
+        self.assertEqual(req.scene_id, "S2A_MSIL2A_20260814T160901_T17TNE")
+        self.assertEqual(req.mndwi_threshold, 0.0)
+
+        summary = AquaticWaterBodySummary(
+            water_pixels=42150,
+            water_surface_area_ha=421.5,
+            mean_ndci=0.28,
+            mean_fai=0.045,
+            mean_chla_ug_l=52.4,
+            mean_turbidity_ntu=18.6,
+            dominant_eutrophication_tier=EutrophicationRiskTier.HYPERTROPHIC,
+            bloom_extent_ha=298.4,
+            bloom_risk_level="severe",
+            floating_scum_detected=True,
+            tier_distribution={"oligotrophic": 4.2, "mesotrophic": 12.8, "eutrophic": 28.5, "hypertrophic": 54.5}
+        )
+        self.assertEqual(summary.dominant_eutrophication_tier, EutrophicationRiskTier.HYPERTROPHIC)
+        self.assertTrue(summary.floating_scum_detected)
+
+        resp = AquaticQualityAnalysisResponse(
+            analysis_id="AQUA-ANA-20261016-01",
+            scene_id="S2A_MSIL2A_20260814T160901_T17TNE",
+            collection="sentinel-2-l2a",
+            algorithm="ndci_mishra_2012",
+            water_masking_method="mndwi_threshold",
+            mndwi_threshold=0.0,
+            summary=summary,
+            tile_url_template="/api/v1/tiles/aquatic/sentinel-2-l2a/ndci/{z}/{x}/{y}.png",
+            hab_tile_url_template="/api/v1/tiles/aquatic/hab/sentinel-2-l2a/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.analysis_id, "AQUA-ANA-20261016-01")
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.created_at)
+
+        tile_params = AquaticTileRequestParams(
+            z=11, x=548, y=768,
+            collection="sentinel-2-l2a",
+            metric=AquaticMetric.NDCI,
+            colormap="spectral",
+            rescale=[-0.1, 0.4],
+            mndwi_threshold=0.0,
+            mask_land=True
+        )
+        self.assertEqual(tile_params.z, 11)
+        self.assertTrue(tile_params.mask_land)
+
+        # 5. Dynamic Tile URL Builders
+        single_url = build_aquatic_tile_url(
+            collection="sentinel-2-l2a",
+            metric="ndci",
+            z=11, x=548, y=768,
+            colormap="spectral",
+            rescale="-0.1,0.4",
+            mndwi_threshold=0.05,
+            mask_land=True
+        )
+        self.assertIn("/api/v1/tiles/aquatic/sentinel-2-l2a/ndci/11/548/768.png", single_url)
+        self.assertIn("colormap=spectral", single_url)
+        self.assertIn("rescale=-0.1,0.4", single_url)
+        self.assertIn("mndwi_threshold=0.05", single_url)
+
+        tmpl_url = build_aquatic_tile_url_template(
+            collection="sentinel-2-l2a",
+            metric="chla",
+            colormap="turbo",
+            rescale=[0.0, 50.0]
+        )
+        self.assertIn("/api/v1/tiles/aquatic/sentinel-2-l2a/chla/{z}/{x}/{y}.png", tmpl_url)
+        self.assertIn("colormap=turbo", tmpl_url)
+        self.assertIn("rescale=0.0,50.0", tmpl_url)
+
+        hab_tmpl = build_aquatic_hab_tile_url_template(collection="sentinel-2-l2a", mndwi_threshold=0.02)
+        self.assertEqual(hab_tmpl, "/api/v1/tiles/aquatic/hab/sentinel-2-l2a/{z}/{x}/{y}.png?mndwi_threshold=0.02")
+
+        # 6. Canonical Route Contract Parity
+        self.assertEqual(format_api_route("analysis_aquatic_quality"), "/api/v1/analysis/aquatic/quality")
+        self.assertEqual(format_api_route("analysis_aquatic_quality_short"), "/analysis/aquatic/quality")
+        self.assertEqual(format_api_route("analysis_aquatic_hab"), "/api/v1/analysis/aquatic/hab")
+        self.assertEqual(format_api_route("analysis_aquatic_hab_short"), "/analysis/aquatic/hab")
+        self.assertEqual(
+            format_api_route("tiles_aquatic_quality", collection="sentinel-2-l2a", metric="ndci", z=11, x=548, y=768),
+            "/api/v1/tiles/aquatic/sentinel-2-l2a/ndci/11/548/768.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_aquatic_quality_short", collection="sentinel-2-l2a", metric="ndci", z=11, x=548, y=768),
+            "/tiles/aquatic/sentinel-2-l2a/ndci/11/548/768.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_aquatic_hab", collection="sentinel-2-l2a", z=11, x=548, y=768),
+            "/api/v1/tiles/aquatic/hab/sentinel-2-l2a/11/548/768.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_aquatic_hab_short", collection="sentinel-2-l2a", z=11, x=548, y=768),
+            "/tiles/aquatic/hab/sentinel-2-l2a/11/548/768.png"
+        )
+
+    def test_task_t252_topographic_solar_illumination_and_scs_c_contracts(self):
+        """Cycle v2.5.32 (Task T-252): Verify Topographic Solar Illumination Correction & SCS+C Inversion contracts.
+        
+        Verifies:
+        1. Enums and configurations: TopographicCorrectionMethod, IlluminationCondition, TopographicMetric, TOPOGRAPHIC_METHOD_CONFIGS, TOPOGRAPHIC_BENCHMARK_SCENES.
+        2. Local incidence cosine solver cos(i) = cos(theta_s) * cos(alpha) + sin(theta_s) * sin(alpha) * cos(phi_s - beta):
+           - Invariant 1: Flat terrain (alpha = 0) strictly matches solar zenith cosine cos(theta_s).
+           - Invariant 2: Slope facing directly into solar beam (alpha = theta_s, beta = phi_s) yields normal incidence cos(i) == 1.0.
+           - Invariant 3: Slope facing 180 degrees away from sun yields self-shadow (cos(i) < 0).
+           - Invariant 4: Output clamped strictly in [-1.0, 1.0].
+        3. C-Correction factor (cos(theta_s) + c) / (cos(i) + c):
+           - Invariant 1: Flat terrain (cos(i) = cos(theta_s)) yields factor exactly 1.0.
+           - Invariant 2: Non-negative and bounded as cos(i) -> 0 with c > 0 (prevents white noise over-correction).
+           - Invariant 3: When c = 0, falls back cleanly to Lambertian cosine factor.
+        4. Minnaert correction factor (cos(theta_s) / max(cos_i_min, cos(i)))^k:
+           - Invariant 1: Flat terrain (cos(i) = cos(theta_s)) yields factor exactly 1.0.
+           - Invariant 2: When k = 1.0, matches Lambertian cosine.
+        5. SCS+C correction factor (cos(theta_s) * cos(alpha) + c) / (cos(i) + c):
+           - Invariant 1: Flat terrain (alpha = 0 => cos(alpha) = 1) reduces identically to C-Correction.
+           - Invariant 2: Shaded steep canopy slopes properly boosted while preventing division by zero.
+        6. Illumination condition classifier:
+           - cos(i) <= 0 => self_shadow
+           - 0.0 < cos(i) < 0.20 => shaded
+           - cos(i) >= 0.20 => sunlit
+        7. Linear regression empirical C estimator (L = m * cos(i) + b => c = b/m).
+        8. Pydantic request/response schemas validation and serialization.
+        9. Dynamic XYZ tile URL builders and templates.
+        10. Canonical API route contract registration in format_api_route.
+        """
+        # 1. Enums and metadata
+        self.assertEqual(TopographicCorrectionMethod.C_CORRECTION, "c_correction")
+        self.assertEqual(TopographicCorrectionMethod.COSINE, "cosine")
+        self.assertEqual(TopographicCorrectionMethod.MINNAERT, "minnaert")
+        self.assertEqual(TopographicCorrectionMethod.SCS_C, "scs_c")
+        self.assertEqual(TopographicCorrectionMethod.NONE, "none")
+
+        self.assertEqual(IlluminationCondition.SUNLIT, "sunlit")
+        self.assertEqual(IlluminationCondition.SHADED, "shaded")
+        self.assertEqual(IlluminationCondition.SELF_SHADOW, "self_shadow")
+
+        self.assertEqual(TopographicMetric.CORRECTED_REFLECTANCE, "corrected_reflectance")
+        self.assertEqual(TopographicMetric.COS_INCIDENCE, "cos_incidence")
+        self.assertEqual(TopographicMetric.ILLUMINATION, "illumination")
+
+        self.assertIn("c_correction", TOPOGRAPHIC_METHOD_CONFIGS)
+        self.assertIn("scs_c", TOPOGRAPHIC_METHOD_CONFIGS)
+        self.assertTrue(TOPOGRAPHIC_METHOD_CONFIGS["scs_c"]["canopy_aware"])
+        self.assertTrue(TOPOGRAPHIC_METHOD_CONFIGS["c_correction"]["requires_c_factor"])
+
+        self.assertIn("MT_SHASTA_VOLCANO_2026", TOPOGRAPHIC_BENCHMARK_SCENES)
+        self.assertIn("SWISS_ALPS_VALAIS_2026", TOPOGRAPHIC_BENCHMARK_SCENES)
+        self.assertIn("SIERRA_NEVADA_YOSEMITE_2026", TOPOGRAPHIC_BENCHMARK_SCENES)
+
+        # 2. Local incidence cosine
+        # Invariant 1: Flat terrain
+        cos_flat = calculate_local_incidence_cosine(solar_zenith_deg=30.0, solar_azimuth_deg=180.0, slope_deg=0.0, aspect_deg=-1.0)
+        self.assertAlmostEqual(cos_flat, math.cos(math.radians(30.0)), places=4)
+
+        # Invariant 2: Normal incidence (slope = zenith, aspect = azimuth)
+        cos_normal = calculate_local_incidence_cosine(solar_zenith_deg=35.0, solar_azimuth_deg=135.0, slope_deg=35.0, aspect_deg=135.0)
+        self.assertAlmostEqual(cos_normal, 1.0, places=4)
+
+        # Invariant 3: Self shadow (facing directly away from sun)
+        cos_shadow = calculate_local_incidence_cosine(solar_zenith_deg=60.0, solar_azimuth_deg=180.0, slope_deg=60.0, aspect_deg=0.0)
+        self.assertLess(cos_shadow, 0.0)
+
+        # Invariant 4: Bound range
+        self.assertGreaterEqual(cos_flat, -1.0)
+        self.assertLessEqual(cos_flat, 1.0)
+
+        # 3. C-Correction factor
+        # On flat terrain (cos(i) == cos(theta_s))
+        c_flat = calculate_c_correction_factor(cos_i=math.cos(math.radians(45.0)), solar_zenith_deg=45.0, c_factor=0.08)
+        self.assertAlmostEqual(c_flat, 1.0, places=4)
+
+        # Dimly lit slope (cos(i) = 0.02) with c = 0.08
+        c_dim = calculate_c_correction_factor(cos_i=0.02, solar_zenith_deg=45.0, c_factor=0.08)
+        expected_c_dim = (math.cos(math.radians(45.0)) + 0.08) / (0.02 + 0.08)
+        self.assertAlmostEqual(c_dim, expected_c_dim, places=4)
+        self.assertLess(c_dim, 10.0)  # bounded, does not blow up
+
+        # When c_factor = 0, matches cosine
+        cos_factor = calculate_c_correction_factor(cos_i=0.5, solar_zenith_deg=45.0, c_factor=0.0)
+        expected_cos = math.cos(math.radians(45.0)) / 0.5
+        self.assertAlmostEqual(cos_factor, expected_cos, places=4)
+
+        # 4. Minnaert correction factor
+        m_flat = calculate_minnaert_correction(cos_i=math.cos(math.radians(45.0)), solar_zenith_deg=45.0, k=0.65)
+        self.assertAlmostEqual(m_flat, 1.0, places=4)
+
+        m_k1 = calculate_minnaert_correction(cos_i=0.5, solar_zenith_deg=45.0, k=1.0)
+        self.assertAlmostEqual(m_k1, expected_cos, places=4)
+
+        # 5. SCS+C correction factor
+        # On flat terrain (slope = 0 => cos(alpha) = 1)
+        scs_flat = calculate_scs_c_correction(cos_i=math.cos(math.radians(45.0)), slope_deg=0.0, solar_zenith_deg=45.0, c_factor=0.08)
+        self.assertAlmostEqual(scs_flat, 1.0, places=4)
+        self.assertAlmostEqual(scs_flat, c_flat, places=4)
+
+        # 6. Illumination condition classifier
+        self.assertEqual(classify_illumination_condition(cos_i=0.75), IlluminationCondition.SUNLIT)
+        self.assertEqual(classify_illumination_condition(cos_i=0.10), IlluminationCondition.SHADED)
+        self.assertEqual(classify_illumination_condition(cos_i=-0.05), IlluminationCondition.SELF_SHADOW)
+        self.assertEqual(classify_illumination_condition(cos_i=0.0), IlluminationCondition.SELF_SHADOW)
+
+        # 7. Apply topographic correction
+        # Flat uncorrected reflectance preserved
+        corr_flat = apply_topographic_correction(
+            radiance=0.25,
+            cos_i=math.cos(math.radians(45.0)),
+            slope_deg=0.0,
+            solar_zenith_deg=45.0,
+            method="c_correction",
+            c_factor=0.08
+        )
+        self.assertAlmostEqual(corr_flat, 0.25, places=4)
+
+        # Self shadow masked to 0.0
+        corr_shadow = apply_topographic_correction(
+            radiance=0.10,
+            cos_i=-0.15,
+            slope_deg=45.0,
+            solar_zenith_deg=45.0,
+            mask_self_shadow=True
+        )
+        self.assertEqual(corr_shadow, 0.0)
+
+        # 8. Empirical C estimation from regression
+        # Synthetic L = 0.5 * cos(i) + 0.05 => c = 0.05 / 0.5 = 0.10
+        cos_vals = [0.2, 0.4, 0.6, 0.8, 1.0]
+        rad_vals = [0.5 * c + 0.05 for c in cos_vals]
+        est_c = estimate_c_factor_from_linear_regression(rad_vals, cos_vals)
+        self.assertAlmostEqual(est_c, 0.10, places=3)
+
+        # 9. Pydantic Models Validation
+        req = TopographicCorrectionAnalysisRequest(
+            scene_id="S2A_MSIL2A_20260815_MT_SHASTA",
+            collection="sentinel-2-l2a",
+            dem_collection="cop-dem-glo-30",
+            method=TopographicCorrectionMethod.C_CORRECTION,
+            solar_geometry=TopographicSolarGeometry(
+                solar_zenith_deg=34.2,
+                solar_azimuth_deg=148.5,
+                solar_elevation_deg=55.8,
+                earth_sun_distance_au=1.013
+            ),
+            config=TopographicCorrectionConfig(
+                method=TopographicCorrectionMethod.C_CORRECTION,
+                c_factor=0.08,
+                minnaert_k=0.65,
+                cos_i_min=0.05,
+                mask_self_shadow=True
+            )
+        )
+        self.assertEqual(req.scene_id, "S2A_MSIL2A_20260815_MT_SHASTA")
+        self.assertEqual(req.config.c_factor, 0.08)
+
+        summary = TopographicCorrectionSummary(
+            mean_cos_i=0.7842,
+            min_cos_i=-0.1824,
+            max_cos_i=0.9982,
+            sunlit_pixel_pct=82.5,
+            shaded_pixel_pct=12.8,
+            self_shadow_pixel_pct=4.7,
+            estimated_c_factors={"B02": 0.12, "B03": 0.09, "B04": 0.08, "B08": 0.06},
+            estimated_minnaert_k={"B02": 0.58, "B03": 0.62, "B04": 0.65, "B08": 0.72},
+            mean_radiance_uncalibrated=0.1845,
+            mean_radiance_corrected=0.2012,
+            radiance_std_reduction_pct=41.8
+        )
+        self.assertGreater(summary.radiance_std_reduction_pct, 0.0)
+
+        resp = TopographicCorrectionAnalysisResponse(
+            analysis_id="TOPO-ANA-20261016-01",
+            scene_id="S2A_MSIL2A_20260815_MT_SHASTA",
+            collection="sentinel-2-l2a",
+            dem_collection="cop-dem-glo-30",
+            method="c_correction",
+            solar_geometry=TopographicSolarGeometry(
+                solar_zenith_deg=34.2,
+                solar_azimuth_deg=148.5,
+                solar_elevation_deg=55.8
+            ),
+            summary=summary,
+            tile_url_template="/api/v1/tiles/topographic/sentinel-2-l2a/S2A_MSIL2A_20260815_MT_SHASTA/{z}/{x}/{y}.png?method=c_correction",
+            illumination_tile_url_template="/api/v1/tiles/topographic/illumination/sentinel-2-l2a/S2A_MSIL2A_20260815_MT_SHASTA/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.analysis_id, "TOPO-ANA-20261016-01")
+        self.assertEqual(resp.status, "completed")
+
+        tile_params = TopographicTileRequestParams(
+            z=12, x=654, y=1482,
+            collection="sentinel-2-l2a",
+            item_id="S2A_MSIL2A_20260815_MT_SHASTA",
+            method=TopographicCorrectionMethod.C_CORRECTION,
+            metric=TopographicMetric.CORRECTED_REFLECTANCE,
+            c_factor=0.08
+        )
+        self.assertEqual(tile_params.z, 12)
+        self.assertEqual(tile_params.method, "c_correction")
+
+        # 10. Dynamic Tile URL Builders
+        single_url = build_topographic_tile_url(
+            collection="sentinel-2-l2a",
+            item_id="S2A_MSIL2A_20260815_MT_SHASTA",
+            z=12, x=654, y=1482,
+            method="scs_c",
+            metric="corrected_reflectance",
+            solar_zenith=34.2,
+            solar_azimuth=148.5,
+            c_factor=0.09
+        )
+        self.assertIn("/api/v1/tiles/topographic/sentinel-2-l2a/S2A_MSIL2A_20260815_MT_SHASTA/12/654/1482.png", single_url)
+        self.assertIn("method=scs_c", single_url)
+        self.assertIn("solar_zenith=34.2", single_url)
+
+        tmpl_url = build_topographic_tile_url_template(
+            collection="sentinel-2-l2a",
+            item_id="S2A_MSIL2A_20260815_MT_SHASTA",
+            method="c_correction",
+            metric="corrected_reflectance"
+        )
+        self.assertIn("/api/v1/tiles/topographic/sentinel-2-l2a/S2A_MSIL2A_20260815_MT_SHASTA/{z}/{x}/{y}.png", tmpl_url)
+
+        illum_tmpl = build_topographic_illumination_tile_url_template(
+            collection="sentinel-2-l2a",
+            item_id="S2A_MSIL2A_20260815_MT_SHASTA",
+            solar_zenith=34.2,
+            solar_azimuth=148.5
+        )
+        self.assertIn("/api/v1/tiles/topographic/illumination/sentinel-2-l2a/S2A_MSIL2A_20260815_MT_SHASTA/{z}/{x}/{y}.png", illum_tmpl)
+        self.assertIn("solar_zenith=34.2", illum_tmpl)
+
+        # 11. Canonical Route Contracts
+        self.assertEqual(format_api_route("analysis_topographic_correction"), "/api/v1/analysis/topographic/correction")
+        self.assertEqual(format_api_route("analysis_topographic_correction_short"), "/analysis/topographic/correction")
+        self.assertEqual(format_api_route("analysis_topographic_solar_geometry"), "/api/v1/analysis/topographic/solar-geometry")
+        self.assertEqual(format_api_route("analysis_topographic_solar_geometry_short"), "/analysis/topographic/solar-geometry")
+        self.assertEqual(
+            format_api_route("tiles_topographic_correction", collection="sentinel-2-l2a", item_id="S2A_SHASTA", z=12, x=654, y=1482),
+            "/api/v1/tiles/topographic/sentinel-2-l2a/S2A_SHASTA/12/654/1482.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_topographic_correction_short", collection="sentinel-2-l2a", item_id="S2A_SHASTA", z=12, x=654, y=1482),
+            "/tiles/topographic/sentinel-2-l2a/S2A_SHASTA/12/654/1482.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_topographic_illumination", collection="sentinel-2-l2a", item_id="S2A_SHASTA", z=12, x=654, y=1482),
+            "/api/v1/tiles/topographic/illumination/sentinel-2-l2a/S2A_SHASTA/12/654/1482.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_topographic_illumination_short", collection="sentinel-2-l2a", item_id="S2A_SHASTA", z=12, x=654, y=1482),
+            "/tiles/topographic/illumination/sentinel-2-l2a/S2A_SHASTA/12/654/1482.png"
         )
 
 if __name__ == "__main__":

@@ -39,6 +39,62 @@ from app.models.schemas import (
     SARPolarization,
     SARAnalysisRequest,
     SARAnalysisResponse,
+    SarPolarization,
+    SpeckleFilterMethod,
+    SARBackscatterCalibration,
+    SARFloodDetectionTier,
+    SAR_POLARIZATION_CONFIGS,
+    SPECKLE_FILTER_CONFIGS,
+    SAR_FLOOD_TIER_CONFIGS,
+    SAR_BENCHMARK_SCENES,
+    SARBackscatterAnalysisRequest,
+    SARBackscatterSummary,
+    SARBackscatterAnalysisResponse,
+    SARBackscatterTileRequestParams,
+    SARFloodInundationTileRequestParams,
+    build_sar_backscatter_tile_url,
+    build_sar_backscatter_tile_url_template,
+    build_sar_speckle_filter_tile_url,
+    build_sar_speckle_filter_tile_url_template,
+    build_sar_flood_tile_url,
+    build_sar_flood_tile_url_template,
+    CoRegistrationMethod,
+    GeometricResamplingKernel,
+    CoRegistrationQualityTier,
+    COREGISTRATION_METHOD_CONFIGS,
+    RESAMPLING_KERNEL_CONFIGS,
+    COREGISTRATION_QUALITY_TIER_CONFIGS,
+    COREGISTRATION_BENCHMARK_PAIRS,
+    TiePoint,
+    AffineTransformMatrix,
+    CoRegistrationAnalysisRequest,
+    CoRegistrationSummary,
+    CoRegistrationAnalysisResponse,
+    build_coregistration_tile_url,
+    build_coregistration_tile_url_template,
+    build_coregistration_vector_field_tile_url_template,
+    AquaticMetric,
+    EutrophicationRiskTier,
+    BioOpticalAlgorithm,
+    WaterMaskingMethod,
+    AQUATIC_METRIC_CONFIGS,
+    EUTROPHICATION_TIER_CONFIGS,
+    BIO_OPTICAL_ALGORITHM_CONFIGS,
+    AQUATIC_BENCHMARK_SCENES,
+    calculate_ndci,
+    calculate_fai,
+    calculate_chla_from_ndci,
+    calculate_nechad_turbidity,
+    calculate_mndwi,
+    is_water_pixel,
+    classify_eutrophication_risk_tier,
+    AquaticQualityAnalysisRequest,
+    AquaticWaterBodySummary,
+    AquaticQualityAnalysisResponse,
+    AquaticTileRequestParams,
+    build_aquatic_tile_url,
+    build_aquatic_tile_url_template,
+    build_aquatic_hab_tile_url_template,
     format_spectral_profile,
     format_api_route,
     TransectSampleMethod,
@@ -1270,17 +1326,35 @@ def get_sar_tile(
     z: int,
     x: int,
     y: int,
-    colormap: Optional[str] = "viridis",
-    rescale: Optional[str] = None
+    colormap: Optional[str] = "gray",
+    rescale: Optional[str] = None,
+    filter: Optional[str] = Query(None, alias="speckle_filter"),
+    kernel_size: Optional[int] = Query(None, alias="filter_kernel_size"),
+    cal: Optional[str] = Query(None, alias="calibration"),
+    threshold_db: Optional[float] = Query(None, alias="water_threshold_db")
 ):
-    png_bytes = tile_service.render_sar_tile(
-        polarization=polarization,
-        z=z,
-        x=x,
-        y=y,
-        colormap=colormap or "viridis",
-        rescale=rescale
-    )
+    pol_str = str(polarization).lower().strip()
+    if pol_str == "flood":
+        png_bytes = tile_service.render_sar_flood_inundation_tile(
+            z=z,
+            x=x,
+            y=y,
+            threshold_db=threshold_db if threshold_db is not None else -16.5,
+            speckle_filter=filter or "refined_lee"
+        )
+    else:
+        png_bytes = tile_service.render_sar_backscatter_tile(
+            z=z,
+            x=x,
+            y=y,
+            polarization=polarization,
+            speckle_filter=filter or "refined_lee",
+            kernel_size=kernel_size or 5,
+            calibration=cal or "gamma0",
+            colormap=colormap or "gray",
+            rescale=rescale or "-25,0",
+            water_threshold_db=threshold_db
+        )
     return Response(
         content=png_bytes,
         media_type="image/png",
@@ -3423,7 +3497,6 @@ def get_analysis_bap_composite_tile(
 # ============================================================================
 
 @router.post("/geometric/coregistration", response_model=CoRegistrationResponse)
-@router.post("/coregistration", response_model=CoRegistrationResponse, include_in_schema=False)
 def analyze_geometric_coregistration(req: CoRegistrationRequest):
     """Executes automated sub-pixel geometric co-registration between reference and target scenes.
     Utilizes AROSICS-style Fourier phase correlation over local matching windows to detect sub-pixel
@@ -9585,6 +9658,544 @@ def get_legacy_composite_tile(
         rescale=rescale,
         quality_band=quality_band
     )
+
+
+# ==============================================================================
+# CYCLE v2.5.29: SENTINEL-1 SAR DUAL-POL BACKSCATTER, TERRAIN FLATTENING & SPECKLE FILTERING
+# ==============================================================================
+
+@router.post("/sar/backscatter", response_model=SARBackscatterAnalysisResponse, response_model_by_alias=False)
+@router.post("/sar/backscatter/", response_model=SARBackscatterAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@sar_router.post("/backscatter", response_model=SARBackscatterAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_sar_backscatter_endpoint(
+    payload: Union[SARBackscatterAnalysisRequest, Dict[str, Any]] = Body(...)
+):
+    """Analyzes calibrated Sentinel-1 RTC Synthetic Aperture Radar dual-polarization backscatter,
+    applying local-statistics adaptive speckle filtering, decibel transformations, and flood inundation detection.
+    """
+    if hasattr(payload, "model_dump"):
+        data = payload.model_dump()
+    elif isinstance(payload, dict):
+        data = dict(payload)
+    else:
+        data = dict(payload)
+
+    bbox = data.get("bbox")
+    col_raw = data.get("collection", "sentinel-1-rtc")
+    col_str = col_raw.value if hasattr(col_raw, "value") else str(col_raw)
+    pol_raw = data.get("polarization", "vv")
+    pol_str = pol_raw.value if hasattr(pol_raw, "value") else str(pol_raw)
+    filter_raw = data.get("speckle_filter", "refined_lee")
+    filter_str = filter_raw.value if hasattr(filter_raw, "value") else str(filter_raw)
+    kernel_size = int(data.get("filter_kernel_size", 5))
+    cal_raw = data.get("calibration", "gamma0")
+    cal_str = cal_raw.value if hasattr(cal_raw, "value") else str(cal_raw)
+    start_date = str(data.get("start_date", "2026-09-01"))
+    end_date = str(data.get("end_date", "2026-09-30"))
+    water_thresh = float(data.get("water_threshold_db", -16.5))
+    target_res = float(data.get("target_resolution_m", 10.0))
+
+    sar_ds, summary_dict, scenes = data_acquisition_service.load_sar_rtc_cube(
+        bbox=bbox,
+        collection=col_str,
+        polarization=pol_str,
+        speckle_filter=filter_str,
+        filter_kernel_size=kernel_size,
+        calibration=cal_str,
+        start_date=start_date,
+        end_date=end_date,
+        water_threshold_db=water_thresh,
+        target_resolution_m=target_res
+    )
+
+    tile_url_template = build_sar_backscatter_tile_url_template(
+        collection=col_str,
+        polarization=pol_str,
+        speckle_filter=filter_str,
+        kernel_size=kernel_size,
+        calibration=cal_str
+    )
+
+    analysis_id = f"SAR-RTC-{col_str.upper()[:8]}-{pol_str.upper()}-{uuid.uuid4().hex[:8]}"
+    summary_model = SARBackscatterSummary(**summary_dict)
+
+    return SARBackscatterAnalysisResponse(
+        analysis_id=analysis_id,
+        collection=col_str,
+        polarization=pol_str,
+        speckle_filter=filter_str,
+        calibration=cal_str,
+        filter_kernel_size=kernel_size,
+        summary=summary_model,
+        tile_url_template=tile_url_template,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        status="completed"
+    )
+
+
+@tiles_router.get("/sar/{collection}/{polarization}/{z}/{x}/{y}.png")
+@router.get("/tiles/sar/{collection}/{polarization}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_sar_backscatter_tile_endpoint(
+    collection: str,
+    polarization: str,
+    z: int,
+    x: int,
+    y: int,
+    filter: str = Query("refined_lee", alias="speckle_filter", description="Speckle filter algorithm"),
+    kernel_size: int = Query(5, alias="filter_kernel_size", description="Filter window size in pixels"),
+    cal: str = Query("gamma0", alias="calibration", description="Radiometric calibration convention"),
+    colormap: Optional[str] = Query("gray", description="Visualization colormap"),
+    rescale: Optional[str] = Query("-25,0", description="Contrast stretch min,max in dB"),
+    threshold_db: Optional[float] = Query(None, alias="water_threshold_db", description="Optional specular water threshold")
+):
+    """Dynamic XYZ tile streaming for calibrated Sentinel-1 RTC dual-pol radar backscatter."""
+    png_bytes = tile_service.render_sar_backscatter_tile(
+        z=z,
+        x=x,
+        y=y,
+        collection=collection,
+        polarization=polarization,
+        speckle_filter=filter,
+        kernel_size=kernel_size,
+        calibration=cal,
+        colormap=colormap,
+        rescale=rescale,
+        water_threshold_db=threshold_db
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-SAR-RTC-v2.5"}
+    )
+
+
+@tiles_router.get("/sar/{collection}/{z}/{x}/{y}.png")
+@router.get("/tiles/sar/{collection}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_sar_collection_tile_endpoint(
+    collection: str,
+    z: int,
+    x: int,
+    y: int,
+    polarization: str = Query("vv", description="Polarization channel (vv, vh, ratio_vh_vv, dual_pol_rgb)"),
+    filter: str = Query("refined_lee", alias="speckle_filter", description="Speckle filter algorithm"),
+    kernel_size: int = Query(5, alias="filter_kernel_size", description="Filter window size in pixels"),
+    cal: str = Query("gamma0", alias="calibration", description="Radiometric calibration convention"),
+    colormap: Optional[str] = Query("gray", description="Visualization colormap"),
+    rescale: Optional[str] = Query("-25,0", description="Contrast stretch min,max in dB")
+):
+    """Dynamic XYZ tile streaming for Sentinel-1 RTC collection."""
+    return get_sar_backscatter_tile_endpoint(
+        collection=collection,
+        polarization=polarization,
+        z=z,
+        x=x,
+        y=y,
+        filter=filter,
+        kernel_size=kernel_size,
+        cal=cal,
+        colormap=colormap,
+        rescale=rescale
+    )
+
+
+@tiles_router.get("/sar/filtered/{filter_method}/{z}/{x}/{y}.png")
+@router.get("/tiles/sar/filtered/{filter_method}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_sar_filtered_tile_endpoint(
+    filter_method: str,
+    z: int,
+    x: int,
+    y: int,
+    collection: str = Query("sentinel-1-rtc", description="Source STAC collection"),
+    polarization: str = Query("vv", description="Polarization channel"),
+    kernel_size: int = Query(5, alias="filter_kernel_size", description="Filter window size in pixels"),
+    colormap: Optional[str] = Query("gray", description="Visualization colormap"),
+    rescale: Optional[str] = Query("-25,0", description="Contrast stretch min,max in dB")
+):
+    """Dynamic XYZ tile streaming for adaptive speckle-filtered SAR backscatter."""
+    png_bytes = tile_service.render_sar_speckle_filter_tile(
+        filter_method=filter_method,
+        z=z,
+        x=x,
+        y=y,
+        collection=collection,
+        polarization=polarization,
+        kernel_size=kernel_size,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-SAR-Filter-v2.5"}
+    )
+
+
+@tiles_router.get("/sar/flood/{z}/{x}/{y}.png")
+@router.get("/tiles/sar/flood/{z}/{x}/{y}.png", include_in_schema=False)
+def get_sar_flood_inundation_tile_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    collection: str = Query("sentinel-1-rtc", description="Source STAC collection"),
+    threshold_db: float = Query(-16.5, alias="water_threshold_db", description="Decibel threshold for specular water"),
+    filter: str = Query("refined_lee", alias="speckle_filter", description="Speckle filter algorithm"),
+    polarization: str = Query("vv", description="Polarization channel")
+):
+    """Dynamic XYZ tile streaming for automated SAR specular flood water mapping."""
+    png_bytes = tile_service.render_sar_flood_inundation_tile(
+        z=z,
+        x=x,
+        y=y,
+        collection=collection,
+        threshold_db=threshold_db,
+        speckle_filter=filter,
+        polarization=polarization
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-SAR-Flood-v2.5"}
+    )
+
+
+# ==============================================================================
+# Cycle v2.5.30: Sub-Pixel Automated Image Co-Registration Endpoints
+# ==============================================================================
+
+@router.post("/coregistration", response_model=CoRegistrationAnalysisResponse, response_model_by_alias=False)
+@router.post("/coregistration/", response_model=CoRegistrationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/coregistration", response_model=CoRegistrationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/coregistration/", response_model=CoRegistrationAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_coregistration_endpoint(
+    payload: Union[CoRegistrationAnalysisRequest, Dict[str, Any]] = Body(...)
+):
+    """Automated sub-pixel image co-registration via localized FFT phase correlation,
+    RANSAC affine transformation fitting, and geometric resampling."""
+    if hasattr(payload, "model_dump"):
+        data = payload.model_dump()
+    elif isinstance(payload, dict):
+        data = payload
+    else:
+        data = dict(payload)
+
+    ref_id = str(data.get("reference_scene_id", "REF_SCENE")).strip()
+    tgt_id = str(data.get("target_scene_id", "TARGET_SCENE")).strip()
+    method = str(data.get("method", "fft_phase_correlation")).lower().strip()
+    kernel = str(data.get("kernel", "cubic_convolution")).lower().strip()
+    bbox = data.get("bbox")
+    grid_spacing = int(data.get("grid_spacing_pixels", 64))
+    min_corr = float(data.get("min_correlation", 0.60))
+    outlier_thresh = float(data.get("outlier_threshold_pixels", 1.5))
+
+    ref_ds, tgt_ds, metadata = data_acquisition_service.load_coregistration_scene_pair(
+        reference_scene_id=ref_id,
+        target_scene_id=tgt_id,
+        bbox=bbox
+    )
+
+    ref_raster = ref_ds["B04"].values if "B04" in ref_ds else ref_ds["visual"].values
+    tgt_raster = tgt_ds["B04"].values if "B04" in tgt_ds else tgt_ds["visual"].values
+
+    tie_points, summary_dict = index_service.compute_coregistration_tie_points(
+        ref_raster=ref_raster,
+        target_raster=tgt_raster,
+        grid_spacing_pixels=grid_spacing,
+        min_correlation=min_corr,
+        outlier_threshold_pixels=outlier_thresh,
+        subpixel=True
+    )
+
+    affine_dict = summary_dict.pop("affine_matrix")
+    affine_model = AffineTransformMatrix(**affine_dict)
+    summary_model = CoRegistrationSummary(**summary_dict)
+
+    analysis_id = f"COREG-{uuid.uuid4().hex[:8].upper()}"
+
+    tile_url_template = build_coregistration_tile_url_template(
+        reference_scene_id=ref_id,
+        target_scene_id=tgt_id,
+        mode="aligned",
+        kernel=kernel
+    )
+    vector_field_tile_url_template = build_coregistration_vector_field_tile_url_template(
+        analysis_id=analysis_id,
+        arrow_scale=1.0
+    )
+
+    return CoRegistrationAnalysisResponse(
+        analysis_id=analysis_id,
+        reference_scene_id=ref_id,
+        target_scene_id=tgt_id,
+        method=method,
+        kernel=kernel,
+        affine_matrix=affine_model,
+        summary=summary_model,
+        tile_url_template=tile_url_template,
+        vector_field_tile_url_template=vector_field_tile_url_template,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        status="completed"
+    )
+
+
+@router.get("/coregistration/tie-points")
+@router.get("/coregistration/tie-points/", include_in_schema=False)
+@router.get("/analysis/coregistration/tie-points", include_in_schema=False)
+def get_coregistration_tie_points_endpoint(
+    reference_scene_id: str = Query("REF_SCENE", alias="ref"),
+    target_scene_id: str = Query("TARGET_SCENE", alias="tgt"),
+    grid_spacing: int = Query(64, alias="grid_spacing_pixels"),
+    min_correlation: float = Query(0.60),
+    outlier_threshold: float = Query(1.5, alias="outlier_threshold_pixels")
+):
+    """Returns extracted candidate tie-points with sub-pixel displacements and RANSAC inlier classifications."""
+    ref_ds, tgt_ds, metadata = data_acquisition_service.load_coregistration_scene_pair(
+        reference_scene_id=reference_scene_id,
+        target_scene_id=target_scene_id
+    )
+    ref_raster = ref_ds["B04"].values if "B04" in ref_ds else ref_ds["visual"].values
+    tgt_raster = tgt_ds["B04"].values if "B04" in tgt_ds else tgt_ds["visual"].values
+
+    tie_points, summary_dict = index_service.compute_coregistration_tie_points(
+        ref_raster=ref_raster,
+        target_raster=tgt_raster,
+        grid_spacing_pixels=grid_spacing,
+        min_correlation=min_correlation,
+        outlier_threshold_pixels=outlier_threshold,
+        subpixel=True
+    )
+    return {
+        "status": "ready",
+        "reference_scene_id": reference_scene_id,
+        "target_scene_id": target_scene_id,
+        "total_tie_points": len(tie_points),
+        "inlier_count": summary_dict["affine_matrix"]["inlier_count"],
+        "rmse_pixels": summary_dict["rmse_pixels"],
+        "affine_matrix": summary_dict["affine_matrix"],
+        "summary": summary_dict,
+        "tie_points": tie_points
+    }
+
+
+@tiles_router.get("/coregistration/{reference_scene_id}/{target_scene_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/coregistration/{reference_scene_id}/{target_scene_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_coregistration_tile_endpoint(
+    reference_scene_id: str,
+    target_scene_id: str,
+    z: int,
+    x: int,
+    y: int,
+    mode: str = Query("aligned", description="Rendering mode ('aligned', 'diff_pre', 'diff_post', 'reference', 'target_raw', 'vector_field')"),
+    kernel: str = Query("cubic_convolution", description="Resampling kernel ('nearest', 'bilinear', 'cubic_convolution', 'cubic_spline', 'lanczos')"),
+    colormap: Optional[str] = Query("spectral", description="Colormap for difference visualization"),
+    rescale: Optional[str] = Query(None, description="Contrast stretch range min,max"),
+    arrow_scale: float = Query(1.0, description="Vector arrow scaling factor")
+):
+    """Dynamic XYZ tile streaming for sub-pixel automated image co-registration."""
+    png_bytes = tile_service.render_coregistration_tile(
+        reference_scene_id=reference_scene_id,
+        target_scene_id=target_scene_id,
+        z=z,
+        x=x,
+        y=y,
+        mode=mode,
+        kernel=kernel,
+        colormap=colormap,
+        rescale=rescale,
+        arrow_scale=arrow_scale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-CoRegistration-v2.5"}
+    )
+
+
+@tiles_router.get("/coregistration/vector-field/{analysis_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/coregistration/vector-field/{analysis_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_coregistration_vector_field_tile_endpoint(
+    analysis_id: str,
+    z: int,
+    x: int,
+    y: int,
+    arrow_scale: float = Query(1.0, description="Vector arrow scaling factor")
+):
+    """Dynamic XYZ tile streaming for displacement vector arrows."""
+    png_bytes = tile_service.render_coregistration_vector_field_tile(
+        analysis_id=analysis_id,
+        z=z,
+        x=x,
+        y=y,
+        arrow_scale=arrow_scale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-CoReg-VectorField-v2.5"}
+    )
+
+
+# ==============================================================================
+# Cycle v2.5.31: Aquatic Quality & Harmful Algal Bloom Detection Endpoints
+# ==============================================================================
+
+@router.post("/aquatic/quality", response_model=AquaticQualityAnalysisResponse, response_model_by_alias=False)
+@router.post("/aquatic/quality/", response_model=AquaticQualityAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/aquatic/quality", response_model=AquaticQualityAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/aquatic/quality/", response_model=AquaticQualityAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_aquatic_quality_endpoint(
+    payload: Union[AquaticQualityAnalysisRequest, Dict[str, Any]] = Body(...)
+):
+    """Multi-spectral bio-optical water quality and HAB eutrophication inversion.
+    
+    Evaluates:
+        - Water boundary masking via MNDWI / SCL
+        - NDCI (Mishra & Mishra 2012)
+        - Floating Algae Index (FAI Hu 2009)
+        - Chlorophyll-a concentration (ug/L) via empirical / 2BDA / 3BDA models
+        - Nechad et al. (2010) semi-analytical turbidity / TSS (NTU)
+        - Carlson / WHO cyanobacteria bloom hazard categorization
+    """
+    if hasattr(payload, "model_dump"):
+        data = payload.model_dump()
+    elif isinstance(payload, dict):
+        data = payload
+    else:
+        data = payload.dict()
+
+    scene_id = str(data.get("scene_id") or "LAKE_ERIE_HAB_2026")
+    bbox = data.get("bbox")
+    collection = str(data.get("collection") or "sentinel-2-l2a")
+    masking_method = str(data.get("water_masking_method") or "mndwi_threshold")
+    mndwi_threshold = float(data.get("mndwi_threshold", 0.0))
+    algorithm = str(data.get("algorithm") or "ndci_mishra_2012")
+
+    ds, meta = data_acquisition_service.load_aquatic_data_cube(
+        scene_id=scene_id,
+        bbox=bbox,
+        collection=collection,
+        grid_size=256
+    )
+
+    inversion = index_service.compute_aquatic_quality_inversion(
+        bands=ds,
+        algorithm=algorithm,
+        water_masking_method=masking_method,
+        mndwi_threshold=mndwi_threshold
+    )
+
+    summary_dict = inversion["summary"]
+    summary_model = AquaticWaterBodySummary(**summary_dict)
+
+    analysis_id = f"AQUA-{uuid.uuid4().hex[:8].upper()}"
+
+    tile_url_template = build_aquatic_tile_url_template(
+        collection=collection,
+        metric="ndci",
+        colormap="spectral",
+        mndwi_threshold=mndwi_threshold
+    )
+    hab_tile_url_template = build_aquatic_hab_tile_url_template(
+        collection=collection,
+        mndwi_threshold=mndwi_threshold
+    )
+
+    return AquaticQualityAnalysisResponse(
+        analysis_id=analysis_id,
+        scene_id=scene_id,
+        collection=collection,
+        algorithm=algorithm,
+        water_masking_method=masking_method,
+        mndwi_threshold=mndwi_threshold,
+        summary=summary_model,
+        tile_url_template=tile_url_template,
+        hab_tile_url_template=hab_tile_url_template,
+        status="completed"
+    )
+
+
+@router.post("/aquatic/hab", response_model=AquaticQualityAnalysisResponse, response_model_by_alias=False)
+@router.post("/aquatic/hab/", response_model=AquaticQualityAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/aquatic/hab", response_model=AquaticQualityAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/aquatic/hab/", response_model=AquaticQualityAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def analyze_aquatic_hab_endpoint(
+    payload: Union[AquaticQualityAnalysisRequest, Dict[str, Any]] = Body(...)
+):
+    """Harmful Algal Bloom (HAB) and cyanobacterial surface scum hazard assessment."""
+    return analyze_aquatic_quality_endpoint(payload)
+
+
+@router.get("/aquatic/scenes")
+@router.get("/aquatic/scenes/", include_in_schema=False)
+@router.get("/analysis/aquatic/scenes", include_in_schema=False)
+def list_aquatic_scenes_endpoint(
+    collection: str = Query("sentinel-2-l2a"),
+    max_cloud: float = Query(30.0)
+):
+    """Lists available benchmark and candidate satellite scenes for aquatic quality and HAB analysis."""
+    scenes = data_acquisition_service.search_aquatic_scenes(collection=collection, max_cloud=max_cloud)
+    return {"status": "success", "total": len(scenes), "scenes": scenes}
+
+
+@tiles_router.get("/aquatic/hab/{collection}/{z}/{x}/{y}.png")
+@router.get("/tiles/aquatic/hab/{collection}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_aquatic_hab_tile_endpoint(
+    collection: str,
+    z: int,
+    x: int,
+    y: int,
+    item_id: Optional[str] = Query(None, alias="scene_id"),
+    mndwi_threshold: float = Query(0.0, description="MNDWI threshold for water boundary classification")
+):
+    """Dynamic XYZ tile streaming for Harmful Algal Bloom (HAB) risk tiers and surface scum hazard maps."""
+    png_bytes = tile_service.render_aquatic_hab_tile(
+        collection=collection,
+        z=z,
+        x=x,
+        y=y,
+        item_id=item_id,
+        mndwi_threshold=mndwi_threshold
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Aquatic-HAB-v2.5"}
+    )
+
+
+@tiles_router.get("/aquatic/{collection}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/aquatic/{collection}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_aquatic_quality_tile_endpoint(
+    collection: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    item_id: Optional[str] = Query(None, alias="scene_id"),
+    colormap: Optional[str] = Query(None, description="Colormap for rendering ('spectral', 'viridis', 'turbo', 'blues', 'rdylbu_r')"),
+    rescale: Optional[str] = Query(None, description="Contrast stretch range min,max"),
+    mndwi_threshold: float = Query(0.0, description="MNDWI threshold for water boundary classification"),
+    mask_land: bool = Query(True, description="Whether non-water pixels are masked to transparent")
+):
+    """Dynamic XYZ tile streaming for bio-optical aquatic quality metrics (NDCI, FAI, Chl-a, Turbidity, Trophic Tier)."""
+    png_bytes = tile_service.render_aquatic_quality_tile(
+        collection=collection,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        item_id=item_id,
+        colormap=colormap,
+        rescale=rescale,
+        mndwi_threshold=mndwi_threshold,
+        mask_land=mask_land
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-Aquatic-Quality-v2.5"}
+    )
+
+
 
 
 
