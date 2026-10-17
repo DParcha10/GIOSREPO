@@ -15073,6 +15073,329 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             "/tiles/insar-sbas/10/100/200.png"
         )
 
+    def test_task_t312_spectral_unmixing_schemas_and_contracts(self):
+        """Task T-312 (Cycle v2.5.42 Step 1): Verify Linear Spectral Mixture Analysis (LSMA)
+        and Fully Constrained Least Squares (FCLS) sub-pixel fraction inversion schemas,
+        Simplex Projection operator (sum-to-one and non-negativity closure),
+        Fractional Vegetation Cover (FVC) shadow normalization, Soil Tillage Residue Index (STRI),
+        Pydantic data contracts, and canonical XYZ tile endpoints.
+        """
+        import math
+        from app.models.schemas import (
+            SpectralUnmixingModel,
+            SpectralUnmixingTileMetric,
+            EndmemberClass,
+            UnmixingQualityTier,
+            SubPixelDominanceClass,
+            normalize_unmixing_model,
+            normalize_unmixing_metric,
+            normalize_endmember_class,
+            normalize_unmixing_quality_tier,
+            normalize_subpixel_dominance,
+            UNMIXING_MODEL_CONFIGS,
+            STANDARD_ENDMEMBER_LIBRARY,
+            SUBPIXEL_DOMINANCE_CONFIGS,
+            UNMIXING_BENCHMARK_SCENES,
+            project_to_simplex,
+            calculate_unmixing_rmse,
+            calculate_unmixing_fvc,
+            calculate_unmixing_fractional_veg_cover,
+            calculate_soil_tillage_residue_index,
+            calculate_fcls_unmixing,
+            classify_unmixing_quality_rating,
+            classify_subpixel_dominance,
+            build_spectral_unmixing_tile_url,
+            build_spectral_unmixing_tile_url_template,
+            EndmemberSpectralVector,
+            UnmixingAbundancePoint,
+            UnmixingQualitySummary,
+            SpectralUnmixingRequest,
+            SpectralUnmixingResponse,
+            SpectralUnmixingTileRequestParams,
+            SpectralUnmixingModelsResponse,
+            API_ROUTE_CONTRACTS,
+            format_api_route,
+        )
+
+        # 1. Enums Verification
+        self.assertEqual(SpectralUnmixingModel.FCLS_CONSTRAINED.value, "fcls_constrained")
+        self.assertEqual(SpectralUnmixingModel.NNLS_NON_NEGATIVE.value, "nnls_non_negative")
+        self.assertEqual(SpectralUnmixingModel.UCLS_UNCONSTRAINED.value, "ucls_unconstrained")
+        self.assertEqual(SpectralUnmixingModel.EXTENDED_SMA.value, "extended_sma")
+
+        self.assertEqual(SpectralUnmixingTileMetric.FRACTION_GV.value, "fraction_gv")
+        self.assertEqual(SpectralUnmixingTileMetric.FRACTION_NPV.value, "fraction_npv")
+        self.assertEqual(SpectralUnmixingTileMetric.FRACTION_SOIL.value, "fraction_soil")
+        self.assertEqual(SpectralUnmixingTileMetric.FRACTION_SHADE.value, "fraction_shade")
+        self.assertEqual(SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER.value, "fractional_veg_cover")
+        self.assertEqual(SpectralUnmixingTileMetric.UNMIXING_RMSE.value, "unmixing_rmse")
+        self.assertEqual(SpectralUnmixingTileMetric.SOIL_TILLAGE_RESIDUE_INDEX.value, "soil_tillage_residue_index")
+        self.assertEqual(SpectralUnmixingTileMetric.ABUNDANCE_RGB_COMPOSITE.value, "abundance_rgb_composite")
+
+        self.assertEqual(EndmemberClass.GV.value, "gv")
+        self.assertEqual(EndmemberClass.NPV.value, "npv")
+        self.assertEqual(EndmemberClass.SOIL.value, "soil")
+        self.assertEqual(EndmemberClass.SHADE.value, "shade")
+
+        self.assertEqual(UnmixingQualityTier.EXCELLENT.value, "EXCELLENT")
+        self.assertEqual(UnmixingQualityTier.GOOD.value, "GOOD")
+        self.assertEqual(UnmixingQualityTier.ACCEPTABLE.value, "ACCEPTABLE")
+        self.assertEqual(UnmixingQualityTier.DEGRADED.value, "DEGRADED")
+
+        self.assertEqual(SubPixelDominanceClass.GREEN_CANOPY_DOMINANT.value, "green_canopy_dominant")
+        self.assertEqual(SubPixelDominanceClass.DRY_RESIDUE_DOMINANT.value, "dry_residue_dominant")
+        self.assertEqual(SubPixelDominanceClass.BARE_SOIL_TAILINGS.value, "bare_soil_tailings")
+        self.assertEqual(SubPixelDominanceClass.SHADOW_WATER_DOMINANT.value, "shadow_water_dominant")
+        self.assertEqual(SubPixelDominanceClass.MIXED_HETEROGENEOUS.value, "mixed_heterogeneous")
+
+        # 2. Normalizers
+        self.assertEqual(normalize_unmixing_model("fcls"), SpectralUnmixingModel.FCLS_CONSTRAINED)
+        self.assertEqual(normalize_unmixing_model("nnls"), SpectralUnmixingModel.NNLS_NON_NEGATIVE)
+        self.assertEqual(normalize_unmixing_model("ucls"), SpectralUnmixingModel.UCLS_UNCONSTRAINED)
+        self.assertEqual(normalize_unmixing_model("extended"), SpectralUnmixingModel.EXTENDED_SMA)
+        self.assertEqual(normalize_unmixing_model(SpectralUnmixingModel.FCLS_CONSTRAINED), SpectralUnmixingModel.FCLS_CONSTRAINED)
+
+        self.assertEqual(normalize_unmixing_metric("gv"), SpectralUnmixingTileMetric.FRACTION_GV)
+        self.assertEqual(normalize_unmixing_metric("npv"), SpectralUnmixingTileMetric.FRACTION_NPV)
+        self.assertEqual(normalize_unmixing_metric("soil"), SpectralUnmixingTileMetric.FRACTION_SOIL)
+        self.assertEqual(normalize_unmixing_metric("shade"), SpectralUnmixingTileMetric.FRACTION_SHADE)
+        self.assertEqual(normalize_unmixing_metric("fvc"), SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER)
+        self.assertEqual(normalize_unmixing_metric("rmse"), SpectralUnmixingTileMetric.UNMIXING_RMSE)
+        self.assertEqual(normalize_unmixing_metric("stri"), SpectralUnmixingTileMetric.SOIL_TILLAGE_RESIDUE_INDEX)
+        self.assertEqual(normalize_unmixing_metric("rgb"), SpectralUnmixingTileMetric.ABUNDANCE_RGB_COMPOSITE)
+
+        self.assertEqual(normalize_endmember_class("gv"), EndmemberClass.GV)
+        self.assertEqual(normalize_endmember_class("shade"), EndmemberClass.SHADE)
+
+        self.assertEqual(normalize_unmixing_quality_tier("excellent"), UnmixingQualityTier.EXCELLENT)
+        self.assertEqual(normalize_subpixel_dominance("green_canopy"), SubPixelDominanceClass.GREEN_CANOPY_DOMINANT)
+        self.assertEqual(normalize_subpixel_dominance("tailings"), SubPixelDominanceClass.BARE_SOIL_TAILINGS)
+
+        # 3. Scientific Configurations & Endmember Library
+        self.assertIn("fcls_constrained", UNMIXING_MODEL_CONFIGS)
+        self.assertIn("Heinz", UNMIXING_MODEL_CONFIGS["fcls_constrained"]["citation"])
+        self.assertTrue(UNMIXING_MODEL_CONFIGS["fcls_constrained"]["anc_enforced"])
+        self.assertTrue(UNMIXING_MODEL_CONFIGS["fcls_constrained"]["asc_enforced"])
+
+        self.assertIn("gv", STANDARD_ENDMEMBER_LIBRARY)
+        self.assertIn("npv", STANDARD_ENDMEMBER_LIBRARY)
+        self.assertIn("soil", STANDARD_ENDMEMBER_LIBRARY)
+        self.assertIn("shade", STANDARD_ENDMEMBER_LIBRARY)
+        self.assertEqual(len(STANDARD_ENDMEMBER_LIBRARY["gv"]), 7)
+        self.assertEqual(len(STANDARD_ENDMEMBER_LIBRARY["soil"]), 7)
+
+        self.assertIn("MORENCI_MINE_TAILINGS_ARIZONA_2026", UNMIXING_BENCHMARK_SCENES)
+        self.assertIn("PARADISE_CALIFORNIA_POST_FIRE_2026", UNMIXING_BENCHMARK_SCENES)
+
+        # 4. Simplex Projection Operator Invariant (sum-to-one and non-negativity closure)
+        # Test arbitrary vector with negative values and sum != 1
+        raw_vec = [-0.5, 0.2, 1.8, -0.1]
+        proj_vec = project_to_simplex(raw_vec)
+        self.assertEqual(len(proj_vec), 4)
+        for val in proj_vec:
+            self.assertGreaterEqual(val, 0.0)
+        self.assertAlmostEqual(sum(proj_vec), 1.0, places=5)
+
+        # Already on simplex
+        exact_simplex = [0.25, 0.25, 0.25, 0.25]
+        proj_exact = project_to_simplex(exact_simplex)
+        for i in range(4):
+            self.assertAlmostEqual(proj_exact[i], exact_simplex[i], places=5)
+
+        # 5. RMSE and Indices Computation
+        # Zero error
+        rmse_zero = calculate_unmixing_rmse([0.1, 0.2, 0.3], [0.1, 0.2, 0.3])
+        self.assertEqual(rmse_zero, 0.0)
+        # Non-zero error
+        rmse_val = calculate_unmixing_rmse([0.1, 0.2], [0.12, 0.18])
+        self.assertAlmostEqual(rmse_val, math.sqrt((0.02**2 + (-0.02)**2) / 2), places=5)
+
+        # Shadow-normalized FVC: f_GV / (1 - f_Shade)
+        # GV = 0.4, Shade = 0.2 -> 0.4 / (1 - 0.2) = 0.5
+        fvc_res = calculate_unmixing_fvc(0.4, 0.2)
+        self.assertAlmostEqual(fvc_res, 0.5, places=4)
+        self.assertEqual(calculate_unmixing_fractional_veg_cover(0.4, 0.2), fvc_res)
+        # High shade (denom <= 0.05) -> returns 0.0
+        self.assertEqual(calculate_unmixing_fvc(0.02, 0.98), 0.0)
+
+        # Crop Residue STRI: f_NPV / (f_NPV + f_Soil)
+        # NPV = 0.3, Soil = 0.1 -> 0.3 / 0.4 = 0.75
+        stri_res = calculate_soil_tillage_residue_index(0.3, 0.1)
+        self.assertAlmostEqual(stri_res, 0.75, places=4)
+        # Zero denominator -> 0.0
+        self.assertEqual(calculate_soil_tillage_residue_index(0.0, 0.0), 0.0)
+
+        # 6. Quality & Dominance Classifiers
+        self.assertEqual(classify_unmixing_quality_rating(0.008, 1.0), UnmixingQualityTier.EXCELLENT)
+        self.assertEqual(classify_unmixing_quality_rating(0.022, 1.0), UnmixingQualityTier.GOOD)
+        self.assertEqual(classify_unmixing_quality_rating(0.045, 1.0), UnmixingQualityTier.ACCEPTABLE)
+        self.assertEqual(classify_unmixing_quality_rating(0.080, 1.0), UnmixingQualityTier.DEGRADED)
+        self.assertEqual(classify_unmixing_quality_rating(0.005, 0.70), UnmixingQualityTier.DEGRADED)
+
+        self.assertEqual(classify_subpixel_dominance(0.65, 0.15, 0.10, 0.10), SubPixelDominanceClass.GREEN_CANOPY_DOMINANT)
+        self.assertEqual(classify_subpixel_dominance(0.10, 0.60, 0.15, 0.15), SubPixelDominanceClass.DRY_RESIDUE_DOMINANT)
+        self.assertEqual(classify_subpixel_dominance(0.05, 0.10, 0.75, 0.10), SubPixelDominanceClass.BARE_SOIL_TAILINGS)
+        self.assertEqual(classify_subpixel_dominance(0.05, 0.05, 0.10, 0.80), SubPixelDominanceClass.SHADOW_WATER_DOMINANT)
+        self.assertEqual(classify_subpixel_dominance(0.30, 0.25, 0.25, 0.20), SubPixelDominanceClass.MIXED_HETEROGENEOUS)
+
+        # 7. FCLS Unmixing Solver Verification
+        # Pure Green Vegetation Spectrum
+        pure_gv = list(STANDARD_ENDMEMBER_LIBRARY["gv"].values())
+        unmixed_gv = calculate_fcls_unmixing(pure_gv)
+        self.assertGreater(unmixed_gv["fraction_gv"], 0.90)
+        self.assertAlmostEqual(unmixed_gv["sum_abundances"], 1.0, places=3)
+        self.assertLess(unmixed_gv["rmse"], 0.02)
+        self.assertEqual(unmixed_gv["dominance"], SubPixelDominanceClass.GREEN_CANOPY_DOMINANT)
+
+        # Pure Soil Spectrum
+        pure_soil = list(STANDARD_ENDMEMBER_LIBRARY["soil"].values())
+        unmixed_soil = calculate_fcls_unmixing(pure_soil)
+        self.assertGreater(unmixed_soil["fraction_soil"], 0.90)
+        self.assertAlmostEqual(unmixed_soil["sum_abundances"], 1.0, places=3)
+        self.assertEqual(unmixed_soil["dominance"], SubPixelDominanceClass.BARE_SOIL_TAILINGS)
+
+        # Mixed pixel (50% GV, 50% Soil)
+        mixed_spec = [0.5 * pure_gv[i] + 0.5 * pure_soil[i] for i in range(7)]
+        unmixed_mix = calculate_fcls_unmixing(mixed_spec)
+        self.assertAlmostEqual(unmixed_mix["fraction_gv"], 0.5, delta=0.08)
+        self.assertAlmostEqual(unmixed_mix["fraction_soil"], 0.5, delta=0.08)
+        self.assertAlmostEqual(unmixed_mix["sum_abundances"], 1.0, places=3)
+        self.assertLess(unmixed_mix["rmse"], 0.015)
+
+        # 8. Dynamic Tile URL Builders
+        url = build_spectral_unmixing_tile_url(
+            model=SpectralUnmixingModel.FCLS_CONSTRAINED,
+            metric=SpectralUnmixingTileMetric.FRACTION_GV,
+            z=12,
+            x=650,
+            y=1580,
+            colormap="greens",
+            rescale="0,1"
+        )
+        self.assertEqual(url, "/api/v1/tiles/unmixing/fcls_constrained/fraction_gv/12/650/1580.png?colormap=greens&rescale=0,1")
+
+        tmpl = build_spectral_unmixing_tile_url_template(
+            model=SpectralUnmixingModel.FCLS_CONSTRAINED,
+            metric=SpectralUnmixingTileMetric.FRACTION_GV
+        )
+        self.assertEqual(tmpl, "/api/v1/tiles/unmixing/fcls_constrained/fraction_gv/{z}/{x}/{y}.png")
+
+        # 9. Pydantic Models Validation & Serialization Roundtrip
+        vec = EndmemberSpectralVector(
+            name="gv",
+            description="Green Photosynthetic Canopy",
+            bands=[0.02, 0.04, 0.07, 0.03, 0.45, 0.18, 0.07],
+            wavelengths=[492, 560, 665, 705, 842, 1610, 2190]
+        )
+        self.assertEqual(vec.name, "gv")
+        self.assertEqual(len(vec.bands), 7)
+
+        pt = UnmixingAbundancePoint(
+            point_id="PT-001",
+            lat=33.05,
+            lng=-109.35,
+            fraction_gv=0.15,
+            fraction_npv=0.20,
+            fraction_soil=0.60,
+            fraction_shade=0.05,
+            sum_abundances=1.00,
+            fvc=0.1579,
+            stri=0.25,
+            rmse=0.0085,
+            dominance=SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+            quality_tier=UnmixingQualityTier.EXCELLENT
+        )
+        self.assertEqual(pt.point_id, "PT-001")
+        self.assertEqual(pt.dominance, SubPixelDominanceClass.BARE_SOIL_TAILINGS)
+
+        summary = UnmixingQualitySummary(
+            unmixing_model=SpectralUnmixingModel.FCLS_CONSTRAINED,
+            sample_points_count=1,
+            mean_rmse=0.0085,
+            mean_fvc=0.1579,
+            mean_fraction_gv=0.15,
+            mean_fraction_npv=0.20,
+            mean_fraction_soil=0.60,
+            mean_fraction_shade=0.05,
+            quality_tier=UnmixingQualityTier.EXCELLENT,
+            dominant_class=SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+            narrative="FCLS unmixing completed with RMSE < 0.01."
+        )
+        self.assertEqual(summary.quality_tier, UnmixingQualityTier.EXCELLENT)
+
+        req = SpectralUnmixingRequest(
+            aoi_name="Morenci Mine",
+            lat=33.05,
+            lng=-109.35,
+            unmixing_model=SpectralUnmixingModel.FCLS_CONSTRAINED,
+            spectrum=[0.08, 0.11, 0.15, 0.19, 0.32, 0.35, 0.36]
+        )
+        self.assertEqual(req.unmixing_model, SpectralUnmixingModel.FCLS_CONSTRAINED)
+
+        resp = SpectralUnmixingResponse(
+            request_id="UNMIX-001",
+            aoi_name="Morenci Mine",
+            unmixing_model=SpectralUnmixingModel.FCLS_CONSTRAINED,
+            quality_summary=summary,
+            abundance_points=[pt],
+            tile_url_template="/api/v1/tiles/unmixing/fcls_constrained/fraction_gv/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.request_id, "UNMIX-001")
+        self.assertEqual(len(resp.abundance_points), 1)
+
+        tile_params = SpectralUnmixingTileRequestParams(
+            z=12,
+            x=650,
+            y=1580,
+            model=SpectralUnmixingModel.FCLS_CONSTRAINED,
+            metric=SpectralUnmixingTileMetric.FRACTION_GV,
+            colormap="greens",
+            rescale="0,1"
+        )
+        self.assertEqual(tile_params.z, 12)
+        self.assertEqual(tile_params.model, SpectralUnmixingModel.FCLS_CONSTRAINED)
+
+        models_resp = SpectralUnmixingModelsResponse(
+            models=UNMIXING_MODEL_CONFIGS,
+            metrics=[m.value for m in SpectralUnmixingTileMetric],
+            benchmark_scenes=UNMIXING_BENCHMARK_SCENES,
+            endmembers=STANDARD_ENDMEMBER_LIBRARY,
+            dominance_classes=SUBPIXEL_DOMINANCE_CONFIGS
+        )
+        self.assertIn("fcls_constrained", models_resp.models)
+        self.assertEqual(len(models_resp.metrics), 8)
+
+        # 10. Canonical Route Contracts Parity
+        self.assertIn("analysis_unmixing_unmix", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_unmixing_models", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_unmixing_evaluate", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_unmixing", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_unmixing_xyz", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_unmixing_unmix"), "/api/v1/analysis/unmixing/unmix")
+        self.assertEqual(format_api_route("analysis_unmixing_unmix_short"), "/analysis/unmixing/unmix")
+        self.assertEqual(format_api_route("analysis_unmixing_models"), "/api/v1/analysis/unmixing/models")
+        self.assertEqual(format_api_route("analysis_unmixing_models_short"), "/analysis/unmixing/models")
+        self.assertEqual(format_api_route("analysis_unmixing_evaluate"), "/api/v1/analysis/unmixing/evaluate")
+        self.assertEqual(format_api_route("analysis_unmixing_evaluate_short"), "/analysis/unmixing/evaluate")
+
+        self.assertEqual(
+            format_api_route("tiles_unmixing", model="fcls", metric="gv", z=12, x=650, y=1580),
+            "/api/v1/tiles/unmixing/fcls_constrained/fraction_gv/12/650/1580.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_unmixing_short", model=SpectralUnmixingModel.NNLS_NON_NEGATIVE, metric="rmse", z=10, x=163, y=395),
+            "/tiles/unmixing/nnls_non_negative/unmixing_rmse/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_unmixing_xyz", z=10, x=100, y=200),
+            "/api/v1/tiles/unmixing/10/100/200.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_unmixing_xyz_short", z=10, x=100, y=200),
+            "/tiles/unmixing/10/100/200.png"
+        )
+
 if __name__ == "__main__":
     unittest.main()
 

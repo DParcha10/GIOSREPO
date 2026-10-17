@@ -964,6 +964,22 @@ from app.models.schemas import (
     InSARDeformationResponse,
     InSARSBASTileRequestParams,
     InSARSBASModelsResponse,
+    SpectralUnmixingModel,
+    SpectralUnmixingTileMetric,
+    EndmemberClass,
+    UnmixingQualityTier,
+    SubPixelDominanceClass,
+    UNMIXING_MODEL_CONFIGS,
+    STANDARD_ENDMEMBER_LIBRARY,
+    SUBPIXEL_DOMINANCE_CONFIGS,
+    UNMIXING_BENCHMARK_SCENES,
+    EndmemberSpectralVector,
+    UnmixingAbundancePoint,
+    UnmixingQualitySummary,
+    SpectralUnmixingRequest,
+    SpectralUnmixingResponse,
+    SpectralUnmixingTileRequestParams,
+    SpectralUnmixingModelsResponse,
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -977,6 +993,7 @@ from app.services.calibration_service import calibration_service
 from app.services.trend_service import trend_service
 from app.services.multimodal_service import multimodal_service
 from app.services.insar_sbas_service import insar_sbas_service
+from app.services.unmixing_service import unmixing_service
 
 logger = logging.getLogger(__name__)
 
@@ -996,6 +1013,7 @@ cross_calibration_router = APIRouter(prefix="/cross-calibration", tags=["Multi-S
 trend_router = APIRouter(prefix="/trend", tags=["Non-Parametric Trend Analysis & Multi-Decadal Pixel Trajectories"])
 multimodal_router = APIRouter(prefix="/multimodal", tags=["Multimodal Satellite SAR + Optical Sensor Fusion & Feature-Track Inversion"])
 insar_sbas_router = APIRouter(prefix="/insar-sbas", tags=["InSAR SBAS Time-Series Ground Deformation Inversion"])
+unmixing_router = APIRouter(prefix="/unmixing", tags=["Linear Spectral Mixture Analysis & Sub-Pixel Endmember Inversion"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -11967,6 +11985,132 @@ def get_insar_sbas_tile_xyz_endpoint(
             "X-Tile-Engine": f"GIOS-InSARSBAS-{model}-{metric}"
         }
     )
+
+
+# ============================================================================
+# CYCLE v2.5.42: LINEAR SPECTRAL MIXTURE ANALYSIS (LSMA) & SUB-PIXEL ENDMEMBER FRACTION INVERSION
+# ============================================================================
+
+@router.get("/unmixing/models", response_model=SpectralUnmixingModelsResponse)
+@router.get("/unmixing/models/", response_model=SpectralUnmixingModelsResponse, include_in_schema=False)
+@router.get("/analysis/unmixing/models", response_model=SpectralUnmixingModelsResponse, include_in_schema=False)
+@router.get("/analysis/unmixing/models/", response_model=SpectralUnmixingModelsResponse, include_in_schema=False)
+@unmixing_router.get("/models", response_model=SpectralUnmixingModelsResponse, include_in_schema=False)
+@unmixing_router.get("/models/", response_model=SpectralUnmixingModelsResponse, include_in_schema=False)
+def get_spectral_unmixing_models_endpoint():
+    """Retrieves available Linear Spectral Mixture Analysis (LSMA) models, rendering metrics, benchmark scenes, endmembers, and dominance classes."""
+    return unmixing_service.get_capabilities()
+
+
+@router.post("/unmixing/unmix", response_model=SpectralUnmixingResponse)
+@router.post("/unmixing/unmix/", response_model=SpectralUnmixingResponse, include_in_schema=False)
+@router.post("/analysis/unmixing/unmix", response_model=SpectralUnmixingResponse, include_in_schema=False)
+@router.post("/analysis/unmixing/unmix/", response_model=SpectralUnmixingResponse, include_in_schema=False)
+@unmixing_router.post("/unmix", response_model=SpectralUnmixingResponse, include_in_schema=False)
+@unmixing_router.post("/unmix/", response_model=SpectralUnmixingResponse, include_in_schema=False)
+def request_spectral_unmixing_endpoint(req: SpectralUnmixingRequest):
+    """Executes linear spectral mixture analysis and sub-pixel endmember fraction inversion."""
+    return unmixing_service.execute_unmixing_pipeline(req)
+
+
+@router.post("/unmixing/evaluate", response_model=UnmixingQualitySummary)
+@router.post("/unmixing/evaluate/", response_model=UnmixingQualitySummary, include_in_schema=False)
+@router.post("/analysis/unmixing/evaluate", response_model=UnmixingQualitySummary, include_in_schema=False)
+@router.post("/analysis/unmixing/evaluate/", response_model=UnmixingQualitySummary, include_in_schema=False)
+@unmixing_router.post("/evaluate", response_model=UnmixingQualitySummary, include_in_schema=False)
+@unmixing_router.post("/evaluate/", response_model=UnmixingQualitySummary, include_in_schema=False)
+def evaluate_spectral_unmixing_quality_endpoint(req: SpectralUnmixingRequest):
+    """Evaluates quantitative scientific quality summary and dominance classification for spectral unmixing dataset."""
+    return unmixing_service.evaluate_quality_pipeline(req)
+
+
+@tiles_router.get("/unmixing/{model}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/unmixing/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/unmixing/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/unmixing/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@unmixing_router.get("/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_spectral_unmixing_tile_endpoint(
+    model: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    min_fvc: Optional[float] = None,
+    max_rmse: Optional[float] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("spectral_unmixing"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for sub-pixel endmember abundance and derived biophysical rasters."""
+    png_bytes = tile_service.render_unmixing_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        min_fvc=min_fvc,
+        max_rmse=max_rmse,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-SpectralUnmixing-{model}-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/unmixing/{z}/{x}/{y}.png")
+@router.get("/tiles/unmixing/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/unmixing/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/unmixing/{z}/{x}/{y}.png", include_in_schema=False)
+@unmixing_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_spectral_unmixing_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    model: str = Query("fcls_constrained"),
+    metric: str = Query("fractional_veg_cover"),
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    min_fvc: Optional[float] = None,
+    max_rmse: Optional[float] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("spectral_unmixing"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for spectral unmixing tiles with query parameter configuration."""
+    png_bytes = tile_service.render_unmixing_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        min_fvc=min_fvc,
+        max_rmse=max_rmse,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-SpectralUnmixing-{model}-{metric}"
+        }
+    )
+
 
 
 

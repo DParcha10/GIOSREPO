@@ -26871,3 +26871,685 @@ export const buildInSARSBASTileUrlTemplate = ({
 } = {}) => {
   return buildInSARSBASTileUrl({ model, metric, z: '{z}', x: '{x}', y: '{y}', colormap, rescale, minCoherence, maxDa });
 };
+
+
+// ============================================================================
+// CYCLE v2.5.42: LINEAR SPECTRAL MIXTURE ANALYSIS (LSMA) & FULLY CONSTRAINED
+// LEAST SQUARES (FCLS) SUB-PIXEL ENDMEMBER FRACTION INVERSION
+// ============================================================================
+
+/**
+ * Mathematical inversion algorithms for sub-pixel linear spectral unmixing.
+ * @enum {string}
+ */
+export const SpectralUnmixingModel = Object.freeze({
+  FCLS_CONSTRAINED: 'fcls_constrained',
+  NNLS_NON_NEGATIVE: 'nnls_non_negative',
+  UCLS_UNCONSTRAINED: 'ucls_unconstrained',
+  EXTENDED_SMA: 'extended_sma'
+});
+
+/**
+ * Dynamic XYZ visualization metrics for sub-pixel endmember abundance layers.
+ * @enum {string}
+ */
+export const SpectralUnmixingTileMetric = Object.freeze({
+  FRACTION_GV: 'fraction_gv',
+  FRACTION_NPV: 'fraction_npv',
+  FRACTION_SOIL: 'fraction_soil',
+  FRACTION_SHADE: 'fraction_shade',
+  FRACTIONAL_VEG_COVER: 'fractional_veg_cover',
+  UNMIXING_RMSE: 'unmixing_rmse',
+  SOIL_TILLAGE_RESIDUE_INDEX: 'soil_tillage_residue_index',
+  ABUNDANCE_RGB_COMPOSITE: 'abundance_rgb_composite'
+});
+
+/**
+ * Canonical biophysical endmember classification categories.
+ * @enum {string}
+ */
+export const EndmemberClass = Object.freeze({
+  GV: 'gv',
+  NPV: 'npv',
+  SOIL: 'soil',
+  SHADE: 'shade'
+});
+
+/**
+ * Quantitative certification quality tiers for spectral unmixing inversion.
+ * @enum {string}
+ */
+export const UnmixingQualityTier = Object.freeze({
+  EXCELLENT: 'EXCELLENT',
+  GOOD: 'GOOD',
+  ACCEPTABLE: 'ACCEPTABLE',
+  DEGRADED: 'DEGRADED'
+});
+
+/**
+ * Dominant sub-pixel surface regime based on maximum abundance fraction.
+ * @enum {string}
+ */
+export const SubPixelDominanceClass = Object.freeze({
+  GREEN_CANOPY_DOMINANT: 'green_canopy_dominant',
+  DRY_RESIDUE_DOMINANT: 'dry_residue_dominant',
+  BARE_SOIL_TAILINGS: 'bare_soil_tailings',
+  SHADOW_WATER_DOMINANT: 'shadow_water_dominant',
+  MIXED_HETEROGENEOUS: 'mixed_heterogeneous'
+});
+
+/**
+ * Normalizes string or enum values into canonical SpectralUnmixingModel.
+ * @param {string|SpectralUnmixingModel} val 
+ * @returns {string}
+ */
+export const normalizeUnmixingModel = (val) => {
+  if (!val) return SpectralUnmixingModel.FCLS_CONSTRAINED;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_').replace(/ /g, '_');
+  const aliasMap = {
+    fcls: SpectralUnmixingModel.FCLS_CONSTRAINED,
+    fcls_constrained: SpectralUnmixingModel.FCLS_CONSTRAINED,
+    constrained: SpectralUnmixingModel.FCLS_CONSTRAINED,
+    fully_constrained: SpectralUnmixingModel.FCLS_CONSTRAINED,
+    nnls: SpectralUnmixingModel.NNLS_NON_NEGATIVE,
+    nnls_non_negative: SpectralUnmixingModel.NNLS_NON_NEGATIVE,
+    non_negative: SpectralUnmixingModel.NNLS_NON_NEGATIVE,
+    ucls: SpectralUnmixingModel.UCLS_UNCONSTRAINED,
+    ucls_unconstrained: SpectralUnmixingModel.UCLS_UNCONSTRAINED,
+    unconstrained: SpectralUnmixingModel.UCLS_UNCONSTRAINED,
+    ols: SpectralUnmixingModel.UCLS_UNCONSTRAINED,
+    extended: SpectralUnmixingModel.EXTENDED_SMA,
+    extended_sma: SpectralUnmixingModel.EXTENDED_SMA,
+    mesma: SpectralUnmixingModel.EXTENDED_SMA,
+    sma: SpectralUnmixingModel.FCLS_CONSTRAINED
+  };
+  return aliasMap[raw] || SpectralUnmixingModel.FCLS_CONSTRAINED;
+};
+
+/**
+ * Normalizes string or enum values into canonical SpectralUnmixingTileMetric.
+ * @param {string|SpectralUnmixingTileMetric} val 
+ * @returns {string}
+ */
+export const normalizeUnmixingMetric = (val) => {
+  if (!val) return SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_').replace(/ /g, '_');
+  const aliasMap = {
+    gv: SpectralUnmixingTileMetric.FRACTION_GV,
+    fraction_gv: SpectralUnmixingTileMetric.FRACTION_GV,
+    green_vegetation: SpectralUnmixingTileMetric.FRACTION_GV,
+    f_gv: SpectralUnmixingTileMetric.FRACTION_GV,
+    npv: SpectralUnmixingTileMetric.FRACTION_NPV,
+    fraction_npv: SpectralUnmixingTileMetric.FRACTION_NPV,
+    non_photosynthetic: SpectralUnmixingTileMetric.FRACTION_NPV,
+    f_npv: SpectralUnmixingTileMetric.FRACTION_NPV,
+    soil: SpectralUnmixingTileMetric.FRACTION_SOIL,
+    fraction_soil: SpectralUnmixingTileMetric.FRACTION_SOIL,
+    bare_soil: SpectralUnmixingTileMetric.FRACTION_SOIL,
+    tailings: SpectralUnmixingTileMetric.FRACTION_SOIL,
+    f_soil: SpectralUnmixingTileMetric.FRACTION_SOIL,
+    shade: SpectralUnmixingTileMetric.FRACTION_SHADE,
+    fraction_shade: SpectralUnmixingTileMetric.FRACTION_SHADE,
+    shadow: SpectralUnmixingTileMetric.FRACTION_SHADE,
+    f_shade: SpectralUnmixingTileMetric.FRACTION_SHADE,
+    fvc: SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+    fractional_veg_cover: SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+    veg_cover: SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+    canopy_cover: SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+    rmse: SpectralUnmixingTileMetric.UNMIXING_RMSE,
+    unmixing_rmse: SpectralUnmixingTileMetric.UNMIXING_RMSE,
+    error: SpectralUnmixingTileMetric.UNMIXING_RMSE,
+    residual: SpectralUnmixingTileMetric.UNMIXING_RMSE,
+    stri: SpectralUnmixingTileMetric.SOIL_TILLAGE_RESIDUE_INDEX,
+    soil_tillage_residue_index: SpectralUnmixingTileMetric.SOIL_TILLAGE_RESIDUE_INDEX,
+    residue: SpectralUnmixingTileMetric.SOIL_TILLAGE_RESIDUE_INDEX,
+    rgb: SpectralUnmixingTileMetric.ABUNDANCE_RGB_COMPOSITE,
+    composite: SpectralUnmixingTileMetric.ABUNDANCE_RGB_COMPOSITE,
+    abundance_rgb_composite: SpectralUnmixingTileMetric.ABUNDANCE_RGB_COMPOSITE
+  };
+  return aliasMap[raw] || SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER;
+};
+
+/**
+ * Normalizes endmember class values.
+ * @param {string|EndmemberClass} val 
+ * @returns {string}
+ */
+export const normalizeEndmemberClass = (val) => {
+  if (!val) return EndmemberClass.SOIL;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_');
+  const aliasMap = {
+    gv: EndmemberClass.GV,
+    green: EndmemberClass.GV,
+    veg: EndmemberClass.GV,
+    npv: EndmemberClass.NPV,
+    dry_veg: EndmemberClass.NPV,
+    litter: EndmemberClass.NPV,
+    soil: EndmemberClass.SOIL,
+    tailings: EndmemberClass.SOIL,
+    substrate: EndmemberClass.SOIL,
+    shade: EndmemberClass.SHADE,
+    shadow: EndmemberClass.SHADE,
+    water: EndmemberClass.SHADE
+  };
+  return aliasMap[raw] || EndmemberClass.SOIL;
+};
+
+/**
+ * Normalizes unmixing quality tier values.
+ * @param {string|UnmixingQualityTier} val 
+ * @returns {string}
+ */
+export const normalizeUnmixingQualityTier = (val) => {
+  if (!val) return UnmixingQualityTier.ACCEPTABLE;
+  const raw = String(val).trim().toUpperCase();
+  return UnmixingQualityTier[raw] || UnmixingQualityTier.ACCEPTABLE;
+};
+
+/**
+ * Normalizes sub-pixel dominance classification values.
+ * @param {string|SubPixelDominanceClass} val 
+ * @returns {string}
+ */
+export const normalizeSubpixelDominance = (val) => {
+  if (!val) return SubPixelDominanceClass.MIXED_HETEROGENEOUS;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_');
+  const aliasMap = {
+    green_canopy: SubPixelDominanceClass.GREEN_CANOPY_DOMINANT,
+    green: SubPixelDominanceClass.GREEN_CANOPY_DOMINANT,
+    canopy: SubPixelDominanceClass.GREEN_CANOPY_DOMINANT,
+    gv: SubPixelDominanceClass.GREEN_CANOPY_DOMINANT,
+    dry_residue: SubPixelDominanceClass.DRY_RESIDUE_DOMINANT,
+    residue: SubPixelDominanceClass.DRY_RESIDUE_DOMINANT,
+    npv: SubPixelDominanceClass.DRY_RESIDUE_DOMINANT,
+    litter: SubPixelDominanceClass.DRY_RESIDUE_DOMINANT,
+    bare_soil: SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+    soil: SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+    tailings: SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+    mine_tailings: SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+    shadow: SubPixelDominanceClass.SHADOW_WATER_DOMINANT,
+    water: SubPixelDominanceClass.SHADOW_WATER_DOMINANT,
+    shadow_water: SubPixelDominanceClass.SHADOW_WATER_DOMINANT,
+    mixed: SubPixelDominanceClass.MIXED_HETEROGENEOUS,
+    heterogeneous: SubPixelDominanceClass.MIXED_HETEROGENEOUS
+  };
+  if (aliasMap[raw]) return aliasMap[raw];
+  const match = Object.values(SubPixelDominanceClass).find(v => v === raw);
+  return match || SubPixelDominanceClass.MIXED_HETEROGENEOUS;
+};
+
+/**
+ * Theoretical unmixing algorithms metadata and literature citations.
+ */
+export const UNMIXING_MODEL_CONFIGS = Object.freeze({
+  [SpectralUnmixingModel.FCLS_CONSTRAINED]: {
+    id: SpectralUnmixingModel.FCLS_CONSTRAINED,
+    label: 'Fully Constrained Least Squares (FCLS)',
+    citation: 'Heinz, D. C., & Chang, C.-I. (2001). Fully constrained least squares linear spectral mixture analysis method for material quantification in hyperspectral imagery. IEEE TGRS, 39(3), 529-545.',
+    description: 'Dual-constrained linear mixture optimization strictly enforcing both the Abundance Non-negativity Constraint (ANC, f_k >= 0) and Abundance Sum-to-One Constraint (ASC, sum f_k = 1.0). Provides physically meaningful fractions of green canopy, dry litter, bare soil, and shadow.',
+    enforcesSumToOne: true,
+    enforcesNonNegativity: true,
+    anc_enforced: true,
+    asc_enforced: true,
+    expectedRmse: 0.012,
+    badgeClass: 'bg-emerald-900/60 text-emerald-300 border-emerald-500/30'
+  },
+  [SpectralUnmixingModel.NNLS_NON_NEGATIVE]: {
+    id: SpectralUnmixingModel.NNLS_NON_NEGATIVE,
+    label: 'Non-Negative Least Squares (NNLS)',
+    citation: 'Lawson, C. L., & Hanson, R. J. (1974). Solving Least Squares Problems. Prentice-Hall.',
+    description: 'Active-set quadratic programming enforcing only the non-negativity constraint (f_k >= 0) without forcing sum-to-one; allows illumination variation and severe topographic shadowing to scale total abundance.',
+    enforcesSumToOne: false,
+    enforcesNonNegativity: true,
+    expectedRmse: 0.018,
+    badgeClass: 'bg-blue-900/60 text-blue-300 border-blue-500/30'
+  },
+  [SpectralUnmixingModel.UCLS_UNCONSTRAINED]: {
+    id: SpectralUnmixingModel.UCLS_UNCONSTRAINED,
+    label: 'Unconstrained Least Squares (UCLS)',
+    citation: 'Settle, J. J., & Drake, N. A. (1993). Linear mixed spectral reflectance models. International Journal of Remote Sensing, 14(6), 1159-1186.',
+    description: 'Standard Moore-Penrose pseudo-inverse solution f = (M^T M)^(-1) M^T y. Computationally instantaneous but permits physically impossible negative fractions and fractions greater than 1.0.',
+    enforcesSumToOne: false,
+    enforcesNonNegativity: false,
+    expectedRmse: 0.024,
+    badgeClass: 'bg-amber-900/60 text-amber-300 border-amber-500/30'
+  },
+  [SpectralUnmixingModel.EXTENDED_SMA]: {
+    id: SpectralUnmixingModel.EXTENDED_SMA,
+    label: 'Multiple Endmember Spectral Mixture (MESMA Proxy)',
+    citation: 'Roberts, D. A., Gardner, M., Church, R., Ustin, S., Scheer, G., & Green, R. O. (1998). Mapping chaparral in the Santa Monica Mountains using multiple endmember spectral mixture models. Remote Sensing of Environment, 65(3), 267-279.',
+    description: 'Iterative subset endmember selection testing candidate combinations (GV-Soil-Shade, NPV-Soil-Shade, GV-NPV-Soil-Shade) and selecting the optimal combination minimizing residual RMSE.',
+    enforcesSumToOne: true,
+    enforcesNonNegativity: true,
+    anc_enforced: true,
+    asc_enforced: true,
+    expectedRmse: 0.009,
+    badgeClass: 'bg-purple-900/60 text-purple-300 border-purple-500/30'
+  }
+});
+
+/**
+ * Standard multi-spectral reflectance library for primary Earth surface endmembers.
+ */
+export const STANDARD_ENDMEMBER_LIBRARY = Object.freeze({
+  [EndmemberClass.GV]: {
+    coastal: 0.025,
+    blue: 0.028,
+    green: 0.065,
+    red: 0.035,
+    nir_narrow: 0.480,
+    swir_1: 0.210,
+    swir_2: 0.090
+  },
+  [EndmemberClass.NPV]: {
+    coastal: 0.080,
+    blue: 0.105,
+    green: 0.155,
+    red: 0.210,
+    nir_narrow: 0.320,
+    swir_1: 0.420,
+    swir_2: 0.360
+  },
+  [EndmemberClass.SOIL]: {
+    coastal: 0.090,
+    blue: 0.125,
+    green: 0.175,
+    red: 0.235,
+    nir_narrow: 0.290,
+    swir_1: 0.370,
+    swir_2: 0.410
+  },
+  [EndmemberClass.SHADE]: {
+    coastal: 0.015,
+    blue: 0.012,
+    green: 0.010,
+    red: 0.008,
+    nir_narrow: 0.005,
+    swir_1: 0.003,
+    swir_2: 0.002
+  }
+});
+
+/**
+ * Sub-pixel land cover dominance display configurations.
+ */
+export const SUBPIXEL_DOMINANCE_CONFIGS = Object.freeze({
+  [SubPixelDominanceClass.GREEN_CANOPY_DOMINANT]: {
+    label: 'Photosynthetic Canopy Dominant',
+    colorHex: '#10b981',
+    badgeClass: 'bg-emerald-900/70 text-emerald-300 border-emerald-500/40',
+    description: 'Dense photosynthetic vegetation cover (f_GV >= 50%); active transpiration and biomass production.'
+  },
+  [SubPixelDominanceClass.DRY_RESIDUE_DOMINANT]: {
+    label: 'Non-Photosynthetic Residue Dominant',
+    colorHex: '#f59e0b',
+    badgeClass: 'bg-amber-900/70 text-amber-300 border-amber-500/40',
+    description: 'Dry vegetative biomass, deadfall, crop stubble, or senescent litter (f_NPV >= 50%); elevated wildfire hazard.'
+  },
+  [SubPixelDominanceClass.BARE_SOIL_TAILINGS]: {
+    label: 'Bare Soil / Tailings Substrate',
+    colorHex: '#ef4444',
+    badgeClass: 'bg-rose-900/70 text-rose-300 border-rose-500/40',
+    description: 'Exposed mineral soil, rock, or unrevegetated mine tailings (f_Soil >= 50%); vulnerable to erosion and dust lift.'
+  },
+  [SubPixelDominanceClass.SHADOW_WATER_DOMINANT]: {
+    label: 'Shadow / Open Water Dominant',
+    colorHex: '#06b6d4',
+    badgeClass: 'bg-cyan-900/70 text-cyan-300 border-cyan-500/40',
+    description: 'Canopy cast shadow, deep water body, or steep terrain occlusion (f_Shade >= 50%).'
+  },
+  [SubPixelDominanceClass.MIXED_HETEROGENEOUS]: {
+    label: 'Mixed Heterogeneous Matrix',
+    colorHex: '#a855f7',
+    badgeClass: 'bg-purple-900/70 text-purple-300 border-purple-500/40',
+    description: 'Balanced multi-component surface mixture with no single endmember exceeding 50% fraction.'
+  }
+});
+
+/**
+ * Pre-configured research validation scenes for sub-pixel spectral unmixing.
+ */
+export const UNMIXING_BENCHMARK_SCENES = Object.freeze({
+  MORENCI_MINE_TAILINGS_ARIZONA_2026: {
+    id: 'MORENCI_MINE_TAILINGS_ARIZONA_2026',
+    name: 'Morenci Copper Mine Tailings Impoundment, Arizona',
+    lat: 33.085,
+    lng: -109.340,
+    description: 'Massive open-pit copper tailings impoundment; unmixing isolates dry tailings sand dust from revegetated berms and seepage ponds.',
+    expectedFractions: { gv: 0.08, npv: 0.12, soil: 0.72, shade: 0.08 },
+    dominantClass: SubPixelDominanceClass.BARE_SOIL_TAILINGS
+  },
+  PARADISE_CALIFORNIA_POST_FIRE_2026: {
+    id: 'PARADISE_CALIFORNIA_POST_FIRE_2026',
+    name: 'Camp Fire Post-Burn Regenerating Watershed, Paradise CA',
+    lat: 39.759,
+    lng: -121.621,
+    description: 'Post-wildfire scar showing charred timber deadfall (NPV), recovering chaparral canopy (GV), and exposed rock.',
+    expectedFractions: { gv: 0.24, npv: 0.38, soil: 0.20, shade: 0.18 },
+    dominantClass: SubPixelDominanceClass.DRY_RESIDUE_DOMINANT
+  },
+  SAN_JOAQUIN_VALLEY_AGRICULTURE_2026: {
+    id: 'SAN_JOAQUIN_VALLEY_AGRICULTURE_2026',
+    name: 'San Joaquin Valley Mixed Cropland & Fallow Fields, CA',
+    lat: 36.320,
+    lng: -119.850,
+    description: 'Agricultural mosaic separating irrigated almond orchard canopy (GV) from post-harvest crop stubble (NPV) and tilled soil.',
+    expectedFractions: { gv: 0.58, npv: 0.14, soil: 0.22, shade: 0.06 },
+    dominantClass: SubPixelDominanceClass.GREEN_CANOPY_DOMINANT
+  },
+  ATACAMA_SALAR_MINERAL_CRUST_2026: {
+    id: 'ATACAMA_SALAR_MINERAL_CRUST_2026',
+    name: 'Atacama Salar Lithium Evaporation Brine & Salt Crust, Chile',
+    lat: -23.500,
+    lng: -68.350,
+    description: 'Hyper-arid evaporite crust and mineral brine pools; test site for high-albedo mineral substrate and water unmixing.',
+    expectedFractions: { gv: 0.02, npv: 0.08, soil: 0.65, shade: 0.25 },
+    dominantClass: SubPixelDominanceClass.BARE_SOIL_TAILINGS
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Mathematical Invariant Solvers (JavaScript Parity)
+// ----------------------------------------------------------------------------
+
+/**
+ * Projects a vector onto the probability simplex sum(w) = 1.0, w_i >= 0.
+ * @param {number[]} v 
+ * @returns {number[]}
+ */
+export const projectToSimplex = (v) => {
+  const vClean = v.map(Number);
+  const n = vClean.length;
+  if (n === 0) return [];
+  const u = [...vClean].sort((a, b) => b - a);
+  const cssv = [];
+  let curr = -1.0;
+  for (const x of u) {
+    curr += x;
+    cssv.push(curr);
+  }
+  let rho = 1;
+  for (let j = 1; j <= n; j++) {
+    if (u[j - 1] - cssv[j - 1] / j > 0) {
+      rho = j;
+    }
+  }
+  const theta = cssv[rho - 1] / rho;
+  let w = vClean.map(x => Math.max(0.0, x - theta));
+  const s = w.reduce((acc, val) => acc + val, 0.0);
+  if (s > 0.0) {
+    w = w.map(x => Math.round((x / s) * 1e6) / 1e6);
+    const sumW = w.reduce((acc, val) => acc + val, 0.0);
+    const diff = 1.0 - sumW;
+    if (Math.abs(diff) > 0.0) {
+      w[0] = Math.round((w[0] + diff) * 1e6) / 1e6;
+    }
+  } else {
+    w = Array(n).fill(Math.round((1.0 / n) * 1e6) / 1e6);
+  }
+  return w;
+};
+
+/**
+ * Calculates RMSE between observed and modeled reflectance vectors.
+ * @param {number[]|Object} observed 
+ * @param {number[]|Object} modeled 
+ * @returns {number}
+ */
+export const calculateUnmixingRmse = (observed, modeled) => {
+  if (typeof observed === 'object' && !Array.isArray(observed) && typeof modeled === 'object' && !Array.isArray(modeled)) {
+    const keys = Object.keys(observed).filter(k => k in modeled);
+    if (keys.length === 0) return 0.0;
+    const diffSq = keys.map(k => Math.pow(Number(observed[k]) - Number(modeled[k]), 2));
+    const meanDiff = diffSq.reduce((a, b) => a + b, 0.0) / keys.length;
+    return Math.round(Math.sqrt(meanDiff) * 1e6) / 1e6;
+  }
+  const obsList = Array.isArray(observed) ? observed.map(Number) : [];
+  const modList = Array.isArray(modeled) ? modeled.map(Number) : [];
+  const m = Math.min(obsList.length, modList.length);
+  if (m === 0) return 0.0;
+  let sumSq = 0.0;
+  for (let i = 0; i < m; i++) {
+    sumSq += Math.pow(obsList[i] - modList[i], 2);
+  }
+  return Math.round(Math.sqrt(sumSq / m) * 1e6) / 1e6;
+};
+
+/**
+ * Calculates shadow-normalized Fractional Vegetation Cover (FVC = f_GV / (1 - f_Shade)).
+ * @param {number} fGv 
+ * @param {number} fShade 
+ * @returns {number}
+ */
+export const calculateUnmixingFvc = (fGv, fShade) => {
+  const gv = Math.max(0.0, Math.min(1.0, Number(fGv) || 0.0));
+  const shade = Math.max(0.0, Math.min(1.0, Number(fShade) || 0.0));
+  const denom = 1.0 - shade;
+  if (denom <= 0.05) return 0.0;
+  return Math.round(Math.min(1.0, Math.max(0.0, gv / denom)) * 1e4) / 1e4;
+};
+
+/**
+ * Calculates Crop Residue / Soil Tillage Index = f_NPV / (f_NPV + f_Soil).
+ * @param {number} fNpv 
+ * @param {number} fSoil 
+ * @returns {number}
+ */
+export const calculateUnmixingFractionalVegCover = calculateUnmixingFvc;
+export const calculateShadowNormalizedFvc = calculateUnmixingFvc;
+
+export const calculateSoilTillageResidueIndex = (fNpv, fSoil) => {
+  const npv = Math.max(0.0, Number(fNpv) || 0.0);
+  const soil = Math.max(0.0, Number(fSoil) || 0.0);
+  const denom = npv + soil;
+  if (denom <= 0.01) return 0.0;
+  return Math.round(Math.min(1.0, Math.max(0.0, npv / denom)) * 1e4) / 1e4;
+};
+
+/**
+ * Classifies unmixing solution quality into standardized tiers.
+ * @param {number} rmse 
+ * @param {number} [sumAbundanceErr=0.0] 
+ * @returns {string}
+ */
+export const classifyUnmixingQualityRating = (rmse, sumAbundanceErr = 0.0) => {
+  const errRmse = Number.isFinite(Number(rmse)) ? Number(rmse) : 0.10;
+  const rawSum = Number.isFinite(Number(sumAbundanceErr)) ? Number(sumAbundanceErr) : 0.0;
+  const errSum = rawSum >= 0.50 ? Math.abs(rawSum - 1.0) : Math.abs(rawSum);
+  if (errRmse <= 0.015 && errSum <= 0.005) return UnmixingQualityTier.EXCELLENT;
+  if (errRmse <= 0.030 && errSum <= 0.010) return UnmixingQualityTier.GOOD;
+  if (errRmse <= 0.050 && errSum <= 0.025) return UnmixingQualityTier.ACCEPTABLE;
+  return UnmixingQualityTier.DEGRADED;
+};
+
+/**
+ * Determines dominant sub-pixel land cover regime.
+ * @param {number} fGv 
+ * @param {number} fNpv 
+ * @param {number} fSoil 
+ * @param {number} fShade 
+ * @returns {string}
+ */
+export const classifySubpixelDominance = (fGv, fNpv, fSoil, fShade) => {
+  const gv = Number(fGv) || 0.0;
+  const npv = Number(fNpv) || 0.0;
+  const soil = Number(fSoil) || 0.0;
+  const shade = Number(fShade) || 0.0;
+
+  if (gv >= 0.50) return SubPixelDominanceClass.GREEN_CANOPY_DOMINANT;
+  if (npv >= 0.50) return SubPixelDominanceClass.DRY_RESIDUE_DOMINANT;
+  if (soil >= 0.50) return SubPixelDominanceClass.BARE_SOIL_TAILINGS;
+  if (shade >= 0.50) return SubPixelDominanceClass.SHADOW_WATER_DOMINANT;
+  return SubPixelDominanceClass.MIXED_HETEROGENEOUS;
+};
+
+/**
+ * Executes Fully Constrained Least Squares (FCLS) spectral unmixing in JavaScript.
+ * @param {Object|number[]} pixelReflectance 
+ * @param {Object} [endmemberLibrary=null] 
+ * @returns {Object}
+ */
+export const calculateFclsUnmixing = (pixelReflectance, endmemberLibrary = null) => {
+  const lib = endmemberLibrary || STANDARD_ENDMEMBER_LIBRARY;
+  const orderedBands = ['coastal', 'blue', 'green', 'red', 'nir_narrow', 'swir_1', 'swir_2'];
+  
+  let y = [];
+  if (typeof pixelReflectance === 'object' && !Array.isArray(pixelReflectance)) {
+    y = orderedBands.map(b => Number(pixelReflectance[b]) || 0.10);
+  } else if (Array.isArray(pixelReflectance)) {
+    y = orderedBands.map((_, i) => (i < pixelReflectance.length ? Number(pixelReflectance[i]) : 0.10));
+  } else {
+    y = Array(orderedBands.length).fill(0.10);
+  }
+
+  const emKeys = [EndmemberClass.GV, EndmemberClass.NPV, EndmemberClass.SOIL, EndmemberClass.SHADE];
+  const M = orderedBands.map(b => emKeys.map(k => Number(lib[k]?.[b]) || 0.10));
+
+  const kDim = emKeys.length;
+  const mDim = orderedBands.length;
+
+  const MTM = Array(kDim).fill(0).map(() => Array(kDim).fill(0));
+  for (let i = 0; i < kDim; i++) {
+    for (let j = 0; j < kDim; j++) {
+      let s = 0.0;
+      for (let b = 0; b < mDim; b++) {
+        s += M[b][i] * M[b][j];
+      }
+      MTM[i][j] = s;
+    }
+  }
+
+  const MTy = Array(kDim).fill(0);
+  for (let i = 0; i < kDim; i++) {
+    let s = 0.0;
+    for (let b = 0; b < mDim; b++) {
+      s += M[b][i] * y[b];
+    }
+    MTy[i] = s;
+  }
+
+  // Power iteration for spectral norm Lipschitz constant
+  let vPow = Array(kDim).fill(1.0);
+  for (let p = 0; p < 15; p++) {
+    const vNext = Array(kDim).fill(0.0);
+    for (let i = 0; i < kDim; i++) {
+      for (let j = 0; j < kDim; j++) {
+        vNext[i] += MTM[i][j] * vPow[j];
+      }
+    }
+    const normV = Math.sqrt(vNext.reduce((acc, x) => acc + x * x, 0.0)) || 1.0;
+    vPow = vNext.map(x => x / normV);
+  }
+  let L = 0.0;
+  for (let i = 0; i < kDim; i++) {
+    let s = 0.0;
+    for (let j = 0; j < kDim; j++) s += MTM[i][j] * vPow[j];
+    L += vPow[i] * s;
+  }
+  const step = 1.0 / Math.max(L, 0.01);
+
+  // Accelerated FISTA with simplex projection
+  let f = Array(kDim).fill(1.0 / kDim);
+  let yVec = [...f];
+  let tVal = 1.0;
+  for (let iter = 0; iter < 100; iter++) {
+    const grad = Array(kDim).fill(0.0);
+    for (let i = 0; i < kDim; i++) {
+      let s = 0.0;
+      for (let j = 0; j < kDim; j++) {
+        s += MTM[i][j] * yVec[j];
+      }
+      grad[i] = s - MTy[i];
+    }
+
+    const stepF = yVec.map((val, i) => val - step * grad[i]);
+    const fNext = projectToSimplex(stepF);
+    const tNext = (1.0 + Math.sqrt(1.0 + 4.0 * tVal * tVal)) / 2.0;
+    const beta = (tVal - 1.0) / tNext;
+    yVec = fNext.map((val, i) => val + beta * (val - f[i]));
+    f = fNext;
+    tVal = tNext;
+  }
+
+  const yModeled = Array(mDim).fill(0);
+  for (let b = 0; b < mDim; b++) {
+    let s = 0.0;
+    for (let i = 0; i < kDim; i++) {
+      s += M[b][i] * f[i];
+    }
+    yModeled[b] = s;
+  }
+
+  const rmse = calculateUnmixingRmse(y, yModeled);
+  const fGv = f[0];
+  const fNpv = f[1];
+  const fSoil = f[2];
+  const fShade = f[3];
+  const fvc = calculateUnmixingFvc(fGv, fShade);
+  const stri = calculateSoilTillageResidueIndex(fNpv, fSoil);
+  const dom = classifySubpixelDominance(fGv, fNpv, fSoil, fShade);
+
+  const modeledReflectance = {};
+  orderedBands.forEach((b, idx) => {
+    modeledReflectance[b] = Math.round(yModeled[idx] * 1e4) / 1e4;
+  });
+
+  return {
+    fraction_gv: Math.round(fGv * 1e4) / 1e4,
+    fraction_npv: Math.round(fNpv * 1e4) / 1e4,
+    fraction_soil: Math.round(fSoil * 1e4) / 1e4,
+    fraction_shade: Math.round(fShade * 1e4) / 1e4,
+    sum_abundances: Math.round(f.reduce((a, b) => a + b, 0.0) * 1e4) / 1e4,
+    rmse,
+    fvc,
+    stri,
+    dominance: dom,
+    modeled_reflectance: modeledReflectance
+  };
+};
+
+/**
+ * Constructs dynamic XYZ tile URL for spectral unmixing abundance raster tiles.
+ * @param {Object} options 
+ * @returns {string}
+ */
+export const buildSpectralUnmixingTileUrl = ({
+  model = SpectralUnmixingModel.FCLS_CONSTRAINED,
+  metric = SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  colormap = null,
+  rescale = null,
+  minFvc = null,
+  maxRmse = null
+} = {}) => {
+  const m = normalizeUnmixingModel(model);
+  const met = normalizeUnmixingMetric(metric);
+  let url = `/api/v1/tiles/unmixing/${m}/${met}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  if (minFvc !== null && minFvc !== undefined) params.push(`min_fvc=${minFvc}`);
+  if (maxRmse !== null && maxRmse !== undefined) params.push(`max_rmse=${maxRmse}`);
+  if (params.length > 0) {
+    url += `?${params.join('&')}`;
+  }
+  return url;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for spectral unmixing layers.
+ * @param {Object} [options={}] 
+ * @returns {string}
+ */
+export const buildSpectralUnmixingTileUrlTemplate = ({
+  model = SpectralUnmixingModel.FCLS_CONSTRAINED,
+  metric = SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+  colormap = null,
+  rescale = null,
+  minFvc = null,
+  maxRmse = null
+} = {}) => {
+  return buildSpectralUnmixingTileUrl({ model, metric, z: '{z}', x: '{x}', y: '{y}', colormap, rescale, minFvc, maxRmse });
+};

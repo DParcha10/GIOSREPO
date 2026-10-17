@@ -16,7 +16,7 @@ import math
 import uuid
 import logging
 import gc
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple, Union, Sequence
 
 import numpy as np
@@ -206,8 +206,8 @@ class InSARSBASService:
         acq_dates = []
         start_dt = datetime(2025, 1, 1, tzinfo=timezone.utc)
         for i in range(num_acquisitions):
-            d = start_dt + (i * dt_days * 86400)
-            acq_dates.append(datetime.fromtimestamp(d.timestamp(), tz=timezone.utc).strftime("%Y-%m-%d"))
+            d = start_dt + timedelta(days=float(i * dt_days))
+            acq_dates.append(d.strftime("%Y-%m-%d"))
 
         # Perpendicular orbital baselines in [-120, +120] meters
         perp_baselines = rng.uniform(-110.0, 110.0, size=num_acquisitions)
@@ -350,7 +350,7 @@ class InSARSBASService:
         curr_disp = 0.0
         start_dt = datetime(2025, 1, 1, tzinfo=timezone.utc)
         for ep in range(18):
-            ep_date = datetime.fromtimestamp(start_dt.timestamp() + ep * 12.0 * 86400, tz=timezone.utc).strftime("%Y-%m-%d")
+            ep_date = (start_dt + timedelta(days=float(ep * 12.0))).strftime("%Y-%m-%d")
             days_from = ep * 12.0
             modeled_d = target_vel * (days_from / 365.25)
             # Add small random walk + seasonal fluctuation

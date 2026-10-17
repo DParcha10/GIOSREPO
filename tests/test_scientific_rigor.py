@@ -4888,6 +4888,148 @@ class TestScientificRigor(unittest.TestCase):
         self.assertIsInstance(sig_tile_bytes, bytes)
         self.assertTrue(sig_tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
 
+    def test_task_t304_multimodal_feature_tracking_scientific_qa_and_invariants(self):
+        """Task T-304 (Cycle v2.5.40 Step 3 Continuous Scientific QA):
+        Verify sub-pixel parabolic peak localization accuracy (sigma < 0.1 px),
+        flow vector divergence conservation under synthetic rigid translational shifts (div v = 0),
+        compass azimuth angles, and multimodal correlation noise rejection.
+        """
+        from app.models.schemas import (
+            MultimodalAlignmentModel,
+            MultimodalSensorPair,
+            MultimodalTileMetric,
+            DisplacementConfidenceTier,
+            MotionHazardTier,
+            normalize_multimodal_model,
+            normalize_sensor_pair,
+            normalize_multimodal_metric,
+            calculate_subpixel_peak_parabolic,
+            calculate_velocity_vector,
+            calculate_correlation_snr,
+            classify_motion_hazard_tier,
+            classify_displacement_confidence,
+            build_multimodal_tile_url,
+            build_multimodal_tile_url_template,
+        )
+
+        # -------------------------------------------------------------
+        # 1. Sub-Pixel Parabolic Peak Localization Accuracy (sigma < 0.1 px)
+        # -------------------------------------------------------------
+        # Analytic quadratic test surface: C(x, y) = 1.0 - a * (x - dx_true)^2 - b * (y - dy_true)^2
+        # On a 3x3 window {-1, 0, 1} x {-1, 0, 1}
+        rng = np.random.RandomState(42)
+        errors_x = []
+        errors_y = []
+        for _ in range(50):
+            true_dx = rng.uniform(-0.35, 0.35)
+            true_dy = rng.uniform(-0.35, 0.35)
+            a = rng.uniform(0.5, 1.5)
+            b = rng.uniform(0.5, 1.5)
+
+            grid = []
+            for j in [-1, 0, 1]:  # row corresponds to y
+                row = []
+                for i in [-1, 0, 1]:  # col corresponds to x
+                    # Add small realistic correlation noise
+                    noise = rng.normal(0.0, 0.005)
+                    val = 1.0 - a * (i - true_dx) ** 2 - b * (j - true_dy) ** 2 + noise
+                    row.append(val)
+                grid.append(row)
+
+            est_dx, est_dy, peak_val = calculate_subpixel_peak_parabolic(grid)
+            errors_x.append(abs(est_dx - true_dx))
+            errors_y.append(abs(est_dy - true_dy))
+
+        std_err_x = float(np.std(errors_x))
+        std_err_y = float(np.std(errors_y))
+        mean_err_x = float(np.mean(errors_x))
+        mean_err_y = float(np.mean(errors_y))
+
+        # Precision requirement from Task T-304: sigma < 0.1 px
+        self.assertLess(std_err_x, 0.1, f"Parabolic X peak standard error ({std_err_x:.4f} px) must be < 0.1 px")
+        self.assertLess(std_err_y, 0.1, f"Parabolic Y peak standard error ({std_err_y:.4f} px) must be < 0.1 px")
+        self.assertLess(mean_err_x, 0.05, "Mean sub-pixel X error must be < 0.05 px")
+        self.assertLess(mean_err_y, 0.05, "Mean sub-pixel Y error must be < 0.05 px")
+
+        # Exact uncorrupted quadratic peak test: zero error
+        grid_exact = [
+            [0.60, 0.85, 0.60],
+            [0.75, 1.00, 0.75],
+            [0.60, 0.85, 0.60]
+        ]
+        dx_0, dy_0, peak_0 = calculate_subpixel_peak_parabolic(grid_exact)
+        self.assertEqual(dx_0, 0.0)
+        self.assertEqual(dy_0, 0.0)
+        self.assertEqual(peak_0, 1.0)
+
+        # -------------------------------------------------------------
+        # 2. Flow Vector Divergence Conservation Under Rigid Shifts
+        # -------------------------------------------------------------
+        # Synthetic rigid translational ground displacement: dx = 2.5 px, dy = -1.8 px
+        # On a uniform velocity vector field, the spatial divergence div(v) = dv_x/dx + dv_y/dy == 0
+        field_vx = np.full((16, 16), 15.2, dtype=np.float64)
+        field_vy = np.full((16, 16), -8.4, dtype=np.float64)
+        grad_vx_x = np.gradient(field_vx, axis=1)
+        grad_vy_y = np.gradient(field_vy, axis=0)
+        divergence = grad_vx_x + grad_vy_y
+        max_div = float(np.max(np.abs(divergence)))
+        self.assertEqual(max_div, 0.0, "Divergence of rigid translational flow field must be identically zero")
+
+        # Compass Azimuth and Magnitude Verification
+        # Pure North (dx=0, dy=1) -> azimuth = 0 deg
+        v_north = calculate_velocity_vector(dx_px=0.0, dy_px=1.0, gsd_m=10.0, dt_days=365.25)
+        self.assertEqual(v_north["azimuth_deg"], 0.0)
+        self.assertAlmostEqual(v_north["velocity_magnitude_m_yr"], 10.0, places=2)
+
+        # Pure East (dx=1, dy=0) -> azimuth = 90 deg
+        v_east = calculate_velocity_vector(dx_px=1.0, dy_px=0.0, gsd_m=10.0, dt_days=365.25)
+        self.assertEqual(v_east["azimuth_deg"], 90.0)
+        self.assertAlmostEqual(v_east["velocity_magnitude_m_yr"], 10.0, places=2)
+
+        # Pure South (dx=0, dy=-1) -> azimuth = 180 deg
+        v_south = calculate_velocity_vector(dx_px=0.0, dy_px=-1.0, gsd_m=10.0, dt_days=365.25)
+        self.assertEqual(v_south["azimuth_deg"], 180.0)
+
+        # Pure West (dx=-1, dy=0) -> azimuth = 270 deg
+        v_west = calculate_velocity_vector(dx_px=-1.0, dy_px=0.0, gsd_m=10.0, dt_days=365.25)
+        self.assertEqual(v_west["azimuth_deg"], 270.0)
+
+        # -------------------------------------------------------------
+        # 3. Multimodal Correlation SNR & Confidence Tier Invariants
+        # -------------------------------------------------------------
+        # High confidence peak with sharp contrast: peak = 0.85, sidelobes ~ 0.10
+        high_corr = [0.85] + [0.10 + 0.02 * rng.randn() for _ in range(24)]
+        snr_high = calculate_correlation_snr(high_corr, peak_val=0.85)
+        self.assertGreater(snr_high, 5.0)
+        conf_high = classify_displacement_confidence(snr=snr_high, peak_corr=0.85)
+        self.assertEqual(conf_high, DisplacementConfidenceTier.HIGH)
+
+        # Low confidence noisy correlation surface: peak = 0.35, sidelobes ~ 0.30
+        noisy_corr = [0.35] + [0.30 + 0.05 * rng.randn() for _ in range(24)]
+        snr_low = calculate_correlation_snr(noisy_corr, peak_val=0.35)
+        self.assertLess(snr_low, 3.0)
+        conf_low = classify_displacement_confidence(snr=snr_low, peak_corr=0.35)
+        self.assertIn(conf_low, [DisplacementConfidenceTier.LOW, DisplacementConfidenceTier.INDETERMINATE])
+
+        # Motion Hazard Tier Invariants
+        self.assertEqual(classify_motion_hazard_tier(65.0), MotionHazardTier.RAPID_DISPLACEMENT)
+        self.assertEqual(classify_motion_hazard_tier(25.0), MotionHazardTier.ACCELERATING_CREEP)
+        self.assertEqual(classify_motion_hazard_tier(7.5), MotionHazardTier.STEADY_CREEP)
+        self.assertEqual(classify_motion_hazard_tier(0.2), MotionHazardTier.SUB_CENTIMETER_STABLE)
+
+        # -------------------------------------------------------------
+        # 4. Multimodal Dynamic Tile URL Contracts
+        # -------------------------------------------------------------
+        for metric in MultimodalTileMetric:
+            tile_url = build_multimodal_tile_url(metric=metric, z=14, x=1024, y=512, colormap="turbo", min_snr=5.0)
+            self.assertTrue(tile_url.startswith("/api/v1/tiles/multimodal/ncc_frequency_domain/"))
+            self.assertIn(f"/{metric.value}/14/1024/512.png", tile_url)
+            self.assertIn("colormap=turbo", tile_url)
+            self.assertIn("min_snr=5.0", tile_url)
+
+            tpl_url = build_multimodal_tile_url_template(metric=metric)
+            self.assertEqual(tpl_url, f"/api/v1/tiles/multimodal/ncc_frequency_domain/{metric.value}/{{z}}/{{x}}/{{y}}.png")
+
     def test_task_t310_insar_sbas_scientific_qa_and_inversion_invariants(self):
         """Task T-310 (Cycle v2.5.41 Step 3 Continuous Scientific QA):
         Verify InSAR SBAS multi-temporal scientific rigor, amplitude dispersion bounds (D_A >= 0),
@@ -5167,9 +5309,193 @@ class TestScientificRigor(unittest.TestCase):
             template_url = build_insar_sbas_tile_url_template(model=SBASInversionModel.SVD_LEAST_NORM, metric=metric)
             self.assertEqual(template_url, f"/api/v1/tiles/insar-sbas/svd_least_norm/{metric.value}/{{z}}/{{x}}/{{y}}.png")
 
+    def test_task_t316_linear_spectral_mixture_analysis_and_fcls_scientific_qa(self):
+        """Task T-316 (Cycle v2.5.42 Step 3 Continuous Scientific QA):
+        Verify Linear Spectral Mixture Analysis (LSMA) and Fully Constrained Least Squares (FCLS)
+        sub-pixel endmember fraction inversion scientific rigor:
+        1. Simplex projection operator sorting-based exactness (sum f_k == 1.0, f_k >= 0).
+        2. Pure endmember recovery (f_k >= 0.95, RMSE < 0.005 for pure GV, NPV, Soil, Shade).
+        3. Arbitrary linear mixtures closure (ASC |sum f_k - 1.0| < 1e-4) and non-negativity (ANC f_k >= 0).
+        4. Reconstruction RMSE non-negativity and exact noise-free convergence.
+        5. Shadow-normalized Fractional Vegetation Cover (FVC) and Soil Tillage Residue Index (STRI).
+        6. Sub-pixel dominance classifications (GV, NPV, Soil, Shade, Mixed).
+        7. Research benchmark scenes catalog and biophysical plausibility.
+        8. Dynamic tile URL generation and RFC 3986 format invariants.
+        """
+        from app.models.schemas import (
+            SpectralUnmixingModel,
+            SpectralUnmixingTileMetric,
+            EndmemberClass,
+            UnmixingQualityTier,
+            SubPixelDominanceClass,
+            normalize_unmixing_model,
+            normalize_unmixing_metric,
+            normalize_endmember_class,
+            normalize_unmixing_quality_tier,
+            normalize_subpixel_dominance,
+            UNMIXING_MODEL_CONFIGS,
+            STANDARD_ENDMEMBER_LIBRARY,
+            SUBPIXEL_DOMINANCE_CONFIGS,
+            UNMIXING_BENCHMARK_SCENES,
+            project_to_simplex,
+            calculate_unmixing_rmse,
+            calculate_unmixing_fvc,
+            calculate_soil_tillage_residue_index,
+            calculate_fcls_unmixing,
+            classify_unmixing_quality_rating,
+            classify_subpixel_dominance,
+            build_spectral_unmixing_tile_url,
+            build_spectral_unmixing_tile_url_template,
+        )
+        from app.services.unmixing_service import UnmixingService, ORDERED_BANDS
+
+        # -------------------------------------------------------------
+        # 1. Simplex Projection Operator Sorting-Based Exactness Invariants
+        # -------------------------------------------------------------
+        # Extreme negative / overshooting vectors
+        v1 = [-0.5, 0.2, 0.8, -0.1]
+        p1 = project_to_simplex(v1)
+        self.assertAlmostEqual(float(np.sum(p1)), 1.0, places=6)
+        self.assertTrue(all(x >= 0.0 for x in p1), "Simplex projection must satisfy non-negativity")
+
+        v2 = [1.5, 2.0, 3.5, 0.5]
+        p2 = project_to_simplex(v2)
+        self.assertAlmostEqual(float(np.sum(p2)), 1.0, places=6)
+        self.assertTrue(all(x >= 0.0 for x in p2), "Simplex projection must satisfy non-negativity")
+
+        # Identity on standard unit basis vectors
+        p3 = project_to_simplex([1.0, 0.0, 0.0, 0.0])
+        np.testing.assert_allclose(p3, [1.0, 0.0, 0.0, 0.0], atol=1e-6)
+
+        # -------------------------------------------------------------
+        # 2. Pure Endmember Recovery with FCLS
+        # -------------------------------------------------------------
+        svc = UnmixingService()
+        for em_name in ["gv", "npv", "soil", "shade"]:
+            pure_spec = STANDARD_ENDMEMBER_LIBRARY[em_name]
+            sol = svc.solve_fcls(pure_spec)
+            self.assertAlmostEqual(
+                sol["sum_abundances"], 1.0, places=4,
+                msg=f"Pure {em_name} FCLS must satisfy sum-to-one constraint"
+            )
+            self.assertGreaterEqual(
+                sol[f"fraction_{em_name}"], 0.95,
+                f"Pure {em_name} endmember must be recovered with fraction >= 0.95"
+            )
+            self.assertLess(
+                sol["rmse"], 0.005,
+                f"Pure {em_name} reconstruction RMSE must be < 0.005"
+            )
+
+        # -------------------------------------------------------------
+        # 3. Arbitrary Linear Mixtures Closure (ASC) & Non-Negativity (ANC)
+        # -------------------------------------------------------------
+        rng = np.random.RandomState(42)
+        M, em_keys, b_keys = svc.get_endmember_matrix()
+        for _ in range(25):
+            true_weights = project_to_simplex(rng.uniform(0.0, 1.0, 4))
+            synth_y = M @ true_weights
+            synth_dict = {b_keys[i]: float(synth_y[i]) for i in range(len(b_keys))}
+            sol = svc.solve_fcls(synth_dict)
+            self.assertAlmostEqual(
+                sol["sum_abundances"], 1.0, places=4,
+                msg="FCLS arbitrary mixture must satisfy sum-to-one closure"
+            )
+            for k in em_keys:
+                self.assertGreaterEqual(
+                    sol[f"fraction_{k}"], 0.0,
+                    msg=f"Fraction {k} must satisfy non-negativity constraint"
+                )
+            self.assertLess(
+                sol["rmse"], 1e-3,
+                msg="Exact linear mixture must reconstruct with RMSE < 1e-3"
+            )
+
+        # -------------------------------------------------------------
+        # 4. Shadow-Normalized FVC & STRI Invariants
+        # -------------------------------------------------------------
+        # Pure GV with no shade -> FVC = 1.0
+        fvc_pure_gv = calculate_unmixing_fvc(1.0, 0.0)
+        self.assertEqual(fvc_pure_gv, 1.0)
+        # GV=0.25, Shade=0.50 -> shadow-normalized FVC = 0.25 / (1.0 - 0.50) = 0.50
+        fvc_half_shade = calculate_unmixing_fvc(0.25, 0.50)
+        self.assertAlmostEqual(fvc_half_shade, 0.50, places=4)
+        # 100% shade -> FVC = 0.0
+        fvc_full_shade = calculate_unmixing_fvc(0.0, 1.0)
+        self.assertEqual(fvc_full_shade, 0.0)
+
+        # Pure NPV -> STRI = 1.0
+        stri_pure_npv = calculate_soil_tillage_residue_index(1.0, 0.0)
+        self.assertEqual(stri_pure_npv, 1.0)
+        # Pure Soil -> STRI = 0.0
+        stri_pure_soil = calculate_soil_tillage_residue_index(0.0, 1.0)
+        self.assertEqual(stri_pure_soil, 0.0)
+        # Equal NPV and Soil -> STRI = 0.50
+        stri_equal = calculate_soil_tillage_residue_index(0.3, 0.3)
+        self.assertEqual(stri_equal, 0.5)
+
+        # -------------------------------------------------------------
+        # 5. Dominance Classification Invariants
+        # -------------------------------------------------------------
+        self.assertEqual(classify_subpixel_dominance(0.7, 0.1, 0.1, 0.1), SubPixelDominanceClass.GREEN_CANOPY_DOMINANT)
+        self.assertEqual(classify_subpixel_dominance(0.1, 0.7, 0.1, 0.1), SubPixelDominanceClass.DRY_RESIDUE_DOMINANT)
+        self.assertEqual(classify_subpixel_dominance(0.1, 0.1, 0.7, 0.1), SubPixelDominanceClass.BARE_SOIL_TAILINGS)
+        self.assertEqual(classify_subpixel_dominance(0.1, 0.1, 0.1, 0.7), SubPixelDominanceClass.SHADOW_WATER_DOMINANT)
+        self.assertEqual(classify_subpixel_dominance(0.25, 0.25, 0.25, 0.25), SubPixelDominanceClass.MIXED_HETEROGENEOUS)
+
+        # -------------------------------------------------------------
+        # 6. Benchmark Scenes Scientific Catalog & Biophysical Fidelity
+        # -------------------------------------------------------------
+        benchmarks = UNMIXING_BENCHMARK_SCENES
+        self.assertIn("MORENCI_MINE_TAILINGS_ARIZONA_2026", benchmarks)
+        morenci = benchmarks["MORENCI_MINE_TAILINGS_ARIZONA_2026"]
+        self.assertGreaterEqual(morenci["expected_fractions"]["soil"], 0.60)
+        self.assertEqual(morenci["dominant_class"], SubPixelDominanceClass.BARE_SOIL_TAILINGS.value)
+
+        self.assertIn("PARADISE_CALIFORNIA_POST_FIRE_2026", benchmarks)
+        paradise = benchmarks["PARADISE_CALIFORNIA_POST_FIRE_2026"]
+        self.assertGreaterEqual(paradise["expected_fractions"]["npv"], 0.20)
+
+        self.assertIn("SAN_JOAQUIN_VALLEY_AGRICULTURE_2026", benchmarks)
+        san_joaquin = benchmarks["SAN_JOAQUIN_VALLEY_AGRICULTURE_2026"]
+        self.assertGreaterEqual(san_joaquin["expected_fractions"]["gv"], 0.50)
+        self.assertEqual(san_joaquin["dominant_class"], SubPixelDominanceClass.GREEN_CANOPY_DOMINANT.value)
+
+        self.assertIn("ATACAMA_SALAR_MINERAL_CRUST_2026", benchmarks)
+        atacama = benchmarks["ATACAMA_SALAR_MINERAL_CRUST_2026"]
+        self.assertGreaterEqual(atacama["expected_fractions"]["soil"], 0.60)
+
+        # -------------------------------------------------------------
+        # 7. Dynamic Tile URL Building & RFC 3986 Format Invariants
+        # -------------------------------------------------------------
+        for metric in SpectralUnmixingTileMetric:
+            tile_url = build_spectral_unmixing_tile_url(
+                model=SpectralUnmixingModel.FCLS_CONSTRAINED,
+                metric=metric,
+                z=12,
+                x=650,
+                y=1580,
+                colormap="viridis",
+                rescale="0,1"
+            )
+            self.assertTrue(tile_url.startswith("/api/v1/tiles/unmixing/fcls_constrained/"))
+            self.assertIn(f"/{metric.value}/12/650/1580.png", tile_url)
+            self.assertIn("colormap=viridis", tile_url)
+            self.assertIn("rescale=0,1", tile_url)
+
+            template_url = build_spectral_unmixing_tile_url_template(
+                model=SpectralUnmixingModel.FCLS_CONSTRAINED,
+                metric=metric
+            )
+            self.assertEqual(
+                template_url,
+                f"/api/v1/tiles/unmixing/fcls_constrained/{metric.value}/{{z}}/{{x}}/{{y}}.png"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

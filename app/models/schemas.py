@@ -36065,3 +36065,684 @@ class InSARSBASModelsResponse(BaseModel):
     metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")
     benchmark_scenes: Dict[str, Any] = Field(..., description="Benchmark research deformation test sites")
     hazard_tiers: Dict[str, Any] = Field(..., description="Deformation hazard tier classifications")
+
+# ============================================================================
+# CYCLE v2.5.42: LINEAR SPECTRAL MIXTURE ANALYSIS (LSMA) & FULLY CONSTRAINED
+# LEAST SQUARES (FCLS) SUB-PIXEL ENDMEMBER FRACTION INVERSION
+# ============================================================================
+
+class SpectralUnmixingModel(str, Enum):
+    """Mathematical inversion algorithms for sub-pixel linear spectral unmixing."""
+    FCLS_CONSTRAINED = "fcls_constrained"        # Fully Constrained Least Squares (Heinz & Chang 2001) - enforces ANC and ASC
+    NNLS_NON_NEGATIVE = "nnls_non_negative"      # Non-Negative Least Squares (Lawson & Hanson 1974) - enforces ANC only
+    UCLS_UNCONSTRAINED = "ucls_unconstrained"    # Unconstrained Least Squares (Settle & Drake 1993)
+    EXTENDED_SMA = "extended_sma"                # Variable Endmember Spectral Mixture Analysis / Multiple Endmember proxy
+
+class SpectralUnmixingTileMetric(str, Enum):
+    """Dynamic XYZ visualization metrics for sub-pixel endmember abundance layers."""
+    FRACTION_GV = "fraction_gv"                  # Photosynthetic green vegetation abundance f_GV in [0, 1]
+    FRACTION_NPV = "fraction_npv"                # Non-photosynthetic vegetation / dry plant residue f_NPV in [0, 1]
+    FRACTION_SOIL = "fraction_soil"              # Bare soil / tailings mineral substrate abundance f_Soil in [0, 1]
+    FRACTION_SHADE = "fraction_shade"            # Photometric canopy shadow / deep water abundance f_Shade in [0, 1]
+    FRACTIONAL_VEG_COVER = "fractional_veg_cover"  # Shadow-normalized canopy cover FVC = f_GV / (1 - f_Shade)
+    UNMIXING_RMSE = "unmixing_rmse"              # Model reconstruction residual Root Mean Square Error
+    SOIL_TILLAGE_RESIDUE_INDEX = "soil_tillage_residue_index"  # Crop residue ratio f_NPV / (f_NPV + f_Soil)
+    ABUNDANCE_RGB_COMPOSITE = "abundance_rgb_composite"        # 3-channel composite: R=NPV, G=GV, B=Soil
+
+class EndmemberClass(str, Enum):
+    """Canonical biophysical endmember classification categories."""
+    GV = "gv"        # Green Photosynthetic Vegetation (chlorophyll mesophyll)
+    NPV = "npv"      # Non-Photosynthetic Vegetation (dry plant matter, cellulose, lignin)
+    SOIL = "soil"    # Mineral Soil / Tailings Substrate (iron oxides, silicates)
+    SHADE = "shade"  # Photometric Shadow / Open Clear Water (near-zero radiance)
+
+class UnmixingQualityTier(str, Enum):
+    """Quantitative certification quality tiers for spectral unmixing inversion."""
+    EXCELLENT = "EXCELLENT"      # RMSE <= 0.015, |sum(f) - 1.0| <= 0.005 (highly accurate unmixing)
+    GOOD = "GOOD"                # RMSE <= 0.030, |sum(f) - 1.0| <= 0.010 (reliable operational inversion)
+    ACCEPTABLE = "ACCEPTABLE"    # RMSE <= 0.050, |sum(f) - 1.0| <= 0.025 (moderate residual noise)
+    DEGRADED = "DEGRADED"        # RMSE > 0.050 or severe constraint violation
+
+class SubPixelDominanceClass(str, Enum):
+    """Dominant sub-pixel surface regime based on maximum abundance fraction."""
+    GREEN_CANOPY_DOMINANT = "green_canopy_dominant"    # f_GV >= 0.50
+    DRY_RESIDUE_DOMINANT = "dry_residue_dominant"      # f_NPV >= 0.50
+    BARE_SOIL_TAILINGS = "bare_soil_tailings"          # f_Soil >= 0.50
+    SHADOW_WATER_DOMINANT = "shadow_water_dominant"    # f_Shade >= 0.50
+    MIXED_HETEROGENEOUS = "mixed_heterogeneous"        # Max abundance < 0.50
+
+def normalize_unmixing_model(val: Any) -> SpectralUnmixingModel:
+    """Normalizes string or enum values into canonical SpectralUnmixingModel."""
+    if isinstance(val, SpectralUnmixingModel):
+        return val
+    raw = str(val).strip().lower().replace("-", "_").replace(" ", "_")
+    alias_map = {
+        "fcls": SpectralUnmixingModel.FCLS_CONSTRAINED,
+        "fcls_constrained": SpectralUnmixingModel.FCLS_CONSTRAINED,
+        "constrained": SpectralUnmixingModel.FCLS_CONSTRAINED,
+        "fully_constrained": SpectralUnmixingModel.FCLS_CONSTRAINED,
+        "nnls": SpectralUnmixingModel.NNLS_NON_NEGATIVE,
+        "nnls_non_negative": SpectralUnmixingModel.NNLS_NON_NEGATIVE,
+        "non_negative": SpectralUnmixingModel.NNLS_NON_NEGATIVE,
+        "ucls": SpectralUnmixingModel.UCLS_UNCONSTRAINED,
+        "ucls_unconstrained": SpectralUnmixingModel.UCLS_UNCONSTRAINED,
+        "unconstrained": SpectralUnmixingModel.UCLS_UNCONSTRAINED,
+        "ols": SpectralUnmixingModel.UCLS_UNCONSTRAINED,
+        "extended": SpectralUnmixingModel.EXTENDED_SMA,
+        "extended_sma": SpectralUnmixingModel.EXTENDED_SMA,
+        "mesma": SpectralUnmixingModel.EXTENDED_SMA,
+        "sma": SpectralUnmixingModel.FCLS_CONSTRAINED,
+    }
+    if raw in alias_map:
+        return alias_map[raw]
+    for m in SpectralUnmixingModel:
+        if raw == m.value or raw == m.name.lower():
+            return m
+    raise ValueError(f"Unsupported spectral unmixing model '{val}'. Supported: {[m.value for m in SpectralUnmixingModel]}")
+
+def normalize_unmixing_metric(val: Any) -> SpectralUnmixingTileMetric:
+    """Normalizes string or enum values into canonical SpectralUnmixingTileMetric."""
+    if isinstance(val, SpectralUnmixingTileMetric):
+        return val
+    raw = str(val).strip().lower().replace("-", "_").replace(" ", "_")
+    alias_map = {
+        "gv": SpectralUnmixingTileMetric.FRACTION_GV,
+        "fraction_gv": SpectralUnmixingTileMetric.FRACTION_GV,
+        "green_vegetation": SpectralUnmixingTileMetric.FRACTION_GV,
+        "f_gv": SpectralUnmixingTileMetric.FRACTION_GV,
+        "npv": SpectralUnmixingTileMetric.FRACTION_NPV,
+        "fraction_npv": SpectralUnmixingTileMetric.FRACTION_NPV,
+        "non_photosynthetic": SpectralUnmixingTileMetric.FRACTION_NPV,
+        "f_npv": SpectralUnmixingTileMetric.FRACTION_NPV,
+        "soil": SpectralUnmixingTileMetric.FRACTION_SOIL,
+        "fraction_soil": SpectralUnmixingTileMetric.FRACTION_SOIL,
+        "bare_soil": SpectralUnmixingTileMetric.FRACTION_SOIL,
+        "tailings": SpectralUnmixingTileMetric.FRACTION_SOIL,
+        "f_soil": SpectralUnmixingTileMetric.FRACTION_SOIL,
+        "shade": SpectralUnmixingTileMetric.FRACTION_SHADE,
+        "fraction_shade": SpectralUnmixingTileMetric.FRACTION_SHADE,
+        "shadow": SpectralUnmixingTileMetric.FRACTION_SHADE,
+        "f_shade": SpectralUnmixingTileMetric.FRACTION_SHADE,
+        "fvc": SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+        "fractional_veg_cover": SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+        "veg_cover": SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+        "canopy_cover": SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER,
+        "rmse": SpectralUnmixingTileMetric.UNMIXING_RMSE,
+        "unmixing_rmse": SpectralUnmixingTileMetric.UNMIXING_RMSE,
+        "error": SpectralUnmixingTileMetric.UNMIXING_RMSE,
+        "residual": SpectralUnmixingTileMetric.UNMIXING_RMSE,
+        "stri": SpectralUnmixingTileMetric.SOIL_TILLAGE_RESIDUE_INDEX,
+        "soil_tillage_residue_index": SpectralUnmixingTileMetric.SOIL_TILLAGE_RESIDUE_INDEX,
+        "residue": SpectralUnmixingTileMetric.SOIL_TILLAGE_RESIDUE_INDEX,
+        "rgb": SpectralUnmixingTileMetric.ABUNDANCE_RGB_COMPOSITE,
+        "composite": SpectralUnmixingTileMetric.ABUNDANCE_RGB_COMPOSITE,
+        "abundance_rgb_composite": SpectralUnmixingTileMetric.ABUNDANCE_RGB_COMPOSITE,
+    }
+    if raw in alias_map:
+        return alias_map[raw]
+    for m in SpectralUnmixingTileMetric:
+        if raw == m.value or raw == m.name.lower():
+            return m
+    raise ValueError(f"Unsupported unmixing tile metric '{val}'. Supported: {[m.value for m in SpectralUnmixingTileMetric]}")
+
+def normalize_endmember_class(val: Any) -> EndmemberClass:
+    """Normalizes endmember class values."""
+    if isinstance(val, EndmemberClass):
+        return val
+    raw = str(val).strip().lower().replace("-", "_")
+    alias_map = {
+        "gv": EndmemberClass.GV,
+        "green": EndmemberClass.GV,
+        "veg": EndmemberClass.GV,
+        "npv": EndmemberClass.NPV,
+        "dry_veg": EndmemberClass.NPV,
+        "litter": EndmemberClass.NPV,
+        "soil": EndmemberClass.SOIL,
+        "tailings": EndmemberClass.SOIL,
+        "substrate": EndmemberClass.SOIL,
+        "shade": EndmemberClass.SHADE,
+        "shadow": EndmemberClass.SHADE,
+        "water": EndmemberClass.SHADE,
+    }
+    if raw in alias_map:
+        return alias_map[raw]
+    for e in EndmemberClass:
+        if raw in (e.value, e.name.lower()):
+            return e
+    return EndmemberClass.SOIL
+
+def normalize_unmixing_quality_tier(val: Any) -> UnmixingQualityTier:
+    """Normalizes unmixing quality tier values."""
+    if isinstance(val, UnmixingQualityTier):
+        return val
+    raw = str(val).strip().upper()
+    try:
+        return UnmixingQualityTier[raw]
+    except KeyError:
+        return UnmixingQualityTier.ACCEPTABLE
+
+def normalize_subpixel_dominance(val: Any) -> SubPixelDominanceClass:
+    """Normalizes sub-pixel dominance classification values."""
+    if isinstance(val, SubPixelDominanceClass):
+        return val
+    raw = str(val).strip().lower().replace("-", "_")
+    alias_map = {
+        "green_canopy": SubPixelDominanceClass.GREEN_CANOPY_DOMINANT,
+        "green": SubPixelDominanceClass.GREEN_CANOPY_DOMINANT,
+        "canopy": SubPixelDominanceClass.GREEN_CANOPY_DOMINANT,
+        "gv": SubPixelDominanceClass.GREEN_CANOPY_DOMINANT,
+        "dry_residue": SubPixelDominanceClass.DRY_RESIDUE_DOMINANT,
+        "residue": SubPixelDominanceClass.DRY_RESIDUE_DOMINANT,
+        "npv": SubPixelDominanceClass.DRY_RESIDUE_DOMINANT,
+        "litter": SubPixelDominanceClass.DRY_RESIDUE_DOMINANT,
+        "bare_soil": SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+        "soil": SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+        "tailings": SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+        "mine_tailings": SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+        "shadow": SubPixelDominanceClass.SHADOW_WATER_DOMINANT,
+        "water": SubPixelDominanceClass.SHADOW_WATER_DOMINANT,
+        "shadow_water": SubPixelDominanceClass.SHADOW_WATER_DOMINANT,
+        "mixed": SubPixelDominanceClass.MIXED_HETEROGENEOUS,
+        "heterogeneous": SubPixelDominanceClass.MIXED_HETEROGENEOUS,
+    }
+    if raw in alias_map:
+        return alias_map[raw]
+    for d in SubPixelDominanceClass:
+        if raw in (d.value, d.name.lower()):
+            return d
+    return SubPixelDominanceClass.MIXED_HETEROGENEOUS
+
+UNMIXING_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    SpectralUnmixingModel.FCLS_CONSTRAINED.value: {
+        "id": SpectralUnmixingModel.FCLS_CONSTRAINED.value,
+        "label": "Fully Constrained Least Squares (FCLS)",
+        "citation": "Heinz, D. C., & Chang, C.-I. (2001). Fully constrained least squares linear spectral mixture analysis method for material quantification in hyperspectral imagery. IEEE TGRS, 39(3), 529-545.",
+        "description": "Dual-constrained linear mixture optimization strictly enforcing both the Abundance Non-negativity Constraint (ANC, f_k >= 0) and Abundance Sum-to-One Constraint (ASC, sum f_k = 1.0). Provides physically meaningful fractions of green canopy, dry litter, bare soil, and shadow.",
+        "enforces_sum_to_one": True,
+        "enforces_non_negativity": True,
+        "anc_enforced": True,
+        "asc_enforced": True,
+        "expected_rmse": 0.012,
+        "badge_class": "bg-emerald-900/60 text-emerald-300 border-emerald-500/30"
+    },
+    SpectralUnmixingModel.NNLS_NON_NEGATIVE.value: {
+        "id": SpectralUnmixingModel.NNLS_NON_NEGATIVE.value,
+        "label": "Non-Negative Least Squares (NNLS)",
+        "citation": "Lawson, C. L., & Hanson, R. J. (1974). Solving Least Squares Problems. Prentice-Hall.",
+        "description": "Active-set quadratic programming enforcing only the non-negativity constraint (f_k >= 0) without forcing sum-to-one; allows illumination variation and severe topographic shadowing to scale total abundance.",
+        "enforces_sum_to_one": False,
+        "enforces_non_negativity": True,
+        "expected_rmse": 0.018,
+        "badge_class": "bg-blue-900/60 text-blue-300 border-blue-500/30"
+    },
+    SpectralUnmixingModel.UCLS_UNCONSTRAINED.value: {
+        "id": SpectralUnmixingModel.UCLS_UNCONSTRAINED.value,
+        "label": "Unconstrained Least Squares (UCLS)",
+        "citation": "Settle, J. J., & Drake, N. A. (1993). Linear mixed spectral reflectance models. International Journal of Remote Sensing, 14(6), 1159-1186.",
+        "description": "Standard Moore-Penrose pseudo-inverse solution f = (M^T M)^(-1) M^T y. Computationally instantaneous but permits physically impossible negative fractions and fractions greater than 1.0.",
+        "enforces_sum_to_one": False,
+        "enforces_non_negativity": False,
+        "expected_rmse": 0.024,
+        "badge_class": "bg-amber-900/60 text-amber-300 border-amber-500/30"
+    },
+    SpectralUnmixingModel.EXTENDED_SMA.value: {
+        "id": SpectralUnmixingModel.EXTENDED_SMA.value,
+        "label": "Multiple Endmember Spectral Mixture (MESMA Proxy)",
+        "citation": "Roberts, D. A., Gardner, M., Church, R., Ustin, S., Scheer, G., & Green, R. O. (1998). Mapping chaparral in the Santa Monica Mountains using multiple endmember spectral mixture models. Remote Sensing of Environment, 65(3), 267-279.",
+        "description": "Iterative subset endmember selection testing candidate combinations (GV-Soil-Shade, NPV-Soil-Shade, GV-NPV-Soil-Shade) and selecting the optimal combination minimizing residual RMSE.",
+        "enforces_sum_to_one": True,
+        "enforces_non_negativity": True,
+        "anc_enforced": True,
+        "asc_enforced": True,
+        "expected_rmse": 0.009,
+        "badge_class": "bg-purple-900/60 text-purple-300 border-purple-500/30"
+    }
+}
+
+STANDARD_ENDMEMBER_LIBRARY: Dict[str, Dict[str, float]] = {
+    EndmemberClass.GV.value: {
+        "coastal": 0.025,
+        "blue": 0.028,
+        "green": 0.065,
+        "red": 0.035,
+        "nir_narrow": 0.480,
+        "swir_1": 0.210,
+        "swir_2": 0.090
+    },
+    EndmemberClass.NPV.value: {
+        "coastal": 0.080,
+        "blue": 0.105,
+        "green": 0.155,
+        "red": 0.210,
+        "nir_narrow": 0.320,
+        "swir_1": 0.420,
+        "swir_2": 0.360
+    },
+    EndmemberClass.SOIL.value: {
+        "coastal": 0.090,
+        "blue": 0.125,
+        "green": 0.175,
+        "red": 0.235,
+        "nir_narrow": 0.290,
+        "swir_1": 0.370,
+        "swir_2": 0.410
+    },
+    EndmemberClass.SHADE.value: {
+        "coastal": 0.015,
+        "blue": 0.012,
+        "green": 0.010,
+        "red": 0.008,
+        "nir_narrow": 0.005,
+        "swir_1": 0.003,
+        "swir_2": 0.002
+    }
+}
+
+SUBPIXEL_DOMINANCE_CONFIGS: Dict[str, Dict[str, Any]] = {
+    SubPixelDominanceClass.GREEN_CANOPY_DOMINANT.value: {
+        "label": "Photosynthetic Canopy Dominant",
+        "color_hex": "#10b981",
+        "badge_class": "bg-emerald-900/70 text-emerald-300 border-emerald-500/40",
+        "description": "Dense photosynthetic vegetation cover (f_GV >= 50%); active transpiration and biomass production."
+    },
+    SubPixelDominanceClass.DRY_RESIDUE_DOMINANT.value: {
+        "label": "Non-Photosynthetic Residue Dominant",
+        "color_hex": "#f59e0b",
+        "badge_class": "bg-amber-900/70 text-amber-300 border-amber-500/40",
+        "description": "Dry vegetative biomass, deadfall, crop stubble, or senescent litter (f_NPV >= 50%); elevated wildfire hazard."
+    },
+    SubPixelDominanceClass.BARE_SOIL_TAILINGS.value: {
+        "label": "Bare Soil / Tailings Substrate",
+        "color_hex": "#ef4444",
+        "badge_class": "bg-rose-900/70 text-rose-300 border-rose-500/40",
+        "description": "Exposed mineral soil, rock, or unrevegetated mine tailings (f_Soil >= 50%); vulnerable to erosion and dust lift."
+    },
+    SubPixelDominanceClass.SHADOW_WATER_DOMINANT.value: {
+        "label": "Shadow / Open Water Dominant",
+        "color_hex": "#06b6d4",
+        "badge_class": "bg-cyan-900/70 text-cyan-300 border-cyan-500/40",
+        "description": "Canopy cast shadow, deep water body, or steep terrain occlusion (f_Shade >= 50%)."
+    },
+    SubPixelDominanceClass.MIXED_HETEROGENEOUS.value: {
+        "label": "Mixed Heterogeneous Matrix",
+        "color_hex": "#a855f7",
+        "badge_class": "bg-purple-900/70 text-purple-300 border-purple-500/40",
+        "description": "Balanced multi-component surface mixture with no single endmember exceeding 50% fraction."
+    }
+}
+
+UNMIXING_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "MORENCI_MINE_TAILINGS_ARIZONA_2026": {
+        "id": "MORENCI_MINE_TAILINGS_ARIZONA_2026",
+        "name": "Morenci Copper Mine Tailings Impoundment, Arizona",
+        "lat": 33.085,
+        "lng": -109.340,
+        "description": "Massive open-pit copper tailings impoundment; unmixing isolates dry tailings sand dust from revegetated berms and seepage ponds.",
+        "expected_fractions": {"gv": 0.08, "npv": 0.12, "soil": 0.72, "shade": 0.08},
+        "dominant_class": SubPixelDominanceClass.BARE_SOIL_TAILINGS.value
+    },
+    "PARADISE_CALIFORNIA_POST_FIRE_2026": {
+        "id": "PARADISE_CALIFORNIA_POST_FIRE_2026",
+        "name": "Camp Fire Post-Burn Regenerating Watershed, Paradise CA",
+        "lat": 39.759,
+        "lng": -121.621,
+        "description": "Post-wildfire scar showing charred timber deadfall (NPV), recovering chaparral canopy (GV), and exposed rock.",
+        "expected_fractions": {"gv": 0.24, "npv": 0.38, "soil": 0.20, "shade": 0.18},
+        "dominant_class": SubPixelDominanceClass.DRY_RESIDUE_DOMINANT.value
+    },
+    "SAN_JOAQUIN_VALLEY_AGRICULTURE_2026": {
+        "id": "SAN_JOAQUIN_VALLEY_AGRICULTURE_2026",
+        "name": "San Joaquin Valley Mixed Cropland & Fallow Fields, CA",
+        "lat": 36.320,
+        "lng": -119.850,
+        "description": "Agricultural mosaic separating irrigated almond orchard canopy (GV) from post-harvest crop stubble (NPV) and tilled soil.",
+        "expected_fractions": {"gv": 0.58, "npv": 0.14, "soil": 0.22, "shade": 0.06},
+        "dominant_class": SubPixelDominanceClass.GREEN_CANOPY_DOMINANT.value
+    },
+    "ATACAMA_SALAR_MINERAL_CRUST_2026": {
+        "id": "ATACAMA_SALAR_MINERAL_CRUST_2026",
+        "name": "Atacama Salar Lithium Evaporation Brine & Salt Crust, Chile",
+        "lat": -23.500,
+        "lng": -68.350,
+        "description": "Hyper-arid evaporite crust and mineral brine pools; test site for high-albedo mineral substrate and water unmixing.",
+        "expected_fractions": {"gv": 0.02, "npv": 0.08, "soil": 0.65, "shade": 0.25},
+        "dominant_class": SubPixelDominanceClass.BARE_SOIL_TAILINGS.value
+    }
+}
+
+# ----------------------------------------------------------------------------
+# Deterministic Mathematical Solvers & Invariants for Spectral Unmixing
+# ----------------------------------------------------------------------------
+
+def project_to_simplex(v: Sequence[float]) -> List[float]:
+    """Exact O(K log K) projection of a vector v onto the probability simplex.
+    
+    Solves: min_w 0.5 * ||w - v||_2^2 subject to sum(w) = 1.0 and w_i >= 0.
+    Based on Duchi et al. (2008) / Wang & Carreira-Perpiñán (2013).
+    """
+    v_clean = [float(x) for x in v]
+    n = len(v_clean)
+    if n == 0:
+        return []
+    u = sorted(v_clean, reverse=True)
+    cssv = []
+    curr = -1.0
+    for x in u:
+        curr += x
+        cssv.append(curr)
+    rho = 1
+    for j in range(1, n + 1):
+        if u[j - 1] - cssv[j - 1] / float(j) > 0.0:
+            rho = j
+    theta = cssv[rho - 1] / float(rho)
+    w = [max(0.0, x - theta) for x in v_clean]
+    s = sum(w)
+    if s > 0.0:
+        w = [round(x / s, 6) for x in w]
+        diff = 1.0 - sum(w)
+        if abs(diff) > 0.0:
+            w[0] = round(w[0] + diff, 6)
+    else:
+        w = [round(1.0 / n, 6)] * n
+    return w
+
+def calculate_unmixing_rmse(
+    observed: Union[Dict[str, float], Sequence[float]],
+    modeled: Union[Dict[str, float], Sequence[float]]
+) -> float:
+    """Calculates Root Mean Square Error (RMSE) between observed and modeled reflectance."""
+    if isinstance(observed, dict) and isinstance(modeled, dict):
+        common_keys = [k for k in observed if k in modeled]
+        if not common_keys:
+            return 0.0
+        diff_sq = [(float(observed[k]) - float(modeled[k])) ** 2 for k in common_keys]
+        return round(math.sqrt(sum(diff_sq) / len(diff_sq)), 6)
+    obs_list = [float(x) for x in observed]
+    mod_list = [float(x) for x in modeled]
+    m = min(len(obs_list), len(mod_list))
+    if m == 0:
+        return 0.0
+    diff_sq = [(obs_list[i] - mod_list[i]) ** 2 for i in range(m)]
+    return round(math.sqrt(sum(diff_sq) / m), 6)
+
+def calculate_unmixing_fvc(f_gv: float, f_shade: float) -> float:
+    """Calculates shadow-normalized Fractional Vegetation Cover (FVC = f_GV / (1 - f_Shade))."""
+    gv = max(0.0, min(1.0, float(f_gv))) if f_gv is not None and not math.isnan(f_gv) else 0.0
+    shade = max(0.0, min(1.0, float(f_shade))) if f_shade is not None and not math.isnan(f_shade) else 0.0
+    denom = 1.0 - shade
+    if denom <= 0.05:
+        return 0.0
+    return round(min(1.0, max(0.0, gv / denom)), 4)
+
+calculate_unmixing_fractional_veg_cover = calculate_unmixing_fvc
+calculate_shadow_normalized_fvc = calculate_unmixing_fvc
+
+def calculate_soil_tillage_residue_index(f_npv: float, f_soil: float) -> float:
+    """Calculates Crop Residue / Soil Tillage Index = f_NPV / (f_NPV + f_Soil)."""
+    npv = max(0.0, float(f_npv)) if f_npv is not None and not math.isnan(f_npv) else 0.0
+    soil = max(0.0, float(f_soil)) if f_soil is not None and not math.isnan(f_soil) else 0.0
+    denom = npv + soil
+    if denom <= 0.01:
+        return 0.0
+    return round(min(1.0, max(0.0, npv / denom)), 4)
+
+def calculate_fcls_unmixing(
+    pixel_reflectance: Union[Dict[str, float], Sequence[float]],
+    endmember_library: Optional[Dict[str, Dict[str, float]]] = None
+) -> Dict[str, Any]:
+    """Executes Fully Constrained Least Squares (FCLS) spectral unmixing.
+    
+    Solves min_f ||y - M f||^2 subject to f_k >= 0 and sum(f_k) = 1.0
+    using projected gradient descent with exact simplex projection.
+    """
+    lib = endmember_library if endmember_library is not None else STANDARD_ENDMEMBER_LIBRARY
+    ordered_bands = ["coastal", "blue", "green", "red", "nir_narrow", "swir_1", "swir_2"]
+    
+    # 1. Parse observed reflectance vector
+    if isinstance(pixel_reflectance, dict):
+        y = [float(pixel_reflectance.get(b, 0.10)) for b in ordered_bands]
+    else:
+        y_raw = list(pixel_reflectance)
+        y = [float(y_raw[i]) if i < len(y_raw) else 0.10 for i in range(len(ordered_bands))]
+
+    # 2. Construct endmember matrix M [M_bands x K_endmembers]
+    em_keys = [EndmemberClass.GV.value, EndmemberClass.NPV.value, EndmemberClass.SOIL.value, EndmemberClass.SHADE.value]
+    M = []
+    for b in ordered_bands:
+        row = [float(lib[k].get(b, 0.10)) for k in em_keys]
+        M.append(row)
+
+    # 3. Projected gradient descent for FCLS
+    k_dim = len(em_keys)
+    m_dim = len(ordered_bands)
+    
+    MTM = [[0.0] * k_dim for _ in range(k_dim)]
+    for i in range(k_dim):
+        for j in range(k_dim):
+            s = 0.0
+            for b in range(m_dim):
+                s += M[b][i] * M[b][j]
+            MTM[i][j] = s
+            
+    MTy = [0.0] * k_dim
+    for i in range(k_dim):
+        s = 0.0
+        for b in range(m_dim):
+            s += M[b][i] * y[b]
+        MTy[i] = s
+
+    # Power iteration for spectral norm Lipschitz constant
+    v_pow = [1.0] * k_dim
+    for _ in range(15):
+        v_next = [sum(MTM[i][j] * v_pow[j] for j in range(k_dim)) for i in range(k_dim)]
+        norm_v = math.sqrt(sum(x ** 2 for x in v_next)) or 1.0
+        v_pow = [x / norm_v for x in v_next]
+    L = sum(v_pow[i] * sum(MTM[i][j] * v_pow[j] for j in range(k_dim)) for i in range(k_dim))
+    step = 1.0 / max(L, 0.01)
+
+    # Accelerated FISTA with simplex projection
+    f = [1.0 / k_dim] * k_dim
+    y_vec = list(f)
+    t_val = 1.0
+    for _ in range(100):
+        grad = [sum(MTM[i][j] * y_vec[j] for j in range(k_dim)) - MTy[i] for i in range(k_dim)]
+        f_next = project_to_simplex([y_vec[i] - step * grad[i] for i in range(k_dim)])
+        t_next = (1.0 + math.sqrt(1.0 + 4.0 * t_val * t_val)) / 2.0
+        beta = (t_val - 1.0) / t_next
+        y_vec = [f_next[i] + beta * (f_next[i] - f[i]) for i in range(k_dim)]
+        f = f_next
+        t_val = t_next
+    y_modeled = [0.0] * m_dim
+    for b in range(m_dim):
+        s = 0.0
+        for i in range(k_dim):
+            s += M[b][i] * f[i]
+        y_modeled[b] = s
+
+    rmse = calculate_unmixing_rmse(y, y_modeled)
+    f_gv = f[0]
+    f_npv = f[1]
+    f_soil = f[2]
+    f_shade = f[3]
+    fvc = calculate_unmixing_fvc(f_gv, f_shade)
+    stri = calculate_soil_tillage_residue_index(f_npv, f_soil)
+    dom = classify_subpixel_dominance(f_gv, f_npv, f_soil, f_shade)
+
+    return {
+        "fraction_gv": round(f_gv, 4),
+        "fraction_npv": round(f_npv, 4),
+        "fraction_soil": round(f_soil, 4),
+        "fraction_shade": round(f_shade, 4),
+        "sum_abundances": round(sum(f), 4),
+        "rmse": rmse,
+        "fvc": fvc,
+        "stri": stri,
+        "dominance": dom.value,
+        "modeled_reflectance": {ordered_bands[b]: round(y_modeled[b], 4) for b in range(m_dim)}
+    }
+
+def classify_unmixing_quality_rating(
+    rmse: float,
+    sum_abundance_err: float = 0.0
+) -> UnmixingQualityTier:
+    """Classifies unmixing solution quality into standardized tiers."""
+    err_rmse = float(rmse) if rmse is not None and not math.isnan(rmse) else 0.10
+    raw_sum = float(sum_abundance_err) if sum_abundance_err is not None else 0.0
+    err_sum = abs(raw_sum - 1.0) if raw_sum >= 0.50 else abs(raw_sum)
+    if err_rmse <= 0.015 and err_sum <= 0.005:
+        return UnmixingQualityTier.EXCELLENT
+    elif err_rmse <= 0.030 and err_sum <= 0.010:
+        return UnmixingQualityTier.GOOD
+    elif err_rmse <= 0.050 and err_sum <= 0.025:
+        return UnmixingQualityTier.ACCEPTABLE
+    return UnmixingQualityTier.DEGRADED
+
+def classify_subpixel_dominance(
+    f_gv: float,
+    f_npv: float,
+    f_soil: float,
+    f_shade: float
+) -> SubPixelDominanceClass:
+    """Determines the dominant sub-pixel land cover regime."""
+    gv = float(f_gv or 0.0)
+    npv = float(f_npv or 0.0)
+    soil = float(f_soil or 0.0)
+    shade = float(f_shade or 0.0)
+    
+    if gv >= 0.50:
+        return SubPixelDominanceClass.GREEN_CANOPY_DOMINANT
+    elif npv >= 0.50:
+        return SubPixelDominanceClass.DRY_RESIDUE_DOMINANT
+    elif soil >= 0.50:
+        return SubPixelDominanceClass.BARE_SOIL_TAILINGS
+    elif shade >= 0.50:
+        return SubPixelDominanceClass.SHADOW_WATER_DOMINANT
+    return SubPixelDominanceClass.MIXED_HETEROGENEOUS
+
+def build_spectral_unmixing_tile_url(
+    model: Union[SpectralUnmixingModel, str],
+    metric: Union[SpectralUnmixingTileMetric, str],
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    min_fvc: Optional[float] = None,
+    max_rmse: Optional[float] = None
+) -> str:
+    """Builds dynamic XYZ tile URL for spectral unmixing abundance raster layers."""
+    m_val = normalize_unmixing_model(model).value
+    met_val = normalize_unmixing_metric(metric).value
+    url = f"/api/v1/tiles/unmixing/{m_val}/{met_val}/{int(z)}/{int(x)}/{int(y)}.png"
+    params = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if min_fvc is not None:
+        params.append(f"min_fvc={float(min_fvc)}")
+    if max_rmse is not None:
+        params.append(f"max_rmse={float(max_rmse)}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+def build_spectral_unmixing_tile_url_template(
+    model: Union[SpectralUnmixingModel, str] = SpectralUnmixingModel.FCLS_CONSTRAINED,
+    metric: Union[SpectralUnmixingTileMetric, str] = SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER
+) -> str:
+    """Builds dynamic XYZ tile URL template for Leaflet TileLayer integration."""
+    m_val = normalize_unmixing_model(model).value
+    met_val = normalize_unmixing_metric(metric).value
+    return f"/api/v1/tiles/unmixing/{m_val}/{met_val}/{{z}}/{{x}}/{{y}}.png"
+
+# ----------------------------------------------------------------------------
+# Linear Spectral Mixture Analysis (LSMA) Pydantic Models & Data Contracts
+# ----------------------------------------------------------------------------
+
+class EndmemberSpectralVector(BaseModel):
+    """Standardized multi-spectral surface reflectance vector for an endmember."""
+    endmember_id: Optional[str] = Field(default=None, description="Endmember label (e.g. gv, npv, soil, shade)")
+    name: str = Field(..., description="Human-readable endmember description")
+    description: Optional[str] = Field(default=None, description="Detailed biophysical description")
+    reflectance: Optional[Dict[str, float]] = Field(default=None, description="Reflectance values per band (coastal, blue, green, red, nir_narrow, swir_1, swir_2)")
+    bands: Optional[List[float]] = Field(default=None, description="Ordered band reflectance values")
+    wavelengths: Optional[List[int]] = Field(default=None, description="Nominal band center wavelengths in nanometers")
+
+class UnmixingAbundancePoint(BaseModel):
+    """Sub-pixel endmember fractions for a geographic location."""
+    point_id: str = Field(..., description="Unique point identifier (e.g. PT-001)")
+    lat: float = Field(..., description="WGS84 latitude coordinate")
+    lng: float = Field(..., description="WGS84 longitude coordinate")
+    fraction_gv: float = Field(..., ge=0.0, le=1.0, description="Photosynthetic green vegetation abundance")
+    fraction_npv: float = Field(..., ge=0.0, le=1.0, description="Non-photosynthetic vegetation / litter abundance")
+    fraction_soil: float = Field(..., ge=0.0, le=1.0, description="Bare soil / tailings substrate abundance")
+    fraction_shade: float = Field(..., ge=0.0, le=1.0, description="Photometric shadow / deep water abundance")
+    sum_abundances: float = Field(default=1.0, description="Sum of abundances")
+    fvc: float = Field(..., ge=0.0, le=1.0, description="Shadow-normalized fractional vegetation cover")
+    stri: float = Field(default=0.0, ge=0.0, le=1.0, description="Soil tillage residue index f_NPV / (f_NPV + f_Soil)")
+    rmse: float = Field(..., ge=0.0, description="Unmixing model reconstruction RMSE")
+    dominance: SubPixelDominanceClass = Field(..., description="Dominant surface material category")
+    quality_tier: UnmixingQualityTier = Field(..., description="Inversion quality rating")
+
+class UnmixingQualitySummary(BaseModel):
+    """Quantitative certification summary for spectral unmixing inversion."""
+    unmixing_model: SpectralUnmixingModel = Field(..., description="Applied unmixing optimization algorithm")
+    sample_points_count: int = Field(..., ge=0, description="Number of unmixed evaluation pixels")
+    mean_rmse: float = Field(..., ge=0.0, description="Mean reconstruction RMSE across evaluated footprint")
+    mean_fvc: float = Field(..., ge=0.0, le=1.0, description="Average Fractional Vegetation Cover across AOI")
+    mean_fraction_gv: float = Field(..., ge=0.0, le=1.0, description="Average green vegetation abundance")
+    mean_fraction_npv: float = Field(..., ge=0.0, le=1.0, description="Average non-photosynthetic vegetation abundance")
+    mean_fraction_soil: float = Field(..., ge=0.0, le=1.0, description="Average bare soil / tailings abundance")
+    mean_fraction_shade: float = Field(..., ge=0.0, le=1.0, description="Average shadow abundance")
+    quality_tier: UnmixingQualityTier = Field(..., description="Overall inversion certification tier")
+    dominant_class: SubPixelDominanceClass = Field(..., description="Overall AOI land cover dominance")
+    quality_checklist: Dict[str, bool] = Field(default_factory=dict, description="Scientific compliance checklist")
+    narrative: str = Field(..., description="Biophysical interpretation of sub-pixel fractions")
+
+class SpectralUnmixingRequest(BaseModel):
+    """Payload for requesting sub-pixel linear spectral mixture analysis."""
+    aoi_name: Optional[str] = Field(default="Morenci Copper Mine Tailings", description="Target AOI label")
+    lat: Optional[float] = Field(default=None, description="Optional target latitude")
+    lng: Optional[float] = Field(default=None, description="Optional target longitude")
+    unmixing_model: SpectralUnmixingModel = Field(default=SpectralUnmixingModel.FCLS_CONSTRAINED, description="Unmixing algorithm")
+    target_endmembers: List[str] = Field(default_factory=lambda: ["gv", "npv", "soil", "shade"], description="List of endmember classes to include")
+    spectrum: Optional[List[float]] = Field(default=None, description="Optional observed pixel reflectance vector across standard bands")
+    custom_endmembers: Optional[Dict[str, Dict[str, float]]] = Field(default=None, description="Optional custom endmember library override")
+    bbox: Optional[Any] = Field(default=None, description="Optional bounding box envelope")
+
+    @field_validator("unmixing_model", mode="before")
+    @classmethod
+    def validate_unmixing_model(cls, v: Any) -> SpectralUnmixingModel:
+        return normalize_unmixing_model(v)
+
+class SpectralUnmixingResponse(BaseModel):
+    """Response payload containing spectral unmixing abundance results."""
+    request_id: str = Field(..., description="Unique unmixing request identifier")
+    aoi_name: str = Field(..., description="Area of interest label")
+    unmixing_model: SpectralUnmixingModel = Field(..., description="Applied unmixing algorithm")
+    quality_summary: UnmixingQualitySummary = Field(..., description="Quantitative certification summary")
+    abundance_points: List[UnmixingAbundancePoint] = Field(default_factory=list, description="Evaluated sub-pixel abundance sample points")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for Leaflet abundance layer")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Execution timestamp")
+    status: str = Field(default="success", description="Execution status")
+
+class SpectralUnmixingTileRequestParams(BaseModel):
+    """Query parameters for dynamic XYZ spectral unmixing tile rendering."""
+    z: Optional[int] = Field(default=None, ge=0, le=24, description="Tile zoom level (0-24)")
+    x: Optional[int] = Field(default=None, ge=0, description="Tile column X index")
+    y: Optional[int] = Field(default=None, ge=0, description="Tile row Y index")
+    model: SpectralUnmixingModel = Field(default=SpectralUnmixingModel.FCLS_CONSTRAINED, description="Unmixing algorithm")
+    metric: SpectralUnmixingTileMetric = Field(default=SpectralUnmixingTileMetric.FRACTIONAL_VEG_COVER, description="Visualization abundance metric")
+    colormap: Optional[str] = Field(default=None, description="Colormap palette")
+    rescale: Optional[str] = Field(default=None, description="Rescale range min,max")
+    min_fvc: Optional[float] = Field(default=None, description="FVC minimum filter")
+    max_rmse: Optional[float] = Field(default=None, description="RMSE maximum ceiling filter")
+
+class SpectralUnmixingModelsResponse(BaseModel):
+    """Capabilities response describing supported unmixing models, benchmark scenes, and endmembers."""
+    models: Dict[str, Any] = Field(..., description="Supported unmixing models and literature citations")
+    metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Benchmark research unmixing test sites")
+    endmembers: Dict[str, Any] = Field(..., description="Standard endmember spectral library")
+    dominance_classes: Dict[str, Any] = Field(..., description="Sub-pixel land cover dominance classifications")

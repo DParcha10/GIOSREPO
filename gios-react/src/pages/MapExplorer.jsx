@@ -213,6 +213,9 @@ import PhenologySeasonalityModal from '../components/PhenologySeasonalityModal';
 import SpectralSharpeningModal from '../components/SpectralSharpeningModal';
 import CrossSensorCalibrationModal from '../components/CrossSensorCalibrationModal';
 import TrendAnalysisModal from '../components/TrendAnalysisModal';
+import MultimodalFusionModal from '../components/MultimodalFusionModal';
+import InSARDeformationModal from '../components/InSARDeformationModal';
+import SpectralUnmixingModal from '../components/SpectralUnmixingModal';
 import BYOCStorageModal from '../components/BYOCStorageModal';
 import PointCloudCHMModal from '../components/PointCloudCHMModal';
 import CoRegistrationModal from '../components/CoRegistrationModal';
@@ -383,7 +386,18 @@ import {
   buildTrendTileUrlTemplate,
   TrendModel,
   TrendTileMetric,
-  TrendSignificanceClass
+  TrendSignificanceClass,
+  buildMultimodalTileUrlTemplate,
+  MultimodalAlignmentModel,
+  MultimodalTileMetric,
+  MultimodalSensorPair,
+  buildInSARSBASTileUrlTemplate,
+  SBASInversionModel,
+  InSARSBASTileMetric,
+  buildSpectralUnmixingTileUrlTemplate,
+  SpectralUnmixingModel,
+  SpectralUnmixingTileMetric,
+  SubPixelDominanceClass
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -1001,6 +1015,72 @@ export default function MapExplorer() {
     significance_class: TrendSignificanceClass?.SIGNIFICANT_BROWNING || 'significant_browning',
     annual_change_percent: -2.58
   });
+
+  // Cycle v2.5.40 Multimodal SAR + Optical Sensor Fusion & Feature-Tracking State (Task T-302)
+  const [multimodalModalOpen, setMultimodalModalOpen] = useState(false);
+  const [showMultimodalTileLayer, setShowMultimodalTileLayer] = useState(false);
+  const [multimodalSceneKey, setMultimodalSceneKey] = useState('JAKOBSHAVN_ISBRAE_GLACIER_SURGE_2026');
+  const [multimodalSceneName, setMultimodalSceneName] = useState('Jakobshavn Isbræ Greenland Glacier Ice Stream');
+  const [multimodalModel, setMultimodalModel] = useState(MultimodalAlignmentModel?.NCC_FREQUENCY_DOMAIN || 'ncc_frequency_domain');
+  const [multimodalMetric, setMultimodalMetric] = useState(MultimodalTileMetric?.VELOCITY_MAGNITUDE || 'velocity_magnitude');
+  const [multimodalSensorPair, setMultimodalSensorPair] = useState(MultimodalSensorPair?.S1_RTC_S2_L2A || 's1_rtc_s2_l2a');
+  const [multimodalColormap, setMultimodalColormap] = useState('turbo');
+  const [multimodalOpacity, setMultimodalOpacity] = useState(0.85);
+  const [multimodalTileUrl, setMultimodalTileUrl] = useState('');
+  const [multimodalSummary, setMultimodalSummary] = useState({
+    mean_velocity_m_yr: 8450.0,
+    peak_velocity_m_yr: 11200.0,
+    dominant_azimuth_deg: 268.5,
+    mean_snr: 8.4,
+    valid_vector_ratio: 96.0,
+    hazard_tier: 'rapid_displacement'
+  });
+  const [multimodalVectorPoints, setMultimodalVectorPoints] = useState([]);
+
+  // Cycle v2.5.41 InSAR SBAS Multi-Temporal Ground Deformation State (Task T-308)
+  const [insarSbasModalOpen, setInsarSbasModalOpen] = useState(false);
+  const [showInsarSbasTileLayer, setShowInsarSbasTileLayer] = useState(false);
+  const [insarSbasSceneKey, setInsarSbasSceneKey] = useState('CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026');
+  const [insarSbasSceneName, setInsarSbasSceneName] = useState('Tulare Basin Aquifer Overdraft & Deep Subsidence');
+  const [insarSbasModel, setInsarSbasModel] = useState(SBASInversionModel?.SVD_LEAST_NORM || 'svd_least_norm');
+  const [insarSbasMetric, setInsarSbasMetric] = useState(InSARSBASTileMetric?.MEAN_VELOCITY_MM_YR || 'mean_velocity_mm_yr');
+  const [insarSbasColormap, setInsarSbasColormap] = useState('spectral');
+  const [insarSbasOpacity, setInsarSbasOpacity] = useState(0.85);
+  const [insarSbasTileUrl, setInsarSbasTileUrl] = useState('');
+  const [insarSbasSummary, setInsarSbasSummary] = useState({
+    mean_velocity_mm_yr: -165.0,
+    peak_velocity_mm_yr: -210.0,
+    mean_coherence: 0.74,
+    mean_da: 0.18,
+    total_psc_count: 16,
+    dominant_hazard_tier: 'critical_subsidence'
+  });
+  const [insarSbasPscPoints, setInsarSbasPscPoints] = useState([]);
+
+  // Cycle v2.5.42 Spectral Unmixing (LSMA / FCLS) Sub-Pixel Endmember State (Task T-314)
+  const [unmixingModalOpen, setUnmixingModalOpen] = useState(false);
+  const [showUnmixingTileLayer, setShowUnmixingTileLayer] = useState(false);
+  const [unmixingSceneKey, setUnmixingSceneKey] = useState('MORENCI_MINE_TAILINGS_ARIZONA_2026');
+  const [unmixingSceneName, setUnmixingSceneName] = useState('Morenci Copper Mine Tailings Impoundment, Arizona');
+  const [unmixingModel, setUnmixingModel] = useState(SpectralUnmixingModel?.FCLS_CONSTRAINED || 'fcls_constrained');
+  const [unmixingMetric, setUnmixingMetric] = useState(SpectralUnmixingTileMetric?.FRACTIONAL_VEG_COVER || 'fractional_veg_cover');
+  const [unmixingColormap, setUnmixingColormap] = useState('viridis');
+  const [unmixingOpacity, setUnmixingOpacity] = useState(0.85);
+  const [unmixingMinFvc, setUnmixingMinFvc] = useState(0.0);
+  const [unmixingMaxRmse, setUnmixingMaxRmse] = useState(0.05);
+  const [unmixingTileUrl, setUnmixingTileUrl] = useState('');
+  const [unmixingSummary, setUnmixingSummary] = useState({
+    mean_rmse: 0.0084,
+    mean_fvc: 0.184,
+    mean_fraction_gv: 0.162,
+    mean_fraction_npv: 0.215,
+    mean_fraction_soil: 0.541,
+    mean_fraction_shade: 0.082,
+    mean_stri: 0.284,
+    quality_tier: 'EXCELLENT',
+    dominant_class: 'bare_soil_tailings'
+  });
+  const [unmixingSamplePoints, setUnmixingSamplePoints] = useState([]);
 
   // T-79 & T-81 Dense Point Cloud Filtering & Canopy Height Model (CHM) State
   const [pointCloudModalOpen, setPointCloudModalOpen] = useState(false);
@@ -5225,6 +5305,138 @@ export default function MapExplorer() {
                 zIndex={455}
               />
             )}
+
+            {/* Cycle v2.5.40 Multimodal SAR + Optical Dynamic Velocity TileLayer (Task T-302) */}
+            {showMultimodalTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`multimodal-tile-${multimodalSceneKey}-${multimodalModel}-${multimodalMetric}-${multimodalSensorPair}-${multimodalColormap}-${multimodalOpacity}`}
+                url={multimodalTileUrl || buildMultimodalTileUrlTemplate({
+                  model: multimodalModel,
+                  metric: multimodalMetric,
+                  colormap: multimodalColormap,
+                  pair: multimodalSensorPair
+                })}
+                opacity={multimodalOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={456}
+              />
+            )}
+
+            {/* Cycle v2.5.41 InSAR SBAS Ground Deformation TileLayer (Task T-308) */}
+            {showInsarSbasTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`insar-sbas-tile-${insarSbasSceneKey}-${insarSbasModel}-${insarSbasMetric}-${insarSbasColormap}-${insarSbasOpacity}`}
+                url={insarSbasTileUrl || buildInSARSBASTileUrlTemplate({
+                  model: insarSbasModel,
+                  metric: insarSbasMetric,
+                  colormap: insarSbasColormap
+                })}
+                opacity={insarSbasOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={457}
+              />
+            )}
+
+            {/* Cycle v2.5.42 Spectral Unmixing Dynamic TileLayer (Task T-314) */}
+            {showUnmixingTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`unmixing-tile-${unmixingSceneKey}-${unmixingModel}-${unmixingMetric}-${unmixingColormap}-${unmixingOpacity}-${unmixingMinFvc}-${unmixingMaxRmse}`}
+                url={unmixingTileUrl || buildSpectralUnmixingTileUrlTemplate({
+                  model: unmixingModel,
+                  metric: unmixingMetric,
+                  colormap: unmixingColormap,
+                  minFvc: unmixingMinFvc > 0 ? unmixingMinFvc : null,
+                  maxRmse: unmixingMaxRmse < 0.1 ? unmixingMaxRmse : null
+                })}
+                opacity={unmixingOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={458}
+              />
+            )}
+
+            {/* Cycle v2.5.40 Multimodal Displacement Vector Overlays */}
+            {showMultimodalTileLayer && !curtainActive && multimodalVectorPoints?.map((pt) => (
+              <CircleMarker
+                key={`mm-vec-${pt.id}`}
+                center={[pt.lat, pt.lon]}
+                radius={4}
+                pathOptions={{
+                  color: pt.hazardTier === 'rapid_displacement' ? '#f43f5e' : '#14b8a6',
+                  fillColor: pt.hazardTier === 'rapid_displacement' ? '#f43f5e' : '#14b8a6',
+                  fillOpacity: 0.8,
+                  weight: 1
+                }}
+              >
+                <Popup>
+                  <div className="text-xs font-mono">
+                    <div className="font-bold text-teal-400">Vector #{pt.id}</div>
+                    <div>Speed: {pt.velocityMagnitudeMYr} m/yr</div>
+                    <div>Azimuth: {pt.azimuthDeg}°</div>
+                    <div>SNR: {pt.snr}</div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            ))}
+
+            {/* Cycle v2.5.41 InSAR SBAS Persistent Scatterer Targets */}
+            {showInsarSbasTileLayer && !curtainActive && insarSbasPscPoints?.map((psc) => (
+              <CircleMarker
+                key={`insar-psc-${psc.id}`}
+                center={[psc.lat, psc.lon]}
+                radius={4}
+                pathOptions={{
+                  color: psc.meanVelocityMmYr <= -25 ? '#dc2626' : '#3b82f6',
+                  fillColor: psc.meanVelocityMmYr <= -25 ? '#dc2626' : '#3b82f6',
+                  fillOpacity: 0.8,
+                  weight: 1
+                }}
+              >
+                <Popup>
+                  <div className="text-xs font-mono">
+                    <div className="font-bold text-blue-400">PSC Target #{psc.id}</div>
+                    <div>Velocity: {psc.meanVelocityMmYr} mm/yr</div>
+                    <div>Coherence (γ): {psc.temporalCoherence}</div>
+                    <div>Dispersion (D_A): {psc.amplitudeDispersion}</div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            ))}
+
+            {/* Cycle v2.5.42 Spectral Unmixing Sub-Pixel Sample Points (Task T-314) */}
+            {showUnmixingTileLayer && !curtainActive && unmixingSamplePoints?.map((pt) => (
+              <CircleMarker
+                key={`unmix-pt-${pt.id}`}
+                center={[pt.lat, pt.lon]}
+                radius={4}
+                pathOptions={{
+                  color: pt.dominance === 'green_canopy_dominant' ? '#10b981' :
+                         pt.dominance === 'dry_residue_dominant' ? '#f59e0b' :
+                         pt.dominance === 'bare_soil_tailings' ? '#ef4444' : '#06b6d4',
+                  fillColor: pt.dominance === 'green_canopy_dominant' ? '#10b981' :
+                             pt.dominance === 'dry_residue_dominant' ? '#f59e0b' :
+                             pt.dominance === 'bare_soil_tailings' ? '#ef4444' : '#06b6d4',
+                  fillOpacity: 0.85,
+                  weight: 1
+                }}
+              >
+                <Popup>
+                  <div className="text-xs font-mono">
+                    <div className="font-bold text-emerald-400">Sample #{pt.id}</div>
+                    <div>GV: {(pt.fraction_gv * 100).toFixed(1)}% | NPV: {(pt.fraction_npv * 100).toFixed(1)}%</div>
+                    <div>Soil: {(pt.fraction_soil * 100).toFixed(1)}% | Shade: {(pt.fraction_shade * 100).toFixed(1)}%</div>
+                    <div>Norm FVC: {(pt.fvc * 100).toFixed(1)}% | STRI: {(pt.stri * 100).toFixed(1)}%</div>
+                    <div>RMSE: {pt.rmse.toFixed(4)} | ∑ f_k: {pt.sum_fractions.toFixed(4)}</div>
+                    <div className="text-zinc-400 text-[10px] mt-0.5 uppercase">{pt.dominance.replace(/_/g, ' ')}</div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            ))}
 
             {/* T-224: MGRS Granule Footprint Boundaries Overlay */}
             {showMosaicLayer && mosaicShowFootprints && mosaicGranuleIds.map((gid) => {
@@ -10636,6 +10848,317 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* Cycle v2.5.40 Floating Multimodal Sensor Fusion HUD Card (Task T-302) */}
+          {showMultimodalTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-teal-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[740px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Compass className="w-4 h-4 text-teal-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[210px]" title={multimodalSceneName}>
+                    {multimodalSceneName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                    {multimodalSensorPair.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    {multimodalModel.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                    {(multimodalSummary?.hazard_tier || 'rapid_displacement').replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setMultimodalModalOpen(true)}
+                    className="px-2 py-1 bg-teal-950 hover:bg-teal-900 border border-teal-500/40 text-teal-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowMultimodalTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Multimodal Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">Mean Velocity:</span>
+                  <span className="font-bold text-teal-400">
+                    {multimodalSummary?.mean_velocity_m_yr?.toLocaleString() ?? 8450} m/yr
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Peak:</span>
+                  <span className="font-bold text-rose-400">
+                    {multimodalSummary?.peak_velocity_m_yr?.toLocaleString() ?? 11200} m/yr
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Azimuth:</span>
+                  <span className="font-bold text-amber-300">
+                    {multimodalSummary?.dominant_azimuth_deg ?? 268.5}°
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">SNR:</span>
+                  <span className="font-bold text-purple-300">
+                    {multimodalSummary?.mean_snr ?? 8.4}
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Valid:</span>
+                  <span className="font-bold text-cyan-300">
+                    {multimodalSummary?.valid_vector_ratio ?? 96}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Metric:</span>
+                  {['velocity_magnitude', 'easting_displacement', 'northing_displacement', 'correlation_peak', 'signal_to_noise_ratio'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setMultimodalMetric(m)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        multimodalMetric === m
+                          ? 'bg-teal-500/30 text-teal-300 border border-teal-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {m.replace(/_/g, ' ')}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={multimodalOpacity}
+                      onChange={(e) => setMultimodalOpacity(parseFloat(e.target.value))}
+                      className="w-16 accent-teal-400 cursor-pointer"
+                    />
+                    <span className="text-teal-400 font-bold">{Math.round(multimodalOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cycle v2.5.41 Floating InSAR SBAS Ground Deformation HUD Card (Task T-308) */}
+          {showInsarSbasTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-blue-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[740px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-blue-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[210px]" title={insarSbasSceneName}>
+                    {insarSbasSceneName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    {insarSbasModel.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    {insarSbasMetric.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-red-500/20 text-red-300 border border-red-500/40">
+                    {(insarSbasSummary?.dominant_hazard_tier || 'critical_subsidence').replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setInsarSbasModalOpen(true)}
+                    className="px-2 py-1 bg-blue-950 hover:bg-blue-900 border border-blue-500/40 text-blue-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowInsarSbasTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss InSAR Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">Target Velocity:</span>
+                  <span className="font-bold text-rose-400">
+                    {insarSbasSummary?.mean_velocity_mm_yr ?? -165.0} mm/yr
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Peak:</span>
+                  <span className="font-bold text-red-400">
+                    {insarSbasSummary?.peak_velocity_mm_yr ?? -210.0} mm/yr
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Coherence:</span>
+                  <span className="font-bold text-emerald-400">
+                    {insarSbasSummary?.mean_coherence ?? 0.74}
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Dispersion D_A:</span>
+                  <span className="font-bold text-purple-300">
+                    {insarSbasSummary?.mean_da ?? 0.18}
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">PSCs:</span>
+                  <span className="font-bold text-blue-300">
+                    {insarSbasSummary?.total_psc_count ?? 16} targets
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Metric:</span>
+                  {['mean_velocity_mm_yr', 'cumulative_displacement_mm', 'temporal_coherence', 'amplitude_dispersion', 'velocity_uncertainty'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setInsarSbasMetric(m)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        insarSbasMetric === m
+                          ? 'bg-blue-500/30 text-blue-300 border border-blue-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {m.replace(/_/g, ' ')}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={insarSbasOpacity}
+                      onChange={(e) => setInsarSbasOpacity(parseFloat(e.target.value))}
+                      className="w-16 accent-blue-400 cursor-pointer"
+                    />
+                    <span className="text-blue-400 font-bold">{Math.round(insarSbasOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cycle v2.5.42 Floating Spectral Unmixing Abundance HUD Card (Task T-314) */}
+          {showUnmixingTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-emerald-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[760px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <PieChart className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[220px]" title={unmixingSceneName}>
+                    {unmixingSceneName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {unmixingModel.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    {unmixingMetric.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                    {(unmixingSummary?.dominant_class || 'bare_soil_tailings').replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setUnmixingModalOpen(true)}
+                    className="px-2 py-1 bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowUnmixingTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Unmixing Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">FVC:</span>
+                  <span className="font-bold text-emerald-400">
+                    {Math.round((unmixingSummary?.mean_fvc ?? 0.184) * 100)}%
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">STRI:</span>
+                  <span className="font-bold text-amber-400">
+                    {Math.round((unmixingSummary?.mean_stri ?? 0.284) * 100)}%
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">f_GV:</span>
+                  <span className="font-bold text-emerald-300">
+                    {Math.round((unmixingSummary?.mean_fraction_gv ?? 0.162) * 100)}%
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">f_NPV:</span>
+                  <span className="font-bold text-amber-300">
+                    {Math.round((unmixingSummary?.mean_fraction_npv ?? 0.215) * 100)}%
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">f_Soil:</span>
+                  <span className="font-bold text-rose-300">
+                    {Math.round((unmixingSummary?.mean_fraction_soil ?? 0.541) * 100)}%
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">RMSE:</span>
+                  <span className="font-bold text-purple-300">
+                    {(unmixingSummary?.mean_rmse ?? 0.0084).toFixed(4)}
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Tier:</span>
+                  <span className="font-bold text-emerald-400">
+                    {unmixingSummary?.quality_tier ?? 'EXCELLENT'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Metric:</span>
+                  {['fractional_veg_cover', 'fraction_gv', 'fraction_npv', 'fraction_soil', 'soil_tillage_residue_index', 'unmixing_rmse', 'abundance_rgb_composite'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setUnmixingMetric(m)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        unmixingMetric === m
+                          ? 'bg-emerald-500/30 text-emerald-300 border border-emerald-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {m === 'fractional_veg_cover' ? 'FVC' :
+                       m === 'soil_tillage_residue_index' ? 'STRI' :
+                       m === 'abundance_rgb_composite' ? 'RGB' :
+                       m.replace(/fraction_/g, '').replace(/_/g, ' ')}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={unmixingOpacity}
+                      onChange={(e) => setUnmixingOpacity(parseFloat(e.target.value))}
+                      className="w-16 accent-emerald-400 cursor-pointer"
+                    />
+                    <span className="text-emerald-400 font-bold">{Math.round(unmixingOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -11669,6 +12192,42 @@ export default function MapExplorer() {
               >
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Trend Studio (v2.5.39)</span>
+              </button>
+
+              {/* Cycle v2.5.40 Multimodal Sensor Fusion Studio Shortcut (Task T-302) */}
+              <button
+                onClick={() => setMultimodalModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-teal-300 hover:text-white hover:bg-teal-500/20 border border-teal-500/30 ${
+                  multimodalModalOpen || showMultimodalTileLayer ? 'bg-teal-600 text-white font-extrabold shadow-[0_0_12px_rgba(20,184,166,0.6)]' : ''
+                }`}
+                title="Multimodal SAR-Optical Sensor Fusion Studio, Sub-Pixel Displacement Vectors, Velocity Heatmap & Dynamic Tiles (Cycle v2.5.40)"
+              >
+                <Compass className="w-3.5 h-3.5 text-teal-400" />
+                <span>Multimodal Studio (v2.5.40)</span>
+              </button>
+
+              {/* Cycle v2.5.41 InSAR SBAS Ground Deformation Studio Shortcut (Task T-308) */}
+              <button
+                onClick={() => setInsarSbasModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-blue-300 hover:text-white hover:bg-blue-500/20 border border-blue-500/30 ${
+                  insarSbasModalOpen || showInsarSbasTileLayer ? 'bg-blue-600 text-white font-extrabold shadow-[0_0_12px_rgba(59,130,246,0.6)]' : ''
+                }`}
+                title="InSAR SBAS Ground Deformation Studio, Persistent Scatterer Point Cloud, Multi-Year Millimeter Subsidence & SVD Inversion (Cycle v2.5.41)"
+              >
+                <Activity className="w-3.5 h-3.5 text-blue-400" />
+                <span>InSAR SBAS (v2.5.41)</span>
+              </button>
+
+              {/* Cycle v2.5.42 Spectral Unmixing (LSMA / FCLS) Studio Shortcut (Task T-314) */}
+              <button
+                onClick={() => setUnmixingModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-emerald-300 hover:text-white hover:bg-emerald-500/20 border border-emerald-500/30 ${
+                  unmixingModalOpen || showUnmixingTileLayer ? 'bg-emerald-600 text-white font-extrabold shadow-[0_0_12px_rgba(16,185,129,0.6)]' : ''
+                }`}
+                title="Linear Spectral Mixture Analysis (LSMA) & FCLS Sub-Pixel Endmember Fraction Inversion Studio (Cycle v2.5.42)"
+              >
+                <PieChart className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Spectral Unmixing (v2.5.42)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -23943,6 +24502,117 @@ export default function MapExplorer() {
           if (extra.sceneName) setTrendSceneName(extra.sceneName);
           setShowTrendTileLayer(true);
           setTrendAnalysisModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.40 Multimodal Sensor Fusion Studio Modal (Task T-302) */}
+      <MultimodalFusionModal
+        isOpen={multimodalModalOpen}
+        onClose={() => setMultimodalModalOpen(false)}
+        initialSceneKey={multimodalSceneKey}
+        onApply={(payload) => {
+          setMultimodalSceneKey(payload.sceneKey || 'JAKOBSHAVN_ISBRAE_GLACIER_SURGE_2026');
+          setMultimodalSceneName(payload.sceneName || 'Jakobshavn Isbræ Greenland Glacier Ice Stream');
+          setMultimodalModel(payload.model || 'ncc_frequency_domain');
+          setMultimodalMetric(payload.metric || 'velocity_magnitude');
+          setMultimodalSensorPair(payload.sensorPair || 's1_rtc_s2_l2a');
+          setMultimodalColormap(payload.colormap || 'turbo');
+          setMultimodalOpacity(payload.opacity ?? 0.85);
+          setMultimodalTileUrl(payload.urlTemplate || payload.tileUrl || '');
+          if (payload.summary) {
+            setMultimodalSummary(payload.summary);
+          }
+          if (payload.vectorPoints) {
+            setMultimodalVectorPoints(payload.vectorPoints);
+          }
+          setShowMultimodalTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setMultimodalTileUrl(url);
+          if (extra.model) setMultimodalModel(extra.model);
+          if (extra.metric) setMultimodalMetric(extra.metric);
+          if (extra.sensorPair) setMultimodalSensorPair(extra.sensorPair);
+          if (extra.colormap) setMultimodalColormap(extra.colormap);
+          if (extra.opacity !== undefined) setMultimodalOpacity(extra.opacity);
+          if (extra.summary) setMultimodalSummary(extra.summary);
+          if (extra.vectorPoints) setMultimodalVectorPoints(extra.vectorPoints);
+          if (extra.sceneName) setMultimodalSceneName(extra.sceneName);
+          setShowMultimodalTileLayer(true);
+          setMultimodalModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.41 InSAR SBAS Ground Deformation Studio Modal (Task T-308) */}
+      <InSARDeformationModal
+        isOpen={insarSbasModalOpen}
+        onClose={() => setInsarSbasModalOpen(false)}
+        initialSceneKey={insarSbasSceneKey}
+        onApply={(payload) => {
+          setInsarSbasSceneKey(payload.sceneKey || 'CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026');
+          setInsarSbasSceneName(payload.sceneName || 'Tulare Basin Aquifer Overdraft & Deep Subsidence');
+          setInsarSbasModel(payload.model || 'svd_least_norm');
+          setInsarSbasMetric(payload.metric || 'mean_velocity_mm_yr');
+          setInsarSbasColormap(payload.colormap || 'spectral');
+          setInsarSbasOpacity(payload.opacity ?? 0.85);
+          setInsarSbasTileUrl(payload.urlTemplate || payload.tileUrl || '');
+          if (payload.summary) {
+            setInsarSbasSummary(payload.summary);
+          }
+          if (payload.pscPoints) {
+            setInsarSbasPscPoints(payload.pscPoints);
+          }
+          setShowInsarSbasTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setInsarSbasTileUrl(url);
+          if (extra.model) setInsarSbasModel(extra.model);
+          if (extra.metric) setInsarSbasMetric(extra.metric);
+          if (extra.colormap) setInsarSbasColormap(extra.colormap);
+          if (extra.opacity !== undefined) setInsarSbasOpacity(extra.opacity);
+          if (extra.summary) setInsarSbasSummary(extra.summary);
+          if (extra.pscPoints) setInsarSbasPscPoints(extra.pscPoints);
+          if (extra.sceneName) setInsarSbasSceneName(extra.sceneName);
+          setShowInsarSbasTileLayer(true);
+          setInsarSbasModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.42 Spectral Unmixing (LSMA / FCLS) Studio Modal (Task T-314) */}
+      <SpectralUnmixingModal
+        isOpen={unmixingModalOpen}
+        onClose={() => setUnmixingModalOpen(false)}
+        initialSceneKey={unmixingSceneKey}
+        onApply={(payload) => {
+          setUnmixingSceneKey(payload.sceneKey || 'MORENCI_MINE_TAILINGS_ARIZONA_2026');
+          setUnmixingSceneName(payload.sceneName || 'Morenci Copper Mine Tailings Impoundment, Arizona');
+          setUnmixingModel(payload.model || 'fcls_constrained');
+          setUnmixingMetric(payload.metric || 'fractional_veg_cover');
+          setUnmixingColormap(payload.colormap || 'viridis');
+          setUnmixingOpacity(payload.opacity ?? 0.85);
+          setUnmixingMinFvc(payload.minFvc ?? 0.0);
+          setUnmixingMaxRmse(payload.maxRmse ?? 0.05);
+          setUnmixingTileUrl(payload.urlTemplate || payload.tileUrl || '');
+          if (payload.summary) {
+            setUnmixingSummary(payload.summary);
+          }
+          if (payload.abundancePoints) {
+            setUnmixingSamplePoints(payload.abundancePoints);
+          }
+          setShowUnmixingTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setUnmixingTileUrl(url);
+          if (extra.model) setUnmixingModel(extra.model);
+          if (extra.metric) setUnmixingMetric(extra.metric);
+          if (extra.colormap) setUnmixingColormap(extra.colormap);
+          if (extra.opacity !== undefined) setUnmixingOpacity(extra.opacity);
+          if (extra.minFvc !== undefined) setUnmixingMinFvc(extra.minFvc);
+          if (extra.maxRmse !== undefined) setUnmixingMaxRmse(extra.maxRmse);
+          if (extra.summary) setUnmixingSummary(extra.summary);
+          if (extra.abundancePoints) setUnmixingSamplePoints(extra.abundancePoints);
+          if (extra.sceneName) setUnmixingSceneName(extra.sceneName);
+          setShowUnmixingTileLayer(true);
+          setUnmixingModalOpen(false);
         }}
       />
 

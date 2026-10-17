@@ -195,7 +195,19 @@ import {
   calculateSBASNetworkConnectivity,
   classifyDeformationHazardTier,
   classifyPSCStability,
-  buildInSARSBASTileUrlTemplate
+  buildInSARSBASTileUrlTemplate,
+  SpectralUnmixingModel,
+  SpectralUnmixingTileMetric,
+  EndmemberClass,
+  UnmixingQualityTier,
+  SubPixelDominanceClass,
+  UNMIXING_MODEL_CONFIGS,
+  STANDARD_ENDMEMBER_LIBRARY,
+  SUBPIXEL_DOMINANCE_CONFIGS,
+  UNMIXING_BENCHMARK_SCENES,
+  normalizeUnmixingModel,
+  calculateFclsUnmixing,
+  buildSpectralUnmixingTileUrlTemplate
 } from '../config/constants.js';
 
 export {
@@ -4154,6 +4166,103 @@ const demoAdapter = async (config) => {
             phase_closure_conserved: true
           },
           narrative: 'High-confidence InSAR SBAS multi-temporal inversion with <1.0 mm/yr precision.'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/unmixing/models') || url.includes('/analysis/unmixing/models')) {
+        data = {
+          models: UNMIXING_MODEL_CONFIGS,
+          metrics: Object.values(SpectralUnmixingTileMetric),
+          benchmark_scenes: UNMIXING_BENCHMARK_SCENES,
+          endmembers: STANDARD_ENDMEMBER_LIBRARY,
+          dominance_classes: SUBPIXEL_DOMINANCE_CONFIGS
+        };
+      }
+      else if (url.includes('/api/v1/analysis/unmixing/unmix') || url.includes('/analysis/unmixing/unmix')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const aoiName = parsed.aoi_name || 'Morenci Copper Mine Tailings Impoundment, Arizona';
+        const model = normalizeUnmixingModel(parsed.unmixing_model || parsed.model);
+        
+        const baseScene = UNMIXING_BENCHMARK_SCENES.MORENCI_MINE_TAILINGS_ARIZONA_2026;
+        const baseLat = parsed.lat || baseScene.lat;
+        const baseLng = parsed.lng || baseScene.lng;
+        
+        const abundancePoints = [];
+        for (let i = 0; i < 16; i++) {
+          const row = Math.floor(i / 4);
+          const col = i % 4;
+          const pLat = baseLat + (row - 1.5) * 0.003;
+          const pLng = baseLng + (col - 1.5) * 0.003;
+          
+          const unmixed = calculateFclsUnmixing([0.08, 0.11, 0.15, 0.19, 0.32, 0.35, 0.36]);
+          abundancePoints.push({
+            point_id: `PT-${String(i + 1).padStart(3, '0')}`,
+            lat: Math.round(pLat * 1e5) / 1e5,
+            lng: Math.round(pLng * 1e5) / 1e5,
+            fraction_gv: unmixed.fraction_gv,
+            fraction_npv: unmixed.fraction_npv,
+            fraction_soil: unmixed.fraction_soil,
+            fraction_shade: unmixed.fraction_shade,
+            sum_abundances: unmixed.sum_abundances,
+            fvc: unmixed.fvc,
+            stri: unmixed.stri,
+            rmse: unmixed.rmse,
+            dominance: unmixed.dominance,
+            quality_tier: UnmixingQualityTier.EXCELLENT
+          });
+        }
+        
+        data = {
+          request_id: `UNMIX-${Date.now().toString(36).toUpperCase()}`,
+          aoi_name: aoiName,
+          unmixing_model: model,
+          quality_summary: {
+            unmixing_model: model,
+            sample_points_count: abundancePoints.length,
+            mean_rmse: 0.0084,
+            mean_fvc: 0.184,
+            mean_fraction_gv: 0.162,
+            mean_fraction_npv: 0.215,
+            mean_fraction_soil: 0.541,
+            mean_fraction_shade: 0.082,
+            quality_tier: UnmixingQualityTier.EXCELLENT,
+            dominant_class: SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+            quality_checklist: {
+              abundance_non_negativity_satisfied: true,
+              abundance_sum_to_one_satisfied: true,
+              spectral_rmse_within_tolerance: true,
+              endmember_identifiability_verified: true
+            },
+            narrative: 'Fully Constrained Least Squares (FCLS) sub-pixel unmixing completed with RMSE < 0.015 and 100% sum-to-one constraint compliance.'
+          },
+          abundance_points: abundancePoints,
+          tile_url_template: `/api/v1/tiles/unmixing/${model}/{metric}/{z}/{x}/{y}.png`,
+          processed_at: new Date().toISOString(),
+          status: 'success'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/unmixing/evaluate') || url.includes('/analysis/unmixing/evaluate')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const model = normalizeUnmixingModel(parsed.unmixing_model || parsed.model);
+        data = {
+          unmixing_model: model,
+          sample_points_count: 16,
+          mean_rmse: 0.0084,
+          mean_fvc: 0.184,
+          mean_fraction_gv: 0.162,
+          mean_fraction_npv: 0.215,
+          mean_fraction_soil: 0.541,
+          mean_fraction_shade: 0.082,
+          quality_tier: UnmixingQualityTier.EXCELLENT,
+          dominant_class: SubPixelDominanceClass.BARE_SOIL_TAILINGS,
+          quality_checklist: {
+            abundance_non_negativity_satisfied: true,
+            abundance_sum_to_one_satisfied: true,
+            spectral_rmse_within_tolerance: true,
+            endmember_identifiability_verified: true
+          },
+          narrative: 'High-confidence linear spectral unmixing certification with sum-to-one compliance and low residual error.'
         };
       }
       else if (url.includes('/api/v1/analysis/phenology/benchmarks') || url.includes('/analysis/phenology/benchmarks')) {
@@ -9878,6 +9987,48 @@ export const getInSARSBASTileUrlTemplate = (options = {}) => {
   return buildInSARSBASTileUrlTemplate(options);
 };
 
+/**
+ * Fetches available spectral unmixing models, benchmark scenes, and standard endmembers.
+ * 
+ * @returns {Promise<Object>} Unmixing capabilities response
+ */
+export const fetchUnmixingModels = async () => {
+  const response = await giosApi.get('/api/v1/analysis/unmixing/models');
+  return response.data;
+};
+
+/**
+ * Submits a sub-pixel linear spectral mixture analysis request.
+ * 
+ * @param {Object} [params={}] - Unmixing request parameters
+ * @returns {Promise<Object>} Unmixing response with quality summary, abundance points, and tile template
+ */
+export const requestSpectralUnmixing = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/unmixing/unmix', params);
+  return response.data;
+};
+
+/**
+ * Evaluates spectral unmixing quality summary and certification metrics.
+ * 
+ * @param {Object} [params={}] - Evaluation request parameters
+ * @returns {Promise<Object>} Quantitative quality certification summary
+ */
+export const evaluateUnmixingQuality = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/unmixing/evaluate', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for spectral unmixing abundance raster tiles.
+ * 
+ * @param {Object} [options={}] - Options (model, metric, colormap, rescale, minFvc, maxRmse)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getUnmixingTileUrlTemplate = (options = {}) => {
+  return buildSpectralUnmixingTileUrlTemplate(options);
+};
+
 
 export {
   InSARDeformationHazardTier,
@@ -10298,7 +10449,32 @@ export {
   classifyDeformationHazardTier,
   classifyPSCStability,
   buildInSARSBASTileUrl,
-  buildInSARSBASTileUrlTemplate
+  buildInSARSBASTileUrlTemplate,
+  SpectralUnmixingModel,
+  SpectralUnmixingTileMetric,
+  EndmemberClass,
+  UnmixingQualityTier,
+  SubPixelDominanceClass,
+  UNMIXING_MODEL_CONFIGS,
+  STANDARD_ENDMEMBER_LIBRARY,
+  SUBPIXEL_DOMINANCE_CONFIGS,
+  UNMIXING_BENCHMARK_SCENES,
+  normalizeUnmixingModel,
+  normalizeUnmixingMetric,
+  normalizeEndmemberClass,
+  normalizeUnmixingQualityTier,
+  normalizeSubpixelDominance,
+  projectToSimplex,
+  calculateUnmixingRmse,
+  calculateUnmixingFvc,
+  calculateUnmixingFractionalVegCover,
+  calculateShadowNormalizedFvc,
+  calculateSoilTillageResidueIndex,
+  calculateFclsUnmixing,
+  classifyUnmixingQualityRating,
+  classifySubpixelDominance,
+  buildSpectralUnmixingTileUrl,
+  buildSpectralUnmixingTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;

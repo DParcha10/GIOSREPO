@@ -4008,9 +4008,186 @@ class TestGIOSApi(unittest.TestCase):
             self.assertEqual(r.headers.get("content-type"), "image/png")
             self.assertTrue(r.content.startswith(b"\x89PNG\r\n\x1a\n"))
 
+    def test_task_t301_multimodal_feature_tracking_api(self):
+        """Task T-301 / T-304: Verify Multimodal Feature Tracking REST endpoints and dynamic XYZ tiles."""
+        # 1. Models discovery endpoint & aliases
+        for url in ["/api/v1/analysis/multimodal/models", "/api/v1/multimodal/models"]:
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertIn("models", data)
+            self.assertIn("sensor_pairs", data)
+            self.assertIn("supported_metrics", data)
+            self.assertIn("benchmark_scenes", data)
+            self.assertIn("JAKOBSHAVN_ISBRAE_GLACIER_SURGE_2026", data["benchmark_scenes"])
+
+        # 2. Multimodal Tracking POST endpoint & aliases
+        payload = {
+            "aoi_name": "Jakobshavn Isbræ Terminus Flow",
+            "alignment_model": "ncc_frequency_domain",
+            "sensor_pair": "s1_rtc_s2_l2a"
+        }
+        for url in ["/api/v1/analysis/multimodal/track", "/api/v1/multimodal/track"]:
+            res = self.client.post(url, json=payload)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertEqual(data["status"], "success")
+            self.assertEqual(data["alignment_model"], "ncc_frequency_domain")
+            self.assertIn("vector_field", data)
+            self.assertIn("vectors", data["vector_field"])
+            self.assertGreaterEqual(len(data["vector_field"]["vectors"]), 3)
+            self.assertIn("quality_summary", data)
+            self.assertIn("tile_url_template", data)
+
+        # 3. Multimodal Quality Evaluation POST endpoint & aliases
+        for url in ["/api/v1/analysis/multimodal/evaluate", "/api/v1/multimodal/evaluate"]:
+            res = self.client.post(url, json=payload)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertIn("confidence_rating", data)
+            self.assertIn("mean_peak_correlation", data)
+            self.assertIn("mean_snr", data)
+            self.assertIn("dominant_hazard_tier", data)
+
+        # 4. Dynamic XYZ Multimodal Tile Streaming
+        tile_urls = [
+            "/api/v1/tiles/multimodal/ncc_frequency_domain/velocity_magnitude/10/163/395.png",
+            "/api/v1/tiles/multimodal/ncc_frequency_domain/vector_azimuth/10/163/395.png",
+            "/api/v1/tiles/multimodal/ncc_frequency_domain/correlation_snr/10/163/395.png",
+            "/api/v1/tiles/multimodal/10/163/395.png?model=ncc_frequency_domain&metric=velocity_magnitude",
+            "/tiles/multimodal/ncc_frequency_domain/velocity_magnitude/10/163/395.png"
+        ]
+        for t_url in tile_urls:
+            r = self.client.get(t_url)
+            self.assertEqual(r.status_code, 200, f"Failed tile endpoint: {t_url}")
+            self.assertEqual(r.headers.get("content-type"), "image/png")
+            self.assertTrue(r.content.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_task_t307_insar_sbas_api(self):
+        """Task T-307 / T-310: Verify InSAR SBAS Time-Series Inversion REST endpoints and dynamic XYZ tiles."""
+        # 1. Models discovery endpoint & aliases
+        for url in ["/api/v1/analysis/insar-sbas/models", "/api/v1/insar-sbas/models"]:
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertIn("models", data)
+            self.assertIn("metrics", data)
+            self.assertIn("benchmark_scenes", data)
+            self.assertIn("CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026", data["benchmark_scenes"])
+
+        # 2. InSAR SBAS Inversion POST endpoint & aliases
+        payload = {
+            "aoi_name": "Central Valley Tulare Basin Subsidence",
+            "inversion_model": "svd_least_norm"
+        }
+        for url in ["/api/v1/analysis/insar-sbas/invert", "/api/v1/insar-sbas/invert"]:
+            res = self.client.post(url, json=payload)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertEqual(data["status"], "success")
+            self.assertEqual(data["inversion_model"], "svd_least_norm")
+            self.assertIn("quality_summary", data)
+            self.assertIn("psc_points", data)
+            self.assertGreaterEqual(len(data["psc_points"]), 3)
+            self.assertIn("baseline_graph", data)
+            self.assertIn("tile_url_template", data)
+
+        # 3. InSAR SBAS Quality Evaluation POST endpoint & aliases
+        for url in ["/api/v1/analysis/insar-sbas/evaluate", "/api/v1/insar-sbas/evaluate"]:
+            res = self.client.post(url, json=payload)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertIn("stability_rating", data)
+            self.assertIn("mean_velocity_rmse_mm_yr", data)
+            self.assertIn("dominant_hazard_tier", data)
+            self.assertIn("mean_temporal_coherence", data)
+
+        # 4. Dynamic XYZ InSAR SBAS Tile Streaming
+        tile_urls = [
+            "/api/v1/tiles/insar-sbas/svd_least_norm/mean_velocity_mm_yr/10/163/395.png",
+            "/api/v1/tiles/insar-sbas/svd_least_norm/cumulative_displacement_mm/10/163/395.png",
+            "/api/v1/tiles/insar-sbas/svd_least_norm/temporal_coherence/10/163/395.png",
+            "/api/v1/tiles/insar-sbas/10/163/395.png?model=svd_least_norm&metric=mean_velocity_mm_yr",
+            "/tiles/insar-sbas/svd_least_norm/mean_velocity_mm_yr/10/163/395.png"
+        ]
+        for t_url in tile_urls:
+            r = self.client.get(t_url)
+            self.assertEqual(r.status_code, 200, f"Failed tile endpoint: {t_url}")
+            self.assertEqual(r.headers.get("content-type"), "image/png")
+            self.assertTrue(r.content.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_task_t313_spectral_unmixing_api(self):
+        """Task T-313 / T-316: Verify Linear Spectral Mixture Analysis (LSMA) & FCLS REST API endpoints and dynamic XYZ tiles."""
+        # 1. Models discovery endpoint & aliases
+        for url in ["/api/v1/analysis/unmixing/models", "/api/v1/unmixing/models"]:
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertIn("models", data)
+            self.assertIn("metrics", data)
+            self.assertIn("benchmark_scenes", data)
+            self.assertIn("endmembers", data)
+            self.assertIn("dominance_classes", data)
+            self.assertIn("MORENCI_MINE_TAILINGS_ARIZONA_2026", data["benchmark_scenes"])
+
+        # 2. Spectral Unmixing POST endpoint & aliases
+        payload = {
+            "aoi_name": "Morenci Copper Mine Tailings Impoundment, Arizona",
+            "unmixing_model": "fcls_constrained"
+        }
+        for url in ["/api/v1/analysis/unmixing/unmix", "/api/v1/unmixing/unmix"]:
+            res = self.client.post(url, json=payload)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertEqual(data["status"], "success")
+            self.assertEqual(data["unmixing_model"], "fcls_constrained")
+            self.assertIn("quality_summary", data)
+            self.assertIn("abundance_points", data)
+            self.assertEqual(len(data["abundance_points"]), 16)
+            self.assertIn("tile_url_template", data)
+
+            # Validate point properties
+            pt0 = data["abundance_points"][0]
+            self.assertIn("fraction_gv", pt0)
+            self.assertIn("fraction_soil", pt0)
+            self.assertIn("sum_abundances", pt0)
+            self.assertAlmostEqual(pt0["sum_abundances"], 1.0, places=3)
+            self.assertIn("rmse", pt0)
+            self.assertIn("fvc", pt0)
+            self.assertIn("stri", pt0)
+
+        # 3. Spectral Unmixing Quality Evaluation POST endpoint & aliases
+        for url in ["/api/v1/analysis/unmixing/evaluate", "/api/v1/unmixing/evaluate"]:
+            res = self.client.post(url, json=payload)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertIn("quality_tier", data)
+            self.assertIn("mean_rmse", data)
+            self.assertIn("dominant_class", data)
+            self.assertIn("quality_checklist", data)
+            self.assertTrue(data["quality_checklist"].get("abundance_non_negativity_passed", False))
+            self.assertTrue(data["quality_checklist"].get("abundance_sum_to_one_passed", False))
+
+        # 4. Dynamic XYZ Spectral Unmixing Tile Streaming
+        tile_urls = [
+            "/api/v1/tiles/unmixing/fcls_constrained/fraction_gv/12/650/1580.png",
+            "/api/v1/tiles/unmixing/fcls_constrained/fraction_soil/12/650/1580.png",
+            "/api/v1/tiles/unmixing/fcls_constrained/fractional_veg_cover/12/650/1580.png",
+            "/api/v1/tiles/unmixing/fcls_constrained/unmixing_rmse/12/650/1580.png",
+            "/api/v1/tiles/unmixing/fcls_constrained/abundance_rgb_composite/12/650/1580.png",
+            "/api/v1/tiles/unmixing/12/650/1580.png?model=fcls_constrained&metric=fraction_gv",
+            "/tiles/unmixing/fcls_constrained/fraction_gv/12/650/1580.png"
+        ]
+        for t_url in tile_urls:
+            r = self.client.get(t_url)
+            self.assertEqual(r.status_code, 200, f"Failed tile endpoint: {t_url}")
+            self.assertEqual(r.headers.get("content-type"), "image/png")
+            self.assertTrue(r.content.startswith(b"\x89PNG\r\n\x1a\n"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
