@@ -601,5 +601,250 @@ class UnmixingService:
             res[~mask] = 0.0
             return res
 
+    @classmethod
+    def project_matrix_to_simplex(cls, X: np.ndarray) -> np.ndarray:
+        """Projects each row of (N, K) float array onto standard probability simplex Delta^K.
+        
+        Exact sorting-based projection O(K log K) per row (Duchi et al. 2008 / Wang & Carreira-Perpinan 2013).
+        Guarantees sum(f_k) == 1.0 and f_k >= 0 for all rows simultaneously in vectorized NumPy.
+        """
+        n, k = X.shape
+        u = np.sort(X, axis=1)[:, ::-1]
+        cssv = np.cumsum(u, axis=1)
+        j = np.arange(1, k + 1, dtype=X.dtype)
+        cond = u - (cssv - 1.0) / j > 0
+        rho = k - 1 - np.argmax(cond[:, ::-1], axis=1)
+        theta = (cssv[np.arange(n), rho] - 1.0) / (rho + 1.0)
+        return np.maximum(X - theta[:, np.newaxis], 0.0)
+
+    @classmethod
+    def solve_fcls_vectorized(
+        cls,
+        Y: np.ndarray,
+        M_mat: Optional[np.ndarray] = None,
+        max_iter: int = 40
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Vectorized Fully Constrained Least Squares (FCLS) solver for batch (N, B) reflectance pixels.
+        
+        Args:
+            Y: (N, B) float32/float64 array of observed reflectance across B bands.
+            M_mat: Optional (B, K) design matrix. If None, uses standard 4-endmember library.
+            max_iter: Maximum Nesterov-accelerated FISTA gradient descent iterations.
+            
+        Returns:
+            Tuple of:
+                F: (N, K) abundance fractions satisfying ANC (f_k >= 0) and ASC (sum f_k = 1.0).
+                rmse: (N,) root-mean-square reconstruction error array.
+        """
+        if M_mat is None:
+            M_mat, _, _ = cls.get_endmember_matrix()
+
+        N, B = Y.shape
+        B_m, K = M_mat.shape
+        if B != B_m:
+            raise ValueError(f"Observed band count {B} does not match endmember matrix bands {B_m}")
+
+        MTM = M_mat.T @ M_mat  # (K, K)
+        eigvals = np.linalg.eigvalsh(MTM)
+        L = float(eigvals[-1])
+        step = 1.0 / max(L, 0.01)
+
+        MTy = Y @ M_mat  # (N, K)
+
+        F = np.full((N, K), 1.0 / K, dtype=np.float32)
+        Y_acc = np.copy(F)
+        t_val = 1.0
+
+        for _ in range(max_iter):
+            grad = Y_acc @ MTM - MTy
+            F_next = cls.project_matrix_to_simplex(Y_acc - step * grad)
+            t_next = (1.0 + np.sqrt(1.0 + 4.0 * t_val * t_val)) / 2.0
+            beta = (t_val - 1.0) / t_next
+            Y_acc = F_next + beta * (F_next - F)
+            F = F_next
+            t_val = t_next
+
+        Y_modeled = F @ M_mat.T
+        rmse = np.sqrt(np.mean((Y - Y_modeled) ** 2, axis=1)).astype(np.float32)
+        return F.astype(np.float32), rmse
+
+    def unmix_raster_cube(
+        self,
+        cube: Union[np.ndarray, Any, Dict[str, np.ndarray]],
+        bands: Optional[List[str]] = None,
+        model: Union[str, SpectralUnmixingModel] = SpectralUnmixingModel.FCLS_CONSTRAINED,
+        chunk_size: int = 128,
+        endmember_library: Optional[Dict[str, Dict[str, float]]] = None
+    ) -> Dict[str, np.ndarray]:
+        """High-performance, memory-conscious raster unmixing for large multi-spectral Landsat and Sentinel-2 scenes.
+        
+        Processes in spatial chunks (e.g. 128x128 pixels) to keep memory footprint bounded (< 50MB per chunk),
+        proactively calling gc.collect() between operations.
+        
+        Args:
+            cube: Input 3D array (B, H, W) or (H, W, B), or xr.Dataset / dictionary of 2D band arrays.
+            bands: List of band identifiers. Defaults to ORDERED_BANDS.
+            model: Spectral unmixing model.
+            chunk_size: Spatial tile block size for memory conservation.
+            endmember_library: Optional custom endmember dictionary.
+            
+        Returns:
+            Dictionary containing 2D float32 abundance maps:
+                fraction_gv, fraction_npv, fraction_soil, fraction_shade,
+                fractional_veg_cover, unmixing_rmse, soil_tillage_residue_index,
+                dominance_map
+        """
+        b_keys = bands or ORDERED_BANDS
+        M_mat, em_keys, _ = self.get_endmember_matrix(endmember_library, bands=b_keys)
+
+        # 1. Extract 3D float32 array (B, H, W)
+        if hasattr(cube, "data_vars"):  # xr.Dataset
+            band_arrays = []
+            for b in b_keys:
+                if b in cube:
+                    arr = cube[b].values.astype(np.float32)
+                elif b == "nir_narrow" and "B8A" in cube:
+                    arr = cube["B8A"].values.astype(np.float32)
+                elif b == "nir_narrow" and "B08" in cube:
+                    arr = cube["B08"].values.astype(np.float32)
+                elif b == "nir_narrow" and "nir08" in cube:
+                    arr = cube["nir08"].values.astype(np.float32)
+                elif b == "swir_1" and "B11" in cube:
+                    arr = cube["B11"].values.astype(np.float32)
+                elif b == "swir_1" and "swir16" in cube:
+                    arr = cube["swir16"].values.astype(np.float32)
+                elif b == "swir_2" and "B12" in cube:
+                    arr = cube["B12"].values.astype(np.float32)
+                elif b == "swir_2" and "swir22" in cube:
+                    arr = cube["swir22"].values.astype(np.float32)
+                else:
+                    first_var = list(cube.data_vars.keys())[0]
+                    arr = np.full_like(cube[first_var].values, 0.10, dtype=np.float32)
+                band_arrays.append(arr)
+            raster_3d = np.stack(band_arrays, axis=0)
+        elif isinstance(cube, dict):
+            band_arrays = []
+            for b in b_keys:
+                if b in cube:
+                    band_arrays.append(np.asarray(cube[b], dtype=np.float32))
+                else:
+                    first_arr = next(iter(cube.values()))
+                    band_arrays.append(np.full_like(first_arr, 0.10, dtype=np.float32))
+            raster_3d = np.stack(band_arrays, axis=0)
+        else:
+            raster_3d = np.asarray(cube, dtype=np.float32)
+            if raster_3d.ndim == 3 and raster_3d.shape[2] == len(b_keys):
+                raster_3d = np.transpose(raster_3d, (2, 0, 1))
+
+        B_dim, H, W = raster_3d.shape
+
+        # Scale down digital numbers if in INT16 / reflectance * 10000 format
+        if np.nanmax(raster_3d) > 2.0:
+            raster_3d = raster_3d / 10000.0
+        raster_3d = np.clip(raster_3d, 0.0, 1.0)
+
+        # Allocate output grids
+        f_gv = np.zeros((H, W), dtype=np.float32)
+        f_npv = np.zeros((H, W), dtype=np.float32)
+        f_soil = np.zeros((H, W), dtype=np.float32)
+        f_shade = np.zeros((H, W), dtype=np.float32)
+        rmse_grid = np.zeros((H, W), dtype=np.float32)
+
+        # 2. Chunked processing along spatial blocks
+        for r_start in range(0, H, chunk_size):
+            r_end = min(H, r_start + chunk_size)
+            for c_start in range(0, W, chunk_size):
+                c_end = min(W, c_start + chunk_size)
+                
+                chunk = raster_3d[:, r_start:r_end, c_start:c_end]
+                ch_h = r_end - r_start
+                ch_w = c_end - c_start
+                n_pixels = ch_h * ch_w
+
+                Y_chunk = np.transpose(chunk, (1, 2, 0)).reshape((n_pixels, B_dim))
+                F_chunk, rmse_chunk = self.solve_fcls_vectorized(Y_chunk, M_mat)
+
+                f_gv[r_start:r_end, c_start:c_end] = F_chunk[:, 0].reshape((ch_h, ch_w))
+                f_npv[r_start:r_end, c_start:c_end] = F_chunk[:, 1].reshape((ch_h, ch_w))
+                f_soil[r_start:r_end, c_start:c_end] = F_chunk[:, 2].reshape((ch_h, ch_w))
+                f_shade[r_start:r_end, c_start:c_end] = F_chunk[:, 3].reshape((ch_h, ch_w))
+                rmse_grid[r_start:r_end, c_start:c_end] = rmse_chunk.reshape((ch_h, ch_w))
+
+                del chunk, Y_chunk, F_chunk, rmse_chunk
+
+            gc.collect()
+
+        # 3. Derived biophysical indices
+        denom_fvc = np.maximum(0.05, 1.0 - f_shade)
+        fvc_grid = np.clip(f_gv / denom_fvc, 0.0, 1.0).astype(np.float32)
+
+        denom_stri = np.maximum(0.01, f_npv + f_soil)
+        stri_grid = np.clip(f_npv / denom_stri, 0.0, 1.0).astype(np.float32)
+
+        dom_stack = np.stack([f_gv, f_npv, f_soil, f_shade], axis=0)
+        dominance_map = np.argmax(dom_stack, axis=0).astype(np.uint8)
+
+        del raster_3d, dom_stack
+        gc.collect()
+
+        return {
+            "fraction_gv": f_gv,
+            "fraction_npv": f_npv,
+            "fraction_soil": f_soil,
+            "fraction_shade": f_shade,
+            "fractional_veg_cover": fvc_grid,
+            "unmixing_rmse": rmse_grid,
+            "soil_tillage_residue_index": stri_grid,
+            "dominance_map": dominance_map
+        }
+
+    def ingest_and_unmix_scene(
+        self,
+        scene_id: Optional[str] = None,
+        aoi_name: Optional[str] = None,
+        collection: str = "sentinel-2-l2a",
+        bbox: Optional[Any] = None,
+        model: Union[str, SpectralUnmixingModel] = SpectralUnmixingModel.FCLS_CONSTRAINED,
+        grid_size: int = 256
+    ) -> Dict[str, Any]:
+        """Ingests Sentinel-2 or Landsat-8/9 scene via DataAcquisitionService and executes full-scene unmixing."""
+        from app.services.data_acquisition import data_acquisition_service
+
+        ds, meta = data_acquisition_service.load_unmixing_data_cube(
+            scene_id=scene_id,
+            aoi_name=aoi_name,
+            collection=collection,
+            bbox=bbox,
+            grid_size=grid_size
+        )
+
+        unmixed = self.unmix_raster_cube(ds, model=model)
+
+        mean_gv = float(np.mean(unmixed["fraction_gv"]))
+        mean_npv = float(np.mean(unmixed["fraction_npv"]))
+        mean_soil = float(np.mean(unmixed["fraction_soil"]))
+        mean_shade = float(np.mean(unmixed["fraction_shade"]))
+        mean_rmse = float(np.mean(unmixed["unmixing_rmse"]))
+        mean_fvc = float(np.mean(unmixed["fractional_veg_cover"]))
+
+        dom_class = classify_subpixel_dominance(mean_gv, mean_npv, mean_soil, mean_shade)
+        q_tier = classify_unmixing_quality_rating(mean_rmse, mean_gv + mean_npv + mean_soil + mean_shade)
+
+        return {
+            "metadata": meta,
+            "unmixing_model": normalize_unmixing_model(model).value,
+            "quality_tier": q_tier.value,
+            "dominant_class": dom_class.value,
+            "mean_fractions": {
+                "gv": round(mean_gv, 4),
+                "npv": round(mean_npv, 4),
+                "soil": round(mean_soil, 4),
+                "shade": round(mean_shade, 4)
+            },
+            "mean_fvc": round(mean_fvc, 4),
+            "mean_rmse": round(mean_rmse, 6),
+            "rasters": unmixed
+        }
+
 
 unmixing_service = UnmixingService()

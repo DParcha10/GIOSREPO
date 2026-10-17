@@ -2782,9 +2782,20 @@ class DataAcquisitionService:
 
         # Resolve benchmark scene if available
         matched_sc = None
-        target_name = (scene_id or aoi_name or "").upper().replace(" ", "_").replace("-", "_")
+        target_name = (scene_id or aoi_name or "").upper().replace(" ", "_").replace("-", "_").replace(",", "")
         for key, sc in UNMIXING_BENCHMARK_SCENES.items():
-            if key in target_name or target_name in key or sc["name"].upper().replace(" ", "_") in target_name:
+            sc_key = key.upper()
+            sc_name = sc.get("name", "").upper().replace(" ", "_").replace("-", "_").replace(",", "")
+            if (
+                sc_key in target_name
+                or target_name in sc_key
+                or sc_name in target_name
+                or target_name in sc_name
+                or ("MORENCI" in target_name and "MORENCI" in sc_key)
+                or ("PARADISE" in target_name and "PARADISE" in sc_key)
+                or ("SAN_JOAQUIN" in target_name and "SAN_JOAQUIN" in sc_key)
+                or ("ATACAMA" in target_name and "ATACAMA" in sc_key)
+            ):
                 matched_sc = sc
                 break
 
@@ -2823,10 +2834,10 @@ class DataAcquisitionService:
         dist_sq = ((xx - min_lon) / max(1e-5, max_lon - min_lon) - 0.5)**2 + ((yy - min_lat) / max(1e-5, max_lat - min_lat) - 0.5)**2
         radial_core = np.exp(-4.5 * dist_sq).astype(np.float32)
 
-        gv_map = np.clip(exp_fracs["gv"] + 0.35 * (1.0 - radial_core) + rng.normal(0.0, 0.02, (ny, nx)), 0.01, 0.95).astype(np.float32)
-        npv_map = np.clip(exp_fracs["npv"] + 0.20 * np.cos(np.pi * (xx - min_lon) / max(1e-5, max_lon - min_lon)) + rng.normal(0.0, 0.02, (ny, nx)), 0.01, 0.95).astype(np.float32)
-        soil_map = np.clip(exp_fracs["soil"] * radial_core + 0.15 * (1.0 - radial_core) + rng.normal(0.0, 0.03, (ny, nx)), 0.01, 0.95).astype(np.float32)
-        shade_map = np.clip(exp_fracs["shade"] + 0.05 * radial_core + rng.normal(0.0, 0.01, (ny, nx)), 0.01, 0.95).astype(np.float32)
+        gv_map = np.clip(exp_fracs["gv"] + 0.08 * (1.0 - radial_core) * np.sin(np.pi * (xx - min_lon) / max(1e-5, max_lon - min_lon)) + rng.normal(0.0, 0.015, (ny, nx)), 0.01, 0.95).astype(np.float32)
+        npv_map = np.clip(exp_fracs["npv"] + 0.06 * np.cos(np.pi * (yy - min_lat) / max(1e-5, max_lat - min_lat)) + rng.normal(0.0, 0.015, (ny, nx)), 0.01, 0.95).astype(np.float32)
+        soil_map = np.clip(exp_fracs["soil"] + 0.08 * (radial_core - 0.4) + rng.normal(0.0, 0.015, (ny, nx)), 0.01, 0.95).astype(np.float32)
+        shade_map = np.clip(exp_fracs["shade"] + 0.03 * radial_core + rng.normal(0.0, 0.01, (ny, nx)), 0.01, 0.95).astype(np.float32)
 
         tot = gv_map + npv_map + soil_map + shade_map
         f_gv = gv_map / tot
