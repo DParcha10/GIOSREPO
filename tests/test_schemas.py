@@ -14144,6 +14144,935 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             "/tiles/cross-calibrated/10/100/200.png"
         )
 
+    def test_task_t294_trend_analysis_schemas_and_contracts(self):
+        """Verify Cycle v2.5.39 Non-Parametric Trend Analysis Schemas, Models & Route Contracts."""
+        from app.models.schemas import (
+            TrendModel,
+            TrendSignificanceClass,
+            TrendTileMetric,
+            TrendTargetIndex,
+            TrendConfidenceRating,
+            TREND_MODEL_CONFIGS,
+            TREND_SIGNIFICANCE_CONFIGS,
+            TREND_BENCHMARK_SCENES,
+            normalize_trend_model,
+            normalize_trend_metric,
+            normalize_trend_target_index,
+            calculate_theil_sen_slope,
+            calculate_mann_kendall_statistics,
+            calculate_yue_pilon_prewhitening,
+            classify_trend_significance,
+            build_trend_tile_url,
+            build_trend_tile_url_template,
+            TrendTrajectoryPoint,
+            TheilSenResult,
+            MannKendallResult,
+            YuePilonResult,
+            TrendMilestoneSummary,
+            TrendAnalysisRequest,
+            TrendAnalysisResponse,
+            TrendTileRequestParams,
+            TrendModelsResponse,
+            API_ROUTE_CONTRACTS,
+            format_api_route
+        )
+
+        # 1. Enums and Canonical Normalizers
+        self.assertEqual(TrendModel.THEIL_SEN_MEDIAN.value, "theil_sen_median")
+        self.assertEqual(TrendModel.MANN_KENDALL_RANK.value, "mann_kendall_rank")
+        self.assertEqual(TrendModel.YUE_PILON_PREWHITENED.value, "yue_pilon_prewhitened")
+        self.assertEqual(TrendModel.LINEAR_OLS.value, "linear_ols")
+
+        self.assertEqual(normalize_trend_model("theil_sen"), TrendModel.THEIL_SEN_MEDIAN)
+        self.assertEqual(normalize_trend_model("theil-sen"), TrendModel.THEIL_SEN_MEDIAN)
+        self.assertEqual(normalize_trend_model("mk"), TrendModel.MANN_KENDALL_RANK)
+        self.assertEqual(normalize_trend_model("mann_kendall"), TrendModel.MANN_KENDALL_RANK)
+        self.assertEqual(normalize_trend_model("tfpw"), TrendModel.YUE_PILON_PREWHITENED)
+        self.assertEqual(normalize_trend_model("yue_pilon"), TrendModel.YUE_PILON_PREWHITENED)
+        self.assertEqual(normalize_trend_model("ols"), TrendModel.LINEAR_OLS)
+        self.assertEqual(normalize_trend_model("linear"), TrendModel.LINEAR_OLS)
+        with self.assertRaises(ValueError):
+            normalize_trend_model("nonexistent_model")
+
+        self.assertEqual(TrendSignificanceClass.SIGNIFICANT_GREENING.value, "significant_greening")
+        self.assertEqual(TrendSignificanceClass.SIGNIFICANT_BROWNING.value, "significant_browning")
+        self.assertEqual(TrendSignificanceClass.MODERATE_GREENING.value, "moderate_greening")
+        self.assertEqual(TrendSignificanceClass.MODERATE_BROWNING.value, "moderate_browning")
+        self.assertEqual(TrendSignificanceClass.STABLE_NO_TREND.value, "stable_no_trend")
+
+        self.assertEqual(TrendTileMetric.THEIL_SEN_SLOPE.value, "theil_sen_slope")
+        self.assertEqual(TrendTileMetric.MANN_KENDALL_ZSCORE.value, "mann_kendall_zscore")
+        self.assertEqual(TrendTileMetric.TREND_SIGNIFICANCE.value, "trend_significance")
+        self.assertEqual(TrendTileMetric.P_VALUE.value, "p_value")
+        self.assertEqual(TrendTileMetric.PREWHITENED_SLOPE.value, "prewhitened_slope")
+        self.assertEqual(TrendTileMetric.TRAJECTORY_VARIANCE.value, "trajectory_variance")
+
+        self.assertEqual(normalize_trend_metric("slope"), TrendTileMetric.THEIL_SEN_SLOPE)
+        self.assertEqual(normalize_trend_metric("theil_sen_slope"), TrendTileMetric.THEIL_SEN_SLOPE)
+        self.assertEqual(normalize_trend_metric("zscore"), TrendTileMetric.MANN_KENDALL_ZSCORE)
+        self.assertEqual(normalize_trend_metric("z_score"), TrendTileMetric.MANN_KENDALL_ZSCORE)
+        self.assertEqual(normalize_trend_metric("significance"), TrendTileMetric.TREND_SIGNIFICANCE)
+        self.assertEqual(normalize_trend_metric("pvalue"), TrendTileMetric.P_VALUE)
+        self.assertEqual(normalize_trend_metric("p_value"), TrendTileMetric.P_VALUE)
+        self.assertEqual(normalize_trend_metric("prewhitened"), TrendTileMetric.PREWHITENED_SLOPE)
+        self.assertEqual(normalize_trend_metric("variance"), TrendTileMetric.TRAJECTORY_VARIANCE)
+        with self.assertRaises(ValueError):
+            normalize_trend_metric("invalid_metric")
+
+        self.assertEqual(TrendTargetIndex.NDVI.value, "ndvi")
+        self.assertEqual(TrendTargetIndex.NDMI.value, "ndmi")
+        self.assertEqual(TrendTargetIndex.EVI.value, "evi")
+        self.assertEqual(TrendTargetIndex.SAVI.value, "savi")
+        self.assertEqual(TrendTargetIndex.NDCI.value, "ndci")
+        self.assertEqual(TrendTargetIndex.MNDWI.value, "mndwi")
+        self.assertEqual(TrendTargetIndex.LST.value, "lst")
+
+        self.assertEqual(normalize_trend_target_index("ndvi"), TrendTargetIndex.NDVI)
+        self.assertEqual(normalize_trend_target_index("NDMI"), TrendTargetIndex.NDMI)
+        self.assertEqual(normalize_trend_target_index("lst"), TrendTargetIndex.LST)
+        with self.assertRaises(ValueError):
+            normalize_trend_target_index("unknown_index")
+
+        self.assertEqual(TrendConfidenceRating.HIGH.value, "HIGH")
+        self.assertEqual(TrendConfidenceRating.MODERATE.value, "MODERATE")
+        self.assertEqual(TrendConfidenceRating.LOW.value, "LOW")
+        self.assertEqual(TrendConfidenceRating.INDETERMINATE.value, "INDETERMINATE")
+
+        # 2. Configuration Mappings
+        self.assertIn(TrendModel.THEIL_SEN_MEDIAN.value, TREND_MODEL_CONFIGS)
+        self.assertEqual(TREND_MODEL_CONFIGS[TrendModel.THEIL_SEN_MEDIAN.value]["breakdown_point"], 0.293)
+        self.assertIn(TrendModel.YUE_PILON_PREWHITENED.value, TREND_MODEL_CONFIGS)
+        self.assertTrue(TREND_MODEL_CONFIGS[TrendModel.YUE_PILON_PREWHITENED.value]["handles_autocorrelation"])
+        self.assertIn(TrendSignificanceClass.SIGNIFICANT_GREENING.value, TREND_SIGNIFICANCE_CONFIGS)
+        self.assertIn("SAN_LUIS_RESERVOIR_DROUGHT_DECADE_2016_2026", TREND_BENCHMARK_SCENES)
+        self.assertIn("PARADISE_CALIFORNIA_POST_FIRE_RECOVERY_2018_2026", TREND_BENCHMARK_SCENES)
+        self.assertIn("LAKE_MEAD_WATER_STORAGE_TRAJECTORY_2015_2026", TREND_BENCHMARK_SCENES)
+        self.assertIn("CENTRAL_VALLEY_AQUIFER_SUBSIDENCE_2016_2026", TREND_BENCHMARK_SCENES)
+
+        # 3. Mathematical Solvers & Transformations
+        # Theil-Sen Median Slope
+        # Test linear sequence
+        t_seq = [1.0, 2.0, 3.0, 4.0, 5.0]
+        y_seq = [0.1, 0.2, 0.3, 0.4, 0.5]
+        ts_res = calculate_theil_sen_slope(t_seq, y_seq)
+        self.assertAlmostEqual(ts_res["slope_per_year"], 0.1, places=4)
+        self.assertAlmostEqual(ts_res["intercept"], 0.0, places=4)
+        self.assertEqual(ts_res["pairwise_count"], 10)
+        self.assertAlmostEqual(ts_res["slope_ci_lower"], 0.1, places=4)
+        self.assertAlmostEqual(ts_res["slope_ci_upper"], 0.1, places=4)
+
+        # Flat / zero slope
+        y_flat = [0.45, 0.45, 0.45, 0.45]
+        ts_flat = calculate_theil_sen_slope(y_flat)
+        self.assertEqual(ts_flat["slope_per_year"], 0.0)
+        self.assertEqual(ts_flat["intercept"], 0.45)
+
+        # Outlier robustness check
+        # With an extreme outlier, median slope remains resilient
+        y_outlier = [0.10, 0.20, 0.99, 0.40, 0.50]  # 0.99 is outlier
+        ts_outlier = calculate_theil_sen_slope(t_seq, y_outlier)
+        self.assertAlmostEqual(ts_outlier["slope_per_year"], 0.1, delta=0.05)
+
+        # Short / empty series fallback
+        ts_empty = calculate_theil_sen_slope([])
+        self.assertEqual(ts_empty["slope_per_year"], 0.0)
+        self.assertEqual(ts_empty["intercept"], 0.0)
+
+        # Mann-Kendall Test Statistics
+        # Monotonically increasing: S = n*(n-1)/2 = 5*4/2 = 10
+        mk_inc = calculate_mann_kendall_statistics(y_seq)
+        self.assertEqual(mk_inc["s_statistic"], 10)
+        self.assertGreater(mk_inc["variance_s"], 0.0)
+        self.assertGreater(mk_inc["z_score"], 1.96)
+        self.assertLess(mk_inc["p_value"], 0.05)
+        self.assertTrue(mk_inc["is_significant_95"])
+
+        # Monotonically decreasing
+        y_dec = [0.5, 0.4, 0.3, 0.2, 0.1]
+        mk_dec = calculate_mann_kendall_statistics(y_dec)
+        self.assertEqual(mk_dec["s_statistic"], -10)
+        self.assertLess(mk_dec["z_score"], -1.96)
+        self.assertTrue(mk_dec["is_significant_95"])
+
+        # Flat series
+        mk_flat = calculate_mann_kendall_statistics(y_flat)
+        self.assertEqual(mk_flat["s_statistic"], 0)
+        self.assertEqual(mk_flat["z_score"], 0.0)
+        self.assertFalse(mk_flat["is_significant_95"])
+
+        # Yue-Pilon Pre-whitening
+        yp_res = calculate_yue_pilon_prewhitening(t_seq, y_seq)
+        self.assertIn("lag1_autocorrelation", yp_res)
+        self.assertIn("prewhitened_values", yp_res)
+        self.assertIn("is_autocorrelated", yp_res)
+        self.assertEqual(len(yp_res["prewhitened_values"]), len(y_seq))
+
+        # Significance Classifier
+        self.assertEqual(classify_trend_significance(2.5, 0.01, 0.02), TrendSignificanceClass.SIGNIFICANT_GREENING)
+        self.assertEqual(classify_trend_significance(-2.5, 0.01, -0.02), TrendSignificanceClass.SIGNIFICANT_BROWNING)
+        self.assertEqual(classify_trend_significance(1.8, 0.07, 0.01), TrendSignificanceClass.MODERATE_GREENING)
+        self.assertEqual(classify_trend_significance(-1.8, 0.07, -0.01), TrendSignificanceClass.MODERATE_BROWNING)
+        self.assertEqual(classify_trend_significance(0.5, 0.60, 0.001), TrendSignificanceClass.STABLE_NO_TREND)
+
+        # 4. Pydantic Models & Schemas
+        pt = TrendTrajectoryPoint(
+            date="2026-06-15",
+            timestamp_years=2026.45,
+            value=0.62,
+            fitted_value=0.615,
+            residual=0.005,
+            prewhitened_value=0.618
+        )
+        self.assertEqual(pt.value, 0.62)
+        self.assertEqual(pt.timestamp_years, 2026.45)
+
+        ts_model = TheilSenResult(
+            slope_per_year=ts_res["slope_per_year"],
+            intercept=ts_res["intercept"],
+            slope_ci_lower=ts_res["slope_ci_lower"],
+            slope_ci_upper=ts_res["slope_ci_upper"],
+            pairwise_count=ts_res["pairwise_count"],
+            breakdown_point=ts_res["breakdown_point"]
+        )
+        self.assertEqual(ts_model.slope_per_year, 0.1)
+
+        mk_model = MannKendallResult(
+            s_statistic=mk_inc["s_statistic"],
+            variance_s=mk_inc["variance_s"],
+            z_score=mk_inc["z_score"],
+            p_value=mk_inc["p_value"],
+            kendall_tau=mk_inc["kendall_tau"],
+            is_significant_95=mk_inc["is_significant_95"],
+            is_significant_99=mk_inc["is_significant_99"]
+        )
+        self.assertTrue(mk_model.is_significant_95)
+
+        yp_model = YuePilonResult(
+            lag1_autocorrelation=yp_res["lag1_autocorrelation"],
+            is_autocorrelated=yp_res["is_autocorrelated"],
+            autocorrelation_critical_value=yp_res["autocorrelation_critical_value"],
+            prewhitened_slope=yp_res["prewhitened_slope"],
+            prewhitened_z_score=yp_res["prewhitened_z_score"],
+            prewhitened_p_value=yp_res["prewhitened_p_value"]
+        )
+        self.assertFalse(yp_model.is_autocorrelated)
+
+        milestone = TrendMilestoneSummary(
+            model=TrendModel.THEIL_SEN_MEDIAN,
+            target_index=TrendTargetIndex.NDVI,
+            theil_sen_slope=0.10,
+            mann_kendall_zscore=2.5,
+            p_value=0.012,
+            kendall_tau=0.85,
+            significance_class=TrendSignificanceClass.SIGNIFICANT_GREENING,
+            confidence_rating=TrendConfidenceRating.HIGH,
+            is_prewhitened=True,
+            annual_change_percent=12.5,
+            narrative="Statistically significant multi-decadal vegetative greening trajectory detected."
+        )
+        self.assertEqual(milestone.significance_class, TrendSignificanceClass.SIGNIFICANT_GREENING)
+        self.assertEqual(milestone.confidence_rating, TrendConfidenceRating.HIGH)
+
+        req = TrendAnalysisRequest(
+            aoi_name="Sahel Transition Zone",
+            model="theil_sen",
+            target_index="ndvi",
+            confidence_level=0.95,
+            apply_prewhitening=True,
+            observations=[{"timestamp_years": 2026.45, "value": 0.62}]
+        )
+        self.assertEqual(req.model, TrendModel.THEIL_SEN_MEDIAN)
+        self.assertEqual(req.target_index, TrendTargetIndex.NDVI)
+        self.assertTrue(req.apply_prewhitening)
+
+        resp = TrendAnalysisResponse(
+            request_id="TREND-TEST-001",
+            aoi_name=req.aoi_name,
+            target_index=req.target_index,
+            model=req.model,
+            theil_sen=ts_model,
+            mann_kendall=mk_model,
+            yue_pilon=yp_model,
+            summary=milestone,
+            trajectory_points=[pt],
+            tile_url_template="/api/v1/tiles/trend/theil_sen_median/{metric}/{z}/{x}/{y}.png",
+            observation_count=1,
+            status="success"
+        )
+        self.assertEqual(resp.request_id, "TREND-TEST-001")
+        self.assertEqual(resp.status, "success")
+
+        tile_params = TrendTileRequestParams(
+            model=TrendModel.THEIL_SEN_MEDIAN,
+            metric=TrendTileMetric.THEIL_SEN_SLOPE,
+            index=TrendTargetIndex.NDVI
+        )
+        self.assertEqual(tile_params.metric, TrendTileMetric.THEIL_SEN_SLOPE)
+
+        models_resp = TrendModelsResponse(
+            models=TREND_MODEL_CONFIGS,
+            significance_classes=TREND_SIGNIFICANCE_CONFIGS,
+            benchmark_scenes=TREND_BENCHMARK_SCENES,
+            supported_indices=[e.value for e in TrendTargetIndex],
+            supported_metrics=[e.value for e in TrendTileMetric]
+        )
+        self.assertIn("theil_sen_median", models_resp.models)
+        self.assertIn("SAN_LUIS_RESERVOIR_DROUGHT_DECADE_2016_2026", models_resp.benchmark_scenes)
+
+        # 5. Dynamic Tile URLs & Canonical Route Contracts
+        tile_url = build_trend_tile_url("theil_sen_median", "theil_sen_slope", 12, 650, 1580)
+        self.assertEqual(tile_url, "/api/v1/tiles/trend/theil_sen_median/theil_sen_slope/12/650/1580.png")
+
+        tile_url_cmap = build_trend_tile_url(
+            TrendModel.MANN_KENDALL_RANK,
+            TrendTileMetric.MANN_KENDALL_ZSCORE,
+            14, 2600, 6320,
+            colormap="spectral",
+            target_index="ndvi"
+        )
+        self.assertEqual(
+            tile_url_cmap,
+            "/api/v1/tiles/trend/mann_kendall_rank/mann_kendall_zscore/14/2600/6320.png?colormap=spectral&target_index=ndvi"
+        )
+
+        tmpl = build_trend_tile_url_template("yue_pilon_prewhitened", "prewhitened_slope")
+        self.assertEqual(tmpl, "/api/v1/tiles/trend/yue_pilon_prewhitened/prewhitened_slope/{z}/{x}/{y}.png")
+
+        # Route Contracts
+        self.assertIn("analysis_trend_analyze", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_trend_models", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_trend_evaluate", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_trend", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_trend_xyz", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_trend_analyze"), "/api/v1/analysis/trend/analyze")
+        self.assertEqual(format_api_route("analysis_trend_analyze_short"), "/analysis/trend/analyze")
+        self.assertEqual(format_api_route("analysis_trend_models"), "/api/v1/analysis/trend/models")
+        self.assertEqual(format_api_route("analysis_trend_models_short"), "/analysis/trend/models")
+        self.assertEqual(format_api_route("analysis_trend_evaluate"), "/api/v1/analysis/trend/evaluate")
+        self.assertEqual(format_api_route("analysis_trend_evaluate_short"), "/analysis/trend/evaluate")
+        self.assertEqual(
+            format_api_route("tiles_trend", model="theil_sen_median", metric="theil_sen_slope", z=12, x=650, y=1580),
+            "/api/v1/tiles/trend/theil_sen_median/theil_sen_slope/12/650/1580.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_trend_short", model=TrendModel.MANN_KENDALL_RANK, metric="mann_kendall_zscore", z=10, x=163, y=395),
+            "/tiles/trend/mann_kendall_rank/mann_kendall_zscore/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_trend_xyz", z=10, x=100, y=200),
+            "/api/v1/tiles/trend/10/100/200.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_trend_xyz_short", z=10, x=100, y=200),
+            "/tiles/trend/10/100/200.png"
+        )
+
+    def test_task_t300_multimodal_fusion_schemas_and_contracts(self):
+        """Task T-300: Multimodal Satellite SAR + Optical Sensor Fusion & Feature-Track Displacement Contracts."""
+        from app.models.schemas import (
+            MultimodalAlignmentModel,
+            MultimodalSensorPair,
+            MultimodalTileMetric,
+            DisplacementConfidenceTier,
+            MotionHazardTier,
+            normalize_multimodal_model,
+            normalize_sensor_pair,
+            normalize_multimodal_metric,
+            normalize_displacement_confidence,
+            MULTIMODAL_ALIGNMENT_CONFIGS,
+            MULTIMODAL_BENCHMARK_SCENES,
+            MOTION_HAZARD_CONFIGS,
+            calculate_subpixel_peak_parabolic,
+            calculate_velocity_vector,
+            calculate_correlation_snr,
+            classify_motion_hazard_tier,
+            classify_displacement_confidence,
+            build_multimodal_tile_url,
+            build_multimodal_tile_url_template,
+            DisplacementVectorPoint,
+            DisplacementVectorField,
+            MultimodalFusionQualitySummary,
+            MultimodalTrackingRequest,
+            MultimodalFusionResponse,
+            MultimodalTileRequestParams,
+            MultimodalModelsResponse,
+            API_ROUTE_CONTRACTS,
+            format_api_route
+        )
+
+        # 1. Enums and Canonical Normalizers
+        self.assertEqual(MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN.value, "ncc_frequency_domain")
+        self.assertEqual(MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK.value, "optical_flow_farneback")
+        self.assertEqual(MultimodalAlignmentModel.SIFT_AFFINE_RANSAC.value, "sift_affine_ransac")
+        self.assertEqual(MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE.value, "lucas_kanade_iterative")
+
+        self.assertEqual(MultimodalSensorPair.S1_RTC_S2_L2A.value, "s1_rtc_s2_l2a")
+        self.assertEqual(MultimodalSensorPair.S1_RTC_LANDSAT8.value, "s1_rtc_landsat8")
+        self.assertEqual(MultimodalSensorPair.S2_TEMPORAL_PAIR.value, "s2_temporal_pair")
+        self.assertEqual(MultimodalSensorPair.S1_TEMPORAL_PAIR.value, "s1_temporal_pair")
+
+        self.assertEqual(MultimodalTileMetric.VELOCITY_MAGNITUDE.value, "velocity_magnitude")
+        self.assertEqual(MultimodalTileMetric.VECTOR_AZIMUTH.value, "vector_azimuth")
+        self.assertEqual(MultimodalTileMetric.CORRELATION_SNR.value, "correlation_snr")
+        self.assertEqual(MultimodalTileMetric.DISPLACEMENT_U.value, "displacement_u")
+        self.assertEqual(MultimodalTileMetric.DISPLACEMENT_V.value, "displacement_v")
+        self.assertEqual(MultimodalTileMetric.MULTIMODAL_COMPOSITE.value, "multimodal_composite")
+
+        self.assertEqual(DisplacementConfidenceTier.HIGH.value, "HIGH")
+        self.assertEqual(DisplacementConfidenceTier.MODERATE.value, "MODERATE")
+        self.assertEqual(DisplacementConfidenceTier.LOW.value, "LOW")
+        self.assertEqual(DisplacementConfidenceTier.INDETERMINATE.value, "INDETERMINATE")
+
+        self.assertEqual(MotionHazardTier.RAPID_DISPLACEMENT.value, "rapid_displacement")
+        self.assertEqual(MotionHazardTier.ACCELERATING_CREEP.value, "accelerating_creep")
+        self.assertEqual(MotionHazardTier.STEADY_CREEP.value, "steady_creep")
+        self.assertEqual(MotionHazardTier.SUB_CENTIMETER_STABLE.value, "sub_centimeter_stable")
+
+        # Normalizers
+        self.assertEqual(normalize_multimodal_model("ncc"), MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN)
+        self.assertEqual(normalize_multimodal_model("frequency-domain"), MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN)
+        self.assertEqual(normalize_multimodal_model("cosi_corr"), MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN)
+        self.assertEqual(normalize_multimodal_model("farneback"), MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK)
+        self.assertEqual(normalize_multimodal_model("optical-flow"), MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK)
+        self.assertEqual(normalize_multimodal_model("sift"), MultimodalAlignmentModel.SIFT_AFFINE_RANSAC)
+        self.assertEqual(normalize_multimodal_model("ransac"), MultimodalAlignmentModel.SIFT_AFFINE_RANSAC)
+        self.assertEqual(normalize_multimodal_model("lucas_kanade"), MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE)
+        self.assertEqual(normalize_multimodal_model("lk"), MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE)
+        with self.assertRaises(ValueError):
+            normalize_multimodal_model("invalid_model")
+
+        self.assertEqual(normalize_sensor_pair("s1_s2"), MultimodalSensorPair.S1_RTC_S2_L2A)
+        self.assertEqual(normalize_sensor_pair("sar_optical"), MultimodalSensorPair.S1_RTC_S2_L2A)
+        self.assertEqual(normalize_sensor_pair("s1_landsat"), MultimodalSensorPair.S1_RTC_LANDSAT8)
+        self.assertEqual(normalize_sensor_pair("s2_s2"), MultimodalSensorPair.S2_TEMPORAL_PAIR)
+        self.assertEqual(normalize_sensor_pair("s1_s1"), MultimodalSensorPair.S1_TEMPORAL_PAIR)
+
+        self.assertEqual(normalize_multimodal_metric("velocity"), MultimodalTileMetric.VELOCITY_MAGNITUDE)
+        self.assertEqual(normalize_multimodal_metric("speed"), MultimodalTileMetric.VELOCITY_MAGNITUDE)
+        self.assertEqual(normalize_multimodal_metric("azimuth"), MultimodalTileMetric.VECTOR_AZIMUTH)
+        self.assertEqual(normalize_multimodal_metric("direction"), MultimodalTileMetric.VECTOR_AZIMUTH)
+        self.assertEqual(normalize_multimodal_metric("snr"), MultimodalTileMetric.CORRELATION_SNR)
+        self.assertEqual(normalize_multimodal_metric("psr"), MultimodalTileMetric.CORRELATION_SNR)
+        self.assertEqual(normalize_multimodal_metric("vx"), MultimodalTileMetric.DISPLACEMENT_U)
+        self.assertEqual(normalize_multimodal_metric("vy"), MultimodalTileMetric.DISPLACEMENT_V)
+        self.assertEqual(normalize_multimodal_metric("composite"), MultimodalTileMetric.MULTIMODAL_COMPOSITE)
+
+        self.assertEqual(normalize_displacement_confidence("high"), DisplacementConfidenceTier.HIGH)
+        self.assertEqual(normalize_displacement_confidence("moderate"), DisplacementConfidenceTier.MODERATE)
+        self.assertEqual(normalize_displacement_confidence("low"), DisplacementConfidenceTier.LOW)
+        self.assertEqual(normalize_displacement_confidence("unknown"), DisplacementConfidenceTier.INDETERMINATE)
+
+        # 2. Configurations and Benchmark Scenes
+        self.assertIn(MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN.value, MULTIMODAL_ALIGNMENT_CONFIGS)
+        self.assertTrue(MULTIMODAL_ALIGNMENT_CONFIGS[MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN.value]["supports_multimodal"])
+        self.assertEqual(MULTIMODAL_ALIGNMENT_CONFIGS[MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN.value]["subpixel_accuracy_px"], 0.02)
+        self.assertIn("JAKOBSHAVN_ISBRAE_GLACIER_SURGE_2026", MULTIMODAL_BENCHMARK_SCENES)
+        self.assertIn("SLUMGULLION_LANDSLIDE_COLORADO_CREEP_2026", MULTIMODAL_BENCHMARK_SCENES)
+        self.assertIn("RIDGECREST_CALIFORNIA_FAULT_SLIP_2026", MULTIMODAL_BENCHMARK_SCENES)
+        self.assertIn("PINE_ISLAND_GLACIER_ANTARCTICA_FLOW_2026", MULTIMODAL_BENCHMARK_SCENES)
+        self.assertIn(MotionHazardTier.RAPID_DISPLACEMENT.value, MOTION_HAZARD_CONFIGS)
+        self.assertEqual(MOTION_HAZARD_CONFIGS[MotionHazardTier.RAPID_DISPLACEMENT.value]["min_velocity_m_yr"], 50.0)
+
+        # 3. Mathematical Solvers and Invariants
+        # Parabolic peak fitting on symmetric surface
+        surface_sym = [
+            [0.5, 0.6, 0.5],
+            [0.6, 0.9, 0.6],
+            [0.5, 0.6, 0.5]
+        ]
+        dx, dy, peak = calculate_subpixel_peak_parabolic(surface_sym)
+        self.assertEqual(dx, 0.0)
+        self.assertEqual(dy, 0.0)
+        self.assertAlmostEqual(peak, 0.9, places=2)
+
+        # Asymmetric surface with positive x shift
+        surface_asym = [
+            [0.4, 0.5, 0.6],
+            [0.5, 0.85, 0.75],
+            [0.4, 0.5, 0.6]
+        ]
+        dx_a, dy_a, peak_a = calculate_subpixel_peak_parabolic(surface_asym)
+        self.assertGreater(dx_a, 0.0)
+        self.assertEqual(dy_a, 0.0)
+        self.assertLessEqual(abs(dx_a), 0.5)
+
+        # Degenerate surface returns 0.0
+        self.assertEqual(calculate_subpixel_peak_parabolic([[1.0]]), (0.0, 0.0, 0.0))
+
+        # Velocity Vector: 1.5 px East in 36.525 days at 10m GSD -> 15m in 0.1 yr = 150 m/yr East (azimuth 90 deg)
+        v_res = calculate_velocity_vector(1.5, 0.0, gsd_m=10.0, dt_days=36.525)
+        self.assertEqual(v_res["dx_m"], 15.0)
+        self.assertEqual(v_res["dy_m"], 0.0)
+        self.assertEqual(v_res["velocity_x_m_yr"], 150.0)
+        self.assertEqual(v_res["velocity_y_m_yr"], 0.0)
+        self.assertEqual(v_res["velocity_magnitude_m_yr"], 150.0)
+        self.assertEqual(v_res["azimuth_deg"], 90.0)
+
+        # North-directed velocity (azimuth 0 deg)
+        v_north = calculate_velocity_vector(0.0, 2.0, gsd_m=10.0, dt_days=36.525)
+        self.assertEqual(v_north["velocity_magnitude_m_yr"], 200.0)
+        self.assertEqual(v_north["azimuth_deg"], 0.0)
+
+        # SNR calculation
+        grid_vals = [0.1, 0.15, 0.12, 0.85, 0.14, 0.11]
+        snr_calc = calculate_correlation_snr(grid_vals, 0.85)
+        self.assertGreater(snr_calc, 5.0)
+        self.assertEqual(calculate_correlation_snr([]), 0.0)
+
+        # Motion Hazard Tier
+        self.assertEqual(classify_motion_hazard_tier(75.0), MotionHazardTier.RAPID_DISPLACEMENT)
+        self.assertEqual(classify_motion_hazard_tier(25.0), MotionHazardTier.ACCELERATING_CREEP)
+        self.assertEqual(classify_motion_hazard_tier(5.0), MotionHazardTier.STEADY_CREEP)
+        self.assertEqual(classify_motion_hazard_tier(1.2), MotionHazardTier.SUB_CENTIMETER_STABLE)
+
+        # Displacement Confidence
+        self.assertEqual(classify_displacement_confidence(9.0, 0.75, 0.04), DisplacementConfidenceTier.HIGH)
+        self.assertEqual(classify_displacement_confidence(5.0, 0.50), DisplacementConfidenceTier.MODERATE)
+        self.assertEqual(classify_displacement_confidence(3.0, 0.30), DisplacementConfidenceTier.LOW)
+        self.assertEqual(classify_displacement_confidence(1.5, 0.15), DisplacementConfidenceTier.INDETERMINATE)
+
+        # 4. Pydantic Request & Response Models
+        pt = DisplacementVectorPoint(
+            point_id="pt_0_0",
+            lat=69.172,
+            lng=-49.831,
+            pixel_x=64,
+            pixel_y=128,
+            dx_px=1.25,
+            dy_px=-0.45,
+            velocity_x_m_yr=38.0,
+            velocity_y_m_yr=-13.7,
+            velocity_magnitude_m_yr=40.4,
+            azimuth_deg=109.8,
+            correlation_snr=8.5,
+            peak_correlation=0.76,
+            confidence=DisplacementConfidenceTier.HIGH,
+            hazard_tier=MotionHazardTier.ACCELERATING_CREEP
+        )
+        self.assertEqual(pt.point_id, "pt_0_0")
+        self.assertEqual(pt.confidence, DisplacementConfidenceTier.HIGH)
+
+        field = DisplacementVectorField(
+            mean_velocity_m_yr=40.4,
+            max_velocity_m_yr=85.0,
+            dominant_azimuth_deg=109.8,
+            valid_vectors_count=1,
+            total_grid_points_count=1,
+            coherence_fraction=1.0,
+            vectors=[pt]
+        )
+        self.assertEqual(field.valid_vectors_count, 1)
+
+        summary = MultimodalFusionQualitySummary(
+            sensor_pair=MultimodalSensorPair.S1_RTC_S2_L2A,
+            alignment_model=MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+            mean_snr=8.5,
+            mean_peak_correlation=0.76,
+            subpixel_precision_px=0.035,
+            confidence_rating=DisplacementConfidenceTier.HIGH,
+            dominant_hazard_tier=MotionHazardTier.RAPID_DISPLACEMENT,
+            quality_checklist={"subpixel_peak_valid": True},
+            narrative="High-confidence multimodal tracking."
+        )
+        self.assertEqual(summary.confidence_rating, DisplacementConfidenceTier.HIGH)
+
+        req = MultimodalTrackingRequest(
+            aoi_name="Jakobshavn Test",
+            sensor_pair="s1_s2",
+            alignment_model="ncc",
+            window_size=64,
+            step_size=16,
+            time_delta_days=12.0,
+            gsd_m=10.0,
+            snr_threshold=3.0
+        )
+        self.assertEqual(req.sensor_pair, MultimodalSensorPair.S1_RTC_S2_L2A)
+        self.assertEqual(req.alignment_model, MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN)
+
+        resp = MultimodalFusionResponse(
+            request_id="FUSION-001",
+            aoi_name=req.aoi_name,
+            sensor_pair=req.sensor_pair,
+            alignment_model=req.alignment_model,
+            vector_field=field,
+            quality_summary=summary,
+            tile_url_template="/api/v1/tiles/multimodal/ncc_frequency_domain/{metric}/{z}/{x}/{y}.png",
+            status="success"
+        )
+        self.assertEqual(resp.request_id, "FUSION-001")
+        self.assertEqual(resp.status, "success")
+
+        tile_params = MultimodalTileRequestParams(
+            model=MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+            metric=MultimodalTileMetric.VELOCITY_MAGNITUDE,
+            pair=MultimodalSensorPair.S1_RTC_S2_L2A
+        )
+        self.assertEqual(tile_params.metric, MultimodalTileMetric.VELOCITY_MAGNITUDE)
+
+        models_resp = MultimodalModelsResponse(
+            models=MULTIMODAL_ALIGNMENT_CONFIGS,
+            sensor_pairs={p.value: {"id": p.value} for p in MultimodalSensorPair},
+            benchmark_scenes=MULTIMODAL_BENCHMARK_SCENES,
+            hazard_tiers=MOTION_HAZARD_CONFIGS,
+            supported_metrics=[m.value for m in MultimodalTileMetric]
+        )
+        self.assertIn("ncc_frequency_domain", models_resp.models)
+
+        # 5. Dynamic Tile URLs & Route Contracts
+        t_url = build_multimodal_tile_url("ncc", "velocity", 12, 650, 1580, colormap="turbo", pair="s1_s2", min_snr=3.5)
+        self.assertEqual(
+            t_url,
+            "/api/v1/tiles/multimodal/ncc_frequency_domain/velocity_magnitude/12/650/1580.png?colormap=turbo&pair=s1_rtc_s2_l2a&min_snr=3.5"
+        )
+
+        tmpl = build_multimodal_tile_url_template("farneback", "azimuth")
+        self.assertEqual(tmpl, "/api/v1/tiles/multimodal/optical_flow_farneback/vector_azimuth/{z}/{x}/{y}.png")
+
+        # Canonical Route Contracts
+        self.assertIn("analysis_multimodal_track", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_multimodal_models", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_multimodal_evaluate", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_multimodal", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_multimodal_xyz", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_multimodal_track"), "/api/v1/analysis/multimodal/track")
+        self.assertEqual(format_api_route("analysis_multimodal_track_short"), "/analysis/multimodal/track")
+        self.assertEqual(format_api_route("analysis_multimodal_models"), "/api/v1/analysis/multimodal/models")
+        self.assertEqual(format_api_route("analysis_multimodal_models_short"), "/analysis/multimodal/models")
+        self.assertEqual(format_api_route("analysis_multimodal_evaluate"), "/api/v1/analysis/multimodal/evaluate")
+        self.assertEqual(format_api_route("analysis_multimodal_evaluate_short"), "/analysis/multimodal/evaluate")
+
+        self.assertEqual(
+            format_api_route("tiles_multimodal", model="ncc", metric="velocity", z=12, x=650, y=1580),
+            "/api/v1/tiles/multimodal/ncc_frequency_domain/velocity_magnitude/12/650/1580.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_multimodal_short", model=MultimodalAlignmentModel.SIFT_AFFINE_RANSAC, metric="azimuth", z=10, x=163, y=395),
+            "/tiles/multimodal/sift_affine_ransac/vector_azimuth/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_multimodal_xyz", z=10, x=100, y=200),
+            "/api/v1/tiles/multimodal/10/100/200.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_multimodal_xyz_short", z=10, x=100, y=200),
+            "/tiles/multimodal/10/100/200.png"
+        )
+
+    def test_task_t306_insar_sbas_schemas_and_contracts(self):
+        """Task T-306 (Cycle v2.5.41 Step 1): Verify InSAR SBAS multi-temporal inversion schemas,
+        Persistent Scatterer Candidate (PSC) amplitude dispersion, baseline graph connectivity,
+        phase-to-displacement conversion, Pydantic data contracts, and dynamic XYZ tile endpoints.
+        """
+        from app.models.schemas import (
+            SBASInversionModel,
+            InSARSBASTileMetric,
+            PSCStabilityTier,
+            DeformationHazardTier,
+            SBASNetworkStatus,
+            normalize_sbas_model,
+            normalize_insar_sbas_metric,
+            normalize_psc_stability,
+            normalize_deformation_hazard_tier,
+            SBAS_INVERSION_CONFIGS,
+            DEFORMATION_HAZARD_CONFIGS,
+            INSAR_SBAS_BENCHMARK_SCENES,
+            calculate_amplitude_dispersion,
+            calculate_phase_to_displacement,
+            calculate_sbas_network_connectivity,
+            classify_deformation_hazard_tier,
+            classify_psc_stability,
+            build_insar_sbas_tile_url,
+            build_insar_sbas_tile_url_template,
+            PSCCandidatePoint,
+            SBASInterferogramPair,
+            SBASBaselineGraph,
+            InSARDeformationTimeSeriesPoint,
+            InSARDeformationTimeSeries,
+            InSARDeformationQualitySummary,
+            InSARDeformationRequest,
+            InSARDeformationResponse,
+            InSARSBASTileRequestParams,
+            InSARSBASModelsResponse,
+        )
+
+        # 1. Canonical Enums & Normalizers
+        self.assertEqual(SBASInversionModel.SVD_LEAST_NORM.value, "svd_least_norm")
+        self.assertEqual(SBASInversionModel.L1_NORM_ROBUST.value, "l1_norm_robust")
+        self.assertEqual(SBASInversionModel.KALMAN_FILTER_RECURSIVE.value, "kalman_filter_recursive")
+
+        self.assertEqual(InSARSBASTileMetric.MEAN_VELOCITY_MM_YR.value, "mean_velocity_mm_yr")
+        self.assertEqual(InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM.value, "cumulative_displacement_mm")
+        self.assertEqual(InSARSBASTileMetric.TEMPORAL_COHERENCE.value, "temporal_coherence")
+        self.assertEqual(InSARSBASTileMetric.AMPLITUDE_DISPERSION.value, "amplitude_dispersion")
+        self.assertEqual(InSARSBASTileMetric.VELOCITY_UNCERTAINTY.value, "velocity_uncertainty")
+        self.assertEqual(InSARSBASTileMetric.DEFORMATION_GRADIENT.value, "deformation_gradient")
+
+        self.assertEqual(PSCStabilityTier.HIGH.value, "HIGH")
+        self.assertEqual(DeformationHazardTier.CRITICAL_SUBSIDENCE.value, "critical_subsidence")
+        self.assertEqual(SBASNetworkStatus.FULLY_CONNECTED.value, "fully_connected")
+
+        # Normalization with alias support
+        self.assertEqual(normalize_sbas_model("svd"), SBASInversionModel.SVD_LEAST_NORM)
+        self.assertEqual(normalize_sbas_model("l1_norm"), SBASInversionModel.L1_NORM_ROBUST)
+        self.assertEqual(normalize_sbas_model("kalman"), SBASInversionModel.KALMAN_FILTER_RECURSIVE)
+        self.assertEqual(normalize_sbas_model(SBASInversionModel.SVD_LEAST_NORM), SBASInversionModel.SVD_LEAST_NORM)
+        with self.assertRaises(ValueError):
+            normalize_sbas_model("unsupported_inversion_model")
+
+        self.assertEqual(normalize_insar_sbas_metric("velocity"), InSARSBASTileMetric.MEAN_VELOCITY_MM_YR)
+        self.assertEqual(normalize_insar_sbas_metric("cumulative"), InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM)
+        self.assertEqual(normalize_insar_sbas_metric("coherence"), InSARSBASTileMetric.TEMPORAL_COHERENCE)
+        self.assertEqual(normalize_insar_sbas_metric("dispersion"), InSARSBASTileMetric.AMPLITUDE_DISPERSION)
+        self.assertEqual(normalize_insar_sbas_metric("gradient"), InSARSBASTileMetric.DEFORMATION_GRADIENT)
+        with self.assertRaises(ValueError):
+            normalize_insar_sbas_metric("invalid_insar_metric")
+
+        self.assertEqual(normalize_psc_stability("HIGH"), PSCStabilityTier.HIGH)
+        self.assertEqual(normalize_psc_stability("unknown"), PSCStabilityTier.INDETERMINATE)
+        self.assertEqual(normalize_deformation_hazard_tier("critical_subsidence"), DeformationHazardTier.CRITICAL_SUBSIDENCE)
+
+        # 2. Configuration Tables & Benchmark Sites
+        self.assertIn(SBASInversionModel.SVD_LEAST_NORM.value, SBAS_INVERSION_CONFIGS)
+        self.assertIn("Berardino", SBAS_INVERSION_CONFIGS[SBASInversionModel.SVD_LEAST_NORM.value]["citation"])
+        self.assertIn(SBASInversionModel.L1_NORM_ROBUST.value, SBAS_INVERSION_CONFIGS)
+        self.assertIn("Lauknes", SBAS_INVERSION_CONFIGS[SBASInversionModel.L1_NORM_ROBUST.value]["citation"])
+
+        self.assertIn(DeformationHazardTier.CRITICAL_SUBSIDENCE.value, DEFORMATION_HAZARD_CONFIGS)
+        self.assertEqual(DEFORMATION_HAZARD_CONFIGS[DeformationHazardTier.CRITICAL_SUBSIDENCE.value]["color_hex"], "#dc2626")
+
+        self.assertIn("CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026", INSAR_SBAS_BENCHMARK_SCENES)
+        self.assertIn("MEXICO_CITY_LACUSTRINE_CONSOLIDATION_2026", INSAR_SBAS_BENCHMARK_SCENES)
+        self.assertIn("BOLOGNA_PO_VALLEY_PIEDMONT_SUBSIDENCE_2026", INSAR_SBAS_BENCHMARK_SCENES)
+        self.assertIn("KIRUNA_UNDERGROUND_IRON_MINE_DEFORMATION_2026", INSAR_SBAS_BENCHMARK_SCENES)
+
+        # 3. Mathematical Solvers & Invariants
+        # Amplitude Dispersion D_A = sigma_A / mu_A
+        # Constant amplitudes: std = 0 -> D_A = 0.0
+        da_zero = calculate_amplitude_dispersion([10.0, 10.0, 10.0, 10.0])
+        self.assertEqual(da_zero, 0.0)
+
+        # Stable target D_A <= 0.25 (Ferretti et al. 2001)
+        da_stable = calculate_amplitude_dispersion([10.0, 10.5, 9.8, 10.2, 9.9])
+        self.assertLessEqual(da_stable, 0.25)
+        self.assertGreaterEqual(da_stable, 0.0)
+
+        # Decorrelated vegetation clutter D_A > 0.60
+        da_decorr = calculate_amplitude_dispersion([1.0, 25.0, 3.0, 40.0])
+        self.assertGreater(da_decorr, 0.60)
+
+        # Edge cases: empty or single element returns 1.0
+        self.assertEqual(calculate_amplitude_dispersion([]), 1.0)
+        self.assertEqual(calculate_amplitude_dispersion([5.0]), 1.0)
+
+        # Phase to displacement conversion Delta r = -(lambda / 4pi) * Delta phi
+        # Sentinel-1 C-band (lambda = 55.4657 mm): 2pi phase corresponds to -27.733 mm
+        disp_zero = calculate_phase_to_displacement(0.0)
+        self.assertEqual(disp_zero, 0.0)
+        disp_2pi = calculate_phase_to_displacement(2.0 * math.pi, wavelength_m=0.0554657)
+        self.assertAlmostEqual(disp_2pi, -27.733, places=2)
+        disp_neg_2pi = calculate_phase_to_displacement(-2.0 * math.pi, wavelength_m=0.0554657)
+        self.assertAlmostEqual(disp_neg_2pi, 27.733, places=2)
+
+        # Small Baseline Network Connectivity
+        # Connected network: 4 acquisitions with spanning tree pairs [(0,1), (1,2), (2,3)]
+        conn_full = calculate_sbas_network_connectivity(4, [(0, 1), (1, 2), (2, 3), (0, 2)])
+        self.assertTrue(conn_full["is_connected"])
+        self.assertEqual(conn_full["num_components"], 1)
+        self.assertEqual(conn_full["network_status"], SBASNetworkStatus.FULLY_CONNECTED.value)
+        self.assertGreater(conn_full["redundancy_ratio"], 1.0)
+
+        # Disconnected subsets: pairs [(0,1), (2,3)]
+        conn_dis = calculate_sbas_network_connectivity(4, [(0, 1), (2, 3), (0, 1)])
+        self.assertFalse(conn_dis["is_connected"])
+        self.assertEqual(conn_dis["num_components"], 2)
+        self.assertEqual(conn_dis["network_status"], SBASNetworkStatus.DISCONNECTED_SUBSETS.value)
+
+        # Degenerate network
+        conn_degen = calculate_sbas_network_connectivity(1, [])
+        self.assertFalse(conn_degen["is_connected"])
+        self.assertEqual(conn_degen["network_status"], SBASNetworkStatus.DEGENERATE.value)
+
+        # Deformation Hazard Tier Classification
+        self.assertEqual(classify_deformation_hazard_tier(-165.0), DeformationHazardTier.CRITICAL_SUBSIDENCE)
+        self.assertEqual(classify_deformation_hazard_tier(28.0), DeformationHazardTier.CRITICAL_SUBSIDENCE)
+        self.assertEqual(classify_deformation_hazard_tier(-14.5), DeformationHazardTier.MODERATE_SUBSIDENCE)
+        self.assertEqual(classify_deformation_hazard_tier(5.2), DeformationHazardTier.SLOW_CREEP)
+        self.assertEqual(classify_deformation_hazard_tier(-1.2), DeformationHazardTier.SUB_MILLIMETER_STABLE)
+
+        # PSC Stability Classification
+        self.assertEqual(classify_psc_stability(da=0.15, temporal_coherence=0.82), PSCStabilityTier.HIGH)
+        self.assertEqual(classify_psc_stability(da=0.32, temporal_coherence=0.68), PSCStabilityTier.MODERATE)
+        self.assertEqual(classify_psc_stability(da=0.50, temporal_coherence=0.52), PSCStabilityTier.LOW)
+        self.assertEqual(classify_psc_stability(da=0.75, temporal_coherence=0.30), PSCStabilityTier.INDETERMINATE)
+
+        # 4. Pydantic Models & Field Validation
+        psc_pt = PSCCandidatePoint(
+            point_id="PSC-001",
+            lat=36.05,
+            lng=-119.35,
+            amplitude_dispersion=0.14,
+            temporal_coherence=0.85,
+            mean_velocity_mm_yr=-142.5,
+            cumulative_displacement_mm=-356.2,
+            velocity_std_err_mm_yr=0.75,
+            stability_tier=PSCStabilityTier.HIGH,
+            hazard_tier=DeformationHazardTier.CRITICAL_SUBSIDENCE,
+            elevation_m=68.5
+        )
+        self.assertEqual(psc_pt.point_id, "PSC-001")
+        self.assertEqual(psc_pt.hazard_tier, DeformationHazardTier.CRITICAL_SUBSIDENCE)
+
+        ifg = SBASInterferogramPair(
+            pair_id="IFG_20260105_20260117",
+            primary_date="2026-01-05",
+            secondary_date="2026-01-17",
+            temporal_baseline_days=12.0,
+            perpendicular_baseline_m=48.5,
+            mean_coherence=0.78,
+            is_valid=True
+        )
+        self.assertEqual(ifg.temporal_baseline_days, 12.0)
+
+        graph = SBASBaselineGraph(
+            num_acquisitions=4,
+            num_interferograms=3,
+            num_components=1,
+            is_connected=True,
+            network_status=SBASNetworkStatus.FULLY_CONNECTED,
+            redundancy_ratio=1.0,
+            pairs=[ifg]
+        )
+        self.assertTrue(graph.is_connected)
+
+        ts_pt = InSARDeformationTimeSeriesPoint(
+            date="2026-01-05",
+            days_from_start=0.0,
+            displacement_mm=0.0,
+            modeled_displacement_mm=0.0,
+            residual_mm=0.0,
+            coherence=0.90
+        )
+        ts = InSARDeformationTimeSeries(
+            point_id="PSC-001",
+            lat=36.05,
+            lng=-119.35,
+            annual_velocity_mm_yr=-142.5,
+            r_squared=0.985,
+            acceleration_mm_yr2=-2.1,
+            points=[ts_pt]
+        )
+        self.assertEqual(len(ts.points), 1)
+
+        summary = InSARDeformationQualitySummary(
+            inversion_model=SBASInversionModel.SVD_LEAST_NORM,
+            network_status=SBASNetworkStatus.FULLY_CONNECTED,
+            psc_count=250,
+            mean_temporal_coherence=0.78,
+            mean_amplitude_dispersion=0.18,
+            mean_velocity_rmse_mm_yr=0.88,
+            stability_rating=PSCStabilityTier.HIGH,
+            dominant_hazard_tier=DeformationHazardTier.CRITICAL_SUBSIDENCE,
+            quality_checklist={"full_rank_svd": True},
+            narrative="High-confidence ground subsidence inversion."
+        )
+        self.assertEqual(summary.psc_count, 250)
+
+        # Request validator normalizing string alias "svd" to enum
+        req = InSARDeformationRequest(
+            aoi_name="Central Valley Tulare Basin Subsidence",
+            inversion_model="svd",
+            max_temporal_baseline_days=60.0,
+            max_perpendicular_baseline_m=150.0,
+            amplitude_dispersion_threshold=0.25,
+            min_temporal_coherence=0.65
+        )
+        self.assertEqual(req.inversion_model, SBASInversionModel.SVD_LEAST_NORM)
+
+        resp = InSARDeformationResponse(
+            request_id="SBAS-TEST-001",
+            aoi_name=req.aoi_name,
+            inversion_model=req.inversion_model,
+            baseline_graph=graph,
+            quality_summary=summary,
+            psc_points=[psc_pt],
+            sample_timeseries=ts,
+            tile_url_template="/api/v1/tiles/insar-sbas/svd_least_norm/{metric}/{z}/{x}/{y}.png",
+            status="success"
+        )
+        self.assertEqual(resp.request_id, "SBAS-TEST-001")
+        self.assertEqual(resp.status, "success")
+
+        tile_params = InSARSBASTileRequestParams(
+            model=SBASInversionModel.SVD_LEAST_NORM,
+            metric=InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+            colormap="spectral",
+            rescale="-150,20",
+            min_coherence=0.65,
+            max_da=0.25
+        )
+        self.assertEqual(tile_params.metric, InSARSBASTileMetric.MEAN_VELOCITY_MM_YR)
+
+        models_resp = InSARSBASModelsResponse(
+            models=SBAS_INVERSION_CONFIGS,
+            metrics=[m.value for m in InSARSBASTileMetric],
+            benchmark_scenes=INSAR_SBAS_BENCHMARK_SCENES,
+            hazard_tiers=DEFORMATION_HAZARD_CONFIGS
+        )
+        self.assertIn("svd_least_norm", models_resp.models)
+
+        # 5. Dynamic Tile URLs & Route Contracts
+        t_url = build_insar_sbas_tile_url(
+            "svd",
+            "velocity",
+            12,
+            650,
+            1580,
+            colormap="spectral",
+            rescale="-150,20",
+            min_coherence=0.65,
+            max_da=0.25
+        )
+        self.assertEqual(
+            t_url,
+            "/api/v1/tiles/insar-sbas/svd_least_norm/mean_velocity_mm_yr/12/650/1580.png?colormap=spectral&rescale=-150,20&min_coherence=0.65&max_da=0.25"
+        )
+
+        tmpl = build_insar_sbas_tile_url_template("l1_norm", "cumulative")
+        self.assertEqual(tmpl, "/api/v1/tiles/insar-sbas/l1_norm_robust/cumulative_displacement_mm/{z}/{x}/{y}.png")
+
+        # Canonical Route Contracts
+        self.assertIn("analysis_insar_sbas_invert", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_insar_sbas_models", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_insar_sbas_evaluate", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_insar_sbas", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_insar_sbas_xyz", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_insar_sbas_invert"), "/api/v1/analysis/insar-sbas/invert")
+        self.assertEqual(format_api_route("analysis_insar_sbas_invert_short"), "/analysis/insar-sbas/invert")
+        self.assertEqual(format_api_route("analysis_insar_sbas_models"), "/api/v1/analysis/insar-sbas/models")
+        self.assertEqual(format_api_route("analysis_insar_sbas_models_short"), "/analysis/insar-sbas/models")
+        self.assertEqual(format_api_route("analysis_insar_sbas_evaluate"), "/api/v1/analysis/insar-sbas/evaluate")
+        self.assertEqual(format_api_route("analysis_insar_sbas_evaluate_short"), "/analysis/insar-sbas/evaluate")
+
+        self.assertEqual(
+            format_api_route("tiles_insar_sbas", model="svd", metric="velocity", z=12, x=650, y=1580),
+            "/api/v1/tiles/insar-sbas/svd_least_norm/mean_velocity_mm_yr/12/650/1580.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_insar_sbas_short", model=SBASInversionModel.L1_NORM_ROBUST, metric="coherence", z=10, x=163, y=395),
+            "/tiles/insar-sbas/l1_norm_robust/temporal_coherence/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_insar_sbas_xyz", z=10, x=100, y=200),
+            "/api/v1/tiles/insar-sbas/10/100/200.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_insar_sbas_xyz_short", z=10, x=100, y=200),
+            "/tiles/insar-sbas/10/100/200.png"
+        )
+
 if __name__ == "__main__":
     unittest.main()
 

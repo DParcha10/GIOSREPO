@@ -696,8 +696,9 @@ export default function CrossSensorCalibrationModal({
                   </div>
 
                   {/* Interactive SVG Canvas */}
-                  <div className="relative w-full h-[360px] bg-zinc-950/80 rounded-lg border border-zinc-850 p-2 flex items-center justify-center">
+                  <div className="relative w-full h-[360px] bg-zinc-950/80 rounded-lg border border-zinc-850 p-2 flex items-center justify-center overflow-hidden">
                     <svg viewBox="0 0 500 360" className="w-full h-full select-none">
+                      <g transform={`scale(${scatterZoom})`} style={{ transformOrigin: '50px 320px', transition: 'transform 0.2s ease-out' }}>
                       {/* Grid lines */}
                       {[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((val) => {
                         const x = 50 + val * 420;
@@ -811,6 +812,7 @@ export default function CrossSensorCalibrationModal({
                           </g>
                         );
                       })}
+                      </g>
                     </svg>
 
                     {/* Interactive Floating Hover Probe Tooltip */}

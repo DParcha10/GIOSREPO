@@ -212,6 +212,7 @@ import ExportDatasetModal from '../components/ExportDatasetModal';
 import PhenologySeasonalityModal from '../components/PhenologySeasonalityModal';
 import SpectralSharpeningModal from '../components/SpectralSharpeningModal';
 import CrossSensorCalibrationModal from '../components/CrossSensorCalibrationModal';
+import TrendAnalysisModal from '../components/TrendAnalysisModal';
 import BYOCStorageModal from '../components/BYOCStorageModal';
 import PointCloudCHMModal from '../components/PointCloudCHMModal';
 import CoRegistrationModal from '../components/CoRegistrationModal';
@@ -378,7 +379,11 @@ import {
   buildCrossCalibratedTileUrlTemplate,
   SensorCalibrationModel,
   CrossSensorTileMetric,
-  CalibrationQualityRating
+  CalibrationQualityRating,
+  buildTrendTileUrlTemplate,
+  TrendModel,
+  TrendTileMetric,
+  TrendSignificanceClass
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -975,6 +980,27 @@ export default function MapExplorer() {
     quality_rating: CalibrationQualityRating?.EXCELLENT || 'EXCELLENT'
   });
   const [crossSensorBlendRatio, setCrossSensorBlendRatio] = useState(0.5);
+
+  // Cycle v2.5.39 Non-Parametric Trend Inversion & Multi-Decadal Pixel Trajectory State (Task T-296)
+  const [trendAnalysisModalOpen, setTrendAnalysisModalOpen] = useState(false);
+  const [showTrendTileLayer, setShowTrendTileLayer] = useState(false);
+  const [trendSceneKey, setTrendSceneKey] = useState('SAN_LUIS_RESERVOIR_DROUGHT_DECADE_2016_2026');
+  const [trendSceneName, setTrendSceneName] = useState('San Luis Reservoir Decadal Hydrological Trajectory (2016-2026)');
+  const [trendModel, setTrendModel] = useState(TrendModel?.THEIL_SEN_MEDIAN || 'theil_sen_median');
+  const [trendMetric, setTrendMetric] = useState(TrendTileMetric?.THEIL_SEN_SLOPE || 'theil_sen_slope');
+  const [trendTargetIndex, setTrendTargetIndex] = useState('ndmi');
+  const [trendColormap, setTrendColormap] = useState('rdylbu');
+  const [trendOpacity, setTrendOpacity] = useState(0.85);
+  const [trendTileUrl, setTrendTileUrl] = useState('');
+  const [trendSummary, setTrendSummary] = useState({
+    model: 'theil_sen_median',
+    metric: 'theil_sen_slope',
+    theil_sen_slope: -0.0142,
+    mann_kendall_zscore: -2.85,
+    p_value: 0.0044,
+    significance_class: TrendSignificanceClass?.SIGNIFICANT_BROWNING || 'significant_browning',
+    annual_change_percent: -2.58
+  });
 
   // T-79 & T-81 Dense Point Cloud Filtering & Canopy Height Model (CHM) State
   const [pointCloudModalOpen, setPointCloudModalOpen] = useState(false);
@@ -5179,6 +5205,24 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={450}
+              />
+            )}
+
+            {/* Cycle v2.5.39 Non-Parametric Trend Dynamic TileLayer (Task T-296) */}
+            {showTrendTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`trend-tile-${trendSceneKey}-${trendModel}-${trendMetric}-${trendTargetIndex}-${trendColormap}-${trendOpacity}`}
+                url={trendTileUrl || buildTrendTileUrlTemplate({
+                  model: trendModel,
+                  metric: trendMetric,
+                  colormap: trendColormap,
+                  index: trendTargetIndex
+                })}
+                opacity={trendOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={455}
               />
             )}
 
@@ -10471,6 +10515,127 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* Cycle v2.5.39 Floating Non-Parametric Trend HUD Card (Task T-296) */}
+          {showTrendTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-emerald-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[720px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[210px]" title={trendSceneName}>
+                    {trendSceneName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {trendTargetIndex.toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                    {trendMetric.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    {trendModel.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase border ${
+                    trendSummary?.significance_class?.includes('greening')
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : trendSummary?.significance_class?.includes('browning')
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                  }`}>
+                    {(trendSummary?.significance_class || 'stable_no_trend').replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setTrendAnalysisModalOpen(true)}
+                    className="px-2 py-1 bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowTrendTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Trend Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">Theil-Sen Q_med:</span>
+                  <span className={`font-bold ${Number(trendSummary?.theil_sen_slope ?? -0.0142) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {Number(trendSummary?.theil_sen_slope ?? -0.0142) >= 0 ? '+' : ''}{Number(trendSummary?.theil_sen_slope ?? -0.0142).toFixed(4)} / yr
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Mann-Kendall Z_S:</span>
+                  <span className={`font-bold ${Math.abs(Number(trendSummary?.mann_kendall_zscore ?? -2.85)) >= 1.96 ? 'text-amber-400' : 'text-zinc-300'}`}>
+                    {Number(trendSummary?.mann_kendall_zscore ?? -2.85) >= 0 ? '+' : ''}{Number(trendSummary?.mann_kendall_zscore ?? -2.85).toFixed(2)}
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">p-value:</span>
+                  <span className={`font-bold ${Number(trendSummary?.p_value ?? 0.0044) < 0.05 ? 'text-emerald-400' : 'text-zinc-400'}`}>
+                    {Number(trendSummary?.p_value ?? 0.0044) < 0.001 ? '< 0.001' : Number(trendSummary?.p_value ?? 0.0044).toFixed(4)}
+                  </span>
+                  <span className="text-zinc-500 uppercase ml-1">Annual Rate:</span>
+                  <span className={`font-bold ${Number(trendSummary?.annual_change_percent ?? -2.58) >= 0 ? 'text-teal-400' : 'text-orange-400'}`}>
+                    {Number(trendSummary?.annual_change_percent ?? -2.58) >= 0 ? '+' : ''}{Number(trendSummary?.annual_change_percent ?? -2.58).toFixed(2)}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Metric:</span>
+                  {['theil_sen_slope', 'mann_kendall_zscore', 'trend_significance', 'p_value', 'prewhitened_slope'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setTrendMetric(m)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        trendMetric === m
+                          ? 'bg-emerald-500/30 text-emerald-300 border border-emerald-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {m.replace(/_/g, ' ')}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Index:</span>
+                    {['ndmi', 'ndvi', 'evi', 'mndwi'].map((idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setTrendTargetIndex(idx)}
+                        className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                          trendTargetIndex === idx
+                            ? 'bg-teal-500/30 text-teal-300 border border-teal-500/50'
+                            : 'text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {idx}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={trendOpacity}
+                      onChange={(e) => setTrendOpacity(parseFloat(e.target.value))}
+                      className="w-16 accent-emerald-400 cursor-pointer"
+                    />
+                    <span className="text-emerald-400 font-bold">{Math.round(trendOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -11492,6 +11657,18 @@ export default function MapExplorer() {
               >
                 <GitCompare className="w-3.5 h-3.5 text-amber-400" />
                 <span>Cross-Calibration (v2.5.38)</span>
+              </button>
+
+              {/* Cycle v2.5.39 Non-Parametric Trend Studio Shortcut (Task T-296) */}
+              <button
+                onClick={() => setTrendAnalysisModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-emerald-300 hover:text-white hover:bg-emerald-500/20 border border-emerald-500/30 ${
+                  trendAnalysisModalOpen || showTrendTileLayer ? 'bg-emerald-600 text-white font-extrabold shadow-[0_0_12px_rgba(16,185,129,0.6)]' : ''
+                }`}
+                title="Non-Parametric Trend Studio, Multi-Decadal Pixel Trajectory Inspector, Theil-Sen Confidence Envelope, Mann-Kendall Significance & Dynamic Trend Tiles (Cycle v2.5.39)"
+              >
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Trend Studio (v2.5.39)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -23733,6 +23910,39 @@ export default function MapExplorer() {
           if (extra.sceneName) setCrossCalibratedSceneName(extra.sceneName);
           setShowCrossCalibratedTileLayer(true);
           setCrossCalibrationModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.39 Non-Parametric Trend Studio Modal (Task T-296) */}
+      <TrendAnalysisModal
+        isOpen={trendAnalysisModalOpen}
+        onClose={() => setTrendAnalysisModalOpen(false)}
+        initialSceneKey={trendSceneKey}
+        onApply={(payload) => {
+          setTrendSceneKey(payload.sceneKey || 'SAN_LUIS_RESERVOIR_DROUGHT_DECADE_2016_2026');
+          setTrendSceneName(payload.sceneName || 'San Luis Reservoir Decadal Hydrological Trajectory (2016-2026)');
+          setTrendModel(payload.model || 'theil_sen_median');
+          setTrendMetric(payload.metric || 'theil_sen_slope');
+          setTrendTargetIndex(payload.targetIndex || 'ndmi');
+          setTrendColormap(payload.colormap || 'rdylbu');
+          setTrendOpacity(payload.opacity ?? 0.85);
+          setTrendTileUrl(payload.urlTemplate || payload.tileUrl || '');
+          if (payload.summary) {
+            setTrendSummary(payload.summary);
+          }
+          setShowTrendTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setTrendTileUrl(url);
+          if (extra.model) setTrendModel(extra.model);
+          if (extra.metric) setTrendMetric(extra.metric);
+          if (extra.targetIndex) setTrendTargetIndex(extra.targetIndex);
+          if (extra.colormap) setTrendColormap(extra.colormap);
+          if (extra.opacity !== undefined) setTrendOpacity(extra.opacity);
+          if (extra.summary) setTrendSummary(extra.summary);
+          if (extra.sceneName) setTrendSceneName(extra.sceneName);
+          setShowTrendTileLayer(true);
+          setTrendAnalysisModalOpen(false);
         }}
       />
 

@@ -1037,6 +1037,39 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_trend_short": "/tiles/trend/{model}/{metric}/{z}/{x}/{y}.png",
     "tiles_trend_xyz": "/api/v1/tiles/trend/{z}/{x}/{y}.png",
     "tiles_trend_xyz_short": "/tiles/trend/{z}/{x}/{y}.png",
+    # Cycle v2.5.40: Multimodal Satellite SAR + Optical Sensor Fusion & Feature-Track Displacement Vector Inversion Contracts
+    "analysis_multimodal_track": "/api/v1/analysis/multimodal/track",
+    "analysis_multimodal_track_short": "/analysis/multimodal/track",
+    "analysis_multimodal_models": "/api/v1/analysis/multimodal/models",
+    "analysis_multimodal_models_short": "/analysis/multimodal/models",
+    "analysis_multimodal_evaluate": "/api/v1/analysis/multimodal/evaluate",
+    "analysis_multimodal_evaluate_short": "/analysis/multimodal/evaluate",
+    "tiles_multimodal": "/api/v1/tiles/multimodal/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_multimodal_short": "/tiles/multimodal/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_multimodal_xyz": "/api/v1/tiles/multimodal/{z}/{x}/{y}.png",
+    "tiles_multimodal_xyz_short": "/tiles/multimodal/{z}/{x}/{y}.png",
+    # Cycle v2.5.41: InSAR SBAS Time-Series Ground Deformation Inversion Contracts
+    "analysis_insar_sbas_invert": "/api/v1/analysis/insar-sbas/invert",
+    "analysis_insar_sbas_invert_short": "/analysis/insar-sbas/invert",
+    "analysis_insar_sbas_models": "/api/v1/analysis/insar-sbas/models",
+    "analysis_insar_sbas_models_short": "/analysis/insar-sbas/models",
+    "analysis_insar_sbas_evaluate": "/api/v1/analysis/insar-sbas/evaluate",
+    "analysis_insar_sbas_evaluate_short": "/analysis/insar-sbas/evaluate",
+    "tiles_insar_sbas": "/api/v1/tiles/insar-sbas/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_insar_sbas_short": "/tiles/insar-sbas/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_insar_sbas_xyz": "/api/v1/tiles/insar-sbas/{z}/{x}/{y}.png",
+    "tiles_insar_sbas_xyz_short": "/tiles/insar-sbas/{z}/{x}/{y}.png",
+    # Cycle v2.5.42: Linear Spectral Mixture Analysis (LSMA) & Sub-Pixel Endmember Fraction Inversion Contracts
+    "analysis_unmixing_unmix": "/api/v1/analysis/unmixing/unmix",
+    "analysis_unmixing_unmix_short": "/analysis/unmixing/unmix",
+    "analysis_unmixing_models": "/api/v1/analysis/unmixing/models",
+    "analysis_unmixing_models_short": "/analysis/unmixing/models",
+    "analysis_unmixing_evaluate": "/api/v1/analysis/unmixing/evaluate",
+    "analysis_unmixing_evaluate_short": "/analysis/unmixing/evaluate",
+    "tiles_unmixing": "/api/v1/tiles/unmixing/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_unmixing_short": "/tiles/unmixing/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_unmixing_xyz": "/api/v1/tiles/unmixing/{z}/{x}/{y}.png",
+    "tiles_unmixing_xyz_short": "/tiles/unmixing/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1332,6 +1365,111 @@ def format_api_route(route_name: str, **kwargs) -> str:
                     break
             if "metric" not in kwargs:
                 kwargs["metric"] = "theil_sen_slope"
+    elif route_name in ("tiles_multimodal", "tiles_multimodal_short"):
+        if "model" in kwargs:
+            val = kwargs["model"]
+            try:
+                kwargs["model"] = normalize_multimodal_model(val).value
+            except Exception:
+                kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("alignment_model", "multimodal_model", "algorithm"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    try:
+                        kwargs["model"] = normalize_multimodal_model(val).value
+                    except Exception:
+                        kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "model" not in kwargs:
+                kwargs["model"] = "ncc_frequency_domain"
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            try:
+                kwargs["metric"] = normalize_multimodal_metric(val).value
+            except Exception:
+                kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("tile_metric", "displacement_metric", "target"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    try:
+                        kwargs["metric"] = normalize_multimodal_metric(val).value
+                    except Exception:
+                        kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "metric" not in kwargs:
+                kwargs["metric"] = "velocity_magnitude"
+    elif route_name in ("tiles_insar_sbas", "tiles_insar_sbas_short"):
+        if "model" in kwargs:
+            val = kwargs["model"]
+            try:
+                kwargs["model"] = normalize_sbas_model(val).value
+            except Exception:
+                kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("sbas_model", "inversion_model", "algorithm"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    try:
+                        kwargs["model"] = normalize_sbas_model(val).value
+                    except Exception:
+                        kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "model" not in kwargs:
+                kwargs["model"] = "svd_least_norm"
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            try:
+                kwargs["metric"] = normalize_insar_sbas_metric(val).value
+            except Exception:
+                kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("insar_metric", "tile_metric", "deformation_metric", "target"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    try:
+                        kwargs["metric"] = normalize_insar_sbas_metric(val).value
+                    except Exception:
+                        kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "metric" not in kwargs:
+                kwargs["metric"] = "mean_velocity_mm_yr"
+    elif route_name in ("tiles_unmixing", "tiles_unmixing_short"):
+        if "model" in kwargs:
+            val = kwargs["model"]
+            try:
+                kwargs["model"] = normalize_unmixing_model(val).value
+            except Exception:
+                kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("unmixing_model", "inversion_model", "algorithm"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    try:
+                        kwargs["model"] = normalize_unmixing_model(val).value
+                    except Exception:
+                        kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "model" not in kwargs:
+                kwargs["model"] = "fcls_constrained"
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            try:
+                kwargs["metric"] = normalize_unmixing_metric(val).value
+            except Exception:
+                kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("unmixing_metric", "tile_metric", "fraction_metric", "endmember", "target"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    try:
+                        kwargs["metric"] = normalize_unmixing_metric(val).value
+                    except Exception:
+                        kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "metric" not in kwargs:
+                kwargs["metric"] = "fractional_veg_cover"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -10815,10 +10953,12 @@ class SBASInterferogramPair(BaseModel):
     pair_id: str = Field(..., description="Unique interferogram pair identifier")
     primary_date: str = Field(..., description="Master/reference acquisition date (YYYY-MM-DD)")
     secondary_date: str = Field(..., description="Slave/repeat acquisition date (YYYY-MM-DD)")
-    perp_baseline_m: float = Field(..., description="Perpendicular spatial baseline B_perp in meters")
+    perp_baseline_m: float = Field(default=0.0, description="Perpendicular spatial baseline B_perp in meters")
+    perpendicular_baseline_m: Optional[float] = Field(default=None, description="Perpendicular spatial baseline alias")
     temporal_baseline_days: int = Field(..., description="Temporal baseline B_T in days")
     mean_coherence: float = Field(..., ge=0.0, le=1.0, description="Mean spatial interferometric coherence")
     unwrapped_phase_rad: Optional[float] = Field(default=0.0, description="Mean unwrapped phase in radians")
+    is_valid: bool = Field(default=True, description="Whether pair satisfies baseline threshold criteria")
     status: SBASPairStatus = Field(default=SBASPairStatus.ACCEPTED, description="Network gating acceptance status")
 
     @model_validator(mode="before")
@@ -10831,10 +10971,17 @@ class SBASInterferogramPair(BaseModel):
                 data["primary_date"] = data["primaryDate"]
             if "secondaryDate" in data and "secondary_date" not in data:
                 data["secondary_date"] = data["secondaryDate"]
-            if "perpBaselineM" in data and "perp_baseline_m" not in data:
+            if "perpendicular_baseline_m" in data and "perp_baseline_m" not in data:
+                data["perp_baseline_m"] = data["perpendicular_baseline_m"]
+            elif "perp_baseline_m" in data and "perpendicular_baseline_m" not in data:
+                data["perpendicular_baseline_m"] = data["perp_baseline_m"]
+            if "perpBaselineM" in data:
                 data["perp_baseline_m"] = data["perpBaselineM"]
+                data["perpendicular_baseline_m"] = data["perpBaselineM"]
             if "temporalBaselineDays" in data and "temporal_baseline_days" not in data:
-                data["temporal_baseline_days"] = data["temporalBaselineDays"]
+                data["temporal_baseline_days"] = int(round(float(data["temporalBaselineDays"])))
+            elif "temporal_baseline_days" in data:
+                data["temporal_baseline_days"] = int(round(float(data["temporal_baseline_days"])))
             if "meanCoherence" in data and "mean_coherence" not in data:
                 data["mean_coherence"] = data["meanCoherence"]
             if "unwrappedPhaseRad" in data and "unwrapped_phase_rad" not in data:
@@ -34164,16 +34311,18 @@ class TrendTargetIndex(str, Enum):
 
 class TrendConfidenceRating(str, Enum):
     """Scientific reliability rating tier for evaluated trend results."""
-    HIGH = "high"
-    MODERATE = "moderate"
-    LOW = "low"
-    INDETERMINATE = "indeterminate"
+    HIGH = "HIGH"
+    MODERATE = "MODERATE"
+    LOW = "LOW"
+    INDETERMINATE = "INDETERMINATE"
 
 TREND_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     TrendModel.THEIL_SEN_MEDIAN.value: {
         "name": "Theil-Sen Robust Median Estimator",
         "citation": "Theil (1950); Sen (1968)",
         "breakdown_point": 0.293,
+        "robust_to_outliers": True,
+        "prewhitened": False,
         "description": "Calculates median of all pairwise observation slopes (N*(N-1)/2). Resists up to 29.3% arbitrary gross outliers, cloud masking leaks, and sensor dropouts without distortion.",
         "preserves_monotonicity": True,
         "handles_autocorrelation": False,
@@ -34183,6 +34332,8 @@ TREND_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "name": "Mann-Kendall Rank Correlation Test",
         "citation": "Mann (1945); Kendall (1975)",
         "breakdown_point": 0.50,
+        "robust_to_outliers": True,
+        "prewhitened": False,
         "description": "Non-parametric rank test for monotonic upward or downward trend. Does not require Gaussian normality or linear trajectory.",
         "preserves_monotonicity": True,
         "handles_autocorrelation": False,
@@ -34192,6 +34343,8 @@ TREND_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "name": "Yue-Pilon Trend-Free Pre-Whitening (TFPW)",
         "citation": "Yue, Pilon, Phinney, & Cavadias (2002)",
         "breakdown_point": 0.293,
+        "robust_to_outliers": True,
+        "prewhitened": True,
         "description": "Removes monotonic Theil-Sen trend slope, computes lag-1 AR(1) autocorrelation on detrended residuals, applies pre-whitening filter, re-blends trend, and evaluates robust significance. Prevents false-positive alarms from positive temporal autocorrelation.",
         "preserves_monotonicity": True,
         "handles_autocorrelation": True,
@@ -34201,6 +34354,8 @@ TREND_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "name": "Ordinary Least Squares (OLS) Linear Regression",
         "citation": "Gauss-Markov Theorem Baseline",
         "breakdown_point": 0.0,
+        "robust_to_outliers": False,
+        "prewhitened": False,
         "description": "Parametric ordinary least squares regression. Included as comparative benchmark; vulnerable to single cloud outlier data points.",
         "preserves_monotonicity": False,
         "handles_autocorrelation": False,
@@ -34252,6 +34407,54 @@ TREND_SIGNIFICANCE_CONFIGS: Dict[str, Dict[str, Any]] = {
 }
 
 TREND_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "SAHEL_GREENING_BELT_2026": {
+        "name": "Sahel Semi-Arid Greening & Shrub Encroachment Belt (2000-2026)",
+        "bbox": [-15.00, 12.00, -10.00, 16.00],
+        "coordinates": [14.00, -12.50],
+        "target_index": "ndvi",
+        "start_year": 2000,
+        "end_year": 2026,
+        "expected_theil_sen_slope": 0.0028,
+        "expected_mk_zscore": 2.75,
+        "expected_significance": "significant_greening",
+        "description": "Multi-decadal recovery from 1980s severe drought, increasing precipitation, and agricultural reforestation across the West African Sahel."
+    },
+    "AMAZON_DEFORESTATION_ARC_2026": {
+        "name": "Amazon Basin Arc of Deforestation & Canopy Browning (2000-2026)",
+        "bbox": [-55.50, -11.50, -53.00, -9.50],
+        "coordinates": [-10.50, -54.25],
+        "target_index": "evi",
+        "start_year": 2000,
+        "end_year": 2026,
+        "expected_theil_sen_slope": -0.0045,
+        "expected_mk_zscore": -3.85,
+        "expected_significance": "significant_browning",
+        "description": "Decadal tropical rainforest loss, cattle ranching expansion, and forest fragmentation in Mato Grosso."
+    },
+    "ARAL_SEA_DESICCATION_2026": {
+        "name": "Aral Sea Multi-Decadal Desiccation & Salinization (1985-2026)",
+        "bbox": [58.00, 43.50, 61.50, 46.00],
+        "coordinates": [44.75, 59.75],
+        "target_index": "mndwi",
+        "start_year": 1985,
+        "end_year": 2026,
+        "expected_theil_sen_slope": -0.0125,
+        "expected_mk_zscore": -5.10,
+        "expected_significance": "significant_browning",
+        "description": "Catastrophic multi-decadal shrinkage of inland endorheic sea into the Aralkum Desert."
+    },
+    "CALIFORNIA_CENTRAL_VALLEY_DROUGHT_2026": {
+        "name": "California Central Valley Multi-Decadal Drought & Aquifer Drawdown (2000-2026)",
+        "bbox": [-120.50, 36.40, -120.10, 36.80],
+        "coordinates": [36.6022, -120.3015],
+        "target_index": "ndmi",
+        "start_year": 2000,
+        "end_year": 2026,
+        "expected_theil_sen_slope": -0.0018,
+        "expected_mk_zscore": -2.15,
+        "expected_significance": "moderate_browning",
+        "description": "Intensified megadrought cycles and groundwater over-extraction across the San Joaquin agricultural basin."
+    },
     "SAN_LUIS_RESERVOIR_DROUGHT_DECADE_2016_2026": {
         "name": "San Luis Reservoir Decadal Hydrological Trajectory (2016-2026)",
         "bbox": [-121.15, 37.00, -121.02, 37.10],
@@ -34329,7 +34532,9 @@ def normalize_trend_model(model: Any) -> TrendModel:
         "ols": TrendModel.LINEAR_OLS,
         "linear": TrendModel.LINEAR_OLS
     }
-    return mapping.get(val, TrendModel.THEIL_SEN_MEDIAN)
+    if val in mapping:
+        return mapping[val]
+    raise ValueError(f"Unknown trend model: '{model}'. Supported: {list(mapping.keys())}")
 
 def normalize_trend_metric(metric: Any) -> TrendTileMetric:
     """Normalizes string alias or enum into canonical TrendTileMetric."""
@@ -34351,10 +34556,13 @@ def normalize_trend_metric(metric: Any) -> TrendTileMetric:
         "pvalue": TrendTileMetric.P_VALUE,
         "prewhitened_slope": TrendTileMetric.PREWHITENED_SLOPE,
         "tfpw_slope": TrendTileMetric.PREWHITENED_SLOPE,
+        "prewhitened": TrendTileMetric.PREWHITENED_SLOPE,
         "trajectory_variance": TrendTileMetric.TRAJECTORY_VARIANCE,
         "variance": TrendTileMetric.TRAJECTORY_VARIANCE
     }
-    return mapping.get(val, TrendTileMetric.THEIL_SEN_SLOPE)
+    if val in mapping:
+        return mapping[val]
+    raise ValueError(f"Unknown trend tile metric: '{metric}'. Supported: {list(mapping.keys())}")
 
 def normalize_trend_target_index(idx: Any) -> TrendTargetIndex:
     """Normalizes string alias or enum into canonical TrendTargetIndex."""
@@ -34372,21 +34580,31 @@ def normalize_trend_target_index(idx: Any) -> TrendTargetIndex:
         "mndwi": TrendTargetIndex.MNDWI,
         "lst": TrendTargetIndex.LST
     }
-    return mapping.get(val, TrendTargetIndex.NDVI)
+    if val in mapping:
+        return mapping[val]
+    raise ValueError(f"Unknown trend target index: '{idx}'. Supported: {list(mapping.keys())}")
 
 def calculate_theil_sen_slope(
-    timestamps: Sequence[float],
-    values: Sequence[float],
+    timestamps_or_values: Sequence[float],
+    values: Optional[Sequence[float]] = None,
     alpha: float = 0.05
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     """Calculates Theil-Sen robust median slope, intercept, and confidence interval:
     Q_ij = (x_j - x_i) / (t_j - t_i) for all j > i.
     Resistant to up to 29.3% arbitrary outliers (e.g. undetected cloud masks).
     """
-    if not timestamps or not values or len(timestamps) != len(values) or len(timestamps) < 2:
+    if values is None:
+        vals = [float(v) for v in timestamps_or_values if v is not None and not math.isnan(float(v))]
+        ts = [float(i) for i in range(len(vals))]
+    else:
+        ts = [float(v) for v in timestamps_or_values if v is not None and not math.isnan(float(v))]
+        vals = [float(v) for v in values if v is not None and not math.isnan(float(v))]
+
+    if not ts or not vals or len(ts) != len(vals) or len(ts) < 2:
+        init_val = float(vals[0]) if vals else 0.0
         return {
             "slope_per_year": 0.0,
-            "intercept": float(values[0]) if values else 0.0,
+            "intercept": init_val,
             "slope_ci_lower": 0.0,
             "slope_ci_upper": 0.0,
             "pairwise_count": 0,
@@ -34398,6 +34616,10 @@ def calculate_theil_sen_slope(
             "z_score": 0.0,
             "is_significant": False
         }
+
+    n = len(vals)
+    timestamps = ts
+    values = vals
     
     n = len(values)
     slopes: List[float] = []
@@ -34637,7 +34859,8 @@ def build_trend_tile_url(
     x: int = 650,
     y: int = 1580,
     colormap: Optional[str] = None,
-    index: Optional[str] = None
+    index: Optional[str] = None,
+    target_index: Optional[str] = None
 ) -> str:
     """Builds canonical XYZ tile URL for dynamic trend significance raster tiles."""
     norm_model = normalize_trend_model(model).value
@@ -34646,8 +34869,9 @@ def build_trend_tile_url(
     params = []
     if colormap:
         params.append(f"colormap={colormap}")
-    if index:
-        params.append(f"index={index}")
+    idx = target_index or index
+    if idx:
+        params.append(f"target_index={idx}")
     if params:
         url += "?" + "&".join(params)
     return url
@@ -34656,7 +34880,8 @@ def build_trend_tile_url_template(
     model: Union[str, TrendModel] = TrendModel.THEIL_SEN_MEDIAN,
     metric: Union[str, TrendTileMetric] = TrendTileMetric.THEIL_SEN_SLOPE,
     colormap: Optional[str] = None,
-    index: Optional[str] = None
+    index: Optional[str] = None,
+    target_index: Optional[str] = None
 ) -> str:
     """Constructs dynamic Leaflet tile URL template for trend raster tiles."""
     norm_model = normalize_trend_model(model).value
@@ -34665,8 +34890,9 @@ def build_trend_tile_url_template(
     params = []
     if colormap:
         params.append(f"colormap={colormap}")
-    if index:
-        params.append(f"index={index}")
+    idx = target_index or index
+    if idx:
+        params.append(f"target_index={idx}")
     if params:
         url += "?" + "&".join(params)
     return url
@@ -34773,3 +34999,1069 @@ class TrendModelsResponse(BaseModel):
     significance_classes: Dict[str, Any] = Field(..., description="Significance tier configurations")
     supported_indices: List[str] = Field(default_factory=list, description="Supported biophysical index keys")
     supported_metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")
+
+
+# ============================================================================
+# CYCLE v2.5.40: MULTIMODAL SATELLITE SAR + OPTICAL SENSOR FUSION & FEATURE TRACKING
+# ============================================================================
+
+class MultimodalAlignmentModel(str, Enum):
+    """Coregistration and displacement vector feature-tracking algorithms."""
+    NCC_FREQUENCY_DOMAIN = "ncc_frequency_domain"     # 2D FFT normalized cross-correlation peak solver (COSI-Corr / Scambos et al. 1992)
+    OPTICAL_FLOW_FARNEBACK = "optical_flow_farneback" # Dense polynomial expansion optical flow (Farneback 2003)
+    SIFT_AFFINE_RANSAC = "sift_affine_ransac"         # Scale-Invariant Feature Transform with RANSAC affine homography
+    LUCAS_KANADE_ITERATIVE = "lucas_kanade_iterative" # Iterative multi-scale pyramidal Lucas-Kanade gradient solver
+
+class MultimodalSensorPair(str, Enum):
+    """Multimodal and multi-temporal sensor combination pairs."""
+    S1_RTC_S2_L2A = "s1_rtc_s2_l2a"         # Sentinel-1 RTC SAR amplitude cross-registered to Sentinel-2 L2A optical
+    S1_RTC_LANDSAT8 = "s1_rtc_landsat8"     # Sentinel-1 RTC SAR amplitude cross-registered to Landsat-8/9 OLI optical
+    S2_TEMPORAL_PAIR = "s2_temporal_pair"   # Bi-temporal Sentinel-2 L2A optical repeat pass
+    S1_TEMPORAL_PAIR = "s1_temporal_pair"   # Bi-temporal Sentinel-1 RTC SAR amplitude repeat pass
+
+class MultimodalTileMetric(str, Enum):
+    """Dynamic XYZ tile visualization metrics for multimodal fusion."""
+    VELOCITY_MAGNITUDE = "velocity_magnitude"   # Resultant ground motion speed |v| = sqrt(vx^2 + vy^2) in m/yr
+    VECTOR_AZIMUTH = "vector_azimuth"           # Flow direction compass azimuth in degrees [0, 360) clockwise from North
+    CORRELATION_SNR = "correlation_snr"         # Signal-to-noise ratio / peak-to-sidelobe ratio of correlation surface
+    DISPLACEMENT_U = "displacement_u"           # East-West horizontal velocity component vx in m/yr
+    DISPLACEMENT_V = "displacement_v"           # North-South horizontal velocity component vy in m/yr
+    MULTIMODAL_COMPOSITE = "multimodal_composite" # Fused 3-band composite (SAR VV backscatter, Optical NIR, Velocity magnitude)
+
+class DisplacementConfidenceTier(str, Enum):
+    """Statistical confidence rating for sub-pixel feature-tracked displacement vectors."""
+    HIGH = "HIGH"                 # Peak correlation >= 0.65, SNR >= 8.0, sub-pixel residual error <= 0.10 px
+    MODERATE = "MODERATE"         # Peak correlation >= 0.45, SNR >= 4.5, sub-pixel residual error <= 0.25 px
+    LOW = "LOW"                   # Peak correlation >= 0.25, SNR >= 2.5
+    INDETERMINATE = "INDETERMINATE" # Sub-threshold correlation, severe decorrelation, or cloud occlusion
+
+class MotionHazardTier(str, Enum):
+    """Ground motion hazard classification based on annualized displacement rate."""
+    RAPID_DISPLACEMENT = "rapid_displacement"     # |v| >= 50.0 m/yr: Rapid glacier surge or catastrophic slope failure
+    ACCELERATING_CREEP = "accelerating_creep"     # 15.0 <= |v| < 50.0 m/yr: Active accelerated geotechnical creep / structural motion
+    STEADY_CREEP = "steady_creep"                 # 3.0 <= |v| < 15.0 m/yr: Continuous baseline ground creep
+    SUB_CENTIMETER_STABLE = "sub_centimeter_stable" # |v| < 3.0 m/yr: Geotechnically stable terrain surface
+
+def normalize_multimodal_model(val: Any) -> MultimodalAlignmentModel:
+    """Normalize multimodal alignment model input to canonical enum."""
+    if isinstance(val, MultimodalAlignmentModel):
+        return val
+    raw = str(val or "").strip().lower().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "ncc_frequency_domain": MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+        "ncc": MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+        "fft_ncc": MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+        "frequency_domain": MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+        "cosi_corr": MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+        "optical_flow_farneback": MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK,
+        "farneback": MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK,
+        "optical_flow": MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK,
+        "sift_affine_ransac": MultimodalAlignmentModel.SIFT_AFFINE_RANSAC,
+        "sift": MultimodalAlignmentModel.SIFT_AFFINE_RANSAC,
+        "ransac": MultimodalAlignmentModel.SIFT_AFFINE_RANSAC,
+        "lucas_kanade_iterative": MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE,
+        "lucas_kanade": MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE,
+        "lk": MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE,
+    }
+    if raw in mapping:
+        return mapping[raw]
+    raise ValueError(f"Unsupported multimodal alignment model: '{val}'. Supported: {list(MultimodalAlignmentModel)}")
+
+def normalize_sensor_pair(val: Any) -> MultimodalSensorPair:
+    """Normalize sensor pair input to canonical enum."""
+    if isinstance(val, MultimodalSensorPair):
+        return val
+    raw = str(val or "").strip().lower().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "s1_rtc_s2_l2a": MultimodalSensorPair.S1_RTC_S2_L2A,
+        "s1_s2": MultimodalSensorPair.S1_RTC_S2_L2A,
+        "sentinel1_sentinel2": MultimodalSensorPair.S1_RTC_S2_L2A,
+        "sar_optical": MultimodalSensorPair.S1_RTC_S2_L2A,
+        "s1_rtc_landsat8": MultimodalSensorPair.S1_RTC_LANDSAT8,
+        "s1_landsat": MultimodalSensorPair.S1_RTC_LANDSAT8,
+        "s2_temporal_pair": MultimodalSensorPair.S2_TEMPORAL_PAIR,
+        "s2_s2": MultimodalSensorPair.S2_TEMPORAL_PAIR,
+        "optical_temporal": MultimodalSensorPair.S2_TEMPORAL_PAIR,
+        "s1_temporal_pair": MultimodalSensorPair.S1_TEMPORAL_PAIR,
+        "s1_s1": MultimodalSensorPair.S1_TEMPORAL_PAIR,
+        "sar_temporal": MultimodalSensorPair.S1_TEMPORAL_PAIR,
+    }
+    if raw in mapping:
+        return mapping[raw]
+    return MultimodalSensorPair.S1_RTC_S2_L2A
+
+def normalize_multimodal_metric(val: Any) -> MultimodalTileMetric:
+    """Normalize multimodal tile visualization metric to canonical enum."""
+    if isinstance(val, MultimodalTileMetric):
+        return val
+    raw = str(val or "").strip().lower().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "velocity_magnitude": MultimodalTileMetric.VELOCITY_MAGNITUDE,
+        "velocity": MultimodalTileMetric.VELOCITY_MAGNITUDE,
+        "magnitude": MultimodalTileMetric.VELOCITY_MAGNITUDE,
+        "speed": MultimodalTileMetric.VELOCITY_MAGNITUDE,
+        "vector_azimuth": MultimodalTileMetric.VECTOR_AZIMUTH,
+        "azimuth": MultimodalTileMetric.VECTOR_AZIMUTH,
+        "direction": MultimodalTileMetric.VECTOR_AZIMUTH,
+        "correlation_snr": MultimodalTileMetric.CORRELATION_SNR,
+        "snr": MultimodalTileMetric.CORRELATION_SNR,
+        "psr": MultimodalTileMetric.CORRELATION_SNR,
+        "displacement_u": MultimodalTileMetric.DISPLACEMENT_U,
+        "vx": MultimodalTileMetric.DISPLACEMENT_U,
+        "u": MultimodalTileMetric.DISPLACEMENT_U,
+        "displacement_v": MultimodalTileMetric.DISPLACEMENT_V,
+        "vy": MultimodalTileMetric.DISPLACEMENT_V,
+        "v": MultimodalTileMetric.DISPLACEMENT_V,
+        "multimodal_composite": MultimodalTileMetric.MULTIMODAL_COMPOSITE,
+        "composite": MultimodalTileMetric.MULTIMODAL_COMPOSITE,
+    }
+    if raw in mapping:
+        return mapping[raw]
+    return MultimodalTileMetric.VELOCITY_MAGNITUDE
+
+def normalize_displacement_confidence(val: Any) -> DisplacementConfidenceTier:
+    """Normalize displacement confidence rating to canonical enum."""
+    if isinstance(val, DisplacementConfidenceTier):
+        return val
+    raw = str(val or "").strip().upper()
+    try:
+        return DisplacementConfidenceTier[raw]
+    except KeyError:
+        return DisplacementConfidenceTier.INDETERMINATE
+
+MULTIMODAL_ALIGNMENT_CONFIGS: Dict[str, Dict[str, Any]] = {
+    MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN.value: {
+        "name": "Frequency-Domain Normalized Cross-Correlation (COSI-Corr)",
+        "citation": "Scambos et al. (1992); Leprince et al. (2007) IEEE TGRS",
+        "subpixel_accuracy_px": 0.02,
+        "computational_complexity": "O(N log N)",
+        "default_window_size": 64,
+        "default_step_size": 16,
+        "recommended_sensor_pair": "s1_rtc_s2_l2a",
+        "description": "Fast 2D Fourier phase and intensity correlation with 2D quadratic peak fitting, achieving sub-pixel precision for large-scale surface deformation.",
+        "supports_multimodal": True
+    },
+    MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK.value: {
+        "name": "Farnebäck Dense Quadratic Polynomial Optical Flow",
+        "citation": "Farnebäck, G. (2003) SCIA LNCS 2749",
+        "subpixel_accuracy_px": 0.05,
+        "computational_complexity": "O(N)",
+        "default_window_size": 32,
+        "default_step_size": 8,
+        "recommended_sensor_pair": "s2_temporal_pair",
+        "description": "Dense two-frame motion estimation using neighborhood polynomial approximations, yielding continuous displacement vector fields.",
+        "supports_multimodal": False
+    },
+    MultimodalAlignmentModel.SIFT_AFFINE_RANSAC.value: {
+        "name": "Scale-Invariant Feature Transform with RANSAC Affine Model",
+        "citation": "Lowe, D.G. (2004) IJCV; Fischler & Bolles (1981) ACM",
+        "subpixel_accuracy_px": 0.08,
+        "computational_complexity": "O(K log K)",
+        "default_window_size": 128,
+        "default_step_size": 32,
+        "recommended_sensor_pair": "s1_rtc_s2_l2a",
+        "description": "Invariant gradient orientation keypoint descriptors paired with Random Sample Consensus to prune multimodal outliers and fit rigid 2D affine warps.",
+        "supports_multimodal": True
+    },
+    MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE.value: {
+        "name": "Iterative Pyramidal Lucas-Kanade Feature Tracker",
+        "citation": "Lucas & Kanade (1981) IJCAI; Bouguet, J.-Y. (2001) OpenCV",
+        "subpixel_accuracy_px": 0.04,
+        "computational_complexity": "O(N * I)",
+        "default_window_size": 48,
+        "default_step_size": 16,
+        "recommended_sensor_pair": "s1_temporal_pair",
+        "description": "Multi-scale image pyramid gradient descent minimizing sum of squared differences across localized temporal image patches.",
+        "supports_multimodal": False
+    }
+}
+
+MULTIMODAL_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "JAKOBSHAVN_ISBRAE_GLACIER_SURGE_2026": {
+        "name": "Jakobshavn Isbræ Greenland Glacier Ice Stream",
+        "aoi_name": "Jakobshavn Isbræ Terminus, West Greenland",
+        "sensor_pair": MultimodalSensorPair.S1_RTC_S2_L2A.value,
+        "primary_scene_id": "S1A_IW_GRDH_1SDV_20260714T093215_RTC",
+        "secondary_scene_id": "S2B_MSIL2A_20260726T145229_T22WEV",
+        "center_lat": 69.172,
+        "center_lon": -49.831,
+        "expected_mean_velocity_m_yr": 8450.0,
+        "dominant_azimuth_deg": 268.5,
+        "temporal_baseline_days": 12.0,
+        "gsd_meters": 10.0,
+        "description": "Fastest-flowing tidewater outlet glacier in Greenland exhibiting massive ice flux and western seaward terminus calve dynamics."
+    },
+    "SLUMGULLION_LANDSLIDE_COLORADO_CREEP_2026": {
+        "name": "Slumgullion Landslide Colorado Creep",
+        "aoi_name": "San Juan Mountains, Lake City, Colorado",
+        "sensor_pair": MultimodalSensorPair.S1_RTC_S2_L2A.value,
+        "primary_scene_id": "S1B_IW_GRDH_1SDV_20260605T131140_RTC",
+        "secondary_scene_id": "S2A_MSIL2A_20260617T175911_T13SCD",
+        "center_lat": 37.994,
+        "center_lon": -107.253,
+        "expected_mean_velocity_m_yr": 5.4,
+        "dominant_azimuth_deg": 312.0,
+        "temporal_baseline_days": 12.0,
+        "gsd_meters": 10.0,
+        "description": "Benchmark continuously active natural clay-rich earthflow with stable slow displacement rate of 2 to 7 meters per year."
+    },
+    "RIDGECREST_CALIFORNIA_FAULT_SLIP_2026": {
+        "name": "Ridgecrest California Coseismic Rupture Zone",
+        "aoi_name": "Eastern California Shear Zone, Searles Valley",
+        "sensor_pair": MultimodalSensorPair.S1_TEMPORAL_PAIR.value,
+        "primary_scene_id": "S1A_IW_GRDH_1SDV_20260701T015244_RTC",
+        "secondary_scene_id": "S1A_IW_GRDH_1SDV_20260713T015244_RTC",
+        "center_lat": 35.770,
+        "center_lon": -117.600,
+        "expected_mean_velocity_m_yr": 14.8,
+        "dominant_azimuth_deg": 138.2,
+        "temporal_baseline_days": 12.0,
+        "gsd_meters": 10.0,
+        "description": "Right-lateral strike-slip surface fault rupture showing localized high-gradient ground displacement vectors."
+    },
+    "PINE_ISLAND_GLACIER_ANTARCTICA_FLOW_2026": {
+        "name": "Pine Island Glacier West Antarctica Ice Shelf",
+        "aoi_name": "Amundsen Sea Embayment, West Antarctica",
+        "sensor_pair": MultimodalSensorPair.S2_TEMPORAL_PAIR.value,
+        "primary_scene_id": "S2A_MSIL2A_20260110T021544_T10CFE",
+        "secondary_scene_id": "S2B_MSIL2A_20260122T021544_T10CFE",
+        "center_lat": -75.166,
+        "center_lon": -100.000,
+        "expected_mean_velocity_m_yr": 3950.0,
+        "dominant_azimuth_deg": 295.0,
+        "temporal_baseline_days": 12.0,
+        "gsd_meters": 10.0,
+        "description": "Critical West Antarctic ice stream undergoing grounding line retreat and accelerating seaward displacement."
+    }
+}
+
+MOTION_HAZARD_CONFIGS: Dict[str, Dict[str, Any]] = {
+    MotionHazardTier.RAPID_DISPLACEMENT.value: {
+        "tier": MotionHazardTier.RAPID_DISPLACEMENT.value,
+        "label": "Rapid Displacement Hazard",
+        "badge_class": "bg-rose-500/20 text-rose-300 border-rose-500/40",
+        "hex_color": "#f43f5e",
+        "min_velocity_m_yr": 50.0,
+        "description": "Severe ground movement (>50 m/yr). Indicates active glacier surging, high-velocity rock avalanche, or critical slope failure."
+    },
+    MotionHazardTier.ACCELERATING_CREEP.value: {
+        "tier": MotionHazardTier.ACCELERATING_CREEP.value,
+        "label": "Accelerating Creep",
+        "badge_class": "bg-amber-500/20 text-amber-300 border-amber-500/40",
+        "hex_color": "#f59e0b",
+        "min_velocity_m_yr": 15.0,
+        "description": "Heightened ground displacement rate (15 to 50 m/yr). Warrants continuous geotechnical surveillance and structural safety alerts."
+    },
+    MotionHazardTier.STEADY_CREEP.value: {
+        "tier": MotionHazardTier.STEADY_CREEP.value,
+        "label": "Steady Slow Creep",
+        "badge_class": "bg-cyan-500/20 text-cyan-300 border-cyan-500/40",
+        "hex_color": "#06b6d4",
+        "min_velocity_m_yr": 3.0,
+        "description": "Continuous baseline ground motion (3 to 15 m/yr). Consistent with natural earthflows or slow seasonal slope deformation."
+    },
+    MotionHazardTier.SUB_CENTIMETER_STABLE.value: {
+        "tier": MotionHazardTier.SUB_CENTIMETER_STABLE.value,
+        "label": "Stable Surface Terrain",
+        "badge_class": "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
+        "hex_color": "#10b981",
+        "min_velocity_m_yr": 0.0,
+        "description": "Nominal ground velocity (<3 m/yr). Stable surface terrain without significant active kinematic deformation."
+    }
+}
+
+def calculate_subpixel_peak_parabolic(
+    correlation_surface: Sequence[Sequence[float]]
+) -> Tuple[float, float, float]:
+    """Evaluates 2D quadratic parabolic peak localization around the central maximum.
+    
+    Given a 3x3 normalized cross-correlation window centered on index [1][1]:
+        delta_x = (C[1][2] - C[1][0]) / (2 * (2 * C[1][1] - C[1][2] - C[1][0]))
+        delta_y = (C[2][1] - C[0][1]) / (2 * (2 * C[1][1] - C[2][1] - C[0][1]))
+    
+    Returns:
+        (delta_x, delta_y, peak_correlation): sub-pixel offsets clamped to [-0.5, 0.5] and interpolated peak value.
+    """
+    if len(correlation_surface) < 3 or any(len(row) < 3 for row in correlation_surface):
+        return (0.0, 0.0, 0.0)
+    
+    c00 = float(correlation_surface[1][1])
+    c_left = float(correlation_surface[1][0])
+    c_right = float(correlation_surface[1][2])
+    c_top = float(correlation_surface[0][1])
+    c_bottom = float(correlation_surface[2][1])
+    
+    denom_x = 2.0 * (2.0 * c00 - c_right - c_left)
+    if abs(denom_x) > 1e-7:
+        dx = (c_right - c_left) / denom_x
+    else:
+        dx = 0.0
+    dx = max(-0.5, min(0.5, dx))
+    
+    denom_y = 2.0 * (2.0 * c00 - c_bottom - c_top)
+    if abs(denom_y) > 1e-7:
+        dy = (c_bottom - c_top) / denom_y
+    else:
+        dy = 0.0
+    dy = max(-0.5, min(0.5, dy))
+    
+    # Interpolated peak value using 2D second-order Taylor expansion
+    peak_val = c00 + 0.5 * (dx * (c_right - c_left) + dy * (c_bottom - c_top))
+    peak_val = max(-1.0, min(1.0, peak_val))
+    
+    return (round(dx, 4), round(dy, 4), round(peak_val, 4))
+
+def calculate_velocity_vector(
+    dx_px: float,
+    dy_px: float,
+    gsd_m: float = 10.0,
+    dt_days: float = 12.0
+) -> Dict[str, float]:
+    """Computes ground displacement metric vector and annual velocity from pixel offsets.
+    
+    Args:
+        dx_px: East-West sub-pixel displacement (positive East)
+        dy_px: North-South sub-pixel displacement (positive North)
+        gsd_m: Ground sampling distance in meters per pixel
+        dt_days: Temporal observation baseline in days
+    
+    Returns:
+        Dictionary containing metric displacements, velocities in m/yr, magnitude, and compass azimuth.
+    """
+    dt_years = max(1e-4, dt_days / 365.25)
+    dx_m = dx_px * gsd_m
+    dy_m = dy_px * gsd_m
+    
+    vx = dx_m / dt_years
+    vy = dy_m / dt_years
+    v_mag = math.sqrt(vx * vx + vy * vy)
+    
+    # Compass azimuth clockwise from North: atan2(dx, dy)
+    rad = math.atan2(dx_m, dy_m)
+    deg = (math.degrees(rad) + 360.0) % 360.0
+    
+    return {
+        "dx_px": round(dx_px, 4),
+        "dy_px": round(dy_px, 4),
+        "dx_m": round(dx_m, 3),
+        "dy_m": round(dy_m, 3),
+        "velocity_x_m_yr": round(vx, 3),
+        "velocity_y_m_yr": round(vy, 3),
+        "velocity_magnitude_m_yr": round(v_mag, 3),
+        "azimuth_deg": round(deg, 2)
+    }
+
+def calculate_correlation_snr(
+    correlation_grid: Sequence[float],
+    peak_val: Optional[float] = None
+) -> float:
+    """Calculates peak-to-sidelobe ratio (PSR) / Signal-to-Noise Ratio of correlation matrix."""
+    if not correlation_grid:
+        return 0.0
+    
+    vals = [float(v) for v in correlation_grid]
+    peak = peak_val if peak_val is not None else max(vals)
+    
+    # Sidelobes excluding the peak
+    sidelobes = [v for v in vals if abs(v - peak) > 1e-4]
+    if not sidelobes:
+        return 10.0
+    
+    mean_side = sum(sidelobes) / len(sidelobes)
+    var_side = sum((v - mean_side) ** 2 for v in sidelobes) / len(sidelobes)
+    std_side = math.sqrt(var_side)
+    
+    snr = (peak - mean_side) / (std_side + 1e-6)
+    return round(max(0.0, snr), 2)
+
+def classify_motion_hazard_tier(velocity_magnitude_m_yr: float) -> MotionHazardTier:
+    """Categorizes annual displacement rate into geotechnical hazard classifications."""
+    v = abs(float(velocity_magnitude_m_yr))
+    if v >= 50.0:
+        return MotionHazardTier.RAPID_DISPLACEMENT
+    elif v >= 15.0:
+        return MotionHazardTier.ACCELERATING_CREEP
+    elif v >= 3.0:
+        return MotionHazardTier.STEADY_CREEP
+    else:
+        return MotionHazardTier.SUB_CENTIMETER_STABLE
+
+def classify_displacement_confidence(
+    snr: float,
+    peak_corr: float,
+    subpixel_error: float = 0.05
+) -> DisplacementConfidenceTier:
+    """Assigns statistical confidence rating based on correlation peak, SNR, and localization error."""
+    s = float(snr)
+    p = float(peak_corr)
+    e = abs(float(subpixel_error))
+    
+    if s >= 8.0 and p >= 0.65 and e <= 0.10:
+        return DisplacementConfidenceTier.HIGH
+    elif s >= 4.5 and p >= 0.45:
+        return DisplacementConfidenceTier.MODERATE
+    elif s >= 2.5 and p >= 0.25:
+        return DisplacementConfidenceTier.LOW
+    else:
+        return DisplacementConfidenceTier.INDETERMINATE
+
+def build_multimodal_tile_url(
+    model: Union[str, MultimodalAlignmentModel] = MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+    metric: Union[str, MultimodalTileMetric] = MultimodalTileMetric.VELOCITY_MAGNITUDE,
+    z: int = 12,
+    x: int = 650,
+    y: int = 1580,
+    colormap: Optional[str] = None,
+    pair: Optional[Union[str, MultimodalSensorPair]] = None,
+    min_snr: Optional[float] = None
+) -> str:
+    """Constructs canonical XYZ tile URL for dynamic multimodal displacement vector raster tiles."""
+    norm_model = normalize_multimodal_model(model).value
+    norm_metric = normalize_multimodal_metric(metric).value
+    url = f"/api/v1/tiles/multimodal/{norm_model}/{norm_metric}/{z}/{x}/{y}.png"
+    params = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if pair:
+        params.append(f"pair={normalize_sensor_pair(pair).value}")
+    if min_snr is not None:
+        params.append(f"min_snr={min_snr}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+def build_multimodal_tile_url_template(
+    model: Union[str, MultimodalAlignmentModel] = MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+    metric: Union[str, MultimodalTileMetric] = MultimodalTileMetric.VELOCITY_MAGNITUDE,
+    colormap: Optional[str] = None,
+    pair: Optional[Union[str, MultimodalSensorPair]] = None,
+    min_snr: Optional[float] = None
+) -> str:
+    """Constructs dynamic Leaflet tile URL template for multimodal displacement vector raster tiles."""
+    norm_model = normalize_multimodal_model(model).value
+    norm_metric = normalize_multimodal_metric(metric).value
+    url = f"/api/v1/tiles/multimodal/{norm_model}/{norm_metric}/{{z}}/{{x}}/{{y}}.png"
+    params = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if pair:
+        params.append(f"pair={normalize_sensor_pair(pair).value}")
+    if min_snr is not None:
+        params.append(f"min_snr={min_snr}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+class DisplacementVectorPoint(BaseModel):
+    """Localized ground displacement vector point from sub-pixel feature tracking."""
+    point_id: str = Field(..., description="Unique vector grid point identifier")
+    lat: float = Field(..., description="Latitude coordinate in WGS84 degrees")
+    lng: float = Field(..., description="Longitude coordinate in WGS84 degrees")
+    pixel_x: int = Field(..., ge=0, description="Column pixel coordinate in reference scene")
+    pixel_y: int = Field(..., ge=0, description="Row pixel coordinate in reference scene")
+    dx_px: float = Field(..., description="Sub-pixel East-West displacement offset")
+    dy_px: float = Field(..., description="Sub-pixel North-South displacement offset")
+    velocity_x_m_yr: float = Field(..., description="Annualized East-West velocity component in m/yr")
+    velocity_y_m_yr: float = Field(..., description="Annualized North-South velocity component in m/yr")
+    velocity_magnitude_m_yr: float = Field(..., ge=0.0, description="Ground motion speed magnitude in m/yr")
+    azimuth_deg: float = Field(..., ge=0.0, le=360.0, description="Displacement compass azimuth clockwise from North")
+    correlation_snr: float = Field(..., ge=0.0, description="Correlation peak signal-to-noise ratio")
+    peak_correlation: float = Field(..., ge=-1.0, le=1.0, description="Normalized cross-correlation coefficient at peak")
+    confidence: DisplacementConfidenceTier = Field(..., description="Statistical confidence classification")
+    hazard_tier: MotionHazardTier = Field(..., description="Kinematic motion hazard tier")
+
+class DisplacementVectorField(BaseModel):
+    """Aggregated spatial field of sub-pixel displacement vectors."""
+    mean_velocity_m_yr: float = Field(..., ge=0.0, description="Spatial mean velocity across valid vector field")
+    max_velocity_m_yr: float = Field(..., ge=0.0, description="Maximum observed velocity magnitude in m/yr")
+    dominant_azimuth_deg: float = Field(..., ge=0.0, le=360.0, description="Directional mean flow azimuth in degrees")
+    valid_vectors_count: int = Field(..., ge=0, description="Number of vectors satisfying SNR and peak threshold")
+    total_grid_points_count: int = Field(..., ge=0, description="Total evaluated grid points across AOI")
+    coherence_fraction: float = Field(..., ge=0.0, le=1.0, description="Fraction of valid vectors over total grid")
+    vectors: List[DisplacementVectorPoint] = Field(default_factory=list, description="Collection of individual vector points")
+
+class MultimodalFusionQualitySummary(BaseModel):
+    """Quantitative certification summary for multimodal sensor fusion."""
+    sensor_pair: MultimodalSensorPair = Field(..., description="Evaluated sensor pair")
+    alignment_model: MultimodalAlignmentModel = Field(..., description="Applied coregistration / tracking algorithm")
+    mean_snr: float = Field(..., ge=0.0, description="Mean correlation SNR across vectors")
+    mean_peak_correlation: float = Field(..., ge=-1.0, le=1.0, description="Mean normalized cross-correlation peak")
+    subpixel_precision_px: float = Field(..., ge=0.0, description="Estimated sub-pixel localization accuracy in pixels")
+    confidence_rating: DisplacementConfidenceTier = Field(..., description="Overall dataset confidence rating")
+    dominant_hazard_tier: MotionHazardTier = Field(..., description="Highest-severity kinematic hazard category")
+    quality_checklist: Dict[str, bool] = Field(default_factory=dict, description="Scientific criteria compliance checks")
+    narrative: str = Field(..., description="Executive interpretation of displacement results")
+
+class MultimodalTrackingRequest(BaseModel):
+    """Request payload for multimodal SAR-optical sensor fusion and displacement tracking."""
+    aoi_name: Optional[str] = Field(default="Jakobshavn Isbræ Terminus Flow", description="Target AOI label")
+    sensor_pair: MultimodalSensorPair = Field(default=MultimodalSensorPair.S1_RTC_S2_L2A, description="Sensor combination pair")
+    alignment_model: MultimodalAlignmentModel = Field(default=MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN, description="Displacement tracking model")
+    window_size: int = Field(default=64, ge=16, le=512, description="Correlation interrogation window size in pixels")
+    step_size: int = Field(default=16, ge=4, le=128, description="Grid step size stride in pixels")
+    time_delta_days: float = Field(default=12.0, gt=0.0, le=3650.0, description="Temporal baseline between acquisitions in days")
+    gsd_m: float = Field(default=10.0, gt=0.0, le=100.0, description="Spatial resolution in meters per pixel")
+    snr_threshold: float = Field(default=3.0, ge=1.0, le=20.0, description="Minimum correlation SNR to accept vector")
+    reference_scene_id: Optional[str] = Field(default=None, description="Primary reference acquisition scene ID")
+    secondary_scene_id: Optional[str] = Field(default=None, description="Secondary repeat pass scene ID")
+    bbox: Optional[Any] = Field(default=None, description="Optional bounding box envelope")
+
+    @field_validator("alignment_model", mode="before")
+    @classmethod
+    def validate_alignment_model(cls, v: Any) -> MultimodalAlignmentModel:
+        return normalize_multimodal_model(v)
+
+    @field_validator("sensor_pair", mode="before")
+    @classmethod
+    def validate_sensor_pair(cls, v: Any) -> MultimodalSensorPair:
+        return normalize_sensor_pair(v)
+
+class MultimodalFusionResponse(BaseModel):
+    """Response payload containing 2D displacement vector field, certification, and Leaflet tile endpoints."""
+    request_id: str = Field(..., description="Unique fusion request identifier")
+    aoi_name: str = Field(..., description="Area of interest label")
+    sensor_pair: MultimodalSensorPair = Field(..., description="Evaluated sensor pair")
+    alignment_model: MultimodalAlignmentModel = Field(..., description="Applied tracking algorithm")
+    vector_field: DisplacementVectorField = Field(..., description="Sub-pixel displacement vector field")
+    quality_summary: MultimodalFusionQualitySummary = Field(..., description="Quality certification summary")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for Leaflet velocity layer")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Execution timestamp")
+    status: str = Field(default="success", description="Execution status")
+
+class MultimodalTileRequestParams(BaseModel):
+    """Query parameters for dynamic XYZ multimodal displacement tile rendering."""
+    model: MultimodalAlignmentModel = Field(default=MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN, description="Tracking algorithm")
+    metric: MultimodalTileMetric = Field(default=MultimodalTileMetric.VELOCITY_MAGNITUDE, description="Visualization metric")
+    pair: MultimodalSensorPair = Field(default=MultimodalSensorPair.S1_RTC_S2_L2A, description="Sensor pair")
+    colormap: Optional[str] = Field(default=None, description="Colormap palette")
+    rescale: Optional[str] = Field(default=None, description="Rescale range min,max")
+    min_snr: Optional[float] = Field(default=None, description="SNR threshold filter")
+
+class MultimodalModelsResponse(BaseModel):
+    """Capabilities response describing supported multimodal alignment models, benchmark scenes, and hazard configs."""
+    models: Dict[str, Any] = Field(..., description="Supported alignment models and literature citations")
+    sensor_pairs: Dict[str, Any] = Field(..., description="Supported multimodal sensor pairs")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Benchmark research tracking test sites")
+    hazard_tiers: Dict[str, Any] = Field(..., description="Motion hazard tier classifications")
+    supported_metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")
+
+
+
+# ============================================================================
+# CYCLE v2.5.41: InSAR SMALL BASELINE SUBSET (SBAS) & PERSISTENT SCATTERER
+# INTERFEROMETRY (PSI) TIME-SERIES GROUND DEFORMATION INVERSION
+# ============================================================================
+
+class SBASInversionModel(str, Enum):
+    """Mathematical inversion algorithms for multi-temporal small baseline interferograms."""
+    SVD_LEAST_NORM = "svd_least_norm"             # Singular Value Decomposition minimum-norm (Berardino et al. 2002)
+    L1_NORM_ROBUST = "l1_norm_robust"             # Iteratively reweighted L1-norm robust to phase unwrapping jumps (Lauknes 2011)
+    KALMAN_FILTER_RECURSIVE = "kalman_filter_recursive"  # Sequential Kalman filtering state estimator (Guarnieri 2018)
+
+class InSARSBASTileMetric(str, Enum):
+    """Dynamic XYZ visualization metrics for InSAR SBAS / PSI displacement layers."""
+    MEAN_VELOCITY_MM_YR = "mean_velocity_mm_yr"              # Mean annual line-of-sight velocity in mm/yr
+    CUMULATIVE_DISPLACEMENT_MM = "cumulative_displacement_mm"  # Total accumulated LOS ground displacement in mm
+    TEMPORAL_COHERENCE = "temporal_coherence"                # Multi-temporal interferometric phase stability [0, 1]
+    AMPLITUDE_DISPERSION = "amplitude_dispersion"            # Persistent scatterer dispersion index D_A = sigma_A / mu_A
+    VELOCITY_UNCERTAINTY = "velocity_uncertainty"            # Standard error of estimated annual velocity in mm/yr
+    DEFORMATION_GRADIENT = "deformation_gradient"            # Spatial differential subsidence / angular distortion (mm/m)
+
+class PSCStabilityTier(str, Enum):
+    """Statistical stability classification of Persistent Scatterer Candidates (Ferretti et al. 2001)."""
+    HIGH = "HIGH"                    # D_A <= 0.25 and temporal coherence >= 0.75 (Ideal permanent scatterer)
+    MODERATE = "MODERATE"            # 0.25 < D_A <= 0.40 or 0.60 <= coherence < 0.75 (Acceptable distributed scatterer)
+    LOW = "LOW"                      # 0.40 < D_A <= 0.60 or 0.45 <= coherence < 0.60 (Marginally stable target)
+    INDETERMINATE = "INDETERMINATE"  # D_A > 0.60 or uncalibrated
+
+class DeformationHazardTier(str, Enum):
+    """Geotechnical ground deformation hazard classification based on annualized velocity."""
+    CRITICAL_SUBSIDENCE = "critical_subsidence"      # |v| >= 25.0 mm/yr (severe structural risk, differential settlement)
+    MODERATE_SUBSIDENCE = "moderate_subsidence"      # 10.0 <= |v| < 25.0 mm/yr (actionable embankment/foundation alert)
+    SLOW_CREEP = "slow_creep"                        # 3.0 <= |v| < 10.0 mm/yr (long-term secular tectonic/aquifer movement)
+    SUB_MILLIMETER_STABLE = "sub_millimeter_stable"  # |v| < 3.0 mm/yr (geotechnically stable benchmark ground)
+
+class SBASNetworkStatus(str, Enum):
+    """Topological connectivity status of the small baseline interferogram network."""
+    FULLY_CONNECTED = "fully_connected"              # Single connected component; full rank temporal inversion
+    DISCONNECTED_SUBSETS = "disconnected_subsets"    # Multiple disjoint temporal graphs; requires SVD pseudo-inverse
+    DEGENERATE = "degenerate"                        # < 3 interferograms or disconnected isolated acquisitions
+
+def normalize_sbas_model(val: Any) -> SBASInversionModel:
+    """Normalizes string or enum values into canonical SBASInversionModel."""
+    if isinstance(val, SBASInversionModel):
+        return val
+    raw = str(val).strip().lower().replace("-", "_").replace(" ", "_")
+    alias_map = {
+        "svd": SBASInversionModel.SVD_LEAST_NORM,
+        "svd_least_norm": SBASInversionModel.SVD_LEAST_NORM,
+        "least_norm": SBASInversionModel.SVD_LEAST_NORM,
+        "berardino": SBASInversionModel.SVD_LEAST_NORM,
+        "l1": SBASInversionModel.L1_NORM_ROBUST,
+        "l1_norm": SBASInversionModel.L1_NORM_ROBUST,
+        "l1_norm_robust": SBASInversionModel.L1_NORM_ROBUST,
+        "robust": SBASInversionModel.L1_NORM_ROBUST,
+        "kalman": SBASInversionModel.KALMAN_FILTER_RECURSIVE,
+        "kalman_filter": SBASInversionModel.KALMAN_FILTER_RECURSIVE,
+        "kalman_filter_recursive": SBASInversionModel.KALMAN_FILTER_RECURSIVE,
+        "sequential": SBASInversionModel.KALMAN_FILTER_RECURSIVE,
+    }
+    if raw in alias_map:
+        return alias_map[raw]
+    for m in SBASInversionModel:
+        if raw == m.value or raw == m.name.lower():
+            return m
+    raise ValueError(f"Unsupported SBAS inversion model '{val}'. Supported: {[m.value for m in SBASInversionModel]}")
+
+def normalize_insar_sbas_metric(val: Any) -> InSARSBASTileMetric:
+    """Normalizes string or enum values into canonical InSARSBASTileMetric."""
+    if isinstance(val, InSARSBASTileMetric):
+        return val
+    raw = str(val).strip().lower().replace("-", "_").replace(" ", "_")
+    alias_map = {
+        "velocity": InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+        "mean_velocity": InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+        "mean_velocity_mm_yr": InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+        "v_los": InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+        "cumulative": InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM,
+        "cumulative_displacement": InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM,
+        "cumulative_displacement_mm": InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM,
+        "d_los": InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM,
+        "coherence": InSARSBASTileMetric.TEMPORAL_COHERENCE,
+        "temporal_coherence": InSARSBASTileMetric.TEMPORAL_COHERENCE,
+        "gamma": InSARSBASTileMetric.TEMPORAL_COHERENCE,
+        "dispersion": InSARSBASTileMetric.AMPLITUDE_DISPERSION,
+        "amplitude_dispersion": InSARSBASTileMetric.AMPLITUDE_DISPERSION,
+        "da": InSARSBASTileMetric.AMPLITUDE_DISPERSION,
+        "uncertainty": InSARSBASTileMetric.VELOCITY_UNCERTAINTY,
+        "velocity_uncertainty": InSARSBASTileMetric.VELOCITY_UNCERTAINTY,
+        "stderr": InSARSBASTileMetric.VELOCITY_UNCERTAINTY,
+        "gradient": InSARSBASTileMetric.DEFORMATION_GRADIENT,
+        "deformation_gradient": InSARSBASTileMetric.DEFORMATION_GRADIENT,
+        "differential": InSARSBASTileMetric.DEFORMATION_GRADIENT,
+    }
+    if raw in alias_map:
+        return alias_map[raw]
+    for m in InSARSBASTileMetric:
+        if raw == m.value or raw == m.name.lower():
+            return m
+    raise ValueError(f"Unsupported InSAR SBAS tile metric '{val}'. Supported: {[m.value for m in InSARSBASTileMetric]}")
+
+def normalize_psc_stability(val: Any) -> PSCStabilityTier:
+    """Normalizes PSC stability tier values."""
+    if isinstance(val, PSCStabilityTier):
+        return val
+    raw = str(val).strip().upper()
+    try:
+        return PSCStabilityTier[raw]
+    except KeyError:
+        return PSCStabilityTier.INDETERMINATE
+
+def normalize_deformation_hazard_tier(val: Any) -> DeformationHazardTier:
+    """Normalizes deformation hazard tier values."""
+    if isinstance(val, DeformationHazardTier):
+        return val
+    raw = str(val).strip().lower().replace("-", "_")
+    for t in DeformationHazardTier:
+        if raw in (t.value, t.name.lower()):
+            return t
+    return DeformationHazardTier.SUB_MILLIMETER_STABLE
+
+SBAS_INVERSION_CONFIGS: Dict[str, Dict[str, Any]] = {
+    SBASInversionModel.SVD_LEAST_NORM.value: {
+        "id": SBASInversionModel.SVD_LEAST_NORM.value,
+        "label": "Singular Value Decomposition (SVD) Minimum-Norm",
+        "citation": "Berardino, P., Fornaro, G., Lanari, R., & Sansosti, E. (2002). A new algorithm for surface deformation monitoring based on small baseline differential SAR interferograms. IEEE TGRS, 40(11), 2375-2383.",
+        "description": "Multi-master least-norm solution decomposing rank-deficient temporal baseline networks using SVD Moore-Penrose pseudo-inversion; eliminates temporal decorrelation across isolated acquisition clusters.",
+        "precision_mm_yr": 1.0,
+        "robust_to_unwrapping_errors": False,
+        "handles_disconnected_subsets": True,
+        "badge_class": "bg-blue-900/60 text-blue-300 border-blue-500/30"
+    },
+    SBASInversionModel.L1_NORM_ROBUST.value: {
+        "id": SBASInversionModel.L1_NORM_ROBUST.value,
+        "label": "Iteratively Reweighted L1-Norm Regularization",
+        "citation": "Lauknes, T. R., Zebker, H. A., & Larsen, Y. (2011). InSAR deformation time series using an L1-norm regularization approach. Remote Sensing of Environment, 115(12), 3401-3416.",
+        "description": "L1-norm iteratively reweighted least squares (IRLS) objective function suppressing anomalous 2pi phase unwrapping residuals, atmospheric turbulence, and high-gradient phase jumps.",
+        "precision_mm_yr": 1.2,
+        "robust_to_unwrapping_errors": True,
+        "handles_disconnected_subsets": True,
+        "badge_class": "bg-emerald-900/60 text-emerald-300 border-emerald-500/30"
+    },
+    SBASInversionModel.KALMAN_FILTER_RECURSIVE.value: {
+        "id": SBASInversionModel.KALMAN_FILTER_RECURSIVE.value,
+        "label": "Sequential Recursive Extended Kalman Filter (EKF)",
+        "citation": "Guarnieri, A. M., & Tebaldini, S. (2018). Hybrid Cramér-Rao bounds for InSAR phase and deformation tracking. IEEE GRSL, 15(7), 1011-1015.",
+        "description": "Recursive state-space Kalman estimator processing incoming Sentinel-1 acquisitions incrementally without re-inverting the full historical covariance matrix; optimal for real-time monitoring daemons.",
+        "precision_mm_yr": 1.5,
+        "robust_to_unwrapping_errors": True,
+        "handles_disconnected_subsets": False,
+        "badge_class": "bg-purple-900/60 text-purple-300 border-purple-500/30"
+    }
+}
+
+DEFORMATION_HAZARD_CONFIGS: Dict[str, Dict[str, Any]] = {
+    DeformationHazardTier.CRITICAL_SUBSIDENCE.value: {
+        "id": DeformationHazardTier.CRITICAL_SUBSIDENCE.value,
+        "label": "Critical Subsidence Hazard",
+        "velocity_threshold_mm_yr": 25.0,
+        "badge_class": "bg-red-900/60 text-red-300 border-red-500/30",
+        "color_hex": "#dc2626",
+        "severity": "CRITICAL",
+        "description": "Rapid millimeter displacement (|v| >= 25 mm/yr); immediate threat to civil structures, aqueducts, and tailings dam crest integrity."
+    },
+    DeformationHazardTier.MODERATE_SUBSIDENCE.value: {
+        "id": DeformationHazardTier.MODERATE_SUBSIDENCE.value,
+        "label": "Moderate Subsidence",
+        "velocity_threshold_mm_yr": 10.0,
+        "badge_class": "bg-orange-900/60 text-orange-300 border-orange-500/30",
+        "color_hex": "#f97316",
+        "severity": "WARNING",
+        "description": "Accelerated settlement (10 - 25 mm/yr); requires geotechnical instrumentation inspection and piezometer correlation."
+    },
+    DeformationHazardTier.SLOW_CREEP.value: {
+        "id": DeformationHazardTier.SLOW_CREEP.value,
+        "label": "Slow Creep / Steady Settlement",
+        "velocity_threshold_mm_yr": 3.0,
+        "badge_class": "bg-amber-900/60 text-amber-300 border-amber-500/30",
+        "color_hex": "#eab308",
+        "severity": "WATCH",
+        "description": "Steady seasonal or slow continuous deformation (3 - 10 mm/yr); long-term aquifer drawdown or natural consolidation."
+    },
+    DeformationHazardTier.SUB_MILLIMETER_STABLE.value: {
+        "id": DeformationHazardTier.SUB_MILLIMETER_STABLE.value,
+        "label": "Sub-Millimeter Stable Ground",
+        "velocity_threshold_mm_yr": 0.0,
+        "badge_class": "bg-emerald-900/60 text-emerald-300 border-emerald-500/30",
+        "color_hex": "#10b981",
+        "severity": "NORMAL",
+        "description": "Negligible ground movement (|v| < 3 mm/yr); stable bedrock or engineered foundation within instrument noise ceiling."
+    }
+}
+
+INSAR_SBAS_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026": {
+        "id": "CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026",
+        "name": "Tulare Basin Aquifer Overdraft & Deep Subsidence",
+        "location": "San Joaquin Valley, California, USA",
+        "coordinates": {"lat": 36.05, "lng": -119.35},
+        "bbox": [-119.65, 35.80, -119.05, 36.30],
+        "expected_peak_velocity_mm_yr": -165.0,
+        "dominant_hazard_tier": DeformationHazardTier.CRITICAL_SUBSIDENCE.value,
+        "recommended_model": SBASInversionModel.SVD_LEAST_NORM.value,
+        "citation": "Farr, T. G., et al. (2016). Progress Report: Subsidence in the Central Valley, California. NASA JPL / California DWR Report."
+    },
+    "MEXICO_CITY_LACUSTRINE_CONSOLIDATION_2026": {
+        "id": "MEXICO_CITY_LACUSTRINE_CONSOLIDATION_2026",
+        "name": "Mexico City Lacustrine Clay Aquitard Consolidation",
+        "location": "Valley of Mexico, Mexico",
+        "coordinates": {"lat": 19.43, "lng": -99.13},
+        "bbox": [-99.30, 19.25, -98.95, 19.60],
+        "expected_peak_velocity_mm_yr": -280.0,
+        "dominant_hazard_tier": DeformationHazardTier.CRITICAL_SUBSIDENCE.value,
+        "recommended_model": SBASInversionModel.L1_NORM_ROBUST.value,
+        "citation": "Cabral-Cano, E., et al. (2008). Spaceborne radar interferometry for monitoring subsidence in Mexico City. International Geology Review, 50(4), 379-392."
+    },
+    "BOLOGNA_PO_VALLEY_PIEDMONT_SUBSIDENCE_2026": {
+        "id": "BOLOGNA_PO_VALLEY_PIEDMONT_SUBSIDENCE_2026",
+        "name": "Bologna Po Plain Alluvial Groundwater Subsidence",
+        "location": "Emilia-Romagna, Italy",
+        "coordinates": {"lat": 44.50, "lng": 11.35},
+        "bbox": [-11.10, 44.35, 11.55, 44.65],
+        "expected_peak_velocity_mm_yr": -12.5,
+        "dominant_hazard_tier": DeformationHazardTier.MODERATE_SUBSIDENCE.value,
+        "recommended_model": SBASInversionModel.SVD_LEAST_NORM.value,
+        "citation": "Berardino, P., et al. (2002). A new algorithm for surface deformation monitoring based on small baseline differential SAR interferograms. IEEE TGRS, 40(11), 2375-2383."
+    },
+    "KIRUNA_UNDERGROUND_IRON_MINE_DEFORMATION_2026": {
+        "id": "KIRUNA_UNDERGROUND_IRON_MINE_DEFORMATION_2026",
+        "name": "Kiruna Sub-Level Caving Underground Mine Subsidence Trough",
+        "location": "Norrbotten, Sweden",
+        "coordinates": {"lat": 67.85, "lng": 20.22},
+        "bbox": [20.10, 67.80, 20.35, 67.90],
+        "expected_peak_velocity_mm_yr": -45.0,
+        "dominant_hazard_tier": DeformationHazardTier.CRITICAL_SUBSIDENCE.value,
+        "recommended_model": SBASInversionModel.L1_NORM_ROBUST.value,
+        "citation": "Villegas-Lanza, J. C., et al. (2020). Multi-temporal InSAR ground displacement analysis over Kiruna sub-level caving mine. Remote Sensing, 12(14), 2235."
+    }
+}
+
+# ----------------------------------------------------------------------------
+# InSAR SBAS / PSI Mathematical Solvers & Invariant Functions
+# ----------------------------------------------------------------------------
+
+def calculate_amplitude_dispersion(amplitudes: Sequence[float]) -> float:
+    """Calculates amplitude dispersion index D_A = sigma_A / mu_A (Ferretti et al. 2001).
+    
+    A target is classified as a Persistent Scatterer Candidate (PSC) if D_A <= 0.25,
+    demonstrating phase stability across temporal SAR acquisition stacks.
+    
+    Invariant:
+        D_A >= 0.0, with D_A <= 0.25 indicating high phase stability.
+    """
+    if not amplitudes or len(amplitudes) < 2:
+        return 1.0
+    arr = [float(a) for a in amplitudes if a is not None and not math.isnan(a) and a >= 0.0]
+    if len(arr) < 2:
+        return 1.0
+    mean_a = sum(arr) / len(arr)
+    if mean_a < 1e-6:
+        return 1.0
+    variance = sum((x - mean_a) ** 2 for x in arr) / len(arr)
+    std_a = math.sqrt(variance)
+    return round(max(0.0, std_a / mean_a), 4)
+
+def calculate_phase_to_displacement(
+    delta_phi_rad: float,
+    wavelength_m: float = 0.0554657
+) -> float:
+    """Converts wrapped/unwrapped interferometric phase change to line-of-sight displacement in mm.
+    
+    Formula:
+        Delta r = - (lambda / 4pi) * Delta phi
+        
+    For Sentinel-1 C-band (lambda = 0.0554657 m = 55.4657 mm):
+        4pi rad of phase corresponds to 55.4657 mm LOS displacement.
+    """
+    if delta_phi_rad is None or math.isnan(delta_phi_rad):
+        return 0.0
+    wavelength_mm = float(wavelength_m) * 1000.0
+    disp_mm = -(wavelength_mm / (4.0 * math.pi)) * float(delta_phi_rad)
+    return round(disp_mm, 3)
+
+def calculate_sbas_network_connectivity(
+    num_acquisitions: int,
+    interferogram_pairs: Sequence[Tuple[int, int]]
+) -> Dict[str, Any]:
+    """Analyzes the connectivity of an SBAS small baseline acquisition graph.
+    
+    Determines whether the interferometric network is fully connected or partitioned
+    into disconnected subsets requiring SVD minimum-norm pseudo-inversion.
+    """
+    n = max(0, int(num_acquisitions))
+    if n < 2 or not interferogram_pairs:
+        return {
+            "num_acquisitions": n,
+            "num_interferograms": 0,
+            "num_components": n if n > 0 else 0,
+            "is_connected": False,
+            "network_status": SBASNetworkStatus.DEGENERATE.value,
+            "redundancy_ratio": 0.0,
+            "degrees": [0] * n
+        }
+
+    adj: Dict[int, List[int]] = {i: [] for i in range(n)}
+    valid_pairs_count = 0
+    for pair in interferogram_pairs:
+        if len(pair) >= 2:
+            u, v = int(pair[0]), int(pair[1])
+            if 0 <= u < n and 0 <= v < n and u != v:
+                adj[u].append(v)
+                adj[v].append(u)
+                valid_pairs_count += 1
+
+    visited = [False] * n
+    num_components = 0
+    for node in range(n):
+        if not visited[node]:
+            num_components += 1
+            queue = [node]
+            visited[node] = True
+            while queue:
+                curr = queue.pop(0)
+                for neighbor in adj[curr]:
+                    if not visited[neighbor]:
+                        visited[neighbor] = True
+                        queue.append(neighbor)
+
+    is_connected = (num_components == 1 and n >= 3)
+    if is_connected:
+        status = SBASNetworkStatus.FULLY_CONNECTED
+    elif num_components > 1 and valid_pairs_count >= n - 1:
+        status = SBASNetworkStatus.DISCONNECTED_SUBSETS
+    else:
+        status = SBASNetworkStatus.DEGENERATE
+
+    degrees = [len(adj[i]) for i in range(n)]
+    redundancy = round(float(valid_pairs_count) / max(1.0, float(n - 1)), 2)
+
+    return {
+        "num_acquisitions": n,
+        "num_interferograms": valid_pairs_count,
+        "num_components": num_components,
+        "is_connected": is_connected,
+        "network_status": status.value,
+        "redundancy_ratio": redundancy,
+        "degrees": degrees
+    }
+
+def classify_deformation_hazard_tier(velocity_mm_yr: float) -> DeformationHazardTier:
+    """Classifies ground deformation velocity into geotechnical hazard tiers."""
+    if velocity_mm_yr is None or math.isnan(velocity_mm_yr):
+        return DeformationHazardTier.SUB_MILLIMETER_STABLE
+    abs_v = abs(float(velocity_mm_yr))
+    if abs_v >= 25.0:
+        return DeformationHazardTier.CRITICAL_SUBSIDENCE
+    elif abs_v >= 10.0:
+        return DeformationHazardTier.MODERATE_SUBSIDENCE
+    elif abs_v >= 3.0:
+        return DeformationHazardTier.SLOW_CREEP
+    return DeformationHazardTier.SUB_MILLIMETER_STABLE
+
+def classify_psc_stability(
+    da: float,
+    temporal_coherence: float = 0.70
+) -> PSCStabilityTier:
+    """Evaluates statistical reliability of a Persistent Scatterer Candidate."""
+    if da is None or math.isnan(da) or da < 0.0:
+        return PSCStabilityTier.INDETERMINATE
+    gamma = float(temporal_coherence) if temporal_coherence is not None and not math.isnan(temporal_coherence) else 0.70
+    if da <= 0.25 and gamma >= 0.75:
+        return PSCStabilityTier.HIGH
+    elif da <= 0.40 and gamma >= 0.60:
+        return PSCStabilityTier.MODERATE
+    elif da <= 0.60 and gamma >= 0.45:
+        return PSCStabilityTier.LOW
+    return PSCStabilityTier.INDETERMINATE
+
+def build_insar_sbas_tile_url(
+    model: Union[SBASInversionModel, str],
+    metric: Union[InSARSBASTileMetric, str],
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    min_coherence: Optional[float] = None,
+    max_da: Optional[float] = None
+) -> str:
+    """Builds a fully-qualified dynamic XYZ tile URL for InSAR SBAS deformation layers."""
+    m_val = normalize_sbas_model(model).value
+    met_val = normalize_insar_sbas_metric(metric).value
+    url = f"/api/v1/tiles/insar-sbas/{m_val}/{met_val}/{int(z)}/{int(x)}/{int(y)}.png"
+    params = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if rescale:
+        params.append(f"rescale={rescale}")
+    if min_coherence is not None:
+        params.append(f"min_coherence={float(min_coherence)}")
+    if max_da is not None:
+        params.append(f"max_da={float(max_da)}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+def build_insar_sbas_tile_url_template(
+    model: Union[SBASInversionModel, str] = SBASInversionModel.SVD_LEAST_NORM,
+    metric: Union[InSARSBASTileMetric, str] = InSARSBASTileMetric.MEAN_VELOCITY_MM_YR
+) -> str:
+    """Builds dynamic XYZ tile URL template for Leaflet TileLayer integration."""
+    m_val = normalize_sbas_model(model).value
+    met_val = normalize_insar_sbas_metric(metric).value
+    return f"/api/v1/tiles/insar-sbas/{m_val}/{met_val}/{{z}}/{{x}}/{{y}}.png"
+
+# ----------------------------------------------------------------------------
+# InSAR SBAS / PSI Pydantic Models & Data Contracts
+# ----------------------------------------------------------------------------
+
+class PSCCandidatePoint(BaseModel):
+    """Persistent Scatterer Candidate (PSC) ground target with millimeter displacement telemetry."""
+    point_id: str = Field(..., description="Unique point identifier (e.g. PSC-001)")
+    lat: float = Field(..., description="WGS84 latitude coordinate")
+    lng: float = Field(..., description="WGS84 longitude coordinate")
+    amplitude_dispersion: float = Field(..., ge=0.0, description="Amplitude dispersion index D_A")
+    temporal_coherence: float = Field(..., ge=0.0, le=1.0, description="Multi-temporal phase coherence")
+    mean_velocity_mm_yr: float = Field(..., description="Estimated mean line-of-sight velocity in mm/yr")
+    cumulative_displacement_mm: float = Field(..., description="Total accumulated LOS displacement in mm")
+    velocity_std_err_mm_yr: float = Field(default=0.8, ge=0.0, description="Annual velocity standard error")
+    stability_tier: PSCStabilityTier = Field(..., description="Persistent scatterer stability rating")
+    hazard_tier: DeformationHazardTier = Field(..., description="Deformation hazard classification")
+    elevation_m: Optional[float] = Field(default=None, description="Topographic surface elevation")
+
+class SBASBaselineGraph(BaseModel):
+    """Graph structure of temporal and spatial small baseline network."""
+    num_acquisitions: int = Field(..., ge=0, description="Total number of SAR acquisitions")
+    num_interferograms: int = Field(..., ge=0, description="Number of formed interferometric pairs")
+    num_components: int = Field(..., ge=0, description="Number of connected sub-graph components")
+    is_connected: bool = Field(..., description="Whether graph is single connected component")
+    network_status: SBASNetworkStatus = Field(..., description="Topological status of baseline network")
+    redundancy_ratio: float = Field(..., ge=0.0, description="Ratio of formed pairs to minimum spanning tree edges")
+    pairs: List[SBASInterferogramPair] = Field(default_factory=list, description="List of baseline pairs")
+
+class InSARDeformationTimeSeriesPoint(BaseModel):
+    """Temporal displacement epoch along an InSAR time-series trajectory."""
+    date: str = Field(..., description="Observation epoch date YYYY-MM-DD")
+    days_from_start: float = Field(..., ge=0.0, description="Elapsed days since first acquisition")
+    displacement_mm: float = Field(..., description="Observed relative LOS displacement in mm")
+    modeled_displacement_mm: float = Field(..., description="Inverted parametric trend displacement in mm")
+    residual_mm: float = Field(..., description="Observation residual Delta r - r_mod in mm")
+    coherence: float = Field(default=0.85, ge=0.0, le=1.0, description="Interferometric coherence for epoch")
+
+class InSARDeformationTimeSeries(BaseModel):
+    """Multi-year millimeter displacement time-series for a selected ground scatterer."""
+    point_id: str = Field(..., description="Selected PSC target identifier")
+    lat: float = Field(..., description="WGS84 latitude")
+    lng: float = Field(..., description="WGS84 longitude")
+    annual_velocity_mm_yr: float = Field(..., description="Estimated linear slope in mm/yr")
+    r_squared: float = Field(..., ge=0.0, le=1.0, description="Coefficient of determination for linear trend")
+    acceleration_mm_yr2: float = Field(default=0.0, description="Second-order acceleration component in mm/yr^2")
+    points: List[InSARDeformationTimeSeriesPoint] = Field(default_factory=list, description="Sequential displacement epochs")
+
+class InSARDeformationQualitySummary(BaseModel):
+    """Quantitative certification summary for InSAR SBAS / PSI time-series inversion."""
+    inversion_model: SBASInversionModel = Field(..., description="Applied SBAS inversion algorithm")
+    network_status: SBASNetworkStatus = Field(..., description="Baseline network graph status")
+    psc_count: int = Field(..., ge=0, description="Total count of stable persistent scatterers")
+    mean_temporal_coherence: float = Field(..., ge=0.0, le=1.0, description="Average temporal phase coherence")
+    mean_amplitude_dispersion: float = Field(..., ge=0.0, description="Average amplitude dispersion index D_A")
+    mean_velocity_rmse_mm_yr: float = Field(..., ge=0.0, description="Estimated velocity inversion RMSE in mm/yr")
+    stability_rating: PSCStabilityTier = Field(..., description="Overall dataset stability classification")
+    dominant_hazard_tier: DeformationHazardTier = Field(..., description="Highest-severity deformation hazard tier")
+    quality_checklist: Dict[str, bool] = Field(default_factory=dict, description="Scientific compliance checklist")
+    narrative: str = Field(..., description="Geotechnical summary of ground motion findings")
+
+class InSARDeformationRequest(BaseModel):
+    """Payload for requesting InSAR SBAS multi-temporal ground deformation inversion."""
+    aoi_name: Optional[str] = Field(default="Central Valley Tulare Basin Subsidence", description="Target AOI label")
+    inversion_model: SBASInversionModel = Field(default=SBASInversionModel.SVD_LEAST_NORM, description="Inversion algorithm")
+    max_temporal_baseline_days: float = Field(default=60.0, gt=0.0, le=365.0, description="Maximum temporal baseline B_temp")
+    max_perpendicular_baseline_m: float = Field(default=150.0, gt=0.0, le=1000.0, description="Maximum perpendicular baseline B_perp")
+    amplitude_dispersion_threshold: float = Field(default=0.25, gt=0.0, le=1.0, description="PSC selection threshold D_A")
+    min_temporal_coherence: float = Field(default=0.65, ge=0.1, le=1.0, description="Minimum temporal phase coherence")
+    reference_point: Optional[Tuple[float, float]] = Field(default=None, description="Stable reference ground tie point [lat, lng]")
+    bbox: Optional[Any] = Field(default=None, description="Optional bounding box envelope")
+
+    @field_validator("inversion_model", mode="before")
+    @classmethod
+    def validate_inversion_model(cls, v: Any) -> SBASInversionModel:
+        return normalize_sbas_model(v)
+
+class InSARDeformationResponse(BaseModel):
+    """Response payload containing InSAR SBAS deformation inversion results."""
+    request_id: str = Field(..., description="Unique inversion request identifier")
+    aoi_name: str = Field(..., description="Area of interest label")
+    inversion_model: SBASInversionModel = Field(..., description="Applied inversion algorithm")
+    baseline_graph: SBASBaselineGraph = Field(..., description="Interferometric baseline network topology")
+    quality_summary: InSARDeformationQualitySummary = Field(..., description="Quantitative certification summary")
+    psc_points: List[PSCCandidatePoint] = Field(default_factory=list, description="Spatial point cloud of scatterers")
+    sample_timeseries: Optional[InSARDeformationTimeSeries] = Field(default=None, description="Detailed deformation time-series for representative point")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for Leaflet deformation layer")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Execution timestamp")
+    status: str = Field(default="success", description="Execution status")
+
+class InSARSBASTileRequestParams(BaseModel):
+    """Query parameters for dynamic XYZ InSAR deformation tile rendering."""
+    model: SBASInversionModel = Field(default=SBASInversionModel.SVD_LEAST_NORM, description="Inversion algorithm")
+    metric: InSARSBASTileMetric = Field(default=InSARSBASTileMetric.MEAN_VELOCITY_MM_YR, description="Visualization metric")
+    colormap: Optional[str] = Field(default=None, description="Colormap palette")
+    rescale: Optional[str] = Field(default=None, description="Rescale range min,max")
+    min_coherence: Optional[float] = Field(default=None, description="Temporal coherence filter")
+    max_da: Optional[float] = Field(default=None, description="Amplitude dispersion ceiling")
+
+class InSARSBASModelsResponse(BaseModel):
+    """Capabilities response describing supported SBAS inversion models, benchmark scenes, and hazard configs."""
+    models: Dict[str, Any] = Field(..., description="Supported SBAS inversion models and literature citations")
+    metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Benchmark research deformation test sites")
+    hazard_tiers: Dict[str, Any] = Field(..., description="Deformation hazard tier classifications")

@@ -904,7 +904,66 @@ from app.models.schemas import (
     CrossSensorCalibrationRequest,
     CrossSensorCalibrationResponse,
     CrossSensorTileRequestParams,
-    CrossSensorModelsResponse
+    CrossSensorModelsResponse,
+    TrendModel,
+    TrendSignificanceClass,
+    TrendTileMetric,
+    TrendTargetIndex,
+    TrendConfidenceRating,
+    TREND_MODEL_CONFIGS,
+    TREND_SIGNIFICANCE_CONFIGS,
+    TREND_BENCHMARK_SCENES,
+    normalize_trend_model,
+    normalize_trend_metric,
+    normalize_trend_target_index,
+    calculate_theil_sen_slope,
+    calculate_mann_kendall_statistics,
+    calculate_yue_pilon_prewhitening,
+    classify_trend_significance,
+    build_trend_tile_url,
+    build_trend_tile_url_template,
+    TrendTrajectoryPoint,
+    TheilSenResult,
+    MannKendallResult,
+    YuePilonResult,
+    TrendMilestoneSummary,
+    TrendAnalysisRequest,
+    TrendAnalysisResponse,
+    TrendTileRequestParams,
+    TrendModelsResponse,
+    MultimodalAlignmentModel,
+    MultimodalSensorPair,
+    MultimodalTileMetric,
+    DisplacementConfidenceTier,
+    MotionHazardTier,
+    MULTIMODAL_ALIGNMENT_CONFIGS,
+    MULTIMODAL_BENCHMARK_SCENES,
+    MOTION_HAZARD_CONFIGS,
+    DisplacementVectorPoint,
+    DisplacementVectorField,
+    MultimodalFusionQualitySummary,
+    MultimodalTrackingRequest,
+    MultimodalFusionResponse,
+    MultimodalTileRequestParams,
+    MultimodalModelsResponse,
+    SBASInversionModel,
+    InSARSBASTileMetric,
+    PSCStabilityTier,
+    DeformationHazardTier,
+    SBASNetworkStatus,
+    SBAS_INVERSION_CONFIGS,
+    DEFORMATION_HAZARD_CONFIGS,
+    INSAR_SBAS_BENCHMARK_SCENES,
+    PSCCandidatePoint,
+    SBASInterferogramPair,
+    SBASBaselineGraph,
+    InSARDeformationTimeSeriesPoint,
+    InSARDeformationTimeSeries,
+    InSARDeformationQualitySummary,
+    InSARDeformationRequest,
+    InSARDeformationResponse,
+    InSARSBASTileRequestParams,
+    InSARSBASModelsResponse,
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -915,6 +974,9 @@ from app.services.export_service import export_service
 from app.services.timeseries import timeseries_service
 from app.services.sharpening_service import sharpening_service
 from app.services.calibration_service import calibration_service
+from app.services.trend_service import trend_service
+from app.services.multimodal_service import multimodal_service
+from app.services.insar_sbas_service import insar_sbas_service
 
 logger = logging.getLogger(__name__)
 
@@ -931,6 +993,9 @@ hydrodynamic_router = APIRouter(prefix="/hydrodynamic", tags=["Hydrodynamics & D
 phenology_router = APIRouter(prefix="/phenology", tags=["Multi-Temporal Phenology & Seasonality"])
 sharpening_router = APIRouter(prefix="/sharpening", tags=["Multi-Band Super-Resolution Sharpening"])
 cross_calibration_router = APIRouter(prefix="/cross-calibration", tags=["Multi-Sensor Cross-Calibration & Harmonization"])
+trend_router = APIRouter(prefix="/trend", tags=["Non-Parametric Trend Analysis & Multi-Decadal Pixel Trajectories"])
+multimodal_router = APIRouter(prefix="/multimodal", tags=["Multimodal Satellite SAR + Optical Sensor Fusion & Feature-Track Inversion"])
+insar_sbas_router = APIRouter(prefix="/insar-sbas", tags=["InSAR SBAS Time-Series Ground Deformation Inversion"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -11527,6 +11592,383 @@ def get_cross_calibrated_tile_xyz_endpoint(
             "X-Tile-Engine": f"GIOS-CrossCalibration-{model}-{metric}"
         }
     )
+
+
+# ==============================================================================
+# Non-Parametric Trend Inversion & Multi-Decadal Pixel Trajectories (Cycle v2.5.39 - Task T-295)
+# ==============================================================================
+
+@router.get("/trend/models", response_model=TrendModelsResponse)
+@router.get("/trend/models/", response_model=TrendModelsResponse, include_in_schema=False)
+@router.get("/analysis/trend/models", response_model=TrendModelsResponse, include_in_schema=False)
+@router.get("/analysis/trend/models/", response_model=TrendModelsResponse, include_in_schema=False)
+@trend_router.get("/models", response_model=TrendModelsResponse, include_in_schema=False)
+@trend_router.get("/models/", response_model=TrendModelsResponse, include_in_schema=False)
+def get_trend_models_endpoint():
+    """Retrieves available non-parametric trend models, benchmark scenes, and significance classes."""
+    return trend_service.get_capabilities()
+
+
+@router.post("/trend/analyze", response_model=TrendAnalysisResponse)
+@router.post("/trend/analyze/", response_model=TrendAnalysisResponse, include_in_schema=False)
+@router.post("/analysis/trend/analyze", response_model=TrendAnalysisResponse, include_in_schema=False)
+@router.post("/analysis/trend/analyze/", response_model=TrendAnalysisResponse, include_in_schema=False)
+@trend_router.post("/analyze", response_model=TrendAnalysisResponse, include_in_schema=False)
+@trend_router.post("/analyze/", response_model=TrendAnalysisResponse, include_in_schema=False)
+def request_trend_analysis_endpoint(req: TrendAnalysisRequest):
+    """Executes multi-decadal non-parametric trend inversion, Theil-Sen median slope,
+    Mann-Kendall rank test, and Yue-Pilon pre-whitening.
+    """
+    return trend_service.execute_trend_pipeline(req)
+
+
+@router.post("/trend/evaluate", response_model=TrendMilestoneSummary)
+@router.post("/trend/evaluate/", response_model=TrendMilestoneSummary, include_in_schema=False)
+@router.post("/analysis/trend/evaluate", response_model=TrendMilestoneSummary, include_in_schema=False)
+@router.post("/analysis/trend/evaluate/", response_model=TrendMilestoneSummary, include_in_schema=False)
+@trend_router.post("/evaluate", response_model=TrendMilestoneSummary, include_in_schema=False)
+@trend_router.post("/evaluate/", response_model=TrendMilestoneSummary, include_in_schema=False)
+def evaluate_trend_quality_endpoint(req: TrendAnalysisRequest):
+    """Evaluates quantitative scientific quality summary and significance classification for a trend trajectory."""
+    return trend_service.evaluate_quality_pipeline(req)
+
+
+@tiles_router.get("/trend/{model}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/trend/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/trend/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/trend/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@trend_router.get("/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_trend_tile_endpoint(
+    model: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    index: Optional[str] = None,
+    target_index: Optional[str] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("trend"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multi-decadal non-parametric trend significance and slope rasters."""
+    png_bytes = tile_service.render_trend_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        target_index=target_index or index,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-TrendAnalysis-{model}-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/trend/{z}/{x}/{y}.png")
+@router.get("/tiles/trend/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/trend/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/trend/{z}/{x}/{y}.png", include_in_schema=False)
+@trend_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_trend_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    model: str = Query("theil_sen_median"),
+    metric: str = Query("theil_sen_slope"),
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    index: Optional[str] = None,
+    target_index: Optional[str] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("trend"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multi-decadal trend tiles with query parameter configuration."""
+    png_bytes = tile_service.render_trend_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        target_index=target_index or index,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-TrendAnalysis-{model}-{metric}"
+        }
+    )
+
+
+# ============================================================================
+# CYCLE v2.5.40: MULTIMODAL SATELLITE SAR + OPTICAL SENSOR FUSION & FEATURE TRACKING
+# ============================================================================
+
+@router.get("/multimodal/models", response_model=MultimodalModelsResponse)
+@router.get("/multimodal/models/", response_model=MultimodalModelsResponse, include_in_schema=False)
+@router.get("/analysis/multimodal/models", response_model=MultimodalModelsResponse, include_in_schema=False)
+@router.get("/analysis/multimodal/models/", response_model=MultimodalModelsResponse, include_in_schema=False)
+@multimodal_router.get("/models", response_model=MultimodalModelsResponse, include_in_schema=False)
+@multimodal_router.get("/models/", response_model=MultimodalModelsResponse, include_in_schema=False)
+def get_multimodal_models_endpoint():
+    """Retrieves available multimodal alignment models, supported sensor pairs, benchmark scenes, and hazard configs."""
+    return multimodal_service.get_capabilities()
+
+
+@router.post("/multimodal/track", response_model=MultimodalFusionResponse)
+@router.post("/multimodal/track/", response_model=MultimodalFusionResponse, include_in_schema=False)
+@router.post("/analysis/multimodal/track", response_model=MultimodalFusionResponse, include_in_schema=False)
+@router.post("/analysis/multimodal/track/", response_model=MultimodalFusionResponse, include_in_schema=False)
+@multimodal_router.post("/track", response_model=MultimodalFusionResponse, include_in_schema=False)
+@multimodal_router.post("/track/", response_model=MultimodalFusionResponse, include_in_schema=False)
+def request_multimodal_tracking_endpoint(req: MultimodalTrackingRequest):
+    """Executes multimodal SAR-optical sensor fusion and sub-pixel displacement feature tracking."""
+    return multimodal_service.execute_tracking_pipeline(req)
+
+
+@router.post("/multimodal/evaluate", response_model=MultimodalFusionQualitySummary)
+@router.post("/multimodal/evaluate/", response_model=MultimodalFusionQualitySummary, include_in_schema=False)
+@router.post("/analysis/multimodal/evaluate", response_model=MultimodalFusionQualitySummary, include_in_schema=False)
+@router.post("/analysis/multimodal/evaluate/", response_model=MultimodalFusionQualitySummary, include_in_schema=False)
+@multimodal_router.post("/evaluate", response_model=MultimodalFusionQualitySummary, include_in_schema=False)
+@multimodal_router.post("/evaluate/", response_model=MultimodalFusionQualitySummary, include_in_schema=False)
+def evaluate_multimodal_quality_endpoint(req: MultimodalTrackingRequest):
+    """Evaluates quantitative scientific quality summary and confidence rating for multimodal displacement field."""
+    return multimodal_service.evaluate_quality_pipeline(req)
+
+
+@tiles_router.get("/multimodal/{model}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/multimodal/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/multimodal/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/multimodal/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@multimodal_router.get("/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_multimodal_tile_endpoint(
+    model: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    pair: Optional[str] = None,
+    min_snr: Optional[float] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("multimodal"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multimodal displacement vector velocity and flow azimuth rasters."""
+    png_bytes = tile_service.render_multimodal_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        pair=pair,
+        min_snr=min_snr,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-MultimodalFusion-{model}-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/multimodal/{z}/{x}/{y}.png")
+@router.get("/tiles/multimodal/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/multimodal/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/multimodal/{z}/{x}/{y}.png", include_in_schema=False)
+@multimodal_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_multimodal_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    model: str = Query("ncc_frequency_domain"),
+    metric: str = Query("velocity_magnitude"),
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    pair: Optional[str] = None,
+    min_snr: Optional[float] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("multimodal"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multimodal velocity tiles with query parameter configuration."""
+    png_bytes = tile_service.render_multimodal_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        pair=pair,
+        min_snr=min_snr,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-MultimodalFusion-{model}-{metric}"
+        }
+    )
+
+
+# ============================================================================
+# CYCLE v2.5.41: InSAR SMALL BASELINE SUBSET (SBAS) & PERSISTENT SCATTERER INVERSION
+# ============================================================================
+
+@router.get("/insar-sbas/models", response_model=InSARSBASModelsResponse)
+@router.get("/insar-sbas/models/", response_model=InSARSBASModelsResponse, include_in_schema=False)
+@router.get("/analysis/insar-sbas/models", response_model=InSARSBASModelsResponse, include_in_schema=False)
+@router.get("/analysis/insar-sbas/models/", response_model=InSARSBASModelsResponse, include_in_schema=False)
+@insar_sbas_router.get("/models", response_model=InSARSBASModelsResponse, include_in_schema=False)
+@insar_sbas_router.get("/models/", response_model=InSARSBASModelsResponse, include_in_schema=False)
+def get_insar_sbas_models_endpoint():
+    """Retrieves available InSAR SBAS inversion models, rendering metrics, benchmark scenes, and hazard tiers."""
+    return insar_sbas_service.get_capabilities()
+
+
+@router.post("/insar-sbas/invert", response_model=InSARDeformationResponse)
+@router.post("/insar-sbas/invert/", response_model=InSARDeformationResponse, include_in_schema=False)
+@router.post("/analysis/insar-sbas/invert", response_model=InSARDeformationResponse, include_in_schema=False)
+@router.post("/analysis/insar-sbas/invert/", response_model=InSARDeformationResponse, include_in_schema=False)
+@insar_sbas_router.post("/invert", response_model=InSARDeformationResponse, include_in_schema=False)
+@insar_sbas_router.post("/invert/", response_model=InSARDeformationResponse, include_in_schema=False)
+def request_insar_sbas_inversion_endpoint(req: InSARDeformationRequest):
+    """Executes multi-temporal InSAR SBAS / PSI ground deformation time-series inversion."""
+    return insar_sbas_service.execute_inversion_pipeline(req)
+
+
+@router.post("/insar-sbas/evaluate", response_model=InSARDeformationQualitySummary)
+@router.post("/insar-sbas/evaluate/", response_model=InSARDeformationQualitySummary, include_in_schema=False)
+@router.post("/analysis/insar-sbas/evaluate", response_model=InSARDeformationQualitySummary, include_in_schema=False)
+@router.post("/analysis/insar-sbas/evaluate/", response_model=InSARDeformationQualitySummary, include_in_schema=False)
+@insar_sbas_router.post("/evaluate", response_model=InSARDeformationQualitySummary, include_in_schema=False)
+@insar_sbas_router.post("/evaluate/", response_model=InSARDeformationQualitySummary, include_in_schema=False)
+def evaluate_insar_sbas_quality_endpoint(req: InSARDeformationRequest):
+    """Evaluates quantitative scientific quality summary and stability classification for InSAR dataset."""
+    return insar_sbas_service.evaluate_quality_pipeline(req)
+
+
+@tiles_router.get("/insar-sbas/{model}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/insar-sbas/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/insar-sbas/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/insar-sbas/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@insar_sbas_router.get("/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_insar_sbas_tile_endpoint(
+    model: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    min_coherence: Optional[float] = None,
+    max_da: Optional[float] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("insar_sbas"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multi-temporal InSAR SBAS subsidence velocity and coherence rasters."""
+    png_bytes = tile_service.render_insar_sbas_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        min_coherence=min_coherence,
+        max_da=max_da,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-InSARSBAS-{model}-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/insar-sbas/{z}/{x}/{y}.png")
+@router.get("/tiles/insar-sbas/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/insar-sbas/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/insar-sbas/{z}/{x}/{y}.png", include_in_schema=False)
+@insar_sbas_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_insar_sbas_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    model: str = Query("svd_least_norm"),
+    metric: str = Query("mean_velocity_mm_yr"),
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    min_coherence: Optional[float] = None,
+    max_da: Optional[float] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("insar_sbas"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for InSAR SBAS deformation tiles with query parameter configuration."""
+    png_bytes = tile_service.render_insar_sbas_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        min_coherence=min_coherence,
+        max_da=max_da,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-InSARSBAS-{model}-{metric}"
+        }
+    )
+
+
 
 
 

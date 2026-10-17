@@ -3935,6 +3935,79 @@ class TestGIOSApi(unittest.TestCase):
             self.assertEqual(r.headers.get("content-type"), "image/png")
             self.assertTrue(r.content.startswith(b"\x89PNG\r\n\x1a\n"))
 
+    def test_task_t295_trend_analysis_endpoints(self):
+        """Task T-295 & T-298: Verify Non-Parametric Trend Inversion, Mann-Kendall test statistics,
+        Theil-Sen median slope, and dynamic XYZ trend tile streaming REST endpoints.
+        """
+        # 1. Models and Capabilities Discovery Endpoint & Aliases
+        for url in ["/api/v1/analysis/trend/models", "/api/v1/trend/models"]:
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertIn("models", data)
+            self.assertIn("theil_sen_median", data["models"])
+            self.assertIn("mann_kendall_rank", data["models"])
+            self.assertIn("yue_pilon_prewhitened", data["models"])
+            self.assertIn("benchmark_scenes", data)
+            self.assertIn("supported_indices", data)
+            self.assertIn("supported_metrics", data)
+
+        # 2. Trend Analysis Pipeline POST Endpoint & Aliases
+        payload = {
+            "aoi_name": "San Luis Reservoir Drought Decade",
+            "model": "theil_sen_median",
+            "target_index": "ndvi",
+            "confidence_level": 0.95
+        }
+        for url in ["/api/v1/analysis/trend/analyze", "/api/v1/trend/analyze"]:
+            res = self.client.post(url, json=payload)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertEqual(data["status"], "success")
+            self.assertEqual(data["model"], "theil_sen_median")
+            self.assertEqual(data["target_index"], "ndvi")
+            self.assertIn("theil_sen", data)
+            self.assertIn("slope_per_year", data["theil_sen"])
+            self.assertIn("mann_kendall", data)
+            self.assertIn("z_score", data["mann_kendall"])
+            self.assertIn("p_value", data["mann_kendall"])
+            self.assertIn("yue_pilon", data)
+            self.assertIn("summary", data)
+            self.assertIn("significance_class", data["summary"])
+            self.assertIn("trajectory_points", data)
+            self.assertGreaterEqual(len(data["trajectory_points"]), 3)
+            self.assertIn("tile_url_template", data)
+
+        # 3. Trend Quality Evaluation Endpoint & Aliases
+        for url in ["/api/v1/analysis/trend/evaluate", "/api/v1/trend/evaluate"]:
+            res = self.client.post(url, json=payload)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertIn("theil_sen_slope", data)
+            self.assertIn("mann_kendall_zscore", data)
+            self.assertIn("p_value", data)
+            self.assertIn("significance_class", data)
+            self.assertIn("confidence_rating", data)
+            self.assertIn("annual_change_percent", data)
+
+        # 4. Dynamic XYZ Trend Tile Streaming Endpoints
+        tile_urls = [
+            "/api/v1/tiles/trend/theil_sen_median/theil_sen_slope/10/163/395.png",
+            "/api/v1/tiles/trend/mann_kendall_rank/mann_kendall_zscore/10/163/395.png",
+            "/api/v1/tiles/trend/theil_sen_median/trend_significance/10/163/395.png",
+            "/api/v1/tiles/trend/yue_pilon_prewhitened/prewhitened_slope/10/163/395.png",
+            "/api/v1/tiles/trend/theil_sen_median/p_value/10/163/395.png",
+            "/api/v1/tiles/trend/theil_sen_median/trajectory_variance/10/163/395.png",
+            "/api/v1/tiles/trend/10/163/395.png?model=theil_sen_median&metric=theil_sen_slope",
+            "/tiles/trend/theil_sen_median/theil_sen_slope/10/163/395.png",
+            "/tiles/trend/10/163/395.png?model=theil_sen_median&metric=theil_sen_slope"
+        ]
+        for t_url in tile_urls:
+            r = self.client.get(t_url)
+            self.assertEqual(r.status_code, 200, f"Failed tile endpoint: {t_url}")
+            self.assertEqual(r.headers.get("content-type"), "image/png")
+            self.assertTrue(r.content.startswith(b"\x89PNG\r\n\x1a\n"))
+
 
 if __name__ == "__main__":
     unittest.main()

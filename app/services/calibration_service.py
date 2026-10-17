@@ -86,7 +86,12 @@ class CalibrationService:
         target_name = (aoi_name or "").upper().replace(" ", "_").replace("-", "_")
         matched_scene = None
         for key, sc in CROSS_SENSOR_BENCHMARK_SCENES.items():
-            if key in target_name or target_name in key or sc.get("name", "").upper().replace(" ", "_") in target_name:
+            sc_name_norm = sc.get("name", "").upper().replace(" ", "_").replace("-", "_")
+            if (key in target_name or target_name in key or 
+                sc_name_norm in target_name or target_name in sc_name_norm or
+                ("TAHOE" in target_name and "TAHOE" in key) or
+                ("BOULDER" in target_name and "BOULDER" in key) or
+                ("NEGEV" in target_name and "NEGEV" in key)):
                 matched_scene = sc
                 break
 
@@ -118,29 +123,29 @@ class CalibrationService:
             water_frac = np.where((np.abs(yy - 0.45) < 0.02), 0.85, 0.01).astype(np.float32)
             soil_frac = np.clip(1.0 - veg_frac - water_frac, 0.0, 1.0).astype(np.float32)
         else:
-            # Default diverse landscape
+            # Default diverse landscape with strong natural gradient
             spatial_freq = np.sin(xx * 6.0) * np.cos(yy * 6.0)
-            veg_frac = np.clip(0.50 + 0.35 * spatial_freq, 0.05, 0.90).astype(np.float32)
-            water_frac = np.where(spatial_freq < -0.75, 0.90, 0.01).astype(np.float32)
+            veg_frac = np.clip(0.50 + 0.42 * spatial_freq, 0.02, 0.95).astype(np.float32)
+            water_frac = np.where(spatial_freq < -0.78, 0.90, 0.01).astype(np.float32)
             soil_frac = np.clip(1.0 - veg_frac - water_frac, 0.0, 1.0).astype(np.float32)
 
-        noise = (rng.randn(ny, nx) * 0.004).astype(np.float32)
+        noise = (rng.randn(ny, nx) * 0.002).astype(np.float32)
 
         # Base Physical Reflectance Spectra per endmember
         # Coastal (~443nm)
-        base_coastal = np.clip(0.04 * veg_frac + 0.12 * soil_frac + 0.06 * water_frac + noise, 0.01, 0.40)
+        base_coastal = np.clip(0.04 * veg_frac + 0.16 * soil_frac + 0.05 * water_frac + noise, 0.01, 0.40)
         # Blue (~490nm)
-        base_blue = np.clip(0.03 * veg_frac + 0.15 * soil_frac + 0.05 * water_frac + noise, 0.01, 0.45)
+        base_blue = np.clip(0.03 * veg_frac + 0.18 * soil_frac + 0.04 * water_frac + noise, 0.01, 0.45)
         # Green (~560nm)
-        base_green = np.clip(0.08 * veg_frac + 0.19 * soil_frac + 0.04 * water_frac + noise, 0.02, 0.50)
+        base_green = np.clip(0.08 * veg_frac + 0.22 * soil_frac + 0.03 * water_frac + noise, 0.02, 0.50)
         # Red (~665nm)
-        base_red = np.clip(0.04 * veg_frac + 0.24 * soil_frac + 0.02 * water_frac + noise, 0.01, 0.55)
+        base_red = np.clip(0.04 * veg_frac + 0.28 * soil_frac + 0.02 * water_frac + noise, 0.01, 0.55)
         # Narrow NIR (~865nm)
-        base_nir = np.clip(0.55 * veg_frac + 0.28 * soil_frac + 0.01 * water_frac + noise, 0.02, 0.85)
+        base_nir = np.clip(0.60 * veg_frac + 0.32 * soil_frac + 0.01 * water_frac + noise, 0.02, 0.88)
         # SWIR-1 (~1610nm)
-        base_swir1 = np.clip(0.22 * veg_frac + 0.34 * soil_frac + 0.005 * water_frac + noise, 0.01, 0.70)
+        base_swir1 = np.clip(0.24 * veg_frac + 0.38 * soil_frac + 0.005 * water_frac + noise, 0.01, 0.72)
         # SWIR-2 (~2190nm)
-        base_swir2 = np.clip(0.10 * veg_frac + 0.28 * soil_frac + 0.002 * water_frac + noise, 0.01, 0.60)
+        base_swir2 = np.clip(0.12 * veg_frac + 0.32 * soil_frac + 0.002 * water_frac + noise, 0.01, 0.62)
 
         # Source bands (e.g. Landsat-8/9 OLI)
         source_bands: Dict[str, np.ndarray] = {
@@ -160,7 +165,7 @@ class CalibrationService:
             coef = CROSS_SENSOR_BAND_COEFFICIENTS.get(b_key, {}).get("roy_2016", {"c0": 0.0, "c1": 1.0})
             c0 = coef["c0"]
             c1 = coef["c1"]
-            jitter = (rng.randn(ny, nx) * 0.0015).astype(np.float32)
+            jitter = (rng.randn(ny, nx) * 0.0006).astype(np.float32)
             msi_sim = np.clip(c0 + c1 * arr + jitter, 0.0, 1.0).astype(np.float32)
             target_bands[b_key] = msi_sim
 

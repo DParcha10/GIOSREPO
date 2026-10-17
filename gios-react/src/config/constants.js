@@ -1206,7 +1206,18 @@ export const API_ENDPOINTS = {
   TILES_TREND: (model, metric, z, x, y) => `/api/v1/tiles/trend/${model}/${metric}/${z}/${x}/${y}.png`,
   TILES_TREND_SHORT: (model, metric, z, x, y) => `/tiles/trend/${model}/${metric}/${z}/${x}/${y}.png`,
   TILES_TREND_XYZ: (z, x, y) => `/api/v1/tiles/trend/${z}/${x}/${y}.png`,
-  TILES_TREND_XYZ_SHORT: (z, x, y) => `/tiles/trend/${z}/${x}/${y}.png`
+  TILES_TREND_XYZ_SHORT: (z, x, y) => `/tiles/trend/${z}/${x}/${y}.png`,
+  // Cycle v2.5.40: Multimodal Satellite SAR + Optical Sensor Fusion & Feature-Track Displacement Vector Inversion
+  ANALYSIS_MULTIMODAL_TRACK: '/api/v1/analysis/multimodal/track',
+  ANALYSIS_MULTIMODAL_TRACK_SHORT: '/analysis/multimodal/track',
+  ANALYSIS_MULTIMODAL_MODELS: '/api/v1/analysis/multimodal/models',
+  ANALYSIS_MULTIMODAL_MODELS_SHORT: '/analysis/multimodal/models',
+  ANALYSIS_MULTIMODAL_EVALUATE: '/api/v1/analysis/multimodal/evaluate',
+  ANALYSIS_MULTIMODAL_EVALUATE_SHORT: '/analysis/multimodal/evaluate',
+  TILES_MULTIMODAL: (model, metric, z, x, y) => `/api/v1/tiles/multimodal/${model}/${metric}/${z}/${x}/${y}.png`,
+  TILES_MULTIMODAL_SHORT: (model, metric, z, x, y) => `/tiles/multimodal/${model}/${metric}/${z}/${x}/${y}.png`,
+  TILES_MULTIMODAL_XYZ: (z, x, y) => `/api/v1/tiles/multimodal/${z}/${x}/${y}.png`,
+  TILES_MULTIMODAL_XYZ_SHORT: (z, x, y) => `/tiles/multimodal/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1593,6 +1604,18 @@ export const formatApiRoute = (endpointKey, params = {}) => {
         );
       case 'TILES_TREND_XYZ':
       case 'TILES_TREND_XYZ_SHORT':
+        return endpoint(params.z, params.x, params.y);
+      case 'TILES_MULTIMODAL':
+      case 'TILES_MULTIMODAL_SHORT':
+        return endpoint(
+          params.model || params.alignment_model || 'ncc_frequency_domain',
+          params.metric || params.tile_metric || 'velocity_magnitude',
+          params.z,
+          params.x,
+          params.y
+        );
+      case 'TILES_MULTIMODAL_XYZ':
+      case 'TILES_MULTIMODAL_XYZ_SHORT':
         return endpoint(params.z, params.x, params.y);
       default:
         return endpoint(params);
@@ -16262,7 +16285,7 @@ export const calculateMannKendallTest = (values = []) => {
   };
 };
 
-export const calculateTheilSenSlope = (times = [], values = []) => {
+export const calculateTheilSenSlope = (times = [], values = [], alpha = 0.05) => {
   const cleanPairs = [];
   for (let idx = 0; idx < Math.min(times.length, values.length); idx += 1) {
     const t = Number(times[idx]);
@@ -16276,15 +16299,28 @@ export const calculateTheilSenSlope = (times = [], values = []) => {
   if (n < 2) {
     return {
       slope_per_year: 0.0,
+      slopePerYear: 0.0,
       intercept: n === 1 ? cleanPairs[0][1] : 0.0,
       slope_ci_lower: 0.0,
+      slopeCiLower: 0.0,
       slope_ci_upper: 0.0,
+      slopeCiUpper: 0.0,
+      pairwise_count: 0,
+      pairwiseCount: 0,
+      breakdown_point: 0.293,
+      breakdownPoint: 0.293,
       kendall_tau: 0.0,
+      kendallTau: 0.0,
       mann_kendall_s: 0,
+      sStatistic: 0,
       p_value: 1.0,
+      pValue: 1.0,
       z_score: 0.0,
+      zScore: 0.0,
       is_significant: false,
-      trend_direction: 'no_trend'
+      isSignificant: false,
+      trend_direction: 'no_trend',
+      trendDirection: 'no_trend'
     };
   }
 
@@ -16304,15 +16340,28 @@ export const calculateTheilSenSlope = (times = [], values = []) => {
   if (slopes.length === 0) {
     return {
       slope_per_year: 0.0,
+      slopePerYear: 0.0,
       intercept: ys[0],
       slope_ci_lower: 0.0,
+      slopeCiLower: 0.0,
       slope_ci_upper: 0.0,
+      slopeCiUpper: 0.0,
+      pairwise_count: 0,
+      pairwiseCount: 0,
+      breakdown_point: 0.293,
+      breakdownPoint: 0.293,
       kendall_tau: 0.0,
+      kendallTau: 0.0,
       mann_kendall_s: 0,
+      sStatistic: 0,
       p_value: 1.0,
+      pValue: 1.0,
       z_score: 0.0,
+      zScore: 0.0,
       is_significant: false,
-      trend_direction: 'no_trend'
+      isSignificant: false,
+      trend_direction: 'no_trend',
+      trendDirection: 'no_trend'
     };
   }
 
@@ -16324,7 +16373,13 @@ export const calculateTheilSenSlope = (times = [], values = []) => {
   const medIntercept = n % 2 === 1 ? intercepts[Math.floor(n / 2)] : 0.5 * (intercepts[n / 2 - 1] + intercepts[n / 2]);
 
   const varS = (n * (n - 1) * (2 * n + 5)) / 18.0;
-  const cAlpha = 1.95996 * Math.sqrt(varS);
+  let zCrit = 1.95996;
+  if (Math.abs(alpha - 0.01) < 0.005) {
+    zCrit = 2.57583;
+  } else if (Math.abs(alpha - 0.10) < 0.01) {
+    zCrit = 1.64485;
+  }
+  const cAlpha = zCrit * Math.sqrt(varS);
   const k1 = Math.max(0, Math.floor((mPairs - cAlpha) / 2.0));
   const k2 = Math.min(mPairs - 1, Math.floor((mPairs + cAlpha) / 2.0));
 
@@ -16332,15 +16387,28 @@ export const calculateTheilSenSlope = (times = [], values = []) => {
 
   return {
     slope_per_year: Number(medSlope.toFixed(4)),
-    intercept: Number(medIntercept.toFixed(4)),
+    slopePerYear: Number(medSlope.toFixed(6)),
+    intercept: Number(medIntercept.toFixed(6)),
     slope_ci_lower: Number(slopes[k1].toFixed(4)),
+    slopeCiLower: Number(slopes[k1].toFixed(6)),
     slope_ci_upper: Number(slopes[k2].toFixed(4)),
+    slopeCiUpper: Number(slopes[k2].toFixed(6)),
+    pairwise_count: mPairs,
+    pairwiseCount: mPairs,
+    breakdown_point: 0.293,
+    breakdownPoint: 0.293,
     kendall_tau: mkRes.kendall_tau,
+    kendallTau: mkRes.kendall_tau,
     mann_kendall_s: mkRes.mann_kendall_s,
+    sStatistic: mkRes.mann_kendall_s,
     p_value: mkRes.p_value,
+    pValue: mkRes.p_value,
     z_score: mkRes.z_score,
+    zScore: mkRes.z_score,
     is_significant: mkRes.is_significant,
-    trend_direction: mkRes.trend_direction
+    isSignificant: mkRes.is_significant,
+    trend_direction: mkRes.trend_direction,
+    trendDirection: mkRes.trend_direction
   };
 };
 
@@ -25645,91 +25713,7 @@ export const erf = (x) => {
   return sign * y;
 };
 
-/**
- * Calculates Theil-Sen robust median slope, intercept, and confidence interval:
- * Q_ij = (x_j - x_i) / (t_j - t_i) for all j > i.
- * 
- * @param {Array<number>} timestamps - Chronological timestamps in fractional years
- * @param {Array<number>} values - Biophysical observation values
- * @param {number} [alpha=0.05] - Significance level for confidence interval (default 0.05 for 95% CI)
- * @returns {Object} Theil-Sen parameters: slopePerYear, intercept, slopeCiLower, slopeCiUpper, pairwiseCount, breakdownPoint
- */
-export const calculateTheilSenSlope = (timestamps, values, alpha = 0.05) => {
-  if (!timestamps || !values || timestamps.length !== values.length || timestamps.length < 2) {
-    return {
-      slopePerYear: 0.0,
-      intercept: 0.0,
-      slopeCiLower: 0.0,
-      slopeCiUpper: 0.0,
-      pairwiseCount: 0,
-      breakdownPoint: 0.293
-    };
-  }
 
-  const n = values.length;
-  const slopes = [];
-  for (let i = 0; i < n - 1; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const dt = Number(timestamps[j]) - Number(timestamps[i]);
-      if (Math.abs(dt) > 1e-9) {
-        const dx = Number(values[j]) - Number(values[i]);
-        slopes.push(dx / dt);
-      }
-    }
-  }
-
-  if (slopes.length === 0) {
-    return {
-      slopePerYear: 0.0,
-      intercept: Number(values[0]),
-      slopeCiLower: 0.0,
-      slopeCiUpper: 0.0,
-      pairwiseCount: 0,
-      breakdownPoint: 0.293
-    };
-  }
-
-  slopes.sort((a, b) => a - b);
-  const m = slopes.length;
-  let medSlope;
-  if (m % 2 === 1) {
-    medSlope = slopes[Math.floor(m / 2)];
-  } else {
-    medSlope = 0.5 * (slopes[m / 2 - 1] + slopes[m / 2]);
-  }
-
-  // Intercept calculation: median of (x_i - slope * t_i)
-  const intercepts = values.map((x, idx) => Number(x) - medSlope * Number(timestamps[idx]));
-  intercepts.sort((a, b) => a - b);
-  let medIntercept;
-  if (intercepts.length % 2 === 1) {
-    medIntercept = intercepts[Math.floor(intercepts.length / 2)];
-  } else {
-    medIntercept = 0.5 * (intercepts[intercepts.length / 2 - 1] + intercepts[intercepts.length / 2]);
-  }
-
-  // Confidence interval using Kendall variance Var(S) = n*(n-1)*(2n+5)/18
-  const varS = (n * (n - 1) * (2 * n + 5)) / 18.0;
-  let zCrit = 1.95996;
-  if (Math.abs(alpha - 0.01) < 0.005) {
-    zCrit = 2.57583;
-  } else if (Math.abs(alpha - 0.10) < 0.01) {
-    zCrit = 1.64485;
-  }
-
-  const cAlpha = zCrit * Math.sqrt(varS);
-  const k1 = Math.max(0, Math.floor((m - cAlpha) / 2.0));
-  const k2 = Math.min(m - 1, Math.ceil((m + cAlpha) / 2.0));
-
-  return {
-    slopePerYear: Number(medSlope.toFixed(6)),
-    intercept: Number(medIntercept.toFixed(6)),
-    slopeCiLower: Number(slopes[k1].toFixed(6)),
-    slopeCiUpper: Number(slopes[k2].toFixed(6)),
-    pairwiseCount: m,
-    breakdownPoint: 0.293
-  };
-};
 
 /**
  * Calculates Mann-Kendall non-parametric test statistics (S, Var(S), Z_S, p-value, tau)
@@ -25955,4 +25939,935 @@ export const buildTrendTileUrlTemplate = ({
   index = null
 } = {}) => {
   return buildTrendTileUrl({ model, metric, z: '{z}', x: '{x}', y: '{y}', colormap, index });
+};
+
+// ============================================================================
+// CYCLE v2.5.40: MULTIMODAL SATELLITE SAR + OPTICAL SENSOR FUSION & FEATURE TRACKING
+// ============================================================================
+
+/**
+ * Coregistration and displacement vector feature-tracking algorithms.
+ * @readonly
+ * @enum {string}
+ */
+export const MultimodalAlignmentModel = Object.freeze({
+  NCC_FREQUENCY_DOMAIN: 'ncc_frequency_domain',     // 2D FFT normalized cross-correlation peak solver (COSI-Corr)
+  OPTICAL_FLOW_FARNEBACK: 'optical_flow_farneback', // Dense polynomial expansion optical flow
+  SIFT_AFFINE_RANSAC: 'sift_affine_ransac',         // Scale-Invariant Feature Transform with RANSAC
+  LUCAS_KANADE_ITERATIVE: 'lucas_kanade_iterative' // Iterative multi-scale pyramidal Lucas-Kanade gradient solver
+});
+
+export const MULTIMODAL_ALIGNMENT_MODELS = Object.freeze(Object.values(MultimodalAlignmentModel));
+
+/**
+ * Multimodal and multi-temporal sensor combination pairs.
+ * @readonly
+ * @enum {string}
+ */
+export const MultimodalSensorPair = Object.freeze({
+  S1_RTC_S2_L2A: 's1_rtc_s2_l2a',         // Sentinel-1 RTC SAR amplitude cross-registered to Sentinel-2 L2A optical
+  S1_RTC_LANDSAT8: 's1_rtc_landsat8',     // Sentinel-1 RTC SAR amplitude cross-registered to Landsat-8/9 OLI optical
+  S2_TEMPORAL_PAIR: 's2_temporal_pair',   // Bi-temporal Sentinel-2 L2A optical repeat pass
+  S1_TEMPORAL_PAIR: 's1_temporal_pair'   // Bi-temporal Sentinel-1 RTC SAR amplitude repeat pass
+});
+
+export const MULTIMODAL_SENSOR_PAIRS = Object.freeze(Object.values(MultimodalSensorPair));
+
+/**
+ * Dynamic XYZ tile visualization metrics for multimodal displacement tracking.
+ * @readonly
+ * @enum {string}
+ */
+export const MultimodalTileMetric = Object.freeze({
+  VELOCITY_MAGNITUDE: 'velocity_magnitude',   // Resultant ground motion speed |v| = sqrt(vx^2 + vy^2) in m/yr
+  VECTOR_AZIMUTH: 'vector_azimuth',           // Flow direction compass azimuth in degrees [0, 360) clockwise from North
+  CORRELATION_SNR: 'correlation_snr',         // Signal-to-noise ratio / peak-to-sidelobe ratio
+  DISPLACEMENT_U: 'displacement_u',           // East-West horizontal velocity component vx in m/yr
+  DISPLACEMENT_V: 'displacement_v',           // North-South horizontal velocity component vy in m/yr
+  MULTIMODAL_COMPOSITE: 'multimodal_composite' // Fused 3-band composite (SAR VV backscatter, Optical NIR, Velocity magnitude)
+});
+
+export const MULTIMODAL_TILE_METRICS = Object.freeze(Object.values(MultimodalTileMetric));
+
+/**
+ * Statistical confidence rating for sub-pixel feature-tracked displacement vectors.
+ * @readonly
+ * @enum {string}
+ */
+export const DisplacementConfidenceTier = Object.freeze({
+  HIGH: 'HIGH',
+  MODERATE: 'MODERATE',
+  LOW: 'LOW',
+  INDETERMINATE: 'INDETERMINATE'
+});
+
+export const DISPLACEMENT_CONFIDENCE_TIERS = Object.freeze(Object.values(DisplacementConfidenceTier));
+
+/**
+ * Ground motion hazard classification based on annualized displacement rate.
+ * @readonly
+ * @enum {string}
+ */
+export const MotionHazardTier = Object.freeze({
+  RAPID_DISPLACEMENT: 'rapid_displacement',     // |v| >= 50.0 m/yr
+  ACCELERATING_CREEP: 'accelerating_creep',     // 15.0 <= |v| < 50.0 m/yr
+  STEADY_CREEP: 'steady_creep',                 // 3.0 <= |v| < 15.0 m/yr
+  SUB_CENTIMETER_STABLE: 'sub_centimeter_stable' // |v| < 3.0 m/yr
+});
+
+export const MOTION_HAZARD_TIERS = Object.freeze(Object.values(MotionHazardTier));
+
+/**
+ * Normalizes multimodal alignment model input string to canonical enum value.
+ * @param {string} val - Model string
+ * @returns {string} Canonical MultimodalAlignmentModel
+ */
+export const normalizeMultimodalModel = (val) => {
+  if (!val) return MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_').replace(/\s+/g, '_');
+  const mapping = {
+    ncc_frequency_domain: MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+    ncc: MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+    fft_ncc: MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+    frequency_domain: MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+    cosi_corr: MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+    optical_flow_farneback: MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK,
+    farneback: MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK,
+    optical_flow: MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK,
+    sift_affine_ransac: MultimodalAlignmentModel.SIFT_AFFINE_RANSAC,
+    sift: MultimodalAlignmentModel.SIFT_AFFINE_RANSAC,
+    ransac: MultimodalAlignmentModel.SIFT_AFFINE_RANSAC,
+    lucas_kanade_iterative: MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE,
+    lucas_kanade: MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE,
+    lk: MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE
+  };
+  return mapping[raw] || MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN;
+};
+
+/**
+ * Normalizes sensor pair input to canonical enum value.
+ * @param {string} val - Sensor pair string
+ * @returns {string} Canonical MultimodalSensorPair
+ */
+export const normalizeSensorPair = (val) => {
+  if (!val) return MultimodalSensorPair.S1_RTC_S2_L2A;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_').replace(/\s+/g, '_');
+  const mapping = {
+    s1_rtc_s2_l2a: MultimodalSensorPair.S1_RTC_S2_L2A,
+    s1_s2: MultimodalSensorPair.S1_RTC_S2_L2A,
+    sentinel1_sentinel2: MultimodalSensorPair.S1_RTC_S2_L2A,
+    sar_optical: MultimodalSensorPair.S1_RTC_S2_L2A,
+    s1_rtc_landsat8: MultimodalSensorPair.S1_RTC_LANDSAT8,
+    s1_landsat: MultimodalSensorPair.S1_RTC_LANDSAT8,
+    s2_temporal_pair: MultimodalSensorPair.S2_TEMPORAL_PAIR,
+    s2_s2: MultimodalSensorPair.S2_TEMPORAL_PAIR,
+    optical_temporal: MultimodalSensorPair.S2_TEMPORAL_PAIR,
+    s1_temporal_pair: MultimodalSensorPair.S1_TEMPORAL_PAIR,
+    s1_s1: MultimodalSensorPair.S1_TEMPORAL_PAIR,
+    sar_temporal: MultimodalSensorPair.S1_TEMPORAL_PAIR
+  };
+  return mapping[raw] || MultimodalSensorPair.S1_RTC_S2_L2A;
+};
+
+/**
+ * Normalizes multimodal tile metric string to canonical enum value.
+ * @param {string} val - Metric string
+ * @returns {string} Canonical MultimodalTileMetric
+ */
+export const normalizeMultimodalMetric = (val) => {
+  if (!val) return MultimodalTileMetric.VELOCITY_MAGNITUDE;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_').replace(/\s+/g, '_');
+  const mapping = {
+    velocity_magnitude: MultimodalTileMetric.VELOCITY_MAGNITUDE,
+    velocity: MultimodalTileMetric.VELOCITY_MAGNITUDE,
+    magnitude: MultimodalTileMetric.VELOCITY_MAGNITUDE,
+    speed: MultimodalTileMetric.VELOCITY_MAGNITUDE,
+    vector_azimuth: MultimodalTileMetric.VECTOR_AZIMUTH,
+    azimuth: MultimodalTileMetric.VECTOR_AZIMUTH,
+    direction: MultimodalTileMetric.VECTOR_AZIMUTH,
+    correlation_snr: MultimodalTileMetric.CORRELATION_SNR,
+    snr: MultimodalTileMetric.CORRELATION_SNR,
+    psr: MultimodalTileMetric.CORRELATION_SNR,
+    displacement_u: MultimodalTileMetric.DISPLACEMENT_U,
+    vx: MultimodalTileMetric.DISPLACEMENT_U,
+    u: MultimodalTileMetric.DISPLACEMENT_U,
+    displacement_v: MultimodalTileMetric.DISPLACEMENT_V,
+    vy: MultimodalTileMetric.DISPLACEMENT_V,
+    v: MultimodalTileMetric.DISPLACEMENT_V,
+    multimodal_composite: MultimodalTileMetric.MULTIMODAL_COMPOSITE,
+    composite: MultimodalTileMetric.MULTIMODAL_COMPOSITE
+  };
+  return mapping[raw] || MultimodalTileMetric.VELOCITY_MAGNITUDE;
+};
+
+/**
+ * Normalizes displacement confidence string to canonical enum value.
+ * @param {string} val - Confidence string
+ * @returns {string} Canonical DisplacementConfidenceTier
+ */
+export const normalizeDisplacementConfidence = (val) => {
+  if (!val) return DisplacementConfidenceTier.INDETERMINATE;
+  const raw = String(val).trim().toUpperCase();
+  return DisplacementConfidenceTier[raw] || DisplacementConfidenceTier.INDETERMINATE;
+};
+
+export const MULTIMODAL_ALIGNMENT_CONFIGS = Object.freeze({
+  [MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN]: {
+    name: 'Frequency-Domain Normalized Cross-Correlation (COSI-Corr)',
+    citation: 'Scambos et al. (1992); Leprince et al. (2007) IEEE TGRS',
+    subpixelAccuracyPx: 0.02,
+    computationalComplexity: 'O(N log N)',
+    defaultWindowSize: 64,
+    defaultStepSize: 16,
+    recommendedSensorPair: 's1_rtc_s2_l2a',
+    description: 'Fast 2D Fourier phase and intensity correlation with 2D quadratic peak fitting, achieving sub-pixel precision for large-scale surface deformation.',
+    supportsMultimodal: true
+  },
+  [MultimodalAlignmentModel.OPTICAL_FLOW_FARNEBACK]: {
+    name: 'Farnebäck Dense Quadratic Polynomial Optical Flow',
+    citation: 'Farnebäck, G. (2003) SCIA LNCS 2749',
+    subpixelAccuracyPx: 0.05,
+    computationalComplexity: 'O(N)',
+    defaultWindowSize: 32,
+    defaultStepSize: 8,
+    recommendedSensorPair: 's2_temporal_pair',
+    description: 'Dense two-frame motion estimation using neighborhood polynomial approximations, yielding continuous displacement vector fields.',
+    supportsMultimodal: false
+  },
+  [MultimodalAlignmentModel.SIFT_AFFINE_RANSAC]: {
+    name: 'Scale-Invariant Feature Transform with RANSAC Affine Model',
+    citation: 'Lowe, D.G. (2004) IJCV; Fischler & Bolles (1981) ACM',
+    subpixelAccuracyPx: 0.08,
+    computationalComplexity: 'O(K log K)',
+    defaultWindowSize: 128,
+    defaultStepSize: 32,
+    recommendedSensorPair: 's1_rtc_s2_l2a',
+    description: 'Invariant gradient orientation keypoint descriptors paired with Random Sample Consensus to prune multimodal outliers and fit rigid 2D affine warps.',
+    supportsMultimodal: true
+  },
+  [MultimodalAlignmentModel.LUCAS_KANADE_ITERATIVE]: {
+    name: 'Iterative Pyramidal Lucas-Kanade Feature Tracker',
+    citation: 'Lucas & Kanade (1981) IJCAI; Bouguet, J.-Y. (2001) OpenCV',
+    subpixelAccuracyPx: 0.04,
+    computationalComplexity: 'O(N * I)',
+    defaultWindowSize: 48,
+    defaultStepSize: 16,
+    recommendedSensorPair: 's1_temporal_pair',
+    description: 'Multi-scale image pyramid gradient descent minimizing sum of squared differences across localized temporal image patches.',
+    supportsMultimodal: false
+  }
+});
+
+export const MULTIMODAL_BENCHMARK_SCENES = Object.freeze({
+  JAKOBSHAVN_ISBRAE_GLACIER_SURGE_2026: {
+    name: 'Jakobshavn Isbræ Greenland Glacier Ice Stream',
+    aoiName: 'Jakobshavn Isbræ Terminus, West Greenland',
+    sensorPair: MultimodalSensorPair.S1_RTC_S2_L2A,
+    primarySceneId: 'S1A_IW_GRDH_1SDV_20260714T093215_RTC',
+    secondarySceneId: 'S2B_MSIL2A_20260726T145229_T22WEV',
+    centerLat: 69.172,
+    centerLon: -49.831,
+    expectedMeanVelocityMYr: 8450.0,
+    dominantAzimuthDeg: 268.5,
+    temporalBaselineDays: 12.0,
+    gsdMeters: 10.0,
+    description: 'Fastest-flowing tidewater outlet glacier in Greenland exhibiting massive ice flux and western seaward terminus calve dynamics.'
+  },
+  SLUMGULLION_LANDSLIDE_COLORADO_CREEP_2026: {
+    name: 'Slumgullion Landslide Colorado Creep',
+    aoiName: 'San Juan Mountains, Lake City, Colorado',
+    sensorPair: MultimodalSensorPair.S1_RTC_S2_L2A,
+    primarySceneId: 'S1B_IW_GRDH_1SDV_20260605T131140_RTC',
+    secondarySceneId: 'S2A_MSIL2A_20260617T175911_T13SCD',
+    centerLat: 37.994,
+    centerLon: -107.253,
+    expectedMeanVelocityMYr: 5.4,
+    dominantAzimuthDeg: 312.0,
+    temporalBaselineDays: 12.0,
+    gsdMeters: 10.0,
+    description: 'Benchmark continuously active natural clay-rich earthflow with stable slow displacement rate of 2 to 7 meters per year.'
+  },
+  RIDGECREST_CALIFORNIA_FAULT_SLIP_2026: {
+    name: 'Ridgecrest California Coseismic Rupture Zone',
+    aoiName: 'Eastern California Shear Zone, Searles Valley',
+    sensorPair: MultimodalSensorPair.S1_TEMPORAL_PAIR,
+    primarySceneId: 'S1A_IW_GRDH_1SDV_20260701T015244_RTC',
+    secondarySceneId: 'S1A_IW_GRDH_1SDV_20260713T015244_RTC',
+    centerLat: 35.770,
+    centerLon: -117.600,
+    expectedMeanVelocityMYr: 14.8,
+    dominantAzimuthDeg: 138.2,
+    temporalBaselineDays: 12.0,
+    gsdMeters: 10.0,
+    description: 'Right-lateral strike-slip surface fault rupture showing localized high-gradient ground displacement vectors.'
+  },
+  PINE_ISLAND_GLACIER_ANTARCTICA_FLOW_2026: {
+    name: 'Pine Island Glacier West Antarctica Ice Shelf',
+    aoiName: 'Amundsen Sea Embayment, West Antarctica',
+    sensorPair: MultimodalSensorPair.S2_TEMPORAL_PAIR,
+    primarySceneId: 'S2A_MSIL2A_20260110T021544_T10CFE',
+    secondarySceneId: 'S2B_MSIL2A_20260122T021544_T10CFE',
+    centerLat: -75.166,
+    centerLon: -100.000,
+    expectedMeanVelocityMYr: 3950.0,
+    dominantAzimuthDeg: 295.0,
+    temporalBaselineDays: 12.0,
+    gsdMeters: 10.0,
+    description: 'Critical West Antarctic ice stream undergoing grounding line retreat and accelerating seaward displacement.'
+  }
+});
+
+export const MOTION_HAZARD_CONFIGS = Object.freeze({
+  [MotionHazardTier.RAPID_DISPLACEMENT]: {
+    tier: MotionHazardTier.RAPID_DISPLACEMENT,
+    label: 'Rapid Displacement Hazard',
+    badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+    hexColor: '#f43f5e',
+    minVelocityMYr: 50.0,
+    description: 'Severe ground movement (>50 m/yr). Indicates active glacier surging, high-velocity rock avalanche, or critical slope failure.'
+  },
+  [MotionHazardTier.ACCELERATING_CREEP]: {
+    tier: MotionHazardTier.ACCELERATING_CREEP,
+    label: 'Accelerating Creep',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+    hexColor: '#f59e0b',
+    minVelocityMYr: 15.0,
+    description: 'Heightened ground displacement rate (15 to 50 m/yr). Warrants continuous geotechnical surveillance and structural safety alerts.'
+  },
+  [MotionHazardTier.STEADY_CREEP]: {
+    tier: MotionHazardTier.STEADY_CREEP,
+    label: 'Steady Slow Creep',
+    badgeClass: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+    hexColor: '#06b6d4',
+    minVelocityMYr: 3.0,
+    description: 'Continuous baseline ground motion (3 to 15 m/yr). Consistent with natural earthflows or slow seasonal slope deformation.'
+  },
+  [MotionHazardTier.SUB_CENTIMETER_STABLE]: {
+    tier: MotionHazardTier.SUB_CENTIMETER_STABLE,
+    label: 'Stable Surface Terrain',
+    badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    hexColor: '#10b981',
+    minVelocityMYr: 0.0,
+    description: 'Nominal ground velocity (<3 m/yr). Stable surface terrain without significant active kinematic deformation.'
+  }
+});
+
+/**
+ * Evaluates 2D quadratic parabolic peak localization around the central maximum.
+ * 
+ * @param {Array<Array<number>>} correlationSurface - 3x3 correlation matrix
+ * @returns {{dx: number, dy: number, peakCorrelation: number}} Subpixel offsets and peak correlation
+ */
+export const calculateSubpixelPeakParabolic = (correlationSurface) => {
+  if (!correlationSurface || correlationSurface.length < 3 || !correlationSurface[0] || correlationSurface[0].length < 3) {
+    return { dx: 0.0, dy: 0.0, peakCorrelation: 0.0 };
+  }
+  const c00 = Number(correlationSurface[1][1]);
+  const cLeft = Number(correlationSurface[1][0]);
+  const cRight = Number(correlationSurface[1][2]);
+  const cTop = Number(correlationSurface[0][1]);
+  const cBottom = Number(correlationSurface[2][1]);
+
+  const denomX = 2.0 * (2.0 * c00 - cRight - cLeft);
+  let dx = 0.0;
+  if (Math.abs(denomX) > 1e-7) {
+    dx = (cRight - cLeft) / denomX;
+  }
+  dx = Math.max(-0.5, Math.min(0.5, dx));
+
+  const denomY = 2.0 * (2.0 * c00 - cBottom - cTop);
+  let dy = 0.0;
+  if (Math.abs(denomY) > 1e-7) {
+    dy = (cBottom - cTop) / denomY;
+  }
+  dy = Math.max(-0.5, Math.min(0.5, dy));
+
+  let peakVal = c00 + 0.5 * (dx * (cRight - cLeft) + dy * (cBottom - cTop));
+  peakVal = Math.max(-1.0, Math.min(1.0, peakVal));
+
+  return {
+    dx: Number(dx.toFixed(4)),
+    dy: Number(dy.toFixed(4)),
+    peakCorrelation: Number(peakVal.toFixed(4))
+  };
+};
+
+/**
+ * Computes ground displacement metric vector and annual velocity from pixel offsets.
+ * 
+ * @param {number} dxPx - East-West pixel displacement
+ * @param {number} dyPx - North-South pixel displacement
+ * @param {number} [gsdM=10.0] - Ground sampling distance in meters
+ * @param {number} [dtDays=12.0] - Temporal baseline in days
+ * @returns {Object} Metric displacement vector components
+ */
+export const calculateVelocityVector = (dxPx, dyPx, gsdM = 10.0, dtDays = 12.0) => {
+  const dtYears = Math.max(1e-4, Number(dtDays) / 365.25);
+  const dxM = Number(dxPx) * Number(gsdM);
+  const dyM = Number(dyPx) * Number(gsdM);
+
+  const vx = dxM / dtYears;
+  const vy = dyM / dtYears;
+  const vMag = Math.sqrt(vx * vx + vy * vy);
+
+  const rad = Math.atan2(dxM, dyM);
+  const deg = ((rad * 180.0 / Math.PI) + 360.0) % 360.0;
+
+  return {
+    dxPx: Number(Number(dxPx).toFixed(4)),
+    dyPx: Number(Number(dyPx).toFixed(4)),
+    dxM: Number(dxM.toFixed(3)),
+    dyM: Number(dyM.toFixed(3)),
+    velocityXMYr: Number(vx.toFixed(3)),
+    velocityYMYr: Number(vy.toFixed(3)),
+    velocityMagnitudeMYr: Number(vMag.toFixed(3)),
+    azimuthDeg: Number(deg.toFixed(2))
+  };
+};
+
+/**
+ * Calculates peak-to-sidelobe ratio (PSR) / Signal-to-Noise Ratio of correlation matrix.
+ * 
+ * @param {Array<number>} correlationGrid - Array of correlation coefficients
+ * @param {number} [peakVal=null] - Maximum peak correlation value
+ * @returns {number} Calculated SNR value
+ */
+export const calculateCorrelationSnr = (correlationGrid, peakVal = null) => {
+  if (!correlationGrid || correlationGrid.length === 0) return 0.0;
+  const vals = correlationGrid.map(Number);
+  const peak = peakVal !== null ? Number(peakVal) : Math.max(...vals);
+
+  const sidelobes = vals.filter((v) => Math.abs(v - peak) > 1e-4);
+  if (sidelobes.length === 0) return 10.0;
+
+  const mean = sidelobes.reduce((acc, v) => acc + v, 0.0) / sidelobes.length;
+  const variance = sidelobes.reduce((acc, v) => acc + (v - mean) ** 2, 0.0) / sidelobes.length;
+  const std = Math.sqrt(variance);
+
+  const snr = (peak - mean) / (std + 1e-6);
+  return Number(Math.max(0.0, snr).toFixed(2));
+};
+
+/**
+ * Categorizes annual displacement rate into geotechnical hazard classifications.
+ * 
+ * @param {number} velocityMagnitudeMYr - Ground velocity magnitude in m/yr
+ * @returns {string} MotionHazardTier
+ */
+export const classifyMotionHazardTier = (velocityMagnitudeMYr) => {
+  const v = Math.abs(Number(velocityMagnitudeMYr));
+  if (v >= 50.0) {
+    return MotionHazardTier.RAPID_DISPLACEMENT;
+  } else if (v >= 15.0) {
+    return MotionHazardTier.ACCELERATING_CREEP;
+  } else if (v >= 3.0) {
+    return MotionHazardTier.STEADY_CREEP;
+  } else {
+    return MotionHazardTier.SUB_CENTIMETER_STABLE;
+  }
+};
+
+/**
+ * Assigns statistical confidence rating based on correlation peak, SNR, and localization error.
+ * 
+ * @param {number} snr - Signal-to-noise ratio
+ * @param {number} peakCorr - Peak correlation coefficient
+ * @param {number} [subpixelError=0.05] - Subpixel error in pixels
+ * @returns {string} DisplacementConfidenceTier
+ */
+export const classifyDisplacementConfidence = (snr, peakCorr, subpixelError = 0.05) => {
+  const s = Number(snr);
+  const p = Number(peakCorr);
+  const e = Math.abs(Number(subpixelError));
+
+  if (s >= 8.0 && p >= 0.65 && e <= 0.10) {
+    return DisplacementConfidenceTier.HIGH;
+  } else if (s >= 4.5 && p >= 0.45) {
+    return DisplacementConfidenceTier.MODERATE;
+  } else if (s >= 2.5 && p >= 0.25) {
+    return DisplacementConfidenceTier.LOW;
+  } else {
+    return DisplacementConfidenceTier.INDETERMINATE;
+  }
+};
+
+/**
+ * Constructs canonical XYZ tile URL for dynamic multimodal displacement vector raster tiles.
+ * 
+ * @param {Object} options - Tile options
+ * @param {string} [options.model='ncc_frequency_domain'] - Alignment model
+ * @param {string} [options.metric='velocity_magnitude'] - Tile metric
+ * @param {number|string} [options.z='{z}'] - Zoom level
+ * @param {number|string} [options.x='{x}'] - Tile X coordinate
+ * @param {number|string} [options.y='{y}'] - Tile Y coordinate
+ * @param {string} [options.colormap=null] - Colormap palette
+ * @param {string} [options.pair=null] - Sensor pair
+ * @param {number} [options.minSnr=null] - SNR threshold filter
+ * @returns {string} Tile URL
+ */
+export const buildMultimodalTileUrl = ({
+  model = MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+  metric = MultimodalTileMetric.VELOCITY_MAGNITUDE,
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  colormap = null,
+  pair = null,
+  minSnr = null
+} = {}) => {
+  const normModel = normalizeMultimodalModel(model);
+  const normMetric = normalizeMultimodalMetric(metric);
+  let url = `/api/v1/tiles/multimodal/${normModel}/${normMetric}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (pair) params.push(`pair=${normalizeSensorPair(pair)}`);
+  if (minSnr !== null && minSnr !== undefined) params.push(`min_snr=${minSnr}`);
+  if (params.length > 0) {
+    url += `?${params.join('&')}`;
+  }
+  return url;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for multimodal displacement raster tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildMultimodalTileUrlTemplate = ({
+  model = MultimodalAlignmentModel.NCC_FREQUENCY_DOMAIN,
+  metric = MultimodalTileMetric.VELOCITY_MAGNITUDE,
+  colormap = null,
+  pair = null,
+  minSnr = null
+} = {}) => {
+  return buildMultimodalTileUrl({ model, metric, z: '{z}', x: '{x}', y: '{y}', colormap, pair, minSnr });
+};
+
+
+
+// ============================================================================
+// CYCLE v2.5.41: InSAR SMALL BASELINE SUBSET (SBAS) & PERSISTENT SCATTERER
+// INTERFEROMETRY (PSI) TIME-SERIES GROUND DEFORMATION INVERSION
+// ============================================================================
+
+export const SBASInversionModel = Object.freeze({
+  SVD_LEAST_NORM: 'svd_least_norm',
+  L1_NORM_ROBUST: 'l1_norm_robust',
+  KALMAN_FILTER_RECURSIVE: 'kalman_filter_recursive'
+});
+
+export const InSARSBASTileMetric = Object.freeze({
+  MEAN_VELOCITY_MM_YR: 'mean_velocity_mm_yr',
+  CUMULATIVE_DISPLACEMENT_MM: 'cumulative_displacement_mm',
+  TEMPORAL_COHERENCE: 'temporal_coherence',
+  AMPLITUDE_DISPERSION: 'amplitude_dispersion',
+  VELOCITY_UNCERTAINTY: 'velocity_uncertainty',
+  DEFORMATION_GRADIENT: 'deformation_gradient'
+});
+
+export const PSCStabilityTier = Object.freeze({
+  HIGH: 'HIGH',
+  MODERATE: 'MODERATE',
+  LOW: 'LOW',
+  INDETERMINATE: 'INDETERMINATE'
+});
+
+export const DeformationHazardTier = Object.freeze({
+  CRITICAL_SUBSIDENCE: 'critical_subsidence',
+  MODERATE_SUBSIDENCE: 'moderate_subsidence',
+  SLOW_CREEP: 'slow_creep',
+  SUB_MILLIMETER_STABLE: 'sub_millimeter_stable'
+});
+
+export const SBASNetworkStatus = Object.freeze({
+  FULLY_CONNECTED: 'fully_connected',
+  DISCONNECTED_SUBSETS: 'disconnected_subsets',
+  DEGENERATE: 'degenerate'
+});
+
+export const normalizeSBASModel = (val) => {
+  if (!val) return SBASInversionModel.SVD_LEAST_NORM;
+  const raw = String(val).trim().toLowerCase().replace(/-/gu, '_').replace(/\s+/gu, '_');
+  const aliasMap = {
+    svd: SBASInversionModel.SVD_LEAST_NORM,
+    svd_least_norm: SBASInversionModel.SVD_LEAST_NORM,
+    least_norm: SBASInversionModel.SVD_LEAST_NORM,
+    berardino: SBASInversionModel.SVD_LEAST_NORM,
+    l1: SBASInversionModel.L1_NORM_ROBUST,
+    l1_norm: SBASInversionModel.L1_NORM_ROBUST,
+    l1_norm_robust: SBASInversionModel.L1_NORM_ROBUST,
+    robust: SBASInversionModel.L1_NORM_ROBUST,
+    kalman: SBASInversionModel.KALMAN_FILTER_RECURSIVE,
+    kalman_filter: SBASInversionModel.KALMAN_FILTER_RECURSIVE,
+    kalman_filter_recursive: SBASInversionModel.KALMAN_FILTER_RECURSIVE,
+    sequential: SBASInversionModel.KALMAN_FILTER_RECURSIVE
+  };
+  if (aliasMap[raw]) return aliasMap[raw];
+  for (const m of Object.values(SBASInversionModel)) {
+    if (raw === m) return m;
+  }
+  return SBASInversionModel.SVD_LEAST_NORM;
+};
+
+export const normalizeInSARSBASMetric = (val) => {
+  if (!val) return InSARSBASTileMetric.MEAN_VELOCITY_MM_YR;
+  const raw = String(val).trim().toLowerCase().replace(/-/gu, '_').replace(/\s+/gu, '_');
+  const aliasMap = {
+    velocity: InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+    mean_velocity: InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+    mean_velocity_mm_yr: InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+    v_los: InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+    cumulative: InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM,
+    cumulative_displacement: InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM,
+    cumulative_displacement_mm: InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM,
+    d_los: InSARSBASTileMetric.CUMULATIVE_DISPLACEMENT_MM,
+    coherence: InSARSBASTileMetric.TEMPORAL_COHERENCE,
+    temporal_coherence: InSARSBASTileMetric.TEMPORAL_COHERENCE,
+    gamma: InSARSBASTileMetric.TEMPORAL_COHERENCE,
+    dispersion: InSARSBASTileMetric.AMPLITUDE_DISPERSION,
+    amplitude_dispersion: InSARSBASTileMetric.AMPLITUDE_DISPERSION,
+    da: InSARSBASTileMetric.AMPLITUDE_DISPERSION,
+    uncertainty: InSARSBASTileMetric.VELOCITY_UNCERTAINTY,
+    velocity_uncertainty: InSARSBASTileMetric.VELOCITY_UNCERTAINTY,
+    stderr: InSARSBASTileMetric.VELOCITY_UNCERTAINTY,
+    gradient: InSARSBASTileMetric.DEFORMATION_GRADIENT,
+    deformation_gradient: InSARSBASTileMetric.DEFORMATION_GRADIENT,
+    differential: InSARSBASTileMetric.DEFORMATION_GRADIENT
+  };
+  if (aliasMap[raw]) return aliasMap[raw];
+  for (const m of Object.values(InSARSBASTileMetric)) {
+    if (raw === m) return m;
+  }
+  return InSARSBASTileMetric.MEAN_VELOCITY_MM_YR;
+};
+
+export const normalizePSCStability = (val) => {
+  if (!val) return PSCStabilityTier.INDETERMINATE;
+  const raw = String(val).trim().toUpperCase();
+  return PSCStabilityTier[raw] || PSCStabilityTier.INDETERMINATE;
+};
+
+export const normalizeDeformationHazardTier = (val) => {
+  if (!val) return DeformationHazardTier.SUB_MILLIMETER_STABLE;
+  const raw = String(val).trim().toLowerCase().replace(/-/gu, '_');
+  for (const t of Object.values(DeformationHazardTier)) {
+    if (raw === t) return t;
+  }
+  return DeformationHazardTier.SUB_MILLIMETER_STABLE;
+};
+
+export const SBAS_INVERSION_CONFIGS = Object.freeze({
+  [SBASInversionModel.SVD_LEAST_NORM]: {
+    id: SBASInversionModel.SVD_LEAST_NORM,
+    label: 'Singular Value Decomposition (SVD) Minimum-Norm',
+    citation: 'Berardino, P., Fornaro, G., Lanari, R., & Sansosti, E. (2002). A new algorithm for surface deformation monitoring based on small baseline differential SAR interferograms. IEEE TGRS, 40(11), 2375-2383.',
+    description: 'Multi-master least-norm solution decomposing rank-deficient temporal baseline networks using SVD Moore-Penrose pseudo-inversion; eliminates temporal decorrelation across isolated acquisition clusters.',
+    precisionMmYr: 1.0,
+    robustToUnwrappingErrors: false,
+    handlesDisconnectedSubsets: true,
+    badgeClass: 'bg-blue-900/60 text-blue-300 border-blue-500/30'
+  },
+  [SBASInversionModel.L1_NORM_ROBUST]: {
+    id: SBASInversionModel.L1_NORM_ROBUST,
+    label: 'Iteratively Reweighted L1-Norm Regularization',
+    citation: 'Lauknes, T. R., Zebker, H. A., & Larsen, Y. (2011). InSAR deformation time series using an L1-norm regularization approach. Remote Sensing of Environment, 115(12), 3401-3416.',
+    description: 'L1-norm iteratively reweighted least squares (IRLS) objective function suppressing anomalous 2pi phase unwrapping residuals, atmospheric turbulence, and high-gradient phase jumps.',
+    precisionMmYr: 1.2,
+    robustToUnwrappingErrors: true,
+    handlesDisconnectedSubsets: true,
+    badgeClass: 'bg-emerald-900/60 text-emerald-300 border-emerald-500/30'
+  },
+  [SBASInversionModel.KALMAN_FILTER_RECURSIVE]: {
+    id: SBASInversionModel.KALMAN_FILTER_RECURSIVE,
+    label: 'Sequential Recursive Extended Kalman Filter (EKF)',
+    citation: 'Guarnieri, A. M., & Tebaldini, S. (2018). Hybrid Cramér-Rao bounds for InSAR phase and deformation tracking. IEEE GRSL, 15(7), 1011-1015.',
+    description: 'Recursive state-space Kalman estimator processing incoming Sentinel-1 acquisitions incrementally without re-inverting the full historical covariance matrix; optimal for real-time monitoring daemons.',
+    precisionMmYr: 1.5,
+    robustToUnwrappingErrors: true,
+    handlesDisconnectedSubsets: false,
+    badgeClass: 'bg-purple-900/60 text-purple-300 border-purple-500/30'
+  }
+});
+
+export const DEFORMATION_HAZARD_CONFIGS = Object.freeze({
+  [DeformationHazardTier.CRITICAL_SUBSIDENCE]: {
+    id: DeformationHazardTier.CRITICAL_SUBSIDENCE,
+    label: 'Critical Subsidence Hazard',
+    velocityThresholdMmYr: 25.0,
+    badgeClass: 'bg-red-900/60 text-red-300 border-red-500/30',
+    colorHex: '#dc2626',
+    severity: 'CRITICAL',
+    description: 'Rapid millimeter displacement (|v| >= 25 mm/yr); immediate threat to civil structures, aqueducts, and tailings dam crest integrity.'
+  },
+  [DeformationHazardTier.MODERATE_SUBSIDENCE]: {
+    id: DeformationHazardTier.MODERATE_SUBSIDENCE,
+    label: 'Moderate Subsidence',
+    velocityThresholdMmYr: 10.0,
+    badgeClass: 'bg-orange-900/60 text-orange-300 border-orange-500/30',
+    colorHex: '#f97316',
+    severity: 'WARNING',
+    description: 'Accelerated settlement (10 - 25 mm/yr); requires geotechnical instrumentation inspection and piezometer correlation.'
+  },
+  [DeformationHazardTier.SLOW_CREEP]: {
+    id: DeformationHazardTier.SLOW_CREEP,
+    label: 'Slow Creep / Steady Settlement',
+    velocityThresholdMmYr: 3.0,
+    badgeClass: 'bg-amber-900/60 text-amber-300 border-amber-500/30',
+    colorHex: '#eab308',
+    severity: 'WATCH',
+    description: 'Steady seasonal or slow continuous deformation (3 - 10 mm/yr); long-term aquifer drawdown or natural consolidation.'
+  },
+  [DeformationHazardTier.SUB_MILLIMETER_STABLE]: {
+    id: DeformationHazardTier.SUB_MILLIMETER_STABLE,
+    label: 'Sub-Millimeter Stable Ground',
+    velocityThresholdMmYr: 0.0,
+    badgeClass: 'bg-emerald-900/60 text-emerald-300 border-emerald-500/30',
+    colorHex: '#10b981',
+    severity: 'NORMAL',
+    description: 'Negligible ground movement (|v| < 3 mm/yr); stable bedrock or engineered foundation within instrument noise ceiling.'
+  }
+});
+
+export const INSAR_SBAS_BENCHMARK_SCENES = Object.freeze({
+  CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026: {
+    id: 'CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026',
+    name: 'Tulare Basin Aquifer Overdraft & Deep Subsidence',
+    location: 'San Joaquin Valley, California, USA',
+    coordinates: { lat: 36.05, lng: -119.35 },
+    bbox: [-119.65, 35.80, -119.05, 36.30],
+    expectedPeakVelocityMmYr: -165.0,
+    dominantHazardTier: DeformationHazardTier.CRITICAL_SUBSIDENCE,
+    recommendedModel: SBASInversionModel.SVD_LEAST_NORM,
+    citation: 'Farr, T. G., et al. (2016). Progress Report: Subsidence in the Central Valley, California. NASA JPL / California DWR Report.'
+  },
+  MEXICO_CITY_LACUSTRINE_CONSOLIDATION_2026: {
+    id: 'MEXICO_CITY_LACUSTRINE_CONSOLIDATION_2026',
+    name: 'Mexico City Lacustrine Clay Aquitard Consolidation',
+    location: 'Valley of Mexico, Mexico',
+    coordinates: { lat: 19.43, lng: -99.13 },
+    bbox: [-99.30, 19.25, -98.95, 19.60],
+    expectedPeakVelocityMmYr: -280.0,
+    dominantHazardTier: DeformationHazardTier.CRITICAL_SUBSIDENCE,
+    recommendedModel: SBASInversionModel.L1_NORM_ROBUST,
+    citation: 'Cabral-Cano, E., et al. (2008). Spaceborne radar interferometry for monitoring subsidence in Mexico City. International Geology Review, 50(4), 379-392.'
+  },
+  BOLOGNA_PO_VALLEY_PIEDMONT_SUBSIDENCE_2026: {
+    id: 'BOLOGNA_PO_VALLEY_PIEDMONT_SUBSIDENCE_2026',
+    name: 'Bologna Po Plain Alluvial Groundwater Subsidence',
+    location: 'Emilia-Romagna, Italy',
+    coordinates: { lat: 44.50, lng: 11.35 },
+    bbox: [-11.10, 44.35, 11.55, 44.65],
+    expectedPeakVelocityMmYr: -12.5,
+    dominantHazardTier: DeformationHazardTier.MODERATE_SUBSIDENCE,
+    recommendedModel: SBASInversionModel.SVD_LEAST_NORM,
+    citation: 'Berardino, P., et al. (2002). A new algorithm for surface deformation monitoring based on small baseline differential SAR interferograms. IEEE TGRS, 40(11), 2375-2383.'
+  },
+  KIRUNA_UNDERGROUND_IRON_MINE_DEFORMATION_2026: {
+    id: 'KIRUNA_UNDERGROUND_IRON_MINE_DEFORMATION_2026',
+    name: 'Kiruna Sub-Level Caving Underground Mine Subsidence Trough',
+    location: 'Norrbotten, Sweden',
+    coordinates: { lat: 67.85, lng: 20.22 },
+    bbox: [20.10, 67.80, 20.35, 67.90],
+    expectedPeakVelocityMmYr: -45.0,
+    dominantHazardTier: DeformationHazardTier.CRITICAL_SUBSIDENCE,
+    recommendedModel: SBASInversionModel.L1_NORM_ROBUST,
+    citation: 'Villegas-Lanza, J. C., et al. (2020). Multi-temporal InSAR ground displacement analysis over Kiruna sub-level caving mine. Remote Sensing, 12(14), 2235.'
+  }
+});
+
+/**
+ * Calculates amplitude dispersion index D_A = sigma_A / mu_A (Ferretti et al. 2001).
+ * 
+ * @param {Array<number>} amplitudes - Sequence of calibrated radar backscatter amplitudes
+ * @returns {number} D_A index (<= 0.25 indicates Persistent Scatterer Candidate)
+ */
+export const calculateAmplitudeDispersion = (amplitudes) => {
+  if (!Array.isArray(amplitudes) || amplitudes.length < 2) return 1.0;
+  const arr = amplitudes.map(Number).filter((v) => !isNaN(v) && v >= 0.0);
+  if (arr.length < 2) return 1.0;
+  const mean = arr.reduce((acc, val) => acc + val, 0) / arr.length;
+  if (mean < 1e-6) return 1.0;
+  const variance = arr.reduce((acc, val) => acc + (val - mean) ** 2, 0) / arr.length;
+  const std = Math.sqrt(variance);
+  return Number(Math.max(0.0, std / mean).toFixed(4));
+};
+
+/**
+ * Converts wrapped/unwrapped interferometric phase change to line-of-sight displacement in mm.
+ * 
+ * @param {number} deltaPhiRad - Phase change in radians
+ * @param {number} [wavelengthM=0.0554657] - Radar wavelength in meters (default Sentinel-1 C-band)
+ * @returns {number} Displacement in millimeters
+ */
+export const calculatePhaseToDisplacement = (deltaPhiRad, wavelengthM = 0.0554657) => {
+  const phi = Number(deltaPhiRad);
+  if (isNaN(phi)) return 0.0;
+  const wavelengthMm = Number(wavelengthM) * 1000.0;
+  const dispMm = -(wavelengthMm / (4.0 * Math.PI)) * phi;
+  return Number(dispMm.toFixed(3));
+};
+
+/**
+ * Analyzes the topological connectivity of an SBAS small baseline acquisition graph.
+ * 
+ * @param {number} numAcquisitions - Total count of SAR acquisitions
+ * @param {Array<Array<number>>} interferogramPairs - List of index pairs [u, v]
+ * @returns {Object} Graph connectivity metrics
+ */
+export const calculateSBASNetworkConnectivity = (numAcquisitions, interferogramPairs) => {
+  const n = Math.max(0, parseInt(numAcquisitions, 10) || 0);
+  if (n < 2 || !Array.isArray(interferogramPairs) || interferogramPairs.length === 0) {
+    return {
+      numAcquisitions: n,
+      numInterferograms: 0,
+      numComponents: n,
+      isConnected: false,
+      networkStatus: SBASNetworkStatus.DEGENERATE,
+      redundancyRatio: 0.0,
+      degrees: new Array(n).fill(0)
+    };
+  }
+
+  const adj = Array.from({ length: n }, () => []);
+  let validPairsCount = 0;
+  for (const pair of interferogramPairs) {
+    if (Array.isArray(pair) && pair.length >= 2) {
+      const u = parseInt(pair[0], 10);
+      const v = parseInt(pair[1], 10);
+      if (u >= 0 && u < n && v >= 0 && v < n && u !== v) {
+        adj[u].push(v);
+        adj[v].push(u);
+        validPairsCount += 1;
+      }
+    }
+  }
+
+  const visited = new Array(n).fill(false);
+  let numComponents = 0;
+  for (let i = 0; i < n; i += 1) {
+    if (!visited[i]) {
+      numComponents += 1;
+      const queue = [i];
+      visited[i] = true;
+      while (queue.length > 0) {
+        const curr = queue.shift();
+        for (const neighbor of adj[curr]) {
+          if (!visited[neighbor]) {
+            visited[neighbor] = true;
+            queue.push(neighbor);
+          }
+        }
+      }
+    }
+  }
+
+  const isConnected = numComponents === 1 && n >= 3;
+  let status = SBASNetworkStatus.DEGENERATE;
+  if (isConnected) {
+    status = SBASNetworkStatus.FULLY_CONNECTED;
+  } else if (numComponents > 1 && validPairsCount >= n - 1) {
+    status = SBASNetworkStatus.DISCONNECTED_SUBSETS;
+  }
+
+  const degrees = adj.map((list) => list.length);
+  const redundancy = Number((validPairsCount / Math.max(1, n - 1)).toFixed(2));
+
+  return {
+    numAcquisitions: n,
+    numInterferograms: validPairsCount,
+    numComponents,
+    isConnected,
+    networkStatus: status,
+    redundancyRatio: redundancy,
+    degrees
+  };
+};
+
+/**
+ * Classifies ground deformation velocity into geotechnical hazard tiers.
+ * 
+ * @param {number} velocityMmYr - Mean annual displacement velocity in mm/yr
+ * @returns {string} DeformationHazardTier
+ */
+export const classifyDeformationHazardTier = (velocityMmYr) => {
+  const v = Math.abs(Number(velocityMmYr));
+  if (isNaN(v)) return DeformationHazardTier.SUB_MILLIMETER_STABLE;
+  if (v >= 25.0) {
+    return DeformationHazardTier.CRITICAL_SUBSIDENCE;
+  } else if (v >= 10.0) {
+    return DeformationHazardTier.MODERATE_SUBSIDENCE;
+  } else if (v >= 3.0) {
+    return DeformationHazardTier.SLOW_CREEP;
+  }
+  return DeformationHazardTier.SUB_MILLIMETER_STABLE;
+};
+
+/**
+ * Evaluates statistical stability classification of a Persistent Scatterer Candidate.
+ * 
+ * @param {number} da - Amplitude dispersion index D_A
+ * @param {number} [temporalCoherence=0.70] - Temporal phase coherence [0, 1]
+ * @returns {string} PSCStabilityTier
+ */
+export const classifyPSCStability = (da, temporalCoherence = 0.70) => {
+  const d = Number(da);
+  if (isNaN(d) || d < 0.0) return PSCStabilityTier.INDETERMINATE;
+  const gamma = !isNaN(Number(temporalCoherence)) ? Number(temporalCoherence) : 0.70;
+  if (d <= 0.25 && gamma >= 0.75) {
+    return PSCStabilityTier.HIGH;
+  } else if (d <= 0.40 && gamma >= 0.60) {
+    return PSCStabilityTier.MODERATE;
+  } else if (d <= 0.60 && gamma >= 0.45) {
+    return PSCStabilityTier.LOW;
+  }
+  return PSCStabilityTier.INDETERMINATE;
+};
+
+/**
+ * Constructs canonical XYZ tile URL for dynamic InSAR SBAS ground deformation raster tiles.
+ * 
+ * @param {Object} options - Tile options
+ * @returns {string} Tile URL
+ */
+export const buildInSARSBASTileUrl = ({
+  model = SBASInversionModel.SVD_LEAST_NORM,
+  metric = InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  colormap = null,
+  rescale = null,
+  minCoherence = null,
+  maxDa = null
+} = {}) => {
+  const m = normalizeSBASModel(model);
+  const met = normalizeInSARSBASMetric(metric);
+  let url = `/api/v1/tiles/insar-sbas/${m}/${met}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (rescale) params.push(`rescale=${rescale}`);
+  if (minCoherence !== null && minCoherence !== undefined) params.push(`min_coherence=${minCoherence}`);
+  if (maxDa !== null && maxDa !== undefined) params.push(`max_da=${maxDa}`);
+  if (params.length > 0) {
+    url += `?${params.join('&')}`;
+  }
+  return url;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for InSAR SBAS deformation raster tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildInSARSBASTileUrlTemplate = ({
+  model = SBASInversionModel.SVD_LEAST_NORM,
+  metric = InSARSBASTileMetric.MEAN_VELOCITY_MM_YR,
+  colormap = null,
+  rescale = null,
+  minCoherence = null,
+  maxDa = null
+} = {}) => {
+  return buildInSARSBASTileUrl({ model, metric, z: '{z}', x: '{x}', y: '{y}', colormap, rescale, minCoherence, maxDa });
 };

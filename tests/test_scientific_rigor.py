@@ -4416,6 +4416,757 @@ class TestScientificRigor(unittest.TestCase):
         # Empty guidance bands
         self.assertEqual(calculate_synthetic_panchromatic({}), 0.0)
 
+    def test_cross_sensor_calibration_scientific_rigor_and_invariants(self):
+        """Task T-292: Continuous Scientific QA: Multi-Sensor OLI/MSI Radiometric Cross-Calibration,
+        Roy et al. (2016) Bandpass Adjustment Invariance, Orthogonal Distance Regression (ODR/RMA),
+        Residual RMSE Bounds (RMSE < 0.015), Radiometric Bias Normalization, and Constellation Temporal Stacking.
+        """
+        from app.models.schemas import (
+            SensorCalibrationModel,
+            SensorPlatform,
+            CrossSensorBand,
+            CrossSensorTileMetric,
+            CalibrationQualityRating,
+            SENSOR_CALIBRATION_MODEL_CONFIGS,
+            CROSS_SENSOR_BAND_COEFFICIENTS,
+            CROSS_SENSOR_BENCHMARK_SCENES,
+            normalize_sensor_calibration_model,
+            normalize_cross_sensor_band,
+            apply_cross_sensor_band_calibration,
+            calculate_orthogonal_distance_regression,
+            calculate_cross_sensor_residual_rmse,
+            calculate_cross_sensor_radiometric_bias,
+            classify_calibration_quality_rating,
+        )
+        from app.services.calibration_service import CalibrationService
+
+        # -------------------------------------------------------------
+        # 1. Roy et al. (2016) Bandpass Adjustment & Invertibility
+        # -------------------------------------------------------------
+        # Forward transformation: Landsat-8 OLI -> Sentinel-2A MSI
+        # rho_MSI = c0 + c1 * rho_OLI
+        for band in CrossSensorBand:
+            coef = CROSS_SENSOR_BAND_COEFFICIENTS[band.value]["roy_2016"]
+            c0 = coef["c0"]
+            c1 = coef["c1"]
+
+            # Linear model calibration at rho = 0.30
+            rho_in = 0.30
+            rho_cal = apply_cross_sensor_band_calibration(
+                rho_in,
+                band=band,
+                model=SensorCalibrationModel.ROY_2016_LINEAR,
+                source_sensor=SensorPlatform.LANDSAT_8_OLI,
+                target_sensor=SensorPlatform.SENTINEL_2A_MSI,
+            )
+            expected_cal = round(min(1.0, max(0.0, c0 + c1 * rho_in)), 4)
+            self.assertAlmostEqual(
+                rho_cal,
+                expected_cal,
+                places=4,
+                msg=f"Roy et al. (2016) calibration for band {band.value} must match linear model",
+            )
+
+            # Invertibility: (rho_MSI - c0) / c1 should recover original rho_OLI
+            rho_recovered = apply_cross_sensor_band_calibration(
+                rho_cal,
+                band=band,
+                model=SensorCalibrationModel.ROY_2016_LINEAR,
+                source_sensor=SensorPlatform.SENTINEL_2A_MSI,
+                target_sensor=SensorPlatform.LANDSAT_8_OLI,
+            )
+            self.assertAlmostEqual(
+                rho_recovered,
+                rho_in,
+                places=3,
+                msg=f"Inversion for band {band.value} must recover input reflectance within 1e-3",
+            )
+
+        # -------------------------------------------------------------
+        # 2. Reduced Major Axis (RMA) / Orthogonal Distance Regression (ODR)
+        # -------------------------------------------------------------
+        # Perfectly identical sequences: slope = 1.0, intercept = 0.0, R2 = 1.0, RMSE = 0.0
+        x_ident = [0.10, 0.20, 0.30, 0.40, 0.50]
+        y_ident = [0.10, 0.20, 0.30, 0.40, 0.50]
+        odr_res = calculate_orthogonal_distance_regression(x_ident, y_ident)
+        self.assertAlmostEqual(odr_res["slope"], 1.000, places=3)
+        self.assertAlmostEqual(odr_res["intercept"], 0.000, places=4)
+        self.assertAlmostEqual(odr_res["r_squared"], 1.000, places=3)
+        self.assertAlmostEqual(odr_res["rmse"], 0.000, places=4)
+
+        # Known transformation: y = 0.02 + 0.95 * x
+        x_synth = [0.10, 0.25, 0.40, 0.55, 0.70]
+        y_synth = [0.02 + 0.95 * val for val in x_synth]
+        odr_synth = calculate_orthogonal_distance_regression(x_synth, y_synth)
+        self.assertAlmostEqual(odr_synth["slope"], 0.950, places=2)
+        self.assertAlmostEqual(odr_synth["intercept"], 0.020, places=3)
+        self.assertAlmostEqual(odr_synth["r_squared"], 1.000, places=3)
+
+        # Degenerate / empty inputs guard
+        odr_empty = calculate_orthogonal_distance_regression([], [])
+        self.assertEqual(odr_empty["slope"], 1.0)
+        self.assertEqual(odr_empty["intercept"], 0.0)
+
+        # -------------------------------------------------------------
+        # 3. Residual RMSE and Radiometric Bias Bounds
+        # -------------------------------------------------------------
+        x_obs = [0.12, 0.24, 0.36, 0.48]
+        y_obs = [0.005 + 0.99 * val for val in x_obs]
+
+        # Exact fit yields 0.0 RMSE and 0.0 bias
+        rmse_zero = calculate_cross_sensor_residual_rmse(x_obs, y_obs, c0=0.005, c1=0.99)
+        bias_zero = calculate_cross_sensor_radiometric_bias(x_obs, y_obs, c0=0.005, c1=0.99)
+        self.assertAlmostEqual(rmse_zero, 0.0, places=5)
+        self.assertAlmostEqual(bias_zero, 0.0, places=5)
+
+        # Perturbed data residual RMSE must remain bounded
+        y_pert = [y + 0.003 * ((-1) ** idx) for idx, y in enumerate(y_obs)]
+        rmse_pert = calculate_cross_sensor_residual_rmse(x_obs, y_pert, c0=0.005, c1=0.99)
+        bias_pert = calculate_cross_sensor_radiometric_bias(x_obs, y_pert, c0=0.005, c1=0.99)
+        self.assertLess(rmse_pert, 0.015, "Residual RMSE must remain strictly below 0.015 threshold")
+        self.assertLess(abs(bias_pert), 0.005, "Radiometric bias must remain strictly below 0.005")
+
+        # -------------------------------------------------------------
+        # 4. Calibration Quality Rating Classification
+        # -------------------------------------------------------------
+        # EXCELLENT: RMSE <= 0.008, R2 >= 0.990, bias <= 0.003
+        self.assertEqual(
+            classify_calibration_quality_rating(rmse=0.004, r_squared=0.995, mean_bias=0.001),
+            CalibrationQualityRating.EXCELLENT,
+        )
+        # GOOD: RMSE <= 0.015, R2 >= 0.975, bias <= 0.008
+        self.assertEqual(
+            classify_calibration_quality_rating(rmse=0.012, r_squared=0.980, mean_bias=0.005),
+            CalibrationQualityRating.GOOD,
+        )
+        # ACCEPTABLE: RMSE <= 0.030, R2 >= 0.950, bias <= 0.015
+        self.assertEqual(
+            classify_calibration_quality_rating(rmse=0.025, r_squared=0.960, mean_bias=0.012),
+            CalibrationQualityRating.ACCEPTABLE,
+        )
+        # DEGRADED: Outside bounds
+        self.assertEqual(
+            classify_calibration_quality_rating(rmse=0.045, r_squared=0.910, mean_bias=0.025),
+            CalibrationQualityRating.DEGRADED,
+        )
+
+        # -------------------------------------------------------------
+        # 5. Non-Negative Reflectance Clamping Invariant
+        # -------------------------------------------------------------
+        # Physical bounds: Surface reflectance must be strictly clamped to [0.0, 1.0]
+        clamped_neg = apply_cross_sensor_band_calibration(
+            -0.5,
+            band=CrossSensorBand.BLUE,
+            model=SensorCalibrationModel.ROY_2016_LINEAR,
+        )
+        self.assertEqual(clamped_neg, 0.0, "Negative inputs must be clamped to non-negative 0.0")
+
+        clamped_high = apply_cross_sensor_band_calibration(
+            1.8,
+            band=CrossSensorBand.NIR_NARROW,
+            model=SensorCalibrationModel.ROY_2016_LINEAR,
+        )
+        self.assertEqual(clamped_high, 1.0, "Super-reflective values must be clamped to 1.0")
+
+        # -------------------------------------------------------------
+        # 6. CalibrationService Integration & Seamless Constellation Stacking
+        # -------------------------------------------------------------
+        service = CalibrationService()
+        source_b, target_b, sc = service.generate_synthetic_sensor_pair_bands(
+            aoi_name="Lake Tahoe Aquatic & Terrestrial Calibration Target",
+            grid_size=64,
+            seed=42,
+        )
+        self.assertIsNotNone(sc)
+        self.assertIn("nir_narrow", source_b)
+        self.assertIn("red", source_b)
+
+        # Calibrate whole scene
+        calibrated_scene = service.calibrate_scene(
+            source_bands=source_b,
+            model=SensorCalibrationModel.ROY_2016_LINEAR,
+            source_sensor=SensorPlatform.LANDSAT_8_OLI,
+            target_sensor=SensorPlatform.SENTINEL_2A_MSI,
+        )
+        self.assertEqual(set(source_b.keys()), set(calibrated_scene.keys()))
+
+        # Harmonized NDVI computation
+        harm_ndvi = service.compute_harmonized_metric(
+            calibrated_scene,
+            metric=CrossSensorTileMetric.HARMONIZED_NDVI,
+        )
+        self.assertEqual(harm_ndvi.shape, (64, 64))
+        self.assertGreaterEqual(float(np.min(harm_ndvi)), -1.0)
+        self.assertLessEqual(float(np.max(harm_ndvi)), 1.0)
+
+        # Quantitative Quality Certification
+        summary = service.evaluate_quality_summary(
+            source_bands=source_b,
+            calibrated_bands=calibrated_scene,
+            target_bands=target_b,
+            model=SensorCalibrationModel.ROY_2016_LINEAR,
+        )
+        self.assertLess(summary.mean_rmse, 0.015, "Multi-band mean RMSE must satisfy < 0.015 bound")
+        self.assertGreater(summary.mean_r_squared, 0.98, "Harmonized multi-band correlation must exceed R2 > 0.98")
+        self.assertIn(summary.quality_rating, [CalibrationQualityRating.EXCELLENT, CalibrationQualityRating.GOOD])
+
+        # Seamless Daily Stacking: Step offset reduction
+        stack_res = service.generate_seamless_daily_stack(
+            aoi_name="Lake Tahoe Aquatic & Terrestrial Calibration Target",
+            days=14,
+        )
+        self.assertEqual(len(stack_res), 14)
+        for obs in stack_res:
+            self.assertGreater(
+                obs["cross_sensor_offset_reduction_pct"],
+                80.0,
+                "Interleaved cross-calibration must eliminate >80% of artificial step offset variance",
+            )
+
+    def test_non_parametric_trend_inversion_scientific_rigor_and_invariants(self):
+        """Task T-298: Continuous Scientific QA: Non-Parametric Trend Inversion,
+        Theil-Sen Robust Median Slope Invariant (29.3% Breakdown Point vs. OLS Sensitivity),
+        Mann-Kendall Monotonic Rank Statistic Invariance, Exact Tied-Rank Variance Handling,
+        Yue-Pilon Trend-Free Pre-Whitening (TFPW) Autoregressive Removal & Biophysical Directionality Inversion.
+        """
+        from app.models.schemas import (
+            TrendModel,
+            TrendSignificanceClass,
+            TrendTileMetric,
+            TrendTargetIndex,
+            TrendConfidenceRating,
+            TREND_MODEL_CONFIGS,
+            TREND_SIGNIFICANCE_CONFIGS,
+            TREND_BENCHMARK_SCENES,
+            normalize_trend_model,
+            normalize_trend_metric,
+            normalize_trend_target_index,
+            calculate_theil_sen_slope,
+            calculate_mann_kendall_statistics,
+            calculate_yue_pilon_prewhitening,
+            classify_trend_significance,
+            build_trend_tile_url,
+            build_trend_tile_url_template,
+            TrendAnalysisRequest,
+        )
+        from app.services.trend_service import TrendService
+        from app.services.tile_service import tile_service
+
+        # -------------------------------------------------------------
+        # 1. Theil-Sen Robustness Invariant & Outlier Breakdown Point
+        # -------------------------------------------------------------
+        # Pure linear baseline: y = 0.40 + 0.02 * t for t = 0..19 (N = 20)
+        t_clean = list(range(20))
+        y_clean = [0.40 + 0.02 * t for t in t_clean]
+
+        ts_clean = calculate_theil_sen_slope(t_clean, y_clean)
+        self.assertAlmostEqual(ts_clean["slope_per_year"], 0.02, places=4)
+        self.assertAlmostEqual(ts_clean["intercept"], 0.40, places=4)
+        self.assertEqual(ts_clean["pairwise_count"], 190)  # 20 * 19 / 2
+        self.assertLessEqual(ts_clean["slope_ci_lower"], 0.0201)
+        self.assertGreaterEqual(ts_clean["slope_ci_upper"], 0.0199)
+
+        # Corrupt 5 of 20 points (25% contamination, within 29.3% breakdown point)
+        # Extreme outliers simulated from cloud leaks and bad detector lines
+        y_corrupt = list(y_clean)
+        y_corrupt[3] = -0.50   # severe cloud shadow dropout
+        y_corrupt[7] = 1.20    # severe bright cloud contamination
+        y_corrupt[11] = -0.40  # sensor dropout
+        y_corrupt[15] = 1.10   # reflection artifact
+        y_corrupt[18] = -0.30  # snow/ice misclassification
+
+        ts_corrupt = calculate_theil_sen_slope(t_clean, y_corrupt)
+        # Theil-Sen should remain robust to the true slope
+        ts_slope_err = abs(ts_corrupt["slope_per_year"] - 0.02)
+        self.assertLess(ts_slope_err, 0.008, "Theil-Sen slope must withstand 25% severe outliers within 29.3% breakdown threshold")
+
+        # In contrast, Ordinary Least Squares (OLS) slope is severely biased
+        slope_ols, _ = np.polyfit(t_clean, y_corrupt, 1)
+        ols_slope_err = abs(slope_ols - 0.02)
+        self.assertGreater(ols_slope_err, ts_slope_err * 2.5, "OLS must exhibit significantly higher sensitivity to cloud outliers than Theil-Sen")
+
+        # Vectorized pairwise slopes algorithm parity in TrendService
+        vec_slopes = TrendService.calculate_vectorized_pairwise_slopes(t_clean, y_clean)
+        self.assertEqual(len(vec_slopes), 190)
+        self.assertTrue(np.allclose(vec_slopes, 0.02))
+
+        # -------------------------------------------------------------
+        # 2. Mann-Kendall Monotonic Rank Invariance & Exact Tied Variance
+        # -------------------------------------------------------------
+        # Strictly monotonic series:
+        x_mono = [0.10, 0.15, 0.22, 0.35, 0.41, 0.58, 0.64, 0.79, 0.88, 0.96]
+        mk_mono = calculate_mann_kendall_statistics(x_mono)
+        self.assertEqual(mk_mono["s_statistic"], 45)  # 10 * 9 / 2
+        self.assertEqual(mk_mono["kendall_tau"], 1.0)
+        self.assertTrue(mk_mono["is_significant_99"])
+        self.assertGreater(mk_mono["z_score"], 3.5)
+
+        # Apply strictly monotonic non-linear transformations:
+        # e.g., cubic power and exponential scaling
+        y_cubic = [val ** 3 + 2.0 for val in x_mono]
+        y_exp = [math.exp(val) for val in x_mono]
+
+        mk_cubic = calculate_mann_kendall_statistics(y_cubic)
+        mk_exp = calculate_mann_kendall_statistics(y_exp)
+
+        self.assertEqual(mk_cubic["s_statistic"], mk_mono["s_statistic"], "Monotonic non-linear transforms must preserve exact MK S statistic")
+        self.assertAlmostEqual(mk_cubic["z_score"], mk_mono["z_score"], places=4)
+        self.assertAlmostEqual(mk_cubic["p_value"], mk_mono["p_value"], places=6)
+        self.assertAlmostEqual(mk_exp["z_score"], mk_mono["z_score"], places=4)
+
+        # Directional symmetry under time-reversal
+        x_rev = x_mono[::-1]
+        mk_rev = calculate_mann_kendall_statistics(x_rev)
+        self.assertEqual(mk_rev["s_statistic"], -mk_mono["s_statistic"], "Time reversal must invert S sign")
+        self.assertAlmostEqual(mk_rev["z_score"], -mk_mono["z_score"], places=4)
+        self.assertAlmostEqual(mk_rev["p_value"], mk_mono["p_value"], places=6)
+        self.assertAlmostEqual(mk_rev["variance_s"], mk_mono["variance_s"], places=4)
+
+        # Exact tied-rank variance handling
+        # Series with ties: [1, 2, 2, 3, 3, 3, 4] -> n=7, ties of size 2 and 3
+        # Untied Var(S) = 7*6*19/18 = 44.3333...
+        # Tie correction = (2*1*9 + 3*2*11)/18 = (18 + 66)/18 = 4.6667
+        # Tied Var(S) = 44.3333 - 4.6667 = 39.6667
+        x_tied = [1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0]
+        mk_tied = calculate_mann_kendall_statistics(x_tied)
+        self.assertAlmostEqual(mk_tied["variance_s"], 714.0 / 18.0, places=3)
+
+        # -------------------------------------------------------------
+        # 3. Yue-Pilon Trend-Free Pre-Whitening (TFPW) Autoregressive Invariant
+        # -------------------------------------------------------------
+        # AR(1) autoregressive noise with positive serial autocorrelation
+        rng = np.random.RandomState(42)
+        n_pts = 60
+        t_seq = list(range(n_pts))
+        # Pure red noise: x_t = 0.65 * x_{t-1} + e_t
+        ar_noise = [0.0]
+        for _ in range(1, n_pts):
+            ar_noise.append(0.65 * ar_noise[-1] + rng.normal(0.0, 0.05))
+
+        yp_red = calculate_yue_pilon_prewhitening(t_seq, ar_noise)
+        self.assertGreater(yp_red["lag1_autocorrelation"], 0.40, "Yue-Pilon must detect significant positive lag-1 autocorrelation in red noise")
+        self.assertTrue(yp_red["is_autocorrelated"])
+
+        # Trend preservation: True linear trend beta = 0.02 + red noise
+        trend_signal = [0.02 * t + ar for t, ar in zip(t_seq, ar_noise)]
+        yp_trend = calculate_yue_pilon_prewhitening(t_seq, trend_signal)
+        # Pre-whitened slope must preserve the underlying secular trend within bounds
+        self.assertAlmostEqual(yp_trend["prewhitened_slope"], 0.02, delta=0.008, msg="Yue-Pilon TFPW must preserve underlying secular slope")
+
+        # -------------------------------------------------------------
+        # 4. Biophysical Directionality & Significance Classification
+        # -------------------------------------------------------------
+        # Significant greening: Z > 1.96, p < 0.05, slope > 0
+        self.assertEqual(
+            classify_trend_significance(z_score=2.85, p_value=0.004, slope=0.015),
+            TrendSignificanceClass.SIGNIFICANT_GREENING,
+        )
+        # Moderate greening: 1.645 < Z <= 1.96, p < 0.10
+        self.assertEqual(
+            classify_trend_significance(z_score=1.82, p_value=0.068, slope=0.008),
+            TrendSignificanceClass.MODERATE_GREENING,
+        )
+        # Significant browning: Z < -1.96, p < 0.05, slope < 0
+        self.assertEqual(
+            classify_trend_significance(z_score=-3.10, p_value=0.0019, slope=-0.020),
+            TrendSignificanceClass.SIGNIFICANT_BROWNING,
+        )
+        # Moderate browning: -1.96 <= Z < -1.645, p < 0.10
+        self.assertEqual(
+            classify_trend_significance(z_score=-1.75, p_value=0.080, slope=-0.009),
+            TrendSignificanceClass.MODERATE_BROWNING,
+        )
+        # Stable / equilibrium: |Z| <= 1.645 or p >= 0.10
+        self.assertEqual(
+            classify_trend_significance(z_score=0.45, p_value=0.65, slope=0.001),
+            TrendSignificanceClass.STABLE_NO_TREND,
+        )
+
+        # Biophysical directionality inversion
+        dir_green = TrendService.invert_greening_senescence_directionality(slope=0.02, z_score=2.8, p_value=0.005)
+        self.assertEqual(dir_green["state"], "accelerated_greening")
+        self.assertTrue(dir_green["is_significant"])
+
+        dir_brown = TrendService.invert_greening_senescence_directionality(slope=-0.018, z_score=-3.0, p_value=0.002)
+        self.assertEqual(dir_brown["state"], "severe_degradation")
+        self.assertTrue(dir_brown["is_significant"])
+
+        dir_stable = TrendService.invert_greening_senescence_directionality(slope=0.0002, z_score=0.1, p_value=0.92)
+        self.assertEqual(dir_stable["state"], "stable_equilibrium")
+        self.assertFalse(dir_stable["is_significant"])
+
+        # -------------------------------------------------------------
+        # 5. TrendService Trajectory Synthesis, Pipeline & 3D Raster Inversion
+        # -------------------------------------------------------------
+        service = TrendService()
+        obs, matched_sc = service.generate_multi_decadal_trajectory(
+            aoi_name="San Luis Reservoir Drought Decade",
+            target_index=TrendTargetIndex.NDVI,
+            start_year=2016,
+            end_year=2026,
+            observations_per_year=12,
+            seed=42,
+        )
+        self.assertIsNotNone(matched_sc)
+        self.assertEqual(len(obs), 120)  # 10 years * 12 months
+        self.assertIn("timestamp_years", obs[0])
+        self.assertIn("value", obs[0])
+
+        # Execute full trend pipeline
+        req = TrendAnalysisRequest(
+            aoi_name="San Luis Reservoir Drought Decade",
+            model=TrendModel.THEIL_SEN_MEDIAN,
+            target_index=TrendTargetIndex.NDVI,
+            confidence_level=0.95,
+        )
+        resp = service.execute_trend_pipeline(req)
+        self.assertEqual(resp.status, "success")
+        self.assertEqual(resp.observation_count, 120)
+        self.assertEqual(resp.theil_sen.pairwise_count, 7140)  # 120 * 119 / 2
+        self.assertIn(resp.summary.significance_class, [
+            TrendSignificanceClass.SIGNIFICANT_BROWNING,
+            TrendSignificanceClass.MODERATE_BROWNING,
+            TrendSignificanceClass.STABLE_NO_TREND,
+        ])
+        self.assertIn("/api/v1/tiles/trend", resp.tile_url_template)
+
+        # Synthetic trend tile grid (256x256 float32)
+        for metric in TrendTileMetric:
+            grid = service.generate_synthetic_trend_tile_grid(
+                model=TrendModel.THEIL_SEN_MEDIAN,
+                metric=metric,
+                target_index=TrendTargetIndex.NDVI,
+                z=12,
+                x=650,
+                y=1580,
+            )
+            self.assertEqual(grid.shape, (256, 256))
+            self.assertEqual(grid.dtype, np.float32)
+            self.assertFalse(np.any(np.isnan(grid)))
+
+        # 3D Spatio-Temporal Raster Cube Inversion (T, H, W)
+        t_cube = np.linspace(2015.0, 2025.0, 11, dtype=np.float64)
+        cube = np.zeros((11, 16, 16), dtype=np.float32)
+        # Greening gradient in upper rows
+        for t_idx, yr in enumerate(t_cube):
+            cube[t_idx, :8, :] = 0.30 + 0.02 * (yr - 2015.0)
+            cube[t_idx, 8:, :] = 0.50 - 0.02 * (yr - 2015.0)
+
+        cube_res = service.compute_vectorized_raster_trend(
+            cube,
+            timestamps=t_cube,
+            model=TrendModel.THEIL_SEN_MEDIAN,
+            apply_prewhitening=False,
+            chunk_size=8,
+        )
+        self.assertIn("theil_sen_slope", cube_res)
+        self.assertIn("mann_kendall_zscore", cube_res)
+        self.assertIn("trend_significance", cube_res)
+        self.assertGreater(float(np.mean(cube_res["theil_sen_slope"][:8, :])), 0.015)
+        self.assertLess(float(np.mean(cube_res["theil_sen_slope"][8:, :])), -0.015)
+        self.assertEqual(float(np.mean(cube_res["trend_significance"][:8, :])), 2.0)
+        self.assertEqual(float(np.mean(cube_res["trend_significance"][8:, :])), -2.0)
+
+        # -------------------------------------------------------------
+        # 6. Dynamic XYZ Trend Tile Rendering & Colormapping Invariants
+        # -------------------------------------------------------------
+        tile_bytes = tile_service.render_trend_tile(
+            model="theil_sen_median",
+            metric="theil_sen_slope",
+            z=10,
+            x=163,
+            y=395,
+        )
+        self.assertIsInstance(tile_bytes, bytes)
+        self.assertTrue(tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        sig_tile_bytes = tile_service.render_trend_significance_tile(
+            z=10,
+            x=163,
+            y=395,
+        )
+        self.assertIsInstance(sig_tile_bytes, bytes)
+        self.assertTrue(sig_tile_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_task_t310_insar_sbas_scientific_qa_and_inversion_invariants(self):
+        """Task T-310 (Cycle v2.5.41 Step 3 Continuous Scientific QA):
+        Verify InSAR SBAS multi-temporal scientific rigor, amplitude dispersion bounds (D_A >= 0),
+        scale invariance under uniform amplification, triangular phase closure zero-sum invariance,
+        SVD least-norm ground velocity reconstruction convergence (< 1.0 mm/yr error under synthetic subsidence),
+        and benchmark scene biophysical fidelity.
+        """
+        from app.models.schemas import (
+            SBASInversionModel,
+            InSARSBASTileMetric,
+            PSCStabilityTier,
+            DeformationHazardTier,
+            SBASNetworkStatus,
+            normalize_sbas_model,
+            normalize_insar_sbas_metric,
+            normalize_psc_stability,
+            normalize_deformation_hazard_tier,
+            SBAS_INVERSION_CONFIGS,
+            DEFORMATION_HAZARD_CONFIGS,
+            INSAR_SBAS_BENCHMARK_SCENES,
+            calculate_amplitude_dispersion,
+            calculate_phase_to_displacement,
+            calculate_sbas_network_connectivity,
+            classify_deformation_hazard_tier,
+            classify_psc_stability,
+            build_insar_sbas_tile_url,
+            build_insar_sbas_tile_url_template,
+            PSCCandidatePoint,
+            SBASInterferogramPair,
+            SBASBaselineGraph,
+        )
+
+        # -------------------------------------------------------------
+        # 1. Amplitude Dispersion Mathematical Bounds & Scale Invariance
+        # -------------------------------------------------------------
+        # Physical definition: D_A = sigma_A / mu_A
+        # Invariant 1: Non-negativity (D_A >= 0 for any valid amplitude sequence)
+        amps_constant = [15.0, 15.0, 15.0, 15.0, 15.0]
+        da_const = calculate_amplitude_dispersion(amps_constant)
+        self.assertEqual(da_const, 0.0, "Zero-variance signal must yield D_A = 0.0")
+
+        # Invariant 2: Scale Invariance under uniform radar amplification c * A (c > 0)
+        amps_base = [12.0, 14.5, 11.2, 13.8, 12.5, 14.0]
+        da_base = calculate_amplitude_dispersion(amps_base)
+        for scale_factor in [0.1, 2.5, 10.0, 100.0]:
+            amps_scaled = [x * scale_factor for x in amps_base]
+            da_scaled = calculate_amplitude_dispersion(amps_scaled)
+            self.assertAlmostEqual(
+                da_scaled,
+                da_base,
+                places=5,
+                msg=f"Amplitude dispersion must be scale-invariant under multiplier {scale_factor}",
+            )
+
+        # Invariant 3: Permanent Scatterer stability criterion (Ferretti et al. 2001)
+        # Highly coherent urban roof / trihedral corner reflector: D_A <= 0.25
+        amps_psc = [20.0, 20.8, 19.5, 20.3, 21.0, 19.8, 20.2]
+        da_psc = calculate_amplitude_dispersion(amps_psc)
+        self.assertLessEqual(da_psc, 0.25)
+        self.assertGreaterEqual(da_psc, 0.0)
+        self.assertEqual(classify_psc_stability(da_psc, temporal_coherence=0.92), PSCStabilityTier.HIGH)
+
+        # Decorrelated vegetation / volume scattering clutter: D_A > 0.60
+        amps_clutter = [2.0, 18.0, 1.5, 25.0, 4.0, 32.0, 1.0]
+        da_clutter = calculate_amplitude_dispersion(amps_clutter)
+        self.assertGreater(da_clutter, 0.60)
+        self.assertEqual(classify_psc_stability(da_clutter, temporal_coherence=0.25), PSCStabilityTier.INDETERMINATE)
+
+        # -------------------------------------------------------------
+        # 2. Phase-to-Displacement Physical Scaling & Sensor Invariants
+        # -------------------------------------------------------------
+        # Exact physical formulation: Delta r = - (lambda / (4 * pi)) * Delta phi
+        # Sentinel-1 C-band (lambda = 55.4657 mm = 0.0554657 m)
+        lam_s1 = 0.0554657
+        # 2 * pi phase difference -> one full cycle -> displacement = - lambda / 2 = -27.73285 mm
+        disp_2pi = calculate_phase_to_displacement(2.0 * math.pi, wavelength_m=lam_s1)
+        expected_2pi = -(lam_s1 * 1000.0) / 2.0  # -27.73285 mm
+        self.assertAlmostEqual(disp_2pi, expected_2pi, places=3)
+
+        # Invariant: Linearity Delta r(k * Delta phi) == k * Delta r(Delta phi)
+        disp_pi = calculate_phase_to_displacement(math.pi, wavelength_m=lam_s1)
+        self.assertAlmostEqual(disp_2pi, 2.0 * disp_pi, delta=0.002)
+        disp_neg_pi = calculate_phase_to_displacement(-math.pi, wavelength_m=lam_s1)
+        self.assertAlmostEqual(disp_neg_pi, -disp_pi, delta=0.002)
+
+        # Multi-sensor radar wavelength consistency:
+        # L-band (ALOS-2 / NISAR, lambda = 0.238 m): 2pi -> -119.0 mm
+        disp_l_band = calculate_phase_to_displacement(2.0 * math.pi, wavelength_m=0.238)
+        self.assertAlmostEqual(disp_l_band, -119.0, places=2)
+
+        # X-band (TerraSAR-X, lambda = 0.031 m): 2pi -> -15.5 mm
+        disp_x_band = calculate_phase_to_displacement(2.0 * math.pi, wavelength_m=0.031)
+        self.assertAlmostEqual(disp_x_band, -15.5, places=2)
+
+        # -------------------------------------------------------------
+        # 3. Triangular Phase Closure Invariance around Triangulation Loops
+        # -------------------------------------------------------------
+        # For any triplet of SAR acquisitions (A, B, C) forming a closed interferometric loop:
+        # Delta phi_AB = phi_B - phi_A
+        # Delta phi_BC = phi_C - phi_B
+        # Delta phi_AC = phi_C - phi_A
+        # Mathematical invariant: Delta phi_AB + Delta phi_BC - Delta phi_AC == 0.0
+        # This zero-sum property cancels acquisition-specific atmospheric path delays.
+        rng = np.random.RandomState(42)
+        for _ in range(25):
+            phi_A = rng.uniform(-10.0, 10.0)
+            phi_B = rng.uniform(-10.0, 10.0)
+            phi_C = rng.uniform(-10.0, 10.0)
+            atm_A = rng.normal(0.0, 1.5)  # atmospheric delay at time A
+            atm_B = rng.normal(0.0, 1.5)  # atmospheric delay at time B
+            atm_C = rng.normal(0.0, 1.5)  # atmospheric delay at time C
+
+            phi_total_A = phi_A + atm_A
+            phi_total_B = phi_B + atm_B
+            phi_total_C = phi_C + atm_C
+
+            delta_phi_AB = phi_total_B - phi_total_A
+            delta_phi_BC = phi_total_C - phi_total_B
+            delta_phi_AC = phi_total_C - phi_total_A
+
+            loop_closure_error = (delta_phi_AB + delta_phi_BC) - delta_phi_AC
+            self.assertAlmostEqual(
+                loop_closure_error,
+                0.0,
+                places=12,
+                msg="Phase closure error around triangular acquisition loop must be identically zero",
+            )
+
+        # -------------------------------------------------------------
+        # 4. SVD Least-Norm Reconstruction Convergence under Synthetic Subsidence Ground Truth
+        # -------------------------------------------------------------
+        # Case A: Pure secular ground truth (Tulare Basin Benchmark: v_true = -165.0 mm/yr)
+        v_true_tulare = -165.0  # mm/yr
+        num_acquisitions = 13   # 13 monthly acquisitions spanning 1.0 year
+        time_years = np.linspace(0.0, 1.0, num_acquisitions)
+        gt_displacements = v_true_tulare * time_years
+
+        # Small Baseline Interferometric Network configuration:
+        # Connect consecutive pairs (i, i+1) and skip-1 pairs (i, i+2) to ensure high redundancy
+        ifg_pairs = []
+        for i in range(num_acquisitions - 1):
+            ifg_pairs.append((i, i + 1))
+        for i in range(num_acquisitions - 2):
+            ifg_pairs.append((i, i + 2))
+
+        num_ifgs = len(ifg_pairs)
+        self.assertEqual(num_ifgs, 23)
+
+        # Verify network connectivity using SBAS graph analyzer
+        conn = calculate_sbas_network_connectivity(num_acquisitions, ifg_pairs)
+        self.assertTrue(conn["is_connected"])
+        self.assertEqual(conn["num_components"], 1)
+        self.assertEqual(conn["network_status"], SBASNetworkStatus.FULLY_CONNECTED.value)
+        self.assertGreater(conn["redundancy_ratio"], 1.5)
+
+        # Construct SBAS design matrix B of size (num_ifgs, num_acquisitions - 1)
+        # where B * v_intervals = delta_d
+        num_intervals = num_acquisitions - 1
+        delta_t_intervals = np.diff(time_years)  # dt_m = t_{m+1} - t_m
+
+        B = np.zeros((num_ifgs, num_intervals), dtype=np.float64)
+        delta_d_obs = np.zeros(num_ifgs, dtype=np.float64)
+
+        for p_idx, (j, k) in enumerate(ifg_pairs):
+            for m in range(j, k):
+                B[p_idx, m] = delta_t_intervals[m]
+            delta_d_obs[p_idx] = gt_displacements[k] - gt_displacements[j]
+
+        # SVD Least-Norm inversion: B = U * S * V^T -> v_est = V * S^+ * U^T * delta_d
+        U, S, Vt = np.linalg.svd(B, full_matrices=False)
+        rcond = 1e-10
+        S_inv = np.array([1.0 / s if s > rcond * S[0] else 0.0 for s in S])
+        v_intervals_est = Vt.T @ (S_inv * (U.T @ delta_d_obs))
+
+        # Reconstruct cumulative displacement time series by numerical integration
+        reconstructed_displacements = np.zeros(num_acquisitions, dtype=np.float64)
+        for m in range(num_intervals):
+            reconstructed_displacements[m + 1] = reconstructed_displacements[m] + v_intervals_est[m] * delta_t_intervals[m]
+
+        # Fit linear regression to reconstructed time series to estimate mean ground velocity
+        A_reg = np.vstack([time_years, np.ones(num_acquisitions)]).T
+        v_mean_est, intercept = np.linalg.lstsq(A_reg, reconstructed_displacements, rcond=None)[0]
+
+        # Requirement: SVD ground velocity error < 1.0 mm/yr under synthetic ground truth
+        velocity_error = abs(v_mean_est - v_true_tulare)
+        self.assertLess(
+            velocity_error,
+            1.0,
+            f"SVD least-norm velocity error ({velocity_error:.4f} mm/yr) must be strictly < 1.0 mm/yr",
+        )
+        self.assertLess(velocity_error, 1e-6, "Pure secular subsidence must be recovered to machine precision")
+
+        # Reconstruction RMSE between observed interferometric phases and modeled phases
+        modeled_delta_d = B @ v_intervals_est
+        rmse_displacement = float(np.sqrt(np.mean((modeled_delta_d - delta_d_obs) ** 2)))
+        self.assertLess(
+            rmse_displacement,
+            1e-9,
+            f"SBAS least-norm reconstruction RMSE ({rmse_displacement:.2e} mm) must satisfy exact numerical convergence",
+        )
+
+        # Case B: Multi-year subsidence with seasonal thermal cycle (3.0 years, 37 acquisitions)
+        # d(t) = v_true * t + A_s * sin(2*pi*t)
+        v_true_multiyear = -25.0
+        amp_seasonal = 3.5
+        t_multiyear = np.linspace(0.0, 3.0, 37)
+        gt_disp_multiyear = v_true_multiyear * t_multiyear + amp_seasonal * np.sin(2.0 * np.pi * t_multiyear)
+
+        # Build consecutive and skip-1 SBAS pairs for multi-year series
+        n_my = len(t_multiyear)
+        ifg_my = [(i, i + 1) for i in range(n_my - 1)] + [(i, i + 2) for i in range(n_my - 2)]
+        dt_my = np.diff(t_multiyear)
+        B_my = np.zeros((len(ifg_my), n_my - 1), dtype=np.float64)
+        obs_my = np.zeros(len(ifg_my), dtype=np.float64)
+        for p_idx, (j, k) in enumerate(ifg_my):
+            for m in range(j, k):
+                B_my[p_idx, m] = dt_my[m]
+            obs_my[p_idx] = gt_disp_multiyear[k] - gt_disp_multiyear[j]
+
+        U_my, S_my, Vt_my = np.linalg.svd(B_my, full_matrices=False)
+        S_inv_my = np.array([1.0 / s if s > rcond * S_my[0] else 0.0 for s in S_my])
+        v_est_my = Vt_my.T @ (S_inv_my * (U_my.T @ obs_my))
+
+        recon_disp_my = np.zeros(n_my, dtype=np.float64)
+        for m in range(n_my - 1):
+            recon_disp_my[m + 1] = recon_disp_my[m] + v_est_my[m] * dt_my[m]
+
+        # Multi-year linear trend error must be strictly < 1.0 mm/yr due to orthogonal annual cycles
+        A_my = np.vstack([t_multiyear, np.ones(n_my)]).T
+        v_linear_my = np.linalg.lstsq(A_my, recon_disp_my, rcond=None)[0][0]
+        self.assertLess(
+            abs(v_linear_my - v_true_multiyear),
+            1.0,
+            "Multi-year linear subsidence velocity error must be < 1.0 mm/yr",
+        )
+
+        # Harmonic decomposition [t, sin(2pi*t), cos(2pi*t), 1] recovers exact secular velocity
+        A_harmonic = np.vstack([t_multiyear, np.sin(2 * np.pi * t_multiyear), np.cos(2 * np.pi * t_multiyear), np.ones(n_my)]).T
+        v_harmonic = np.linalg.lstsq(A_harmonic, recon_disp_my, rcond=None)[0][0]
+        self.assertAlmostEqual(v_harmonic, v_true_multiyear, places=6)
+
+        # -------------------------------------------------------------
+        # 5. Benchmark Scenes Scientific Catalog & Hazard Classification
+        # -------------------------------------------------------------
+        benchmarks = INSAR_SBAS_BENCHMARK_SCENES
+        self.assertIn("CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026", benchmarks)
+        tulare = benchmarks["CENTRAL_VALLEY_TULARE_AQUIFER_SUBSIDENCE_2026"]
+        self.assertEqual(tulare["expected_peak_velocity_mm_yr"], -165.0)
+        self.assertEqual(tulare["dominant_hazard_tier"], DeformationHazardTier.CRITICAL_SUBSIDENCE.value)
+        self.assertEqual(classify_deformation_hazard_tier(tulare["expected_peak_velocity_mm_yr"]), DeformationHazardTier.CRITICAL_SUBSIDENCE)
+
+        mexico = benchmarks["MEXICO_CITY_LACUSTRINE_CONSOLIDATION_2026"]
+        self.assertEqual(mexico["expected_peak_velocity_mm_yr"], -280.0)
+        self.assertEqual(mexico["dominant_hazard_tier"], DeformationHazardTier.CRITICAL_SUBSIDENCE.value)
+        self.assertEqual(classify_deformation_hazard_tier(mexico["expected_peak_velocity_mm_yr"]), DeformationHazardTier.CRITICAL_SUBSIDENCE)
+
+        bologna = benchmarks["BOLOGNA_PO_VALLEY_PIEDMONT_SUBSIDENCE_2026"]
+        self.assertEqual(bologna["expected_peak_velocity_mm_yr"], -12.5)
+        self.assertEqual(bologna["dominant_hazard_tier"], DeformationHazardTier.MODERATE_SUBSIDENCE.value)
+        self.assertEqual(classify_deformation_hazard_tier(bologna["expected_peak_velocity_mm_yr"]), DeformationHazardTier.MODERATE_SUBSIDENCE)
+
+        kiruna = benchmarks["KIRUNA_UNDERGROUND_IRON_MINE_DEFORMATION_2026"]
+        self.assertEqual(kiruna["expected_peak_velocity_mm_yr"], -45.0)
+        self.assertEqual(kiruna["dominant_hazard_tier"], DeformationHazardTier.CRITICAL_SUBSIDENCE.value)
+        self.assertEqual(classify_deformation_hazard_tier(kiruna["expected_peak_velocity_mm_yr"]), DeformationHazardTier.CRITICAL_SUBSIDENCE)
+
+        # -------------------------------------------------------------
+        # 6. Dynamic Tile URL Building & RFC 3986 Format Invariants
+        # -------------------------------------------------------------
+        for metric in InSARSBASTileMetric:
+            tile_url = build_insar_sbas_tile_url(model=SBASInversionModel.SVD_LEAST_NORM, metric=metric, z=12, x=650, y=1580, colormap="turbo", rescale="-50,10")
+            self.assertTrue(tile_url.startswith("/api/v1/tiles/insar-sbas/svd_least_norm/"))
+            self.assertIn(f"/{metric.value}/12/650/1580.png", tile_url)
+            self.assertIn("colormap=turbo", tile_url)
+            self.assertIn("rescale=-50,10", tile_url)
+
+            template_url = build_insar_sbas_tile_url_template(model=SBASInversionModel.SVD_LEAST_NORM, metric=metric)
+            self.assertEqual(template_url, f"/api/v1/tiles/insar-sbas/svd_least_norm/{metric.value}/{{z}}/{{x}}/{{y}}.png")
+
 
 if __name__ == "__main__":
     unittest.main()

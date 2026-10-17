@@ -158,14 +158,44 @@ import {
   TREND_SIGNIFICANCE_CONFIGS,
   TREND_BENCHMARK_SCENES,
   normalizeTrendModel,
-  normalizeTrendMetric,
   normalizeTrendTargetIndex,
   calculateTheilSenSlope,
   calculateMannKendallStatistics,
   calculateYuePilonPrewhitening,
   classifyTrendSignificance,
-  buildTrendTileUrl,
-  buildTrendTileUrlTemplate
+  buildTrendTileUrlTemplate,
+  MultimodalAlignmentModel,
+  MULTIMODAL_ALIGNMENT_MODELS,
+  MultimodalSensorPair,
+  MULTIMODAL_SENSOR_PAIRS,
+  MultimodalTileMetric,
+  MULTIMODAL_TILE_METRICS,
+  DisplacementConfidenceTier,
+  DISPLACEMENT_CONFIDENCE_TIERS,
+  MotionHazardTier,
+  MOTION_HAZARD_TIERS,
+  MULTIMODAL_ALIGNMENT_CONFIGS,
+  MULTIMODAL_BENCHMARK_SCENES,
+  MOTION_HAZARD_CONFIGS,
+  normalizeMultimodalModel,
+  normalizeSensorPair,
+  calculateVelocityVector,
+  classifyMotionHazardTier,
+  classifyDisplacementConfidence,
+  buildMultimodalTileUrlTemplate,
+  SBASInversionModel,
+  InSARSBASTileMetric,
+  PSCStabilityTier,
+  DeformationHazardTier,
+  SBASNetworkStatus,
+  SBAS_INVERSION_CONFIGS,
+  DEFORMATION_HAZARD_CONFIGS,
+  INSAR_SBAS_BENCHMARK_SCENES,
+  normalizeSBASModel,
+  calculateSBASNetworkConnectivity,
+  classifyDeformationHazardTier,
+  classifyPSCStability,
+  buildInSARSBASTileUrlTemplate
 } from '../config/constants.js';
 
 export {
@@ -3774,8 +3804,6 @@ const demoAdapter = async (config) => {
         for (let i = 0; i < totalMonths; i++) {
           const year = startYear + Math.floor(i / 12);
           const month = (i % 12) + 1;
-          const monthStr = month < 10 ? `0${month}` : `${month}`;
-          const date = `${year}-${monthStr}-15`;
           const tYears = year + (month - 1) / 12.0;
           const seasonal = 0.12 * Math.sin((2 * Math.PI * (month - 1)) / 12.0);
           const trend = -0.0142 * (tYears - startYear);
@@ -3873,6 +3901,259 @@ const demoAdapter = async (config) => {
           is_prewhitened: true,
           annual_change_percent: -2.58,
           narrative: 'Statistically significant browning trajectory detected with Theil-Sen slope -0.0142/yr (p=0.0044, Z=-2.85).'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/multimodal/models') || url.includes('/analysis/multimodal/models')) {
+        data = {
+          models: MULTIMODAL_ALIGNMENT_CONFIGS,
+          sensor_pairs: Object.fromEntries(MULTIMODAL_SENSOR_PAIRS.map((k) => [k, { id: k }])),
+          benchmark_scenes: MULTIMODAL_BENCHMARK_SCENES,
+          hazard_tiers: MOTION_HAZARD_CONFIGS,
+          supported_metrics: MULTIMODAL_TILE_METRICS
+        };
+      }
+      else if (url.includes('/api/v1/analysis/multimodal/track') || url.includes('/analysis/multimodal/track')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const model = normalizeMultimodalModel(parsed.alignment_model || parsed.model);
+        const pair = normalizeSensorPair(parsed.sensor_pair || parsed.pair);
+        const reqId = `MULTIMODAL-${Date.now()}`;
+        const aoiName = parsed.aoi_name || 'Jakobshavn Isbræ Terminus Flow';
+        const timeDelta = Number(parsed.time_delta_days || 12.0);
+        const gsd = Number(parsed.gsd_m || 10.0);
+
+        const vectors = [];
+        const gridW = 5;
+        const gridH = 5;
+        for (let row = 0; row < gridH; row++) {
+          for (let col = 0; col < gridW; col++) {
+            const dx = 1.25 + (row * 0.1) - (col * 0.05);
+            const dy = -0.45 + (col * 0.08);
+            const vInfo = calculateVelocityVector(dx, dy, gsd, timeDelta);
+            const snr = 7.5 + (row * 0.5);
+            const peakCorr = 0.72 + (col * 0.03);
+            const conf = classifyDisplacementConfidence(snr, peakCorr, 0.05);
+            const haz = classifyMotionHazardTier(vInfo.velocityMagnitudeMYr);
+            vectors.push({
+              point_id: `pt_${row}_${col}`,
+              lat: 69.172 + (row * 0.002),
+              lng: -49.831 + (col * 0.003),
+              pixel_x: col * 64,
+              pixel_y: row * 64,
+              dx_px: vInfo.dxPx,
+              dy_px: vInfo.dyPx,
+              velocity_x_m_yr: vInfo.velocityXMYr,
+              velocity_y_m_yr: vInfo.velocityYMYr,
+              velocity_magnitude_m_yr: vInfo.velocityMagnitudeMYr,
+              azimuth_deg: vInfo.azimuthDeg,
+              correlation_snr: snr,
+              peak_correlation: peakCorr,
+              confidence: conf,
+              hazard_tier: haz
+            });
+          }
+        }
+
+        const validVectors = vectors.filter((v) => v.correlation_snr >= 3.0);
+        const meanVel = validVectors.reduce((acc, v) => acc + v.velocity_magnitude_m_yr, 0) / (validVectors.length || 1);
+        const maxVel = Math.max(...validVectors.map((v) => v.velocity_magnitude_m_yr), 0);
+        const meanAz = validVectors.reduce((acc, v) => acc + v.azimuth_deg, 0) / (validVectors.length || 1);
+
+        data = {
+          request_id: reqId,
+          aoi_name: aoiName,
+          sensor_pair: pair,
+          alignment_model: model,
+          vector_field: {
+            mean_velocity_m_yr: Number(meanVel.toFixed(3)),
+            max_velocity_m_yr: Number(maxVel.toFixed(3)),
+            dominant_azimuth_deg: Number(meanAz.toFixed(2)),
+            valid_vectors_count: validVectors.length,
+            total_grid_points_count: vectors.length,
+            coherence_fraction: Number((validVectors.length / vectors.length).toFixed(4)),
+            vectors
+          },
+          quality_summary: {
+            sensor_pair: pair,
+            alignment_model: model,
+            mean_snr: 8.2,
+            mean_peak_correlation: 0.78,
+            subpixel_precision_px: 0.035,
+            confidence_rating: DisplacementConfidenceTier.HIGH,
+            dominant_hazard_tier: classifyMotionHazardTier(maxVel),
+            quality_checklist: {
+              subpixel_peak_valid: true,
+              snr_threshold_satisfied: true,
+              rigid_shift_invariant: true,
+              multimodal_coregistration_aligned: true
+            },
+            narrative: `Multimodal SAR-optical tracking achieved sub-pixel precision (0.035 px) with mean velocity ${meanVel.toFixed(1)} m/yr.`
+          },
+          tile_url_template: `/api/v1/tiles/multimodal/${model}/{metric}/{z}/{x}/{y}.png`,
+          processed_at: new Date().toISOString(),
+          status: 'success'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/multimodal/evaluate') || url.includes('/analysis/multimodal/evaluate')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const model = normalizeMultimodalModel(parsed.alignment_model || parsed.model);
+        const pair = normalizeSensorPair(parsed.sensor_pair || parsed.pair);
+        data = {
+          sensor_pair: pair,
+          alignment_model: model,
+          mean_snr: 8.2,
+          mean_peak_correlation: 0.78,
+          subpixel_precision_px: 0.035,
+          confidence_rating: DisplacementConfidenceTier.HIGH,
+          dominant_hazard_tier: MotionHazardTier.RAPID_DISPLACEMENT,
+          quality_checklist: {
+            subpixel_peak_valid: true,
+            snr_threshold_satisfied: true,
+            rigid_shift_invariant: true,
+            multimodal_coregistration_aligned: true
+          },
+          narrative: 'High-confidence multimodal tracking with 0.035 px sub-pixel precision.'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/insar-sbas/models') || url.includes('/analysis/insar-sbas/models')) {
+        data = {
+          models: SBAS_INVERSION_CONFIGS,
+          metrics: Object.values(InSARSBASTileMetric),
+          benchmark_scenes: INSAR_SBAS_BENCHMARK_SCENES,
+          hazard_tiers: DEFORMATION_HAZARD_CONFIGS
+        };
+      }
+      else if (url.includes('/api/v1/analysis/insar-sbas/invert') || url.includes('/analysis/insar-sbas/invert')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const model = normalizeSBASModel(parsed.inversion_model || parsed.model);
+        const reqId = `SBAS-${Date.now()}`;
+        const aoiName = parsed.aoi_name || 'Central Valley Tulare Basin Subsidence';
+
+        const numAcq = 12;
+        const pairs = [];
+        for (let i = 0; i < numAcq - 1; i++) {
+          pairs.push([i, i + 1]);
+          if (i + 2 < numAcq) pairs.push([i, i + 2]);
+        }
+        const conn = calculateSBASNetworkConnectivity(numAcq, pairs);
+
+        const ifgPairs = pairs.map(([u, v], idx) => ({
+          pair_id: `IFG_${2024 + Math.floor(u / 6)}_${u}_${v}`,
+          primary_date: `2024-0${Math.min(9, u + 1)}-12`,
+          secondary_date: `2024-0${Math.min(9, v + 1)}-24`,
+          temporal_baseline_days: (v - u) * 12.0,
+          perpendicular_baseline_m: Number((45.0 + Math.sin(idx) * 35.0).toFixed(1)),
+          mean_coherence: Number((0.82 - idx * 0.015).toFixed(3)),
+          is_valid: true
+        }));
+
+        const pscPoints = [];
+        for (let i = 0; i < 16; i++) {
+          const row = Math.floor(i / 4);
+          const col = i % 4;
+          const da = Number((0.08 + i * 0.012).toFixed(4));
+          const gamma = Number((0.88 - i * 0.018).toFixed(3));
+          const vel = Number((-145.0 + row * 18.0 - col * 6.5).toFixed(2));
+          const cum = Number((vel * 2.5).toFixed(2));
+          pscPoints.push({
+            point_id: `PSC-${100 + i}`,
+            lat: 36.05 + (row * 0.015),
+            lng: -119.35 + (col * 0.015),
+            amplitude_dispersion: da,
+            temporal_coherence: gamma,
+            mean_velocity_mm_yr: vel,
+            cumulative_displacement_mm: cum,
+            velocity_std_err_mm_yr: 0.85,
+            stability_tier: classifyPSCStability(da, gamma),
+            hazard_tier: classifyDeformationHazardTier(vel),
+            elevation_m: 72.0 + (row * 5.0)
+          });
+        }
+
+        const tsPoints = [];
+        for (let m = 0; m < 36; m++) {
+          const elapsed = m * 30.4;
+          const trend = -145.0 * (elapsed / 365.25);
+          const seasonal = 9.5 * Math.sin((2 * Math.PI * m) / 12.0);
+          const res = (Math.sin(m * 1.7) * 1.8);
+          const total = trend + seasonal + res;
+          tsPoints.push({
+            date: `2023-01-${String(m % 28 + 1).padStart(2, '0')}`,
+            days_from_start: elapsed,
+            displacement_mm: Number(total.toFixed(2)),
+            modeled_displacement_mm: Number((trend + seasonal).toFixed(2)),
+            residual_mm: Number(res.toFixed(2)),
+            coherence: 0.86
+          });
+        }
+
+        data = {
+          request_id: reqId,
+          aoi_name: aoiName,
+          inversion_model: model,
+          baseline_graph: {
+            num_acquisitions: conn.numAcquisitions,
+            num_interferograms: conn.numInterferograms,
+            num_components: conn.numComponents,
+            is_connected: conn.isConnected,
+            network_status: conn.networkStatus,
+            redundancy_ratio: conn.redundancyRatio,
+            pairs: ifgPairs
+          },
+          quality_summary: {
+            inversion_model: model,
+            network_status: conn.networkStatus,
+            psc_count: pscPoints.length,
+            mean_temporal_coherence: 0.76,
+            mean_amplitude_dispersion: 0.17,
+            mean_velocity_rmse_mm_yr: 0.92,
+            stability_rating: PSCStabilityTier.HIGH,
+            dominant_hazard_tier: DeformationHazardTier.CRITICAL_SUBSIDENCE,
+            quality_checklist: {
+              full_rank_svd_inversion: true,
+              temporal_baseline_bounded: true,
+              perpendicular_baseline_bounded: true,
+              phase_closure_conserved: true
+            },
+            narrative: `InSAR SBAS multi-master inversion resolved ${pscPoints.length} PSC targets with mean LOS subsidence rate -145.0 mm/yr.`
+          },
+          psc_points: pscPoints,
+          sample_timeseries: {
+            point_id: 'PSC-100',
+            lat: 36.05,
+            lng: -119.35,
+            annual_velocity_mm_yr: -145.0,
+            r_squared: 0.985,
+            acceleration_mm_yr2: -2.4,
+            points: tsPoints
+          },
+          tile_url_template: `/api/v1/tiles/insar-sbas/${model}/{metric}/{z}/{x}/{y}.png`,
+          processed_at: new Date().toISOString(),
+          status: 'success'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/insar-sbas/evaluate') || url.includes('/analysis/insar-sbas/evaluate')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const model = normalizeSBASModel(parsed.inversion_model || parsed.model);
+        data = {
+          inversion_model: model,
+          network_status: SBASNetworkStatus.FULLY_CONNECTED,
+          psc_count: 16,
+          mean_temporal_coherence: 0.76,
+          mean_amplitude_dispersion: 0.17,
+          mean_velocity_rmse_mm_yr: 0.92,
+          stability_rating: PSCStabilityTier.HIGH,
+          dominant_hazard_tier: DeformationHazardTier.CRITICAL_SUBSIDENCE,
+          quality_checklist: {
+            full_rank_svd_inversion: true,
+            temporal_baseline_bounded: true,
+            perpendicular_baseline_bounded: true,
+            phase_closure_conserved: true
+          },
+          narrative: 'High-confidence InSAR SBAS multi-temporal inversion with <1.0 mm/yr precision.'
         };
       }
       else if (url.includes('/api/v1/analysis/phenology/benchmarks') || url.includes('/analysis/phenology/benchmarks')) {
@@ -9471,6 +9752,132 @@ export const getCrossCalibratedTileUrlTemplate = (options = {}) => {
   return buildCrossCalibratedTileUrlTemplate(options);
 };
 
+/**
+ * Fetches available trend models, benchmark scenes, and significance classes.
+ * 
+ * @returns {Promise<Object>} Trend capabilities response
+ */
+export const fetchTrendModels = async () => {
+  const response = await giosApi.get('/api/v1/analysis/trend/models');
+  return response.data;
+};
+
+/**
+ * Submits a multi-decadal non-parametric trend inversion request.
+ * 
+ * @param {Object} [params={}] - Trend analysis request parameters
+ * @returns {Promise<Object>} Trend analysis response with Theil-Sen slope, Mann-Kendall statistics, and tile template
+ */
+export const requestTrendAnalysis = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/trend/analyze', params);
+  return response.data;
+};
+
+/**
+ * Evaluates trend quality and executive summary for a given time series.
+ * 
+ * @param {Object} [params={}] - Evaluation request parameters
+ * @returns {Promise<Object>} Quantitative trend milestone summary
+ */
+export const evaluateTrendQuality = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/trend/evaluate', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for trend raster tiles.
+ * 
+ * @param {Object} [options={}] - Options (model, metric, colormap, index)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getTrendTileUrlTemplate = (options = {}) => {
+  return buildTrendTileUrlTemplate(options);
+};
+
+/**
+ * Fetches available multimodal alignment models, benchmark scenes, and hazard configs.
+ * 
+ * @returns {Promise<Object>} Multimodal capabilities response
+ */
+export const fetchMultimodalModels = async () => {
+  const response = await giosApi.get('/api/v1/analysis/multimodal/models');
+  return response.data;
+};
+
+/**
+ * Submits a multimodal SAR-optical sensor fusion and displacement tracking request.
+ * 
+ * @param {Object} [params={}] - Tracking request parameters
+ * @returns {Promise<Object>} Multimodal fusion response with 2D displacement vector field, certification, and tile template
+ */
+export const requestMultimodalTracking = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/multimodal/track', params);
+  return response.data;
+};
+
+/**
+ * Evaluates multimodal sensor fusion quality summary and certification metrics.
+ * 
+ * @param {Object} [params={}] - Evaluation request parameters
+ * @returns {Promise<Object>} Quantitative quality certification summary
+ */
+export const evaluateMultimodalQuality = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/multimodal/evaluate', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for multimodal displacement raster tiles.
+ * 
+ * @param {Object} [options={}] - Options (model, metric, colormap, pair, minSnr)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getMultimodalTileUrlTemplate = (options = {}) => {
+  return buildMultimodalTileUrlTemplate(options);
+};
+
+/**
+ * Fetches available InSAR SBAS inversion models, benchmark scenes, and deformation hazard configs.
+ * 
+ * @returns {Promise<Object>} InSAR SBAS capabilities response
+ */
+export const fetchInSARSBASModels = async () => {
+  const response = await giosApi.get('/api/v1/analysis/insar-sbas/models');
+  return response.data;
+};
+
+/**
+ * Submits an InSAR SBAS multi-temporal ground deformation inversion request.
+ * 
+ * @param {Object} [params={}] - Inversion request parameters
+ * @returns {Promise<Object>} InSAR deformation response with baseline network, PSC points, time-series, and tile template
+ */
+export const requestInSARDeformationInversion = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/insar-sbas/invert', params);
+  return response.data;
+};
+
+/**
+ * Evaluates InSAR SBAS quality summary and certification metrics.
+ * 
+ * @param {Object} [params={}] - Evaluation request parameters
+ * @returns {Promise<Object>} Quantitative quality certification summary
+ */
+export const evaluateInSARSBASQuality = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/insar-sbas/evaluate', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for InSAR SBAS deformation raster tiles.
+ * 
+ * @param {Object} [options={}] - Options (model, metric, colormap, rescale, minCoherence, maxDa)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getInSARSBASTileUrlTemplate = (options = {}) => {
+  return buildInSARSBASTileUrlTemplate(options);
+};
+
 
 export {
   InSARDeformationHazardTier,
@@ -9827,7 +10234,71 @@ export {
   calculateCrossSensorRadiometricBias,
   classifyCalibrationQualityRating,
   buildCrossCalibratedTileUrl,
-  buildCrossCalibratedTileUrlTemplate
+  buildCrossCalibratedTileUrlTemplate,
+  TrendModel,
+  TREND_MODELS,
+  TrendSignificanceClass,
+  TREND_SIGNIFICANCE_CLASSES,
+  TrendTileMetric,
+  TREND_TILE_METRICS,
+  TrendTargetIndex,
+  TREND_TARGET_INDICES,
+  TrendConfidenceRating,
+  TREND_CONFIDENCE_RATINGS,
+  TREND_MODEL_CONFIGS,
+  TREND_SIGNIFICANCE_CONFIGS,
+  TREND_BENCHMARK_SCENES,
+  normalizeTrendModel,
+  normalizeTrendMetric,
+  normalizeTrendTargetIndex,
+  calculateMannKendallStatistics,
+  calculateYuePilonPrewhitening,
+  classifyTrendSignificance,
+  buildTrendTileUrl,
+  buildTrendTileUrlTemplate,
+  MultimodalAlignmentModel,
+  MULTIMODAL_ALIGNMENT_MODELS,
+  MultimodalSensorPair,
+  MULTIMODAL_SENSOR_PAIRS,
+  MultimodalTileMetric,
+  MULTIMODAL_TILE_METRICS,
+  DisplacementConfidenceTier,
+  DISPLACEMENT_CONFIDENCE_TIERS,
+  MotionHazardTier,
+  MOTION_HAZARD_TIERS,
+  MULTIMODAL_ALIGNMENT_CONFIGS,
+  MULTIMODAL_BENCHMARK_SCENES,
+  MOTION_HAZARD_CONFIGS,
+  normalizeMultimodalModel,
+  normalizeSensorPair,
+  normalizeMultimodalMetric,
+  normalizeDisplacementConfidence,
+  calculateSubpixelPeakParabolic,
+  calculateVelocityVector,
+  calculateCorrelationSnr,
+  classifyMotionHazardTier,
+  classifyDisplacementConfidence,
+  buildMultimodalTileUrl,
+  buildMultimodalTileUrlTemplate,
+  SBASInversionModel,
+  InSARSBASTileMetric,
+  PSCStabilityTier,
+  DeformationHazardTier,
+  SBASNetworkStatus,
+  SBAS_INVERSION_CONFIGS,
+  DEFORMATION_HAZARD_CONFIGS,
+  INSAR_SBAS_BENCHMARK_SCENES,
+  normalizeSBASModel,
+  normalizeInSARSBASMetric,
+  normalizePSCStability,
+  normalizeDeformationHazardTier,
+  calculateAmplitudeDispersion,
+  calculatePhaseToDisplacement,
+  calculateSBASNetworkConnectivity,
+  classifyDeformationHazardTier,
+  classifyPSCStability,
+  buildInSARSBASTileUrl,
+  buildInSARSBASTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;
