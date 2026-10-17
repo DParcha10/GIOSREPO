@@ -1083,6 +1083,17 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_true_ortho_metric_short": "/tiles/true-ortho/{model}/{metric}/{z}/{x}/{y}.png",
     "tiles_true_ortho_xyz": "/api/v1/tiles/true-ortho/{z}/{x}/{y}.png",
     "tiles_true_ortho_xyz_short": "/tiles/true-ortho/{z}/{x}/{y}.png",
+    # Cycle v2.5.44: Satellite-Derived Bathymetry (SDB), Stumpf Log-Ratio Depth Inversion & Water Column Radiative Transfer Contracts
+    "analysis_bathymetry_invert": "/api/v1/analysis/bathymetry/invert",
+    "analysis_bathymetry_invert_short": "/analysis/bathymetry/invert",
+    "analysis_bathymetry_calibrate": "/api/v1/analysis/bathymetry/calibrate",
+    "analysis_bathymetry_calibrate_short": "/analysis/bathymetry/calibrate",
+    "analysis_bathymetry_capabilities": "/api/v1/analysis/bathymetry/capabilities",
+    "analysis_bathymetry_capabilities_short": "/analysis/bathymetry/capabilities",
+    "tiles_sdb": "/api/v1/tiles/bathymetry/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_sdb_short": "/tiles/bathymetry/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_sdb_xyz": "/api/v1/tiles/bathymetry/{z}/{x}/{y}.png",
+    "tiles_sdb_xyz_short": "/tiles/bathymetry/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1483,6 +1494,23 @@ def format_api_route(route_name: str, **kwargs) -> str:
                     break
             if "metric" not in kwargs:
                 kwargs["metric"] = "fractional_veg_cover"
+    elif route_name in ("tiles_sdb", "tiles_sdb_short"):
+        if "model" in kwargs:
+            val = kwargs["model"]
+            try:
+                kwargs["model"] = normalize_sdb_model(val).value
+            except Exception:
+                kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            kwargs["model"] = "stumpf_log_ratio"
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            try:
+                kwargs["metric"] = normalize_sdb_metric(val).value
+            except Exception:
+                kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            kwargs["metric"] = "bathymetry_depth"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -37378,4 +37406,685 @@ class TrueOrthoTileRequestParams(BaseModel):
     metric: TrueOrthoTileMetric = Field(default=TrueOrthoTileMetric.ORTHO_RGB, description="Visualization raster metric")
     colormap: Optional[str] = Field(default=None, description="Colormap palette")
     rescale: Optional[str] = Field(default=None, description="Rescale range min,max")
+
+
+# ============================================================================
+# CYCLE v2.5.44: SATELLITE-DERIVED BATHYMETRY (SDB) & RADIATIVE TRANSFER CONTRACTS
+# ============================================================================
+
+class SDBTileMetric(str, Enum):
+    """Visualization metrics for satellite-derived bathymetry XYZ tile rendering."""
+    BATHYMETRY_DEPTH = "bathymetry_depth"               # Optical water depth in meters
+    STUMPF_RATIO = "stumpf_ratio"                       # Stumpf log-ratio index (ln(n*Blue) / ln(n*Green))
+    ATTENUATION_KD = "attenuation_kd"                   # Diffuse water column attenuation coefficient Kd (m^-1)
+    BENTHIC_REFLECTANCE = "benthic_reflectance"         # Inverted bottom substrate albedo
+    SILTATION_RISK = "siltation_risk"                   # Reservoir siltation deposition hazard tier
+    DEPTH_CONTOURS = "depth_contours"                   # Contoured depth isolines (every 2m / 5m)
+
+
+class BenthicSubstrateType(str, Enum):
+    """Benthic substrate classification categories for optical shallow-water bottom characterization."""
+    SAND = "sand"                                       # High-reflectance quartz/carbonate sand (albedo ~0.35)
+    SEAGRASS_MACROPHYTE = "seagrass_macrophyte"         # Submerged aquatic vegetation / macrophytes (albedo ~0.08)
+    CORAL_HARDBOTTOM = "coral_hardbottom"               # Hardbottom pavement / coral reef substrate (albedo ~0.18)
+    MUD_SILT = "mud_silt"                               # Fine-grained lacustrine/estuarine silt (albedo ~0.12)
+    DEEP_UNCLASSIFIED = "deep_unclassified"             # Beyond optical penetration limit / unclassified
+
+
+class SDBWaterClarityTier(str, Enum):
+    """Water column bio-optical clarity classification based on diffuse attenuation coefficient Kd."""
+    ULTRA_CLEAR_OLIGOTROPHIC = "ultra_clear_oligotrophic"  # Kd < 0.10 m^-1 (penetration > 25m)
+    MODERATE_MESOTROPHIC = "moderate_mesotrophic"          # 0.10 <= Kd < 0.30 m^-1 (penetration 10-25m)
+    TURBID_EUTROPHIC = "turbid_eutrophic"                  # 0.30 <= Kd < 0.80 m^-1 (penetration 3-10m)
+    HIGH_ATTENUATION = "high_attenuation"                  # Kd >= 0.80 m^-1 (shallow optical penetration < 3m)
+
+
+def normalize_sdb_model(val: Any) -> SDBModelType:
+    """Robustly normalizes bathymetry inversion model into canonical SDBModelType enum."""
+    if isinstance(val, SDBModelType):
+        return val
+    s = str(val).lower().strip().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "stumpf": SDBModelType.STUMPF_LOG_RATIO,
+        "stumpf_log_ratio": SDBModelType.STUMPF_LOG_RATIO,
+        "log_ratio": SDBModelType.STUMPF_LOG_RATIO,
+        "ratio": SDBModelType.STUMPF_LOG_RATIO,
+        "lyzenga": SDBModelType.LYZENGA_MULTISPECTRAL,
+        "lyzenga_multispectral": SDBModelType.LYZENGA_MULTISPECTRAL,
+        "multispectral": SDBModelType.LYZENGA_MULTISPECTRAL,
+        "radiative_transfer": SDBModelType.RADIATIVE_TRANSFER,
+        "bio_optical": SDBModelType.RADIATIVE_TRANSFER,
+    }
+    if s in mapping:
+        return mapping[s]
+    for m in SDBModelType:
+        if m.value == s:
+            return m
+    return SDBModelType.STUMPF_LOG_RATIO
+
+
+def normalize_sdb_metric(val: Any) -> SDBTileMetric:
+    """Robustly normalizes tile metric into canonical SDBTileMetric enum."""
+    if isinstance(val, SDBTileMetric):
+        return val
+    s = str(val).lower().strip().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "depth": SDBTileMetric.BATHYMETRY_DEPTH,
+        "bathymetry_depth": SDBTileMetric.BATHYMETRY_DEPTH,
+        "bathymetry": SDBTileMetric.BATHYMETRY_DEPTH,
+        "water_depth": SDBTileMetric.BATHYMETRY_DEPTH,
+        "stumpf": SDBTileMetric.STUMPF_RATIO,
+        "stumpf_ratio": SDBTileMetric.STUMPF_RATIO,
+        "log_ratio": SDBTileMetric.STUMPF_RATIO,
+        "ratio": SDBTileMetric.STUMPF_RATIO,
+        "kd": SDBTileMetric.ATTENUATION_KD,
+        "attenuation_kd": SDBTileMetric.ATTENUATION_KD,
+        "attenuation": SDBTileMetric.ATTENUATION_KD,
+        "benthic": SDBTileMetric.BENTHIC_REFLECTANCE,
+        "benthic_reflectance": SDBTileMetric.BENTHIC_REFLECTANCE,
+        "bottom_albedo": SDBTileMetric.BENTHIC_REFLECTANCE,
+        "albedo": SDBTileMetric.BENTHIC_REFLECTANCE,
+        "siltation": SDBTileMetric.SILTATION_RISK,
+        "siltation_risk": SDBTileMetric.SILTATION_RISK,
+        "sediment": SDBTileMetric.SILTATION_RISK,
+        "contours": SDBTileMetric.DEPTH_CONTOURS,
+        "depth_contours": SDBTileMetric.DEPTH_CONTOURS,
+        "contour": SDBTileMetric.DEPTH_CONTOURS,
+    }
+    if s in mapping:
+        return mapping[s]
+    for m in SDBTileMetric:
+        if m.value == s:
+            return m
+    return SDBTileMetric.BATHYMETRY_DEPTH
+
+
+def normalize_benthic_substrate(val: Any) -> BenthicSubstrateType:
+    """Normalizes string or enum to canonical BenthicSubstrateType."""
+    if isinstance(val, BenthicSubstrateType):
+        return val
+    s = str(val).lower().strip().replace("-", "_").replace(" ", "_")
+    for b in BenthicSubstrateType:
+        if b.value == s:
+            return b
+    mapping = {
+        "sand": BenthicSubstrateType.SAND,
+        "quartz_sand": BenthicSubstrateType.SAND,
+        "carbonate": BenthicSubstrateType.SAND,
+        "seagrass": BenthicSubstrateType.SEAGRASS_MACROPHYTE,
+        "vegetation": BenthicSubstrateType.SEAGRASS_MACROPHYTE,
+        "macrophyte": BenthicSubstrateType.SEAGRASS_MACROPHYTE,
+        "coral": BenthicSubstrateType.CORAL_HARDBOTTOM,
+        "hardbottom": BenthicSubstrateType.CORAL_HARDBOTTOM,
+        "reef": BenthicSubstrateType.CORAL_HARDBOTTOM,
+        "mud": BenthicSubstrateType.MUD_SILT,
+        "silt": BenthicSubstrateType.MUD_SILT,
+        "deep": BenthicSubstrateType.DEEP_UNCLASSIFIED,
+    }
+    return mapping.get(s, BenthicSubstrateType.DEEP_UNCLASSIFIED)
+
+
+def normalize_sdb_water_clarity(val: Any) -> SDBWaterClarityTier:
+    """Normalizes string or enum to canonical SDBWaterClarityTier."""
+    if isinstance(val, SDBWaterClarityTier):
+        return val
+    s = str(val).lower().strip().replace("-", "_").replace(" ", "_")
+    for c in SDBWaterClarityTier:
+        if c.value == s:
+            return c
+    mapping = {
+        "ultra_clear": SDBWaterClarityTier.ULTRA_CLEAR_OLIGOTROPHIC,
+        "oligotrophic": SDBWaterClarityTier.ULTRA_CLEAR_OLIGOTROPHIC,
+        "mesotrophic": SDBWaterClarityTier.MODERATE_MESOTROPHIC,
+        "moderate": SDBWaterClarityTier.MODERATE_MESOTROPHIC,
+        "eutrophic": SDBWaterClarityTier.TURBID_EUTROPHIC,
+        "turbid": SDBWaterClarityTier.TURBID_EUTROPHIC,
+        "high_attenuation": SDBWaterClarityTier.HIGH_ATTENUATION,
+    }
+    return mapping.get(s, SDBWaterClarityTier.MODERATE_MESOTROPHIC)
+
+
+# ============================================================================
+# CONFIGURATIONS & CANONICAL BENCHMARK SITES
+# ============================================================================
+
+SDB_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    SDBModelType.STUMPF_LOG_RATIO.value: {
+        "name": "Stumpf Log-Ratio Model",
+        "citation": "Stumpf, R. P., Holderied, K., & Sinclair, M. (2003): Determination of water depth with high-resolution satellite imagery over variable bottom types. Limnology and Oceanography, 48(2), 547-556.",
+        "description": "Pseudo-linear ratio of log-transformed reflectance in Blue and Green bands, robust against benthic bottom albedo heterogeneity.",
+        "formula": "z = m1 * [ln(n * R_blue) / ln(n * R_green)] - m0",
+        "default_m1": 28.5,
+        "default_m0": 18.2,
+        "n_const": 1000.0,
+        "bands_required": ["blue", "green"],
+        "max_penetration_m": 45.0,
+    },
+    SDBModelType.LYZENGA_MULTISPECTRAL.value: {
+        "name": "Lyzenga Multi-Band Radiative Transfer",
+        "citation": "Lyzenga, D. R. (1978, 1985): Passive remote sensing techniques for mapping water depth. Applied Optics / IJRS.",
+        "description": "Multi-band linear regression subtracting deep-water signal R_inf to linearize depth attenuation across varying bottom substrates.",
+        "formula": "z = a0 + sum_i [a_i * ln(max(eps, R_i - R_inf_i))]",
+        "default_m1": 25.0,
+        "default_m0": 15.0,
+        "n_const": 1000.0,
+        "bands_required": ["blue", "green", "red"],
+        "max_penetration_m": 35.0,
+    },
+    SDBModelType.RADIATIVE_TRANSFER.value: {
+        "name": "Forward Bio-Optical Radiative Transfer Matching",
+        "citation": "Mobley, C. D. (1994): Light and Water: Radiative Transfer in Natural Waters. Academic Press.",
+        "description": "Semi-analytical optimization matching water-leaving reflectance spectra against look-up tables of bottom albedo and water column attenuation.",
+        "formula": "min_{z, C_chl, b_b} ||R_rs_obs - R_rs_model(z, C_chl, b_b)||^2",
+        "default_m1": 30.0,
+        "default_m0": 20.0,
+        "n_const": 1000.0,
+        "bands_required": ["coastal", "blue", "green", "red"],
+        "max_penetration_m": 40.0,
+    }
+}
+
+SDB_TILE_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    SDBTileMetric.BATHYMETRY_DEPTH.value: {
+        "label": "Water Depth (m)",
+        "unit": "meters",
+        "recommended_colormap": "spectral",
+        "default_range": [0.0, 45.0],
+        "description": "Estimated bathymetric water column depth in meters below surface datum"
+    },
+    SDBTileMetric.STUMPF_RATIO.value: {
+        "label": "Stumpf Log-Ratio Index",
+        "unit": "dimensionless",
+        "recommended_colormap": "viridis",
+        "default_range": [0.80, 1.40],
+        "description": "Normalized ratio of log-transformed blue-to-green reflectance"
+    },
+    SDBTileMetric.ATTENUATION_KD.value: {
+        "label": "Diffuse Attenuation (Kd)",
+        "unit": "m^-1",
+        "recommended_colormap": "turbo",
+        "default_range": [0.05, 0.80],
+        "description": "Water column diffuse light attenuation coefficient Kd"
+    },
+    SDBTileMetric.BENTHIC_REFLECTANCE.value: {
+        "label": "Benthic Bottom Albedo",
+        "unit": "reflectance",
+        "recommended_colormap": "terrain",
+        "default_range": [0.0, 0.50],
+        "description": "Depth-corrected benthic bottom substrate reflectance"
+    },
+    SDBTileMetric.SILTATION_RISK.value: {
+        "label": "Siltation Hazard Tier",
+        "unit": "category",
+        "recommended_colormap": "coolwarm",
+        "default_range": [0, 3],
+        "description": "Operational reservoir siltation storage loss classification"
+    },
+    SDBTileMetric.DEPTH_CONTOURS.value: {
+        "label": "Depth Contours (Isolines)",
+        "unit": "meters",
+        "recommended_colormap": "blues",
+        "default_range": [0.0, 45.0],
+        "description": "Bathymetric depth with 2m / 5m contour interval markings"
+    }
+}
+
+BENTHIC_SUBSTRATE_CONFIGS: Dict[str, Dict[str, Any]] = {
+    BenthicSubstrateType.SAND.value: {
+        "name": "Sand & Carbonate Substrate",
+        "typical_albedo": 0.35,
+        "color": "#fef08a",
+        "description": "High-reflectance coarse quartz or biogenic carbonate sand"
+    },
+    BenthicSubstrateType.CORAL_HARDBOTTOM.value: {
+        "name": "Hardbottom & Coral Pavement",
+        "typical_albedo": 0.18,
+        "color": "#fb923c",
+        "description": "Consolidated rock, limestone pavement, or coral reef structure"
+    },
+    BenthicSubstrateType.MUD_SILT.value: {
+        "name": "Lacustrine Silt & Clay",
+        "typical_albedo": 0.12,
+        "color": "#a8a29e",
+        "description": "Fine-grained sediment, mud, and active tailings silt deposits"
+    },
+    BenthicSubstrateType.SEAGRASS_MACROPHYTE.value: {
+        "name": "Submerged Macrophytes & Seagrass",
+        "typical_albedo": 0.08,
+        "color": "#15803d",
+        "description": "Dense submerged aquatic vegetation absorbing red and blue light"
+    },
+    BenthicSubstrateType.DEEP_UNCLASSIFIED.value: {
+        "name": "Optically Deep / Unclassified",
+        "typical_albedo": 0.02,
+        "color": "#1e3a8a",
+        "description": "Water column beyond optical extinction limit (depth > 30m)"
+    }
+}
+
+SDB_WATER_CLARITY_CONFIGS: Dict[str, Dict[str, Any]] = {
+    SDBWaterClarityTier.ULTRA_CLEAR_OLIGOTROPHIC.value: {
+        "name": "Ultra-Clear (Oligotrophic)",
+        "kd_range": [0.03, 0.10],
+        "secchi_depth_m": "> 12m",
+        "max_sdb_depth_m": 45.0
+    },
+    SDBWaterClarityTier.MODERATE_MESOTROPHIC.value: {
+        "name": "Moderate Clarity (Mesotrophic)",
+        "kd_range": [0.10, 0.30],
+        "secchi_depth_m": "4m - 12m",
+        "max_sdb_depth_m": 25.0
+    },
+    SDBWaterClarityTier.TURBID_EUTROPHIC.value: {
+        "name": "Turbid Water (Eutrophic)",
+        "kd_range": [0.30, 0.80],
+        "secchi_depth_m": "1.5m - 4m",
+        "max_sdb_depth_m": 10.0
+    },
+    SDBWaterClarityTier.HIGH_ATTENUATION.value: {
+        "name": "High Attenuation (Very Turbid)",
+        "kd_range": [0.80, 2.50],
+        "secchi_depth_m": "< 1.5m",
+        "max_sdb_depth_m": 3.0
+    }
+}
+
+SDB_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "LAKE_MEAD_NV": {
+        "id": "LAKE_MEAD_NV",
+        "name": "Lake Mead / Hoover Dam",
+        "location": "Nevada / Arizona, USA",
+        "center": [36.015, -114.738],
+        "bbox": [-114.85, 35.95, -114.62, 36.08],
+        "design_capacity_m3": 3.52e10,
+        "design_max_depth_m": 150.0,
+        "nominal_sdb_max_depth_m": 45.0,
+        "surface_area_ha": 64000.0,
+        "default_m1": 29.2,
+        "default_m0": 18.8,
+        "clarity": SDBWaterClarityTier.ULTRA_CLEAR_OLIGOTROPHIC.value,
+        "typical_blue_r": 0.058,
+        "typical_green_r": 0.038,
+        "description": "Deep arid reservoir with exceptional optical water clarity, steep canyon bathymetry, and multi-year drought storage depletion."
+    },
+    "SAN_LUIS_RES_CA": {
+        "id": "SAN_LUIS_RES_CA",
+        "name": "San Luis Reservoir",
+        "location": "Merced County, California, USA",
+        "center": [37.058, -121.072],
+        "bbox": [-121.15, 37.00, -120.98, 37.12],
+        "design_capacity_m3": 2.51e9,
+        "design_max_depth_m": 92.0,
+        "nominal_sdb_max_depth_m": 42.0,
+        "surface_area_ha": 5140.0,
+        "default_m1": 28.5,
+        "default_m0": 18.2,
+        "clarity": SDBWaterClarityTier.MODERATE_MESOTROPHIC.value,
+        "typical_blue_r": 0.065,
+        "typical_green_r": 0.042,
+        "description": "Major California State Water Project off-stream pumped-storage reservoir with seasonal water level oscillations and sediment redistribution."
+    },
+    "LAKE_POWELL_UT": {
+        "id": "LAKE_POWELL_UT",
+        "name": "Lake Powell / Glen Canyon",
+        "location": "Utah / Arizona, USA",
+        "center": [36.936, -111.484],
+        "bbox": [-111.58, 36.88, -111.38, 36.99],
+        "design_capacity_m3": 3.0e10,
+        "design_max_depth_m": 132.0,
+        "nominal_sdb_max_depth_m": 50.0,
+        "surface_area_ha": 65000.0,
+        "default_m1": 31.0,
+        "default_m0": 19.5,
+        "clarity": SDBWaterClarityTier.ULTRA_CLEAR_OLIGOTROPHIC.value,
+        "typical_blue_r": 0.054,
+        "typical_green_r": 0.036,
+        "description": "Colorado River impoundment with complex submerged sandstone canyon morphology and extensive sediment delta accumulation."
+    },
+    "CORREGO_TAILINGS_MG": {
+        "id": "CORREGO_TAILINGS_MG",
+        "name": "Córrego do Feijão Tailings Pond",
+        "location": "Minas Gerais, Brazil",
+        "center": [-20.120, -44.120],
+        "bbox": [-20.135, -44.135, -20.105, -44.105],
+        "design_capacity_m3": 1.27e7,
+        "design_max_depth_m": 22.0,
+        "nominal_sdb_max_depth_m": 18.5,
+        "surface_area_ha": 85.0,
+        "default_m1": 22.0,
+        "default_m0": 14.5,
+        "clarity": SDBWaterClarityTier.TURBID_EUTROPHIC.value,
+        "typical_blue_r": 0.075,
+        "typical_green_r": 0.058,
+        "description": "Active mining tailings storage facility with continuous slurry inflow, high sediment accumulation rates, and critical dead storage monitoring."
+    }
+}
+
+
+# ============================================================================
+# DETERMINISTIC SDB MATHEMATICAL SOLVERS & INVARIANTS
+# ============================================================================
+
+def calculate_stumpf_log_ratio(
+    r_blue: float,
+    r_green: float,
+    n_const: float = 1000.0,
+    m1: float = 28.5,
+    m0: float = 18.2,
+    max_depth_m: float = 50.0
+) -> Dict[str, float]:
+    """Calculates non-linear Stumpf log-ratio optical depth (Stumpf et al., 2003).
+    
+    Invariants:
+        - Absolute non-negativity: depth z >= 0.0
+        - Monotonic increase: for fixed green, higher blue reflectance yields greater depth
+        - Epsilon division protection: clamps logarithms and denominators against zero
+    """
+    eps = 1e-6
+    b_val = max(eps, min(0.60, float(r_blue)))
+    g_val = max(eps, min(0.60, float(r_green)))
+    n_val = max(10.0, float(n_const))
+    m1_val = float(m1)
+    m0_val = float(m0)
+
+    ln_blue = math.log(max(1.0 + eps, n_val * b_val))
+    ln_green = math.log(max(1.0 + eps, n_val * g_val))
+
+    ratio = ln_blue / ln_green if abs(ln_green) > eps else 1.0
+    raw_z = (m1_val * ratio) - m0_val
+    depth_z = max(0.0, min(float(max_depth_m), raw_z))
+
+    # Diffuse attenuation coefficient Kd approximation
+    kd_est = max(0.04, min(1.50, 0.12 * (g_val / (b_val + eps))))
+
+    # Benthic bottom reflectance albedo estimation (removing water column absorption)
+    benthic_r = max(0.0, min(0.60, (b_val - 0.012) * math.exp(2.0 * kd_est * min(depth_z, 15.0)) + 0.012))
+
+    return {
+        "stumpf_ratio": round(ratio, 4),
+        "depth_m": round(depth_z, 2),
+        "attenuation_kd": round(kd_est, 4),
+        "benthic_reflectance": round(benthic_r, 4),
+        "optical_depth_limit_m": round(min(depth_z * 1.5, 1.2 / (kd_est + eps)), 2)
+    }
+
+
+def calculate_lyzenga_multispectral(
+    r_blue: float,
+    r_green: float,
+    r_red: Optional[float] = None,
+    r_inf_blue: float = 0.015,
+    r_inf_green: float = 0.012,
+    r_inf_red: float = 0.005,
+    a0: float = 0.0,
+    a_blue: float = 16.0,
+    a_green: float = 12.0,
+    a_red: float = -6.0,
+    max_depth_m: float = 40.0
+) -> Dict[str, float]:
+    """Calculates linearized multi-band water column depth (Lyzenga 1978, 1985)."""
+    eps = 1e-5
+    b_val = max(r_inf_blue + eps, float(r_blue))
+    g_val = max(r_inf_green + eps, float(r_green))
+
+    x_blue = math.log(max(eps, b_val - r_inf_blue))
+    x_green = math.log(max(eps, g_val - r_inf_green))
+
+    depth = a0 + (a_blue * x_blue) + (a_green * x_green)
+    if r_red is not None:
+        r_val = max(r_inf_red + eps, float(r_red))
+        x_red = math.log(max(eps, r_val - r_inf_red))
+        depth += (a_red * x_red)
+
+    depth_clamped = max(0.0, min(float(max_depth_m), depth))
+    return {
+        "depth_m": round(depth_clamped, 2),
+        "x_blue": round(x_blue, 4),
+        "x_green": round(x_green, 4)
+    }
+
+
+def calibrate_stumpf_coefficients(
+    observed_depths: Sequence[float],
+    blue_reflectance: Sequence[float],
+    green_reflectance: Sequence[float],
+    n_const: float = 1000.0
+) -> Dict[str, float]:
+    """Calibrates Stumpf scaling factor m1 and surface datum offset m0 via Ordinary Least Squares (OLS).
+    
+    Fits: z_k = m1 * p_k - m0
+    Where p_k = ln(n * R_blue_k) / ln(n * R_green_k).
+    """
+    if len(observed_depths) < 2 or len(observed_depths) != len(blue_reflectance) or len(blue_reflectance) != len(green_reflectance):
+        return {
+            "m1": 28.5,
+            "m0": 18.2,
+            "r_squared": 0.0,
+            "rmse_m": 0.0,
+            "point_count": len(observed_depths)
+        }
+
+    p_vals = []
+    z_vals = []
+    eps = 1e-6
+    n_val = max(10.0, float(n_const))
+
+    for z_obs, b, g in zip(observed_depths, blue_reflectance, green_reflectance):
+        b_clamped = max(eps, min(0.60, float(b)))
+        g_clamped = max(eps, min(0.60, float(g)))
+        ln_b = math.log(max(1.0 + eps, n_val * b_clamped))
+        ln_g = math.log(max(1.0 + eps, n_val * g_clamped))
+        p = ln_b / ln_g if abs(ln_g) > eps else 1.0
+        p_vals.append(p)
+        z_vals.append(float(z_obs))
+
+    mean_p = sum(p_vals) / len(p_vals)
+    mean_z = sum(z_vals) / len(z_vals)
+
+    numerator = sum((p - mean_p) * (z - mean_z) for p, z in zip(p_vals, z_vals))
+    denominator = sum((p - mean_p)**2 for p in p_vals)
+
+    if abs(denominator) < 1e-8:
+        m1 = 28.5
+        m0 = 18.2
+    else:
+        m1 = numerator / denominator
+        # Enforce realistic positive slope for blue/green ratio vs depth
+        if m1 <= 0.0:
+            m1 = 28.5
+        m0 = (m1 * mean_p) - mean_z
+
+    # Compute R^2 and RMSE
+    ss_tot = sum((z - mean_z)**2 for z in z_vals)
+    pred_z = [(m1 * p) - m0 for p in p_vals]
+    ss_res = sum((z - pz)**2 for z, pz in zip(z_vals, pred_z))
+    r2 = max(0.0, min(1.0, 1.0 - (ss_res / (ss_tot + 1e-8))))
+    rmse = math.sqrt(ss_res / len(z_vals))
+
+    return {
+        "m1": round(m1, 2),
+        "m0": round(m0, 2),
+        "r_squared": round(r2, 4),
+        "rmse_m": round(rmse, 2),
+        "point_count": len(z_vals)
+    }
+
+
+def classify_benthic_substrate(
+    benthic_reflectance: float,
+    depth_m: Optional[float] = None,
+    extinction_depth_m: float = 35.0
+) -> BenthicSubstrateType:
+    """Classifies bottom substrate into standard acoustic/optical categories based on bottom albedo."""
+    if depth_m is not None and depth_m >= extinction_depth_m:
+        return BenthicSubstrateType.DEEP_UNCLASSIFIED
+    r_b = max(0.0, float(benthic_reflectance))
+    if r_b >= 0.28:
+        return BenthicSubstrateType.SAND
+    elif r_b >= 0.16:
+        return BenthicSubstrateType.CORAL_HARDBOTTOM
+    elif r_b >= 0.10:
+        return BenthicSubstrateType.MUD_SILT
+    return BenthicSubstrateType.SEAGRASS_MACROPHYTE
+
+
+def classify_water_clarity_tier(kd_m1: float) -> SDBWaterClarityTier:
+    """Classifies water column clarity tier based on diffuse attenuation coefficient Kd (m^-1)."""
+    kd = max(0.01, float(kd_m1))
+    if kd < 0.10:
+        return SDBWaterClarityTier.ULTRA_CLEAR_OLIGOTROPHIC
+    elif kd < 0.30:
+        return SDBWaterClarityTier.MODERATE_MESOTROPHIC
+    elif kd < 0.80:
+        return SDBWaterClarityTier.TURBID_EUTROPHIC
+    return SDBWaterClarityTier.HIGH_ATTENUATION
+
+
+def build_sdb_tile_url(
+    model: Union[SDBModelType, str],
+    metric: Union[SDBTileMetric, str],
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds canonical XYZ tile URL for Satellite-Derived Bathymetry."""
+    m_str = model.value if isinstance(model, SDBModelType) else str(model).lower()
+    t_str = metric.value if isinstance(metric, SDBTileMetric) else str(metric).lower()
+    return f"{base_prefix}/tiles/bathymetry/{m_str}/{t_str}/{z}/{x}/{y}.png"
+
+
+def build_sdb_tile_url_template(
+    model: Union[SDBModelType, str] = SDBModelType.STUMPF_LOG_RATIO,
+    metric: Union[SDBTileMetric, str] = SDBTileMetric.BATHYMETRY_DEPTH,
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds canonical XYZ tile URL template for Leaflet BathymetryTileLayer."""
+    return build_sdb_tile_url(model, metric, "{z}", "{x}", "{y}", base_prefix=base_prefix)
+
+
+# ============================================================================
+# SDB PYDANTIC REQUEST & RESPONSE SCHEMAS
+# ============================================================================
+
+class SDBInSituPoint(BaseModel):
+    """In-situ reference bathymetric sounding point for empirical sensor calibration."""
+    point_id: Optional[str] = Field(default=None, description="Sounding identifier")
+    x: float = Field(..., description="Longitude or X coordinate")
+    y: float = Field(..., description="Latitude or Y coordinate")
+    depth_m: float = Field(..., ge=0.0, description="Observed ground truth water depth in meters")
+    blue_reflectance: Optional[float] = Field(default=None, gt=0.0, le=1.0, description="Measured water-leaving blue reflectance")
+    green_reflectance: Optional[float] = Field(default=None, gt=0.0, le=1.0, description="Measured water-leaving green reflectance")
+
+
+class SDBInSituCalibrationRequest(BaseModel):
+    """Request payload for calibrating Stumpf empirical coefficients using in-situ survey soundings."""
+    asset_id: str = Field(default="SAN_LUIS_RES_CA", description="Target water body identifier")
+    model_type: SDBModelType = Field(default=SDBModelType.STUMPF_LOG_RATIO, description="Target bathymetric model")
+    points: List[SDBInSituPoint] = Field(..., min_length=2, description="In-situ depth calibration soundings")
+    n_const: float = Field(default=1000.0, gt=1.0, description="Log scaling constant n")
+
+
+class SDBInSituCalibrationResponse(BaseModel):
+    """Calibration results for empirical SDB models."""
+    asset_id: str = Field(..., description="Asset identifier")
+    model_type: SDBModelType = Field(..., description="Calibrated model")
+    m1: float = Field(..., description="Calibrated slope coefficient m1")
+    m0: float = Field(..., description="Calibrated offset coefficient m0")
+    r_squared: float = Field(..., ge=0.0, le=1.0, description="Coefficient of determination R^2")
+    rmse_m: float = Field(..., ge=0.0, description="Root mean squared error in meters")
+    point_count: int = Field(..., description="Count of soundings used in regression")
+    calibrated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    status: str = Field(default="calibrated", description="Calibration status")
+
+
+class SDBEACSlice(BaseModel):
+    """Elevation-Area-Capacity (EAC) stage-storage slice for reservoir bathymetry."""
+    elevation_m: float = Field(..., description="Stage water elevation above datum in meters")
+    depth_m: float = Field(..., ge=0.0, description="Bathymetric depth slice in meters")
+    area_m2: float = Field(..., ge=0.0, description="Surface water area at elevation in m2")
+    area_ha: float = Field(..., ge=0.0, description="Surface water area at elevation in hectares")
+    cumulative_volume_m3: float = Field(..., ge=0.0, description="Cumulative water storage capacity in m3")
+    cumulative_volume_acre_feet: float = Field(..., ge=0.0, description="Cumulative storage in acre-feet")
+
+
+class SDBQualitySummary(BaseModel):
+    """Scientific quality certification summary for satellite-derived bathymetry inversion."""
+    mean_depth_m: float = Field(..., ge=0.0, description="Estimated mean water depth in meters")
+    max_depth_m: float = Field(..., ge=0.0, description="Peak bathymetric water depth in meters")
+    estimated_volume_m3: float = Field(..., ge=0.0, description="Remaining active water storage volume in m3")
+    estimated_volume_acre_feet: float = Field(..., ge=0.0, description="Remaining storage in acre-feet")
+    design_capacity_m3: float = Field(..., ge=0.0, description="Original as-built design storage volume in m3")
+    siltation_volume_loss_m3: float = Field(..., ge=0.0, description="Sediment siltation storage loss in m3")
+    siltation_loss_percentage: float = Field(..., ge=0.0, le=100.0, description="Siltation storage capacity loss percentage")
+    estimated_remaining_years: float = Field(..., ge=0.0, description="Projected operational years before dead storage exhaustion")
+    severity_tier: SiltationSeverityTier = Field(..., description="Siltation risk classification")
+    clarity_tier: SDBWaterClarityTier = Field(..., description="Water column clarity classification")
+    critical_siltation_warning: bool = Field(..., description="Flag if capacity loss >= 50%")
+    optical_depth_limit_m: float = Field(..., ge=0.0, description="Maximum optical depth penetration limit in meters")
+    mean_attenuation_kd: float = Field(..., ge=0.0, description="Estimated water column diffuse attenuation Kd")
+    dominant_benthic_substrate: BenthicSubstrateType = Field(..., description="Dominant classified bottom substrate type")
+    quality_checklist: Dict[str, bool] = Field(default_factory=dict, description="Scientific compliance checks")
+    narrative: str = Field(..., description="Interpretation narrative")
+
+
+class SDBInvertRequest(BaseModel):
+    """Payload for executing Satellite-Derived Bathymetry (SDB) depth inversion."""
+    asset_id: str = Field(default="SAN_LUIS_RES_CA", description="Target water body or reservoir identifier")
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2_L2A, description="Multi-spectral satellite collection")
+    item_id: str = Field(default="S2A_MSIL2A_20260815", description="Multi-spectral scene identifier")
+    model_type: SDBModelType = Field(default=SDBModelType.STUMPF_LOG_RATIO, description="Bathymetric inversion model")
+    calibration_m1: float = Field(default=28.5, description="Stumpf slope coefficient m1")
+    calibration_m0: float = Field(default=18.2, description="Stumpf datum offset coefficient m0")
+    design_capacity_m3: float = Field(default=2.5e7, gt=100.0, description="Original design storage volume in m3")
+    design_max_depth_m: float = Field(default=42.0, gt=1.0, description="Nominal maximum bathymetric depth in meters")
+    surface_area_ha: float = Field(default=180.0, gt=0.1, description="Surface water area in hectares")
+    blue_reflectance: float = Field(default=0.065, gt=0.0, le=1.0, description="Water-leaving blue reflectance (~490nm)")
+    green_reflectance: float = Field(default=0.042, gt=0.0, le=1.0, description="Water-leaving green reflectance (~560nm)")
+    red_reflectance: Optional[float] = Field(default=0.018, gt=0.0, le=1.0, description="Water-leaving red reflectance (~665nm)")
+    nir_reflectance: Optional[float] = Field(default=0.005, ge=0.0, le=1.0, description="Water-leaving NIR reflectance (~842nm)")
+    in_situ_points: Optional[List[SDBInSituPoint]] = Field(default=None, description="Optional calibration soundings")
+    bbox: Optional[Any] = Field(default=None, description="Spatial bounding box envelope")
+    geometry: Optional[Dict[str, Any]] = Field(default=None, description="Reservoir polygon geometry")
+
+    @field_validator("model_type", mode="before")
+    @classmethod
+    def validate_model_type(cls, v: Any) -> SDBModelType:
+        return normalize_sdb_model(v)
+
+
+class SDBInvertResponse(BaseModel):
+    """Response payload containing inverted bathymetric depth, EAC stage-storage curve, and siltation metrics."""
+    request_id: str = Field(..., description="Unique inversion evaluation identifier")
+    asset_id: str = Field(..., description="Target asset identifier")
+    collection: str = Field(..., description="Applied satellite collection")
+    item_id: str = Field(..., description="Scene acquisition identifier")
+    model_type: SDBModelType = Field(..., description="Applied bathymetric model")
+    quality_summary: SDBQualitySummary = Field(..., description="Certification and siltation summary")
+    eac_curve: List[SDBEACSlice] = Field(default_factory=list, description="Elevation-Area-Capacity stage storage curve")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template for Leaflet BathymetryTileLayer")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    status: str = Field(default="success")
+
+
+class SDBCapabilitiesResponse(BaseModel):
+    """Capabilities response describing supported SDB models, metrics, substrates, clarity tiers, and benchmark test sites."""
+    models: Dict[str, Any] = Field(..., description="Supported optical bathymetry models")
+    metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")
+    substrates: Dict[str, Any] = Field(..., description="Supported benthic substrate classifications")
+    clarity_tiers: Dict[str, Any] = Field(..., description="Water column clarity categories")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Benchmark research test sites")
+
+
+class SDBTileRequestParams(BaseModel):
+    """Query parameters for dynamic XYZ satellite-derived bathymetry tile rendering."""
+    z: Optional[int] = Field(default=None, ge=0, le=24, description="Tile zoom level (0-24)")
+    x: Optional[int] = Field(default=None, ge=0, description="Tile column X index")
+    y: Optional[int] = Field(default=None, ge=0, description="Tile row Y index")
+    model: SDBModelType = Field(default=SDBModelType.STUMPF_LOG_RATIO, description="Bathymetric model")
+    metric: SDBTileMetric = Field(default=SDBTileMetric.BATHYMETRY_DEPTH, description="Visualization raster metric")
+    colormap: Optional[str] = Field(default=None, description="Colormap palette")
+    rescale: Optional[str] = Field(default=None, description="Rescale range min,max")
+    asset_id: Optional[str] = Field(default=None, description="Target asset or benchmark site identifier")
+
 

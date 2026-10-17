@@ -2084,24 +2084,143 @@ class TileService:
 
     def render_true_ortho_tile(
         self,
-        mosaic_id: str,
-        z: int = 0,
-        x: int = 0,
-        y: int = 0,
-        colormap: Optional[str] = None,
-        rescale: Optional[str] = "0.0,255.0"
+        *args,
+        **kwargs
     ) -> bytes:
-        """Renders 256x256 RGBA tile for seamless true orthomosaic."""
-        return self.render_tile(
-            collection="true-ortho",
-            item_id=mosaic_id,
-            z=z,
-            x=x,
-            y=y,
-            index="true_ortho",
-            colormap=colormap or "spectral",
-            rescale=rescale or "0.0,255.0"
+        """Dynamic 256x256 RGBA XYZ True Orthomosaic Tile Streaming.
+        
+        Supports:
+        - Legacy T-75: render_true_ortho_tile(mosaic_id, z=0, x=0, y=0, colormap=None, rescale="0.0,255.0")
+        - Cycle v2.5.43: render_true_ortho_tile(model, metric, z, x, y, colormap=None, rescale=None, aoi_name=None)
+        """
+        from app.models.schemas import TrueOrthoProcessingModel, TrueOrthoTileMetric, normalize_true_ortho_model, normalize_true_ortho_metric
+
+        # Check if legacy call: first argument is not a model enum/name and second is an int or z
+        is_cycle43 = False
+        if len(args) >= 2:
+            first_str = str(args[0]).lower().strip()
+            valid_models = {m.value for m in TrueOrthoProcessingModel}
+            if first_str in valid_models or "model" in kwargs or "metric" in kwargs:
+                is_cycle43 = True
+            elif len(args) >= 5 and str(args[1]).lower().strip() in {m.value for m in TrueOrthoTileMetric}:
+                is_cycle43 = True
+        elif "model" in kwargs or "metric" in kwargs:
+            is_cycle43 = True
+
+        if not is_cycle43:
+            mosaic_id = args[0] if len(args) > 0 else kwargs.get("mosaic_id", "ortho_drone_01")
+            z = args[1] if len(args) > 1 else kwargs.get("z", 0)
+            x = args[2] if len(args) > 2 else kwargs.get("x", 0)
+            y = args[3] if len(args) > 3 else kwargs.get("y", 0)
+            colormap = args[4] if len(args) > 4 else kwargs.get("colormap", None)
+            rescale = args[5] if len(args) > 5 else kwargs.get("rescale", "0.0,255.0")
+            return self.render_tile(
+                collection="true-ortho",
+                item_id=mosaic_id,
+                z=z,
+                x=x,
+                y=y,
+                index="true_ortho",
+                colormap=colormap or "spectral",
+                rescale=rescale or "0.0,255.0"
+            )
+
+        # Cycle v2.5.43 True Orthorectification Tile Processing
+        model = args[0] if len(args) > 0 else kwargs.get("model", TrueOrthoProcessingModel.DSM_RAY_CAST_VISIBILITY)
+        metric = args[1] if len(args) > 1 else kwargs.get("metric", TrueOrthoTileMetric.ORTHO_RGB)
+        actual_z = int(args[2] if len(args) > 2 else kwargs.get("z", 14))
+        actual_x = int(args[3] if len(args) > 3 else kwargs.get("x", 2500))
+        actual_y = int(args[4] if len(args) > 4 else kwargs.get("y", 5800))
+        colormap = kwargs.get("colormap")
+        rescale = kwargs.get("rescale")
+        aoi_name = kwargs.get("aoi_name")
+
+        norm_model = normalize_true_ortho_model(model).value
+        norm_metric = normalize_true_ortho_metric(metric).value
+
+        default_cmaps = {
+            "ortho_rgb": "rgb",
+            "occlusion_mask": "magma",
+            "seamline_cost_map": "turbo",
+            "incident_angle_map": "viridis",
+            "blending_weights": "coolwarm",
+        }
+        default_rescales = {
+            "ortho_rgb": "0.0,255.0",
+            "occlusion_mask": "0.0,4.0",
+            "seamline_cost_map": "0.0,1.0",
+            "incident_angle_map": "0.0,60.0",
+            "blending_weights": "0.0,1.0",
+        }
+
+        chosen_cmap = (colormap or default_cmaps.get(norm_metric, "viridis")).lower().replace("_r", "").strip()
+        chosen_rescale = rescale or default_rescales.get(norm_metric, "0.0,1.0")
+
+        # 1. Disk caching check
+        cache_key = f"true_ortho_{norm_model}_{norm_metric}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        cache_dir = os.path.join(TILE_CACHE_DIR, "true_ortho", norm_model, norm_metric)
+        dot_cache_dir = os.path.join(".cache", "tiles", "true_ortho", norm_model, norm_metric)
+
+        for d in (cache_dir, dot_cache_dir):
+            try:
+                os.makedirs(d, exist_ok=True)
+                cf = os.path.join(d, f"{cache_hash}.png")
+                if os.path.exists(cf) and os.path.getsize(cf) > 100:
+                    with open(cf, "rb") as f:
+                        return f.read()
+            except Exception:
+                pass
+
+        # 2. Ingest or generate synthetic 2D/3D true ortho grid
+        from app.services.true_ortho_service import true_ortho_service
+        grid = true_ortho_service.generate_synthetic_true_ortho_tile_grid(
+            model=norm_model,
+            metric=norm_metric,
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            aoi_name=aoi_name,
+            grid_size=256
         )
+
+        # 3. Colormap and rescale normalization or RGB composite
+        if norm_metric == "ortho_rgb" and grid.ndim == 3 and grid.shape[2] == 3:
+            rgba = np.zeros((grid.shape[0], grid.shape[1], 4), dtype=np.uint8)
+            rgba[:, :, :3] = np.clip(grid, 0, 255).astype(np.uint8)
+            rgba[:, :, 3] = 255
+        else:
+            try:
+                parts = [float(p.strip()) for p in chosen_rescale.split(",")]
+                min_v, max_v = parts[0], parts[1]
+            except Exception:
+                min_v, max_v = 0.0, 1.0
+
+            norm_val = np.clip((grid - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+            rgba[:, :, 3] = 255
+
+        # 4. Encode PNG
+        img = Image.fromarray(rgba, "RGBA")
+        with io.BytesIO() as buf:
+            img.save(buf, format="PNG", optimize=True)
+            png_bytes = buf.getvalue()
+
+        # 5. Write to cache
+        for d in (cache_dir, dot_cache_dir):
+            try:
+                cf = os.path.join(d, f"{cache_hash}.png")
+                with open(cf, "wb") as f:
+                    f.write(png_bytes)
+            except Exception as e:
+                logger.warning("Failed to write true_ortho tile cache to %s: %s", d, e)
+
+        # 6. Memory cleanup
+        del grid, rgba, img
+        gc.collect()
+
+        return png_bytes
 
     def render_byoc_tile(
         self,
@@ -2500,25 +2619,165 @@ class TileService:
 
     def render_bathymetry_tile(
         self,
-        collection: str = "sentinel-2-l2a",
-        item_id: str = "s2_sample",
-        z: int = 0,
-        x: int = 0,
-        y: int = 0,
-        colormap: Optional[str] = "mako_r",
-        rescale: Optional[str] = "0.0,40.0"
+        *args,
+        **kwargs
     ) -> bytes:
-        """Renders 256x256 RGBA tile for Satellite-Derived Optical Bathymetry water depth (meters)."""
-        return self.render_tile(
-            collection="bathymetry",
-            item_id=item_id or "s2_sample",
-            z=z,
-            x=x,
-            y=y,
-            index="bathymetry",
-            colormap=colormap or "mako_r",
-            rescale=rescale or "0.0,40.0"
-        )
+        """Dynamic 256x256 RGBA XYZ Satellite-Derived Bathymetry (SDB) Tile Streaming.
+        
+        Supports:
+        - Legacy: render_bathymetry_tile(collection="sentinel-2-l2a", item_id="s2_sample", z=0, x=0, y=0, colormap="mako_r", rescale="0.0,40.0")
+        - Cycle v2.5.44 SDB: render_bathymetry_tile(model, metric, z, x, y, colormap=None, rescale=None, asset_id=None)
+        """
+        from app.models.schemas import SDBModelType, SDBTileMetric, normalize_sdb_model, normalize_sdb_metric
+
+        # Check if Cycle v2.5.44 call:
+        is_cycle44 = False
+        valid_models = {m.value for m in SDBModelType} | {"stumpf", "lyzenga", "stumpf_log_ratio", "lyzenga_multispectral", "radiative_transfer"}
+        valid_metrics = {m.value for m in SDBTileMetric} | {"depth", "stumpf", "kd", "benthic", "siltation", "contours", "bathymetry_depth", "stumpf_ratio", "attenuation_kd", "benthic_reflectance", "siltation_risk", "depth_contours"}
+
+        if len(args) >= 2:
+            first_str = str(args[0]).lower().strip()
+            second_str = str(args[1]).lower().strip()
+            if first_str in valid_models or second_str in valid_metrics or "model" in kwargs or "metric" in kwargs:
+                is_cycle44 = True
+            elif len(args) >= 5 and isinstance(args[2], int):
+                if first_str in valid_models or second_str in valid_metrics:
+                    is_cycle44 = True
+        elif "model" in kwargs or "metric" in kwargs:
+            is_cycle44 = True
+
+        if not is_cycle44:
+            collection = args[0] if len(args) > 0 else kwargs.get("collection", "bathymetry")
+            item_id = args[1] if len(args) > 1 else kwargs.get("item_id", "s2_sample")
+            z = args[2] if len(args) > 2 else kwargs.get("z", 0)
+            x = args[3] if len(args) > 3 else kwargs.get("x", 0)
+            y = args[4] if len(args) > 4 else kwargs.get("y", 0)
+            colormap = args[5] if len(args) > 5 else kwargs.get("colormap", "mako_r")
+            rescale = args[6] if len(args) > 6 else kwargs.get("rescale", "0.0,40.0")
+            return self.render_tile(
+                collection="bathymetry",
+                item_id=item_id or "s2_sample",
+                z=z,
+                x=x,
+                y=y,
+                index="bathymetry",
+                colormap=colormap or "mako_r",
+                rescale=rescale or "0.0,40.0"
+            )
+
+        # Cycle v2.5.44 SDB Rendering
+        model_raw = args[0] if len(args) > 0 else kwargs.get("model", SDBModelType.STUMPF_LOG_RATIO)
+        metric_raw = args[1] if len(args) > 1 else kwargs.get("metric", SDBTileMetric.BATHYMETRY_DEPTH)
+        z = args[2] if len(args) > 2 else kwargs.get("z", 0)
+        x = args[3] if len(args) > 3 else kwargs.get("x", 0)
+        y = args[4] if len(args) > 4 else kwargs.get("y", 0)
+        colormap = args[5] if len(args) > 5 else kwargs.get("colormap", None)
+        rescale = args[6] if len(args) > 6 else kwargs.get("rescale", None)
+        asset_id = kwargs.get("asset_id", kwargs.get("item_id", "SAN_LUIS_RES_CA"))
+
+        norm_model = normalize_sdb_model(model_raw)
+        norm_metric = normalize_sdb_metric(metric_raw)
+
+        default_cmaps = {
+            SDBTileMetric.BATHYMETRY_DEPTH: "spectral",
+            SDBTileMetric.STUMPF_RATIO: "viridis",
+            SDBTileMetric.ATTENUATION_KD: "turbo",
+            SDBTileMetric.BENTHIC_REFLECTANCE: "terrain",
+            SDBTileMetric.SILTATION_RISK: "coolwarm",
+            SDBTileMetric.DEPTH_CONTOURS: "blues",
+        }
+        default_rescales = {
+            SDBTileMetric.BATHYMETRY_DEPTH: "0.0,45.0",
+            SDBTileMetric.STUMPF_RATIO: "0.80,1.40",
+            SDBTileMetric.ATTENUATION_KD: "0.05,0.80",
+            SDBTileMetric.BENTHIC_REFLECTANCE: "0.0,0.50",
+            SDBTileMetric.SILTATION_RISK: "0,3",
+            SDBTileMetric.DEPTH_CONTOURS: "0.0,45.0",
+        }
+
+        chosen_cmap = (colormap or default_cmaps.get(norm_metric, "spectral")).lower().replace("_r", "").strip()
+        chosen_rescale = str(rescale).strip() if rescale else default_rescales.get(norm_metric, "0.0,45.0")
+
+        # 1. Disk Caching check
+        cache_key = f"sdb_{norm_model.value}_{norm_metric.value}_{chosen_cmap}_{chosen_rescale}_{asset_id}_{z}_{x}_{y}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        sdb_cache_dir = os.path.join(TILE_CACHE_DIR, "bathymetry", norm_model.value, norm_metric.value)
+        dot_cache_dir = os.path.join(".cache", "tiles", "bathymetry", norm_model.value, norm_metric.value)
+
+        for d in (sdb_cache_dir, dot_cache_dir):
+            try:
+                os.makedirs(d, exist_ok=True)
+                cf = os.path.join(d, f"{cache_hash}.png")
+                if os.path.exists(cf) and os.path.getsize(cf) > 100:
+                    with open(cf, "rb") as f:
+                        return f.read()
+            except Exception:
+                pass
+
+        # 2. Generate aquatic multi-spectral & bathymetric data
+        from app.services.bathymetry_service import bathymetry_service
+        scene_data = bathymetry_service.generate_synthetic_bathymetry_scene(asset_id_or_benchmark=asset_id, grid_size=256)
+        depth_arr = scene_data["depth"]
+        water_mask = scene_data["water_mask"]
+        blue_arr = scene_data["blue"]
+        green_arr = scene_data["green"]
+
+        if norm_metric == SDBTileMetric.BATHYMETRY_DEPTH:
+            grid = depth_arr
+        elif norm_metric == SDBTileMetric.STUMPF_RATIO:
+            grid = bathymetry_service.calculate_stumpf_ratio_array(blue_arr, green_arr)
+        elif norm_metric == SDBTileMetric.ATTENUATION_KD:
+            grid = bathymetry_service.estimate_attenuation_kd_array(blue_arr, green_arr)
+        elif norm_metric == SDBTileMetric.BENTHIC_REFLECTANCE:
+            kd_arr = bathymetry_service.estimate_attenuation_kd_array(blue_arr, green_arr)
+            grid = bathymetry_service.invert_benthic_reflectance_array(blue_arr, depth_arr, kd_arr)
+        elif norm_metric == SDBTileMetric.SILTATION_RISK:
+            grid = np.where(depth_arr > 25.0, 0.0, np.where(depth_arr > 12.0, 1.0, np.where(depth_arr > 4.0, 2.0, 3.0))).astype(np.float32)
+        elif norm_metric == SDBTileMetric.DEPTH_CONTOURS:
+            grid = depth_arr.copy()
+            contour_line = (np.abs(np.remainder(grid, 5.0)) < 0.35) & water_mask
+            grid = np.where(contour_line, 0.0, grid)
+        else:
+            grid = depth_arr
+
+        # 3. Apply Colormap
+        try:
+            parts = [float(p.strip()) for p in chosen_rescale.split(",")]
+            min_v, max_v = parts[0], parts[1]
+        except Exception:
+            min_v, max_v = 0.0, 45.0
+
+        denom = max_v - min_v if abs(max_v - min_v) > 1e-6 else 1.0
+        norm_grid = np.clip((grid - min_v) / denom, 0.0, 1.0)
+
+        cmap_func = self.get_colormap(chosen_cmap)
+        rgba = (cmap_func(norm_grid) * 255.0).astype(np.uint8)
+        rgba[:, :, 3] = np.where(water_mask, 255, 0).astype(np.uint8)
+
+        # 4. Save PNG bytes
+        img = Image.fromarray(rgba, mode="RGBA")
+        bio = io.BytesIO()
+        img.save(bio, format="PNG", optimize=True)
+        png_bytes = bio.getvalue()
+
+        # 5. Write to cache
+        for d in (sdb_cache_dir, dot_cache_dir):
+            try:
+                cf = os.path.join(d, f"{cache_hash}.png")
+                with open(cf, "wb") as f:
+                    f.write(png_bytes)
+            except Exception:
+                pass
+
+        del scene_data, depth_arr, water_mask, blue_arr, green_arr, grid, norm_grid, rgba, img, bio
+        gc.collect()
+
+        return png_bytes
+
+    def render_sdb_tile(self, *args, **kwargs) -> bytes:
+        """Alias for render_bathymetry_tile conforming to Task T-325 specification."""
+        return self.render_bathymetry_tile(*args, **kwargs)
+
 
     def render_gpr_tile(
         self,

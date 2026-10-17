@@ -980,6 +980,29 @@ from app.models.schemas import (
     SpectralUnmixingResponse,
     SpectralUnmixingTileRequestParams,
     SpectralUnmixingModelsResponse,
+    TrueOrthoProcessingModel,
+    TrueOrthoTileMetric,
+    SeamlineOptimizationMethod,
+    PyramidBlendingModel,
+    TrueOrthoAnalysisRequest,
+    TrueOrthoRayCastResponse,
+    TrueOrthoQualitySummary,
+    SeamlineRoutingRequest,
+    SeamlineRoutingResponse,
+    TrueOrthoCapabilitiesResponse,
+    TrueOrthoTileRequestParams,
+    SDBTileMetric,
+    BenthicSubstrateType,
+    SDBWaterClarityTier,
+    SDBInSituPoint,
+    SDBInSituCalibrationRequest,
+    SDBInSituCalibrationResponse,
+    SDBEACSlice,
+    SDBQualitySummary,
+    SDBInvertRequest,
+    SDBInvertResponse,
+    SDBCapabilitiesResponse,
+    SDBTileRequestParams,
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -994,6 +1017,8 @@ from app.services.trend_service import trend_service
 from app.services.multimodal_service import multimodal_service
 from app.services.insar_sbas_service import insar_sbas_service
 from app.services.unmixing_service import unmixing_service
+from app.services.true_ortho_service import true_ortho_service
+from app.services.bathymetry_service import bathymetry_service
 
 logger = logging.getLogger(__name__)
 
@@ -1014,6 +1039,8 @@ trend_router = APIRouter(prefix="/trend", tags=["Non-Parametric Trend Analysis &
 multimodal_router = APIRouter(prefix="/multimodal", tags=["Multimodal Satellite SAR + Optical Sensor Fusion & Feature-Track Inversion"])
 insar_sbas_router = APIRouter(prefix="/insar-sbas", tags=["InSAR SBAS Time-Series Ground Deformation Inversion"])
 unmixing_router = APIRouter(prefix="/unmixing", tags=["Linear Spectral Mixture Analysis & Sub-Pixel Endmember Inversion"])
+true_ortho_router = APIRouter(prefix="/true-ortho", tags=["True Orthorectification & Graph-Cut Seamlines"])
+bathymetry_router = APIRouter(prefix="/bathymetry", tags=["Satellite-Derived Bathymetry & Water Column Radiative Transfer"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -12110,6 +12137,248 @@ def get_spectral_unmixing_tile_xyz_endpoint(
             "X-Tile-Engine": f"GIOS-SpectralUnmixing-{model}-{metric}"
         }
     )
+
+
+# ============================================================================
+# CYCLE v2.5.43: TRUE ORTHORECTIFICATION, DSM RAY-CASTING & GRAPH-CUT SEAMLINES ENDPOINTS
+# ============================================================================
+
+@router.get("/true-ortho/capabilities", response_model=TrueOrthoCapabilitiesResponse)
+@router.get("/true-ortho/capabilities/", response_model=TrueOrthoCapabilitiesResponse, include_in_schema=False)
+@router.get("/true-ortho/models", response_model=TrueOrthoCapabilitiesResponse, include_in_schema=False)
+@router.get("/true-ortho/models/", response_model=TrueOrthoCapabilitiesResponse, include_in_schema=False)
+@true_ortho_router.get("/capabilities", response_model=TrueOrthoCapabilitiesResponse, include_in_schema=False)
+@true_ortho_router.get("/capabilities/", response_model=TrueOrthoCapabilitiesResponse, include_in_schema=False)
+@true_ortho_router.get("/models", response_model=TrueOrthoCapabilitiesResponse, include_in_schema=False)
+@true_ortho_router.get("/models/", response_model=TrueOrthoCapabilitiesResponse, include_in_schema=False)
+def get_true_ortho_capabilities_endpoint():
+    """Retrieves supported true orthorectification algorithms, metrics, seamline methods, and research benchmark test sites."""
+    return true_ortho_service.get_capabilities()
+
+
+@router.post("/true-ortho/occlusion", response_model=TrueOrthoRayCastResponse)
+@router.post("/true-ortho/occlusion/", response_model=TrueOrthoRayCastResponse, include_in_schema=False)
+@router.post("/true-ortho/raycast", response_model=TrueOrthoRayCastResponse, include_in_schema=False)
+@router.post("/true-ortho/raycast/", response_model=TrueOrthoRayCastResponse, include_in_schema=False)
+@true_ortho_router.post("/occlusion", response_model=TrueOrthoRayCastResponse, include_in_schema=False)
+@true_ortho_router.post("/occlusion/", response_model=TrueOrthoRayCastResponse, include_in_schema=False)
+@true_ortho_router.post("/raycast", response_model=TrueOrthoRayCastResponse, include_in_schema=False)
+@true_ortho_router.post("/raycast/", response_model=TrueOrthoRayCastResponse, include_in_schema=False)
+def request_true_ortho_occlusion_endpoint(req: TrueOrthoAnalysisRequest):
+    """Executes 3D DSM line-of-sight ray-tracing visibility analysis and perspective building lean elimination."""
+    return true_ortho_service.execute_true_ortho_pipeline(req)
+
+
+@router.post("/true-ortho/seamlines", response_model=SeamlineRoutingResponse)
+@router.post("/true-ortho/seamlines/", response_model=SeamlineRoutingResponse, include_in_schema=False)
+@router.post("/true-ortho/routing", response_model=SeamlineRoutingResponse, include_in_schema=False)
+@router.post("/true-ortho/routing/", response_model=SeamlineRoutingResponse, include_in_schema=False)
+@true_ortho_router.post("/seamlines", response_model=SeamlineRoutingResponse, include_in_schema=False)
+@true_ortho_router.post("/seamlines/", response_model=SeamlineRoutingResponse, include_in_schema=False)
+@true_ortho_router.post("/routing", response_model=SeamlineRoutingResponse, include_in_schema=False)
+@true_ortho_router.post("/routing/", response_model=SeamlineRoutingResponse, include_in_schema=False)
+def request_true_ortho_seamlines_endpoint(req: SeamlineRoutingRequest):
+    """Executes Dijkstra / Graph-Cut minimum radiometric gradient seamline optimization avoiding elevated obstacles."""
+    return true_ortho_service.execute_seamline_pipeline(req)
+
+
+@router.post("/true-ortho/blend", response_model=TrueOrthoQualitySummary)
+@router.post("/true-ortho/blend/", response_model=TrueOrthoQualitySummary, include_in_schema=False)
+@router.post("/true-ortho/evaluate", response_model=TrueOrthoQualitySummary, include_in_schema=False)
+@router.post("/true-ortho/evaluate/", response_model=TrueOrthoQualitySummary, include_in_schema=False)
+@true_ortho_router.post("/blend", response_model=TrueOrthoQualitySummary, include_in_schema=False)
+@true_ortho_router.post("/blend/", response_model=TrueOrthoQualitySummary, include_in_schema=False)
+@true_ortho_router.post("/evaluate", response_model=TrueOrthoQualitySummary, include_in_schema=False)
+@true_ortho_router.post("/evaluate/", response_model=TrueOrthoQualitySummary, include_in_schema=False)
+def evaluate_true_ortho_quality_endpoint(req: TrueOrthoAnalysisRequest):
+    """Evaluates quantitative scientific quality summary and operational tier for true orthorectification."""
+    return true_ortho_service.evaluate_quality_pipeline(req)
+
+
+@tiles_router.get("/true-ortho/{model}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/true-ortho/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/true-ortho/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/true-ortho/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@true_ortho_router.get("/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_true_ortho_tile_endpoint(
+    model: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    aoi_name: Optional[str] = Query(None, description="Area of interest label")
+):
+    """Dynamic 256x256 RGBA XYZ True Orthomosaic tile streaming across 5 canonical metrics."""
+    png_bytes = tile_service.render_true_ortho_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        aoi_name=aoi_name
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-TrueOrtho-{model}-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/true-ortho/{z}/{x}/{y}.png")
+@router.get("/tiles/true-ortho/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/true-ortho/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/true-ortho/{z}/{x}/{y}.png", include_in_schema=False)
+@true_ortho_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_true_ortho_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    model: str = Query("dsm_ray_cast_visibility", description="True ortho algorithm"),
+    metric: str = Query("ortho_rgb", description="Visualization metric"),
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    aoi_name: Optional[str] = Query(None, description="Area of interest label")
+):
+    """Dynamic XYZ tile streaming for true orthomosaic tiles with query parameter configuration."""
+    png_bytes = tile_service.render_true_ortho_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        aoi_name=aoi_name
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-TrueOrtho-{model}-{metric}"
+        }
+    )
+
+
+# ============================================================================
+# CYCLE v2.5.44: SATELLITE-DERIVED BATHYMETRY & WATER COLUMN INVERSION ROUTES
+# ============================================================================
+
+@router.get("/bathymetry/capabilities", response_model=SDBCapabilitiesResponse)
+@router.get("/bathymetry/capabilities/", response_model=SDBCapabilitiesResponse, include_in_schema=False)
+@router.get("/bathymetry/models", response_model=SDBCapabilitiesResponse, include_in_schema=False)
+@router.get("/bathymetry/models/", response_model=SDBCapabilitiesResponse, include_in_schema=False)
+@bathymetry_router.get("/capabilities", response_model=SDBCapabilitiesResponse, include_in_schema=False)
+@bathymetry_router.get("/capabilities/", response_model=SDBCapabilitiesResponse, include_in_schema=False)
+@bathymetry_router.get("/models", response_model=SDBCapabilitiesResponse, include_in_schema=False)
+@bathymetry_router.get("/models/", response_model=SDBCapabilitiesResponse, include_in_schema=False)
+def get_bathymetry_capabilities_endpoint():
+    """Retrieves supported optical bathymetry models, metrics, benthic substrates, clarity tiers, and benchmark test sites."""
+    return bathymetry_service.get_capabilities()
+
+
+@router.post("/bathymetry/invert", response_model=SDBInvertResponse)
+@router.post("/bathymetry/invert/", response_model=SDBInvertResponse, include_in_schema=False)
+@bathymetry_router.post("/invert", response_model=SDBInvertResponse, include_in_schema=False)
+@bathymetry_router.post("/invert/", response_model=SDBInvertResponse, include_in_schema=False)
+def request_bathymetry_invert_endpoint(req: SDBInvertRequest):
+    """Executes non-linear satellite-derived bathymetry depth inversion, volume calculation, and EAC curve generation."""
+    return bathymetry_service.execute_bathymetry_pipeline(req)
+
+
+@router.post("/bathymetry/calibrate", response_model=SDBInSituCalibrationResponse)
+@router.post("/bathymetry/calibrate/", response_model=SDBInSituCalibrationResponse, include_in_schema=False)
+@bathymetry_router.post("/calibrate", response_model=SDBInSituCalibrationResponse, include_in_schema=False)
+@bathymetry_router.post("/calibrate/", response_model=SDBInSituCalibrationResponse, include_in_schema=False)
+def request_bathymetry_calibrate_endpoint(req: SDBInSituCalibrationRequest):
+    """Calibrates empirical Stumpf scaling (m1) and offset (m0) parameters using in-situ acoustic survey soundings."""
+    return bathymetry_service.execute_calibration_pipeline(req)
+
+
+@router.post("/bathymetry/evaluate", response_model=SDBQualitySummary)
+@router.post("/bathymetry/evaluate/", response_model=SDBQualitySummary, include_in_schema=False)
+@bathymetry_router.post("/evaluate", response_model=SDBQualitySummary, include_in_schema=False)
+@bathymetry_router.post("/evaluate/", response_model=SDBQualitySummary, include_in_schema=False)
+def evaluate_bathymetry_quality_endpoint(req: SDBInvertRequest):
+    """Evaluates scientific quality metrics, siltation storage loss, and operational risk tiers for optical bathymetry."""
+    return bathymetry_service.evaluate_quality_pipeline(req)
+
+
+@tiles_router.get("/bathymetry/{model}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/bathymetry/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@bathymetry_router.get("/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_sdb_tile_endpoint(
+    model: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    asset_id: Optional[str] = Query(None, description="Target asset identifier or benchmark scene")
+):
+    """Dynamic XYZ tile streaming for satellite-derived bathymetry across canonical models and visualization metrics."""
+    png_bytes = tile_service.render_bathymetry_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        asset_id=asset_id or "SAN_LUIS_RES_CA"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-SDB-{model}-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/bathymetry/{z}/{x}/{y}.png")
+@router.get("/tiles/bathymetry/{z}/{x}/{y}.png", include_in_schema=False)
+@bathymetry_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_sdb_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    model: str = Query("stumpf_log_ratio", description="Bathymetric model"),
+    metric: str = Query("bathymetry_depth", description="Visualization metric"),
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    asset_id: Optional[str] = Query(None, description="Target asset identifier or benchmark scene")
+):
+    """Dynamic XYZ tile streaming for satellite-derived bathymetry with query parameter configuration."""
+    png_bytes = tile_service.render_bathymetry_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        asset_id=asset_id or "SAN_LUIS_RES_CA"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-SDB-{model}-{metric}"
+        }
+    )
+
+
 
 
 
