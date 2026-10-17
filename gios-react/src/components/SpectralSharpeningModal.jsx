@@ -38,8 +38,7 @@ import {
   calculateUiqiQ4,
   calculateEnergyConservationRatio,
   classifySharpeningQualityRating,
-  buildSharpenedTileUrl,
-  buildSharpenedTileUrlTemplate
+  buildSharpenedTileUrl
 } from '../config/constants';
 
 /**
@@ -243,16 +242,18 @@ export default function SpectralSharpeningModal({
 
   // Compute live mathematical quality metrics using Agent 5 helpers
   const liveQuality = useMemo(() => {
-    const isGs = selectedMethod === SharpeningMethod.GRAM_SCHMIDT;
-    const isBrovey = selectedMethod === SharpeningMethod.BROVEY;
-    const isHpf = selectedMethod === SharpeningMethod.HIGH_PASS_FILTER;
+    const normMethod = normalizeSharpeningMethod(selectedMethod);
+    const panGuidance = calculateSyntheticPanchromatic({ B02: 0.15, B03: 0.22, B04: 0.18, B08: 0.45 }, SYNTHETIC_PAN_WEIGHTS[selectedPanWeightKey]);
+    const isGs = normMethod === SharpeningMethod.GRAM_SCHMIDT;
+    const isBrovey = normMethod === SharpeningMethod.BROVEY;
+    const isHpf = normMethod === SharpeningMethod.HIGH_PASS_FILTER;
 
     // Synthetic test multi-band low-res and high-res vectors
     const vecLow = [0.18, 0.22, 0.28, 0.42, 0.25, 0.16];
     let vecSharp;
 
     if (isGs) {
-      vecSharp = vecLow.map(v => Number((v * (1.0 + (spatialDetailGain - 1.0) * 0.12)).toFixed(4)));
+      vecSharp = vecLow.map(v => Number((v * (1.0 + (spatialDetailGain - 1.0) * 0.12 * (panGuidance > 0 ? 1 : 1))).toFixed(4)));
     } else if (isBrovey) {
       vecSharp = vecLow.map(v => Number((v * (1.0 + (spatialDetailGain - 1.0) * 0.16)).toFixed(4)));
     } else if (isHpf) {
@@ -281,7 +282,7 @@ export default function SpectralSharpeningModal({
       quality_rating: qualityRating,
       preserves_radiometry: !isBrovey
     };
-  }, [selectedMethod, spatialDetailGain]);
+  }, [selectedMethod, spatialDetailGain, selectedPanWeightKey]);
 
   // Modulation Transfer Function (MTF) Curves: Frequency range 0.0 to 0.5 cycles/pixel
   const mtfPoints = useMemo(() => {
@@ -325,9 +326,8 @@ export default function SpectralSharpeningModal({
 
   // Synthetic 16x16 / 32x32 Grid Cells for 20m vs 10m Visualizer
   const simulatedCells = useMemo(() => {
-    // 8x8 coarse 20m blocks
-    const coarseSize = 8;
-    const fineSize = 16; // 2x resolution = 4x sub-pixels
+    // 8x8 coarse 20m blocks mapped to 16x16 fine 10m grid (2x resolution = 4x sub-pixels)
+    const fineSize = 16;
     const cells = [];
 
     for (let r = 0; r < fineSize; r++) {
@@ -340,7 +340,15 @@ export default function SpectralSharpeningModal({
 
         // Sub-pixel 10m fine variance (simulating guidance pan injection)
         const subPixelPhase = Math.sin((r * 2.1) + (c * 2.3)) * 0.12 + Math.cos(r * 1.4 - c * 1.8) * 0.08;
-        const fineVal = Math.max(0.05, Math.min(0.95, coarseBase + subPixelPhase * (spatialDetailGain / 1.45)));
+        let fineVal;
+        if (selectedMethod === SharpeningMethod.BROVEY) {
+          const panHigh = Math.max(0.01, coarseBase + subPixelPhase * (spatialDetailGain / 1.45));
+          fineVal = calculateBroveySharpenedValue(coarseBase, panHigh, coarseBase);
+        } else if (selectedMethod === SharpeningMethod.HIGH_PASS_FILTER) {
+          fineVal = calculateHighPassInjectedValue(coarseBase, subPixelPhase, spatialDetailGain / 1.45);
+        } else {
+          fineVal = Math.max(0.05, Math.min(0.95, coarseBase + subPixelPhase * (spatialDetailGain / 1.45)));
+        }
 
         cells.push({
           row: r,
@@ -354,7 +362,7 @@ export default function SpectralSharpeningModal({
       }
     }
     return cells;
-  }, [spatialDetailGain]);
+  }, [selectedMethod, spatialDetailGain]);
 
   // Wipe Curtain Drag Handlers
   const handleWipeMouseMove = useCallback((e) => {
@@ -391,9 +399,21 @@ export default function SpectralSharpeningModal({
 
   // Canonical Tile URL
   const currentTileUrlTemplate = useMemo(() => {
-    return buildSharpenedTileUrlTemplate({
+    return getSharpenedTileUrlTemplate({
       method: selectedMethod,
       target: selectedTarget,
+      colormap: selectedColormap
+    });
+  }, [selectedMethod, selectedTarget, selectedColormap]);
+
+  // Sample Level-14 Tile URL for Display
+  const sampleTileUrl = useMemo(() => {
+    return buildSharpenedTileUrl({
+      method: selectedMethod,
+      target: selectedTarget,
+      z: 14,
+      x: 2814,
+      y: 6512,
       colormap: selectedColormap
     });
   }, [selectedMethod, selectedTarget, selectedColormap]);
@@ -419,7 +439,8 @@ export default function SpectralSharpeningModal({
       hpf_kernel: selectedKernelType,
       spatial_gain: spatialDetailGain,
       quality_metrics: liveQuality,
-      tile_url_template: currentTileUrlTemplate
+      tile_url_template: currentTileUrlTemplate,
+      sample_tile_url: sampleTileUrl
     };
     navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
     setCopiedJson(true);
@@ -431,13 +452,19 @@ export default function SpectralSharpeningModal({
     setExecuting(true);
     setSyncNotice(null);
     try {
-      // Dispatch API request to ensure backend parity
-      await requestSpectralSharpening({
-        aoi_name: sceneName,
-        method: selectedMethod,
-        target_bands: selectedTargetBands,
-        spatial_detail_gain: spatialDetailGain
-      }).catch(() => null);
+      // Dispatch API request and evaluation to ensure backend parity
+      await Promise.all([
+        requestSpectralSharpening({
+          aoi_name: sceneName,
+          method: selectedMethod,
+          target_bands: selectedTargetBands,
+          spatial_detail_gain: spatialDetailGain
+        }).catch(() => null),
+        evaluateSharpeningQuality({
+          method: selectedMethod,
+          target_bands: selectedTargetBands
+        }).catch(() => null)
+      ]);
 
       const payload = {
         sceneKey: selectedSceneKey,
@@ -1103,7 +1130,17 @@ export default function SpectralSharpeningModal({
                 ref={mtfContainerRef}
                 className="relative w-full h-[360px] bg-zinc-950 rounded-2xl border border-cyan-500/30 p-6 flex flex-col justify-between overflow-hidden shadow-inner select-none"
               >
-                <svg className="w-full h-full overflow-visible" viewBox="0 0 800 280">
+                <svg
+                  className="w-full h-full overflow-visible"
+                  viewBox="0 0 800 280"
+                  onMouseMove={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const relX = (e.clientX - rect.left) / rect.width;
+                    const freq = Math.max(0, Math.min(0.5, ((relX * 800 - 60) / 700) * 0.5));
+                    setHoverFrequency(freq);
+                  }}
+                  onMouseLeave={() => setHoverFrequency(null)}
+                >
                   {/* Grid Lines */}
                   {[0, 0.25, 0.5, 0.75, 1.0].map((yVal, idx) => {
                     const y = 240 - yVal * 200;
@@ -1204,8 +1241,8 @@ export default function SpectralSharpeningModal({
 
                 {/* Axis Labels */}
                 <div className="flex justify-between text-xs font-mono text-zinc-500 pt-2 border-t border-zinc-900">
-                  <span>Spatial Frequency $f$ (cycles/pixel)</span>
-                  <span>Modulation Transfer Function $H(f) \in [0.0, 1.0]$</span>
+                  <span>Spatial Frequency f (cycles/pixel)</span>
+                  <span>Modulation Transfer Function H(f) in [0.0, 1.0]</span>
                 </div>
               </div>
 
@@ -1433,6 +1470,10 @@ export default function SpectralSharpeningModal({
                     <span className="text-zinc-500 uppercase text-[10px] block">Canonical Tile URL Template</span>
                     <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-cyan-300 break-all text-[11px] select-all">
                       {currentTileUrlTemplate}
+                    </div>
+                    <div className="text-[10px] text-zinc-500 font-mono">
+                      <span>Sample Level-14 Tile: </span>
+                      <span className="text-zinc-400 break-all select-all">{sampleTileUrl}</span>
                     </div>
 
                     <div className="flex items-center gap-2 pt-2">

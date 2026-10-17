@@ -866,7 +866,45 @@ from app.models.schemas import (
     PhenologyMetricsSummary,
     PhenologicalCurvePoint,
     PhenologyAnalysisRequest,
-    PhenologyAnalysisResponse
+    PhenologyAnalysisResponse,
+    SharpeningMethod,
+    SharpeningTargetBand,
+    SharpeningGuidanceBand,
+    SharpeningIndexTarget,
+    HPFKernelType,
+    SharpeningQualityRating,
+    SHARPENING_METHOD_CONFIGS,
+    SHARPENING_BAND_CONFIGS,
+    SYNTHETIC_PAN_WEIGHTS,
+    HPF_KERNELS,
+    SHARPENING_BENCHMARK_SCENES,
+    normalize_sharpening_method,
+    build_sharpened_tile_url,
+    build_sharpened_tile_url_template,
+    HighPassFilterConfig,
+    SharpeningQualitySummary,
+    SpectralSharpeningRequest,
+    SpectralSharpeningResponse,
+    SharpeningTileRequestParams,
+    SharpeningMethodsResponse,
+    SensorCalibrationModel,
+    SensorPlatform,
+    CrossSensorBand,
+    CrossSensorTileMetric,
+    CalibrationQualityRating,
+    SENSOR_CALIBRATION_MODEL_CONFIGS,
+    CROSS_SENSOR_BAND_COEFFICIENTS,
+    CROSS_SENSOR_BENCHMARK_SCENES,
+    normalize_sensor_calibration_model,
+    normalize_cross_sensor_band,
+    build_cross_calibrated_tile_url,
+    build_cross_calibrated_tile_url_template,
+    CrossSensorBandCalibrationResult,
+    CrossSensorCalibrationQualitySummary,
+    CrossSensorCalibrationRequest,
+    CrossSensorCalibrationResponse,
+    CrossSensorTileRequestParams,
+    CrossSensorModelsResponse
 )
 from app.services.indices import index_service
 from app.services.tile_service import tile_service
@@ -875,6 +913,8 @@ from app.services.preprocessing import preprocessing_service
 from app.services.spatial import spatial_service
 from app.services.export_service import export_service
 from app.services.timeseries import timeseries_service
+from app.services.sharpening_service import sharpening_service
+from app.services.calibration_service import calibration_service
 
 logger = logging.getLogger(__name__)
 
@@ -889,6 +929,8 @@ thermal_router = APIRouter(prefix="/thermal", tags=["Thermal Remote Sensing"])
 topography_router = APIRouter(prefix="/topography", tags=["Topography & Elevation"])
 hydrodynamic_router = APIRouter(prefix="/hydrodynamic", tags=["Hydrodynamics & Dam Breach"])
 phenology_router = APIRouter(prefix="/phenology", tags=["Multi-Temporal Phenology & Seasonality"])
+sharpening_router = APIRouter(prefix="/sharpening", tags=["Multi-Band Super-Resolution Sharpening"])
+cross_calibration_router = APIRouter(prefix="/cross-calibration", tags=["Multi-Sensor Cross-Calibration & Harmonization"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -11251,6 +11293,242 @@ def download_export_artifact_endpoint(job_id: str):
             "X-Export-Job-ID": job_id
         }
     )
+
+
+# ==============================================================================
+# CYCLE v2.5.37: MULTI-BAND SUPER-RESOLUTION SHARPENING & GRAM-SCHMIDT SPECTRAL FUSION (TASK T-283)
+# ==============================================================================
+
+@router.get("/sharpening/methods", response_model=SharpeningMethodsResponse)
+@router.get("/sharpening/methods/", response_model=SharpeningMethodsResponse, include_in_schema=False)
+@router.get("/analysis/sharpening/methods", response_model=SharpeningMethodsResponse, include_in_schema=False)
+@sharpening_router.get("/methods", response_model=SharpeningMethodsResponse, include_in_schema=False)
+def get_sharpening_methods_endpoint():
+    """Retrieves available multi-band super-resolution sharpening algorithms, benchmark research scenes, and configuration options."""
+    return sharpening_service.get_capabilities()
+
+
+@router.post("/sharpening/sharpen", response_model=SpectralSharpeningResponse)
+@router.post("/sharpening/sharpen/", response_model=SpectralSharpeningResponse, include_in_schema=False)
+@router.post("/analysis/sharpening/sharpen", response_model=SpectralSharpeningResponse, include_in_schema=False)
+@sharpening_router.post("/sharpen", response_model=SpectralSharpeningResponse, include_in_schema=False)
+def request_spectral_sharpening_endpoint(req: SpectralSharpeningRequest):
+    """Executes multi-band spatial super-resolution and spectral sharpening on Sentinel-2 MSI imagery.
+    Super-resolves 20m RedEdge/SWIR bands to 10m using Gram-Schmidt orthogonalization, Brovey fusion,
+    High-Pass Filter injection, or Bicubic Spline baseline while preserving radiometric fidelity.
+    """
+    return sharpening_service.execute_sharpening_pipeline(req)
+
+
+@router.post("/sharpening/evaluate", response_model=SharpeningQualitySummary)
+@router.post("/sharpening/evaluate/", response_model=SharpeningQualitySummary, include_in_schema=False)
+@router.post("/analysis/sharpening/evaluate", response_model=SharpeningQualitySummary, include_in_schema=False)
+@sharpening_router.post("/evaluate", response_model=SharpeningQualitySummary, include_in_schema=False)
+def evaluate_sharpening_quality_endpoint(req: SpectralSharpeningRequest):
+    """Evaluates quantitative scientific quality metrics (SAM, ERGAS, UIQI/Q4, MTF transfer, and energy conservation)."""
+    return sharpening_service.evaluate_quality_pipeline(req)
+
+
+@tiles_router.get("/sharpened/{method}/{target}/{z}/{x}/{y}.png")
+@router.get("/tiles/sharpened/{method}/{target}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/sharpening/tiles/{method}/{target}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/sharpened/{method}/{target}/{z}/{x}/{y}.png", include_in_schema=False)
+@sharpening_router.get("/tiles/{method}/{target}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_sharpened_tile_endpoint(
+    method: str,
+    target: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    collection: str = Query("sentinel-2-l2a"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multi-band super-resolution sharpened bands and high-resolution derived indices."""
+    png_bytes = tile_service.render_sharpened_tile(
+        method=method,
+        target=target,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-Sharpening-{method}-{target}"
+        }
+    )
+
+
+@tiles_router.get("/sharpened/{z}/{x}/{y}.png")
+@router.get("/tiles/sharpened/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/sharpening/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/sharpened/{z}/{x}/{y}.png", include_in_schema=False)
+@sharpening_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_sharpened_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    method: str = Query("gram_schmidt"),
+    target: str = Query("ndmi"),
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    collection: str = Query("sentinel-2-l2a"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multi-band super-resolution tiles with query parameters."""
+    png_bytes = tile_service.render_sharpened_tile(
+        method=method,
+        target=target,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-Sharpening-{method}-{target}"
+        }
+    )
+
+
+# ==============================================================================
+# CYCLE v2.5.38: MULTI-SENSOR CROSS-CALIBRATION, HARMONIZED SURFACE REFLECTANCE
+# & CROSS-SENSOR DAILY TILES (TASK T-289)
+# ==============================================================================
+
+@router.get("/cross-calibration/models", response_model=CrossSensorModelsResponse)
+@router.get("/cross-calibration/models/", response_model=CrossSensorModelsResponse, include_in_schema=False)
+@router.get("/analysis/cross-calibration/models", response_model=CrossSensorModelsResponse, include_in_schema=False)
+@cross_calibration_router.get("/models", response_model=CrossSensorModelsResponse, include_in_schema=False)
+def get_cross_calibration_models_endpoint():
+    """Retrieves available cross-calibration models, benchmark research targets, and band coefficients."""
+    return calibration_service.get_capabilities()
+
+
+@router.post("/cross-calibration/calibrate", response_model=CrossSensorCalibrationResponse)
+@router.post("/cross-calibration/calibrate/", response_model=CrossSensorCalibrationResponse, include_in_schema=False)
+@router.post("/analysis/cross-calibration/calibrate", response_model=CrossSensorCalibrationResponse, include_in_schema=False)
+@cross_calibration_router.post("/calibrate", response_model=CrossSensorCalibrationResponse, include_in_schema=False)
+def request_cross_calibration_endpoint(req: CrossSensorCalibrationRequest):
+    """Executes multi-sensor radiometric cross-calibration and surface reflectance harmonization.
+
+    Translates Landsat-8/9 OLI and Sentinel-2A/B/C MSI spectral bandpasses using Roy et al. (2016),
+    Chavez DOS, QUAC empirical, RMA orthogonal regression, or cubic polynomial models.
+    """
+    return calibration_service.execute_calibration_pipeline(req)
+
+
+@router.post("/cross-calibration/evaluate", response_model=CrossSensorCalibrationQualitySummary)
+@router.post("/cross-calibration/evaluate/", response_model=CrossSensorCalibrationQualitySummary, include_in_schema=False)
+@router.post("/analysis/cross-calibration/evaluate", response_model=CrossSensorCalibrationQualitySummary, include_in_schema=False)
+@cross_calibration_router.post("/evaluate", response_model=CrossSensorCalibrationQualitySummary, include_in_schema=False)
+def evaluate_cross_calibration_quality_endpoint(req: CrossSensorCalibrationRequest):
+    """Evaluates quantitative scientific quality metrics (residual RMSE, R², mean radiometric bias, and energy conservation)."""
+    return calibration_service.evaluate_quality_pipeline(req)
+
+
+@tiles_router.get("/cross-calibrated/{model}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/cross-calibrated/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/cross-calibration/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/cross-calibrated/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@cross_calibration_router.get("/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_cross_calibrated_tile_endpoint(
+    model: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    source_sensor: Optional[str] = None,
+    target_sensor: Optional[str] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("cross_calibrated"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multi-sensor cross-calibrated surface reflectance and harmonized index rasters."""
+    png_bytes = tile_service.render_cross_calibrated_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        source_sensor=source_sensor,
+        target_sensor=target_sensor,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-CrossCalibration-{model}-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/cross-calibrated/{z}/{x}/{y}.png")
+@router.get("/tiles/cross-calibrated/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/cross-calibration/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/tiles/cross-calibrated/{z}/{x}/{y}.png", include_in_schema=False)
+@cross_calibration_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_cross_calibrated_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    model: str = Query("roy_2016_linear"),
+    metric: str = Query("harmonized_ndvi"),
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+    source_sensor: Optional[str] = None,
+    target_sensor: Optional[str] = None,
+    aoi_name: Optional[str] = None,
+    collection: str = Query("cross_calibrated"),
+    item_id: Optional[str] = None
+):
+    """Dynamic XYZ tile streaming for multi-sensor cross-calibrated tiles with query parameter configuration."""
+    png_bytes = tile_service.render_cross_calibrated_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        source_sensor=source_sensor,
+        target_sensor=target_sensor,
+        aoi_name=aoi_name,
+        collection=collection,
+        item_id=item_id
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-CrossCalibration-{model}-{metric}"
+        }
+    )
+
+
 
 
 

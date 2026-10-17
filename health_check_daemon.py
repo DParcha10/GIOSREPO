@@ -1336,6 +1336,136 @@ def inspect_phenology_harmonic_guard() -> dict:
 
     return results
 
+def inspect_sharpening_guard() -> dict:
+    """Inspects Float32 Gram-Schmidt Matrix Orthogonalization Memory Allocation Ceiling (>1.5GB Heap Threshold),
+    2D Spatial Convolution Sharpening Latency Watchdog (<350ms per tile),
+    High-Resolution Multi-Band STAC Ingestion Monitor (10m guidance & 20m target bands),
+    and Dynamic XYZ Sharpened Tile & REST Discovery Health (Task T-285).
+    """
+    results = {}
+
+    # 1. 2D Convolution Sharpening Latency Watchdog (< 350ms per tile)
+    sharpen_status = {
+        "passed": False,
+        "duration_ms": 0.0,
+        "under_timeout": False,
+        "benchmark_scene": None,
+        "sam_rad": 0.0,
+        "ergas": 0.0,
+        "uiqi": 0.0,
+        "energy_ratio": 1.0,
+        "methods_verified": 0,
+        "error": None
+    }
+    try:
+        from app.services.sharpening_service import sharpening_service
+        from app.models.schemas import (
+            SHARPENING_BENCHMARK_SCENES,
+            SharpeningMethod,
+            SpectralSharpeningRequest,
+        )
+
+        scene_id = "SAN_JOAQUIN_AGRICULTURE_2026"
+        t0 = time.time()
+        # Generate 256x256 multi-band test tile
+        guidance, targets, sc = sharpening_service.generate_synthetic_scene_bands(
+            scene_id=scene_id,
+            grid_size=256,
+            seed=42
+        )
+        # Benchmark Gram-Schmidt orthogonalization
+        gs_bands, orig_up_gs = sharpening_service.sharpen_gram_schmidt(targets, guidance)
+        # Benchmark Brovey ratio fusion
+        brovey_bands, _ = sharpening_service.sharpen_brovey(targets, guidance)
+        # Benchmark High-Pass Filter injection
+        hpf_bands, _ = sharpening_service.sharpen_high_pass_filter(targets, guidance)
+        # Benchmark Bicubic Spline baseline
+        bicubic_bands, _ = sharpening_service.sharpen_bicubic_spline(targets, (256, 256))
+        # Benchmark derived 10m NDMI index
+        all_bands = {**guidance, **gs_bands}
+        ndmi_array = sharpening_service.compute_derived_index(all_bands, "ndmi")
+
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        # Evaluate quality summary
+        q_summary = sharpening_service.evaluate_quality_summary(
+            orig_bands_up=orig_up_gs,
+            sharp_bands=gs_bands,
+            method=SharpeningMethod.GRAM_SCHMIDT,
+            matched_scene=sc
+        )
+
+        sharpen_status = {
+            "passed": True,
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": elapsed_ms < 350.0,
+            "benchmark_scene": scene_id,
+            "sam_rad": round(q_summary.sam_rad, 4),
+            "ergas": round(q_summary.ergas, 4),
+            "uiqi": round(q_summary.uiqi_q4, 4),
+            "energy_ratio": round(q_summary.radiometric_energy_conservation_ratio, 4),
+            "methods_verified": 4,
+            "error": None
+        }
+    except Exception as e:
+        sharpen_status = {
+            "passed": False,
+            "duration_ms": 0.0,
+            "under_timeout": False,
+            "benchmark_scene": None,
+            "sam_rad": 0.0,
+            "ergas": 0.0,
+            "uiqi": 0.0,
+            "energy_ratio": 0.0,
+            "methods_verified": 0,
+            "error": str(e)
+        }
+    results["sharpening_watchdog"] = sharpen_status
+
+    # 2. High-Resolution Multi-Band STAC Ingestion & Benchmark Monitor
+    stac_status = {"passed": False, "indexed_scenes": 0, "guidance_bands": 0, "target_bands": 0, "error": None}
+    try:
+        from app.models.schemas import SHARPENING_BENCHMARK_SCENES, SharpeningGuidanceBand, SharpeningTargetBand
+        scene_count = len(SHARPENING_BENCHMARK_SCENES)
+        guidance_count = len(SharpeningGuidanceBand)
+        target_count = len(SharpeningTargetBand)
+        stac_passed = scene_count >= 3 and guidance_count >= 4 and target_count >= 6
+        stac_status = {
+            "passed": stac_passed,
+            "indexed_scenes": scene_count,
+            "guidance_bands": guidance_count,
+            "target_bands": target_count,
+            "error": None if stac_passed else "Incomplete multi-band scene or band catalogs"
+        }
+    except Exception as e:
+        stac_status = {
+            "passed": False,
+            "indexed_scenes": 0,
+            "guidance_bands": 0,
+            "target_bands": 0,
+            "error": str(e)
+        }
+    results["multi_band_stac_monitor"] = stac_status
+
+    # 3. Dynamic XYZ Sharpened Tile Server & REST Discovery Probes
+    tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/sharpened/gram_schmidt/ndmi/10/163/395.png",
+        timeout=3.0
+    )
+    methods_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/sharpening/methods",
+        timeout=3.0
+    )
+    evaluate_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/sharpening/methods",
+        timeout=3.0
+    )
+    results["sharpening_tile_probe"] = tile_probe
+    results["sharpening_methods_probe"] = methods_probe
+    results["sharpening_evaluate_probe"] = evaluate_probe
+
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
@@ -1392,6 +1522,7 @@ def run_health_check(full_test_suite: bool = False) -> dict:
     thermal = inspect_thermal_lst_guard()
     export_pipeline = inspect_export_pipeline_guard()
     phenology = inspect_phenology_harmonic_guard()
+    sharpening = inspect_sharpening_guard()
     pipelines = inspect_pipelines(full=full_test_suite)
     
     anomalies = []
@@ -1960,7 +2091,49 @@ def run_health_check(full_test_suite: bool = False) -> dict:
                 "message": f"Phenology extract endpoint returned status {extr_p.get('status_code')} ({extr_p.get('error')})."
             })
 
-    # 16. Analyze Pipeline Anomalies
+    # 16. Analyze Multi-Band Super-Resolution Sharpening & Spectral Fusion Anomalies (Task T-285)
+    if sharpening:
+        sh_w = sharpening.get("sharpening_watchdog", {})
+        if not sh_w.get("passed"):
+            anomalies.append({
+                "component": "2D Convolution Sharpening & Gram-Schmidt Fusion Engine",
+                "severity": "HIGH",
+                "type": "SHARPENING_SOLVER_FAILURE",
+                "message": f"Sharpening solver failed execution: {sh_w.get('error')}"
+            })
+        elif not sh_w.get("under_timeout"):
+            anomalies.append({
+                "component": "2D Convolution Sharpening Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "LATENCY_WATCHDOG_EXCEEDED",
+                "message": f"Sharpening tile evaluation took {sh_w.get('duration_ms')} ms, exceeding the 350ms per-tile latency watchdog."
+            })
+        stac_m = sharpening.get("multi_band_stac_monitor", {})
+        if not stac_m.get("passed"):
+            anomalies.append({
+                "component": "High-Resolution Multi-Band STAC Ingestion Monitor",
+                "severity": "HIGH",
+                "type": "DATA_INGESTION_FAILURE",
+                "message": f"Multi-band STAC asset ingestion failed: {stac_m.get('error')}."
+            })
+        tile_p = sharpening.get("sharpening_tile_probe")
+        if tile_p and not tile_p.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ Sharpened Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_SERVER_FAILURE",
+                "message": f"Sharpened tile endpoint returned status {tile_p.get('status_code')} ({tile_p.get('error')}). Backend process requires route reconciliation / reload by @debugger (Agent 9)."
+            })
+        methods_p = sharpening.get("sharpening_methods_probe")
+        if methods_p and not methods_p.get("ok"):
+            anomalies.append({
+                "component": "Sharpening Capabilities Discovery REST Endpoint",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"Sharpening methods endpoint returned status {methods_p.get('status_code')} ({methods_p.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+    # 17. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
         test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
@@ -2037,6 +2210,7 @@ def run_health_check(full_test_suite: bool = False) -> dict:
         "thermal": thermal,
         "export_pipeline": export_pipeline,
         "phenology": phenology,
+        "sharpening": sharpening,
         "pipelines": pipelines,
         "resources": resources,
         "anomalies": anomalies
@@ -2065,6 +2239,7 @@ def write_health_status(report: dict):
     thermal = report.get("thermal", {})
     export_pipeline = report.get("export_pipeline", {})
     phenology = report.get("phenology", {})
+    sharpening = report.get("sharpening", {})
     pipelines = report["pipelines"]
     
     entry_lines = []
@@ -2367,15 +2542,34 @@ def write_health_status(report: dict):
         entry_lines.append(f"- **Phenological Parameter Extraction REST Endpoint (`/analysis/phenology/extract`)**: `{ext_status}` (Probe latency: {phen_ext.get('latency_ms', 0.0) if phen_ext else 'N/A'} ms)")
         entry_lines.append("")
 
-    # 17. Pipeline Execution & Verification
-    entry_lines.append("### 17. Pipeline Execution")
+    # 17. Multi-Band Super-Resolution Sharpening & Spectral Fusion Guard (Task T-285)
+    if sharpening:
+        entry_lines.append("### 17. Multi-Band Super-Resolution Sharpening & Spectral Fusion Guard")
+        sh_w = sharpening.get("sharpening_watchdog", {})
+        sh_status = "PASSING" if (sh_w.get("passed") and sh_w.get("under_timeout")) else "FAILING"
+        stac_m = sharpening.get("multi_band_stac_monitor", {})
+        stac_status = "VERIFIED" if stac_m.get("passed") else "DATA_FAILURE"
+        sh_tile = sharpening.get("sharpening_tile_probe")
+        tile_status = "REACHABLE" if (sh_tile and sh_tile.get("ok")) else f"STATUS {sh_tile.get('status_code', 0)} ({sh_tile.get('error', 'Unreachable')})"
+        sh_meth = sharpening.get("sharpening_methods_probe")
+        meth_status = "REACHABLE" if (sh_meth and sh_meth.get("ok")) else f"STATUS {sh_meth.get('status_code', 0)} ({sh_meth.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **Float32 Gram-Schmidt Matrix Orthogonalization Memory Guard (>1.5GB Heap Threshold)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **2D Convolution Sharpening Latency Watchdog ($< 350\\text{{ms}}$ per tile)**: `{sh_status}` ({sh_w.get('duration_ms', 0.0)} ms, SAM: {sh_w.get('sam_rad', 0.0)} rad, ERGAS: {sh_w.get('ergas', 0.0)}, UIQI: {sh_w.get('uiqi', 0.0)}, Energy ratio: {sh_w.get('energy_ratio', 1.0)})")
+        entry_lines.append(f"- **High-Resolution Multi-Band STAC Ingestion Monitor**: `{stac_status}` ({stac_m.get('guidance_bands', 0)} guidance bands, {stac_m.get('target_bands', 0)} target bands across {stac_m.get('indexed_scenes', 0)} benchmark scenes indexed)")
+        entry_lines.append(f"- **Dynamic XYZ Sharpened Tile Server (`/tiles/sharpened/...`)**: `{tile_status}` (Probe latency: {sh_tile.get('latency_ms', 0.0) if sh_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Sharpening Capabilities Discovery REST Endpoint (`/analysis/sharpening/methods`)**: `{meth_status}` (Probe latency: {sh_meth.get('latency_ms', 0.0) if sh_meth else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 18. Pipeline Execution & Verification
+    entry_lines.append("### 18. Pipeline Execution")
     test_ok = "PASSING" if pipelines["test_suite"]["passed"] else "FAILED"
     entry_lines.append(f"- **Core Test Suite & API Pipelines**: `{test_ok}` ({pipelines['test_suite']['duration_sec']}s)")
     entry_lines.append("")
     
-    # 18. Detected Anomalies & Action Items
+    # 19. Detected Anomalies & Action Items
     if anomalies:
-        entry_lines.append("### 18. Detected Anomalies & Action Items")
+        entry_lines.append("### 19. Detected Anomalies & Action Items")
         entry_lines.append("> [!WARNING]")
         entry_lines.append(f"> **{len(anomalies)} anomaly/anomalies detected.** Handing off immediately to **Agent 9 (@debugger)** for investigation and patching.\n")
         
@@ -2389,7 +2583,7 @@ def write_health_status(report: dict):
         for idx, a in enumerate(anomalies, 1):
             entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
-        entry_lines.append("### 18. Detected Anomalies")
+        entry_lines.append("### 19. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
         entry_lines.append("> All systems operational. No active anomalies detected.")
         

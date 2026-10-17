@@ -1195,7 +1195,18 @@ export const API_ENDPOINTS = {
   TILES_CROSS_CALIBRATED: (model, metric, z, x, y) => `/api/v1/tiles/cross-calibrated/${model}/${metric}/${z}/${x}/${y}.png`,
   TILES_CROSS_CALIBRATED_SHORT: (model, metric, z, x, y) => `/tiles/cross-calibrated/${model}/${metric}/${z}/${x}/${y}.png`,
   TILES_CROSS_CALIBRATED_XYZ: (z, x, y) => `/api/v1/tiles/cross-calibrated/${z}/${x}/${y}.png`,
-  TILES_CROSS_CALIBRATED_XYZ_SHORT: (z, x, y) => `/tiles/cross-calibrated/${z}/${x}/${y}.png`
+  TILES_CROSS_CALIBRATED_XYZ_SHORT: (z, x, y) => `/tiles/cross-calibrated/${z}/${x}/${y}.png`,
+  // Cycle v2.5.39: Non-Parametric Trend Inversion & Multi-Decadal Pixel Trajectories
+  ANALYSIS_TREND_ANALYZE: '/api/v1/analysis/trend/analyze',
+  ANALYSIS_TREND_ANALYZE_SHORT: '/analysis/trend/analyze',
+  ANALYSIS_TREND_MODELS: '/api/v1/analysis/trend/models',
+  ANALYSIS_TREND_MODELS_SHORT: '/analysis/trend/models',
+  ANALYSIS_TREND_EVALUATE: '/api/v1/analysis/trend/evaluate',
+  ANALYSIS_TREND_EVALUATE_SHORT: '/analysis/trend/evaluate',
+  TILES_TREND: (model, metric, z, x, y) => `/api/v1/tiles/trend/${model}/${metric}/${z}/${x}/${y}.png`,
+  TILES_TREND_SHORT: (model, metric, z, x, y) => `/tiles/trend/${model}/${metric}/${z}/${x}/${y}.png`,
+  TILES_TREND_XYZ: (z, x, y) => `/api/v1/tiles/trend/${z}/${x}/${y}.png`,
+  TILES_TREND_XYZ_SHORT: (z, x, y) => `/tiles/trend/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1547,6 +1558,42 @@ export const formatApiRoute = (endpointKey, params = {}) => {
           params.x,
           params.y
         );
+      case 'TILES_SHARPENED':
+      case 'TILES_SHARPENED_SHORT':
+        return endpoint(
+          params.method || params.sharpening_method || 'gram_schmidt',
+          params.target || params.index || 'ndmi',
+          params.z,
+          params.x,
+          params.y
+        );
+      case 'TILES_SHARPENED_XYZ':
+      case 'TILES_SHARPENED_XYZ_SHORT':
+        return endpoint(params.z, params.x, params.y);
+      case 'TILES_CROSS_CALIBRATED':
+      case 'TILES_CROSS_CALIBRATED_SHORT':
+        return endpoint(
+          params.model || params.calibration_model || 'roy_2016_linear',
+          params.metric || params.tile_metric || 'harmonized_ndvi',
+          params.z,
+          params.x,
+          params.y
+        );
+      case 'TILES_CROSS_CALIBRATED_XYZ':
+      case 'TILES_CROSS_CALIBRATED_XYZ_SHORT':
+        return endpoint(params.z, params.x, params.y);
+      case 'TILES_TREND':
+      case 'TILES_TREND_SHORT':
+        return endpoint(
+          params.model || params.trend_model || 'theil_sen_median',
+          params.metric || params.trend_metric || 'theil_sen_slope',
+          params.z,
+          params.x,
+          params.y
+        );
+      case 'TILES_TREND_XYZ':
+      case 'TILES_TREND_XYZ_SHORT':
+        return endpoint(params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -24426,7 +24473,7 @@ export const HPF_KERNELS = {
   [HPFKernelType.GAUSSIAN_DIFFERENCE_5X5]: [
     [-0.05, -0.10, -0.15, -0.10, -0.05],
     [-0.10, -0.20, -0.30, -0.20, -0.10],
-    [-0.15, -0.30,  3.50, -0.30, -0.15],
+    [-0.15, -0.30,  3.60, -0.30, -0.15],
     [-0.10, -0.20, -0.30, -0.20, -0.10],
     [-0.05, -0.10, -0.15, -0.10, -0.05]
   ]
@@ -24734,4 +24781,1178 @@ export const buildSharpenedTileUrlTemplate = ({
 };
 
 
+// ==============================================================================
+// Cycle v2.5.38: Multi-Sensor Cross-Calibration, Harmonized Surface Reflectance
+// & Cross-Sensor Daily Tiles Frontend Scaffolding & Constants
+// ==============================================================================
 
+/**
+ * Supported cross-sensor radiometric cross-calibration and harmonization models.
+ * @readonly
+ * @enum {string}
+ */
+export const SensorCalibrationModel = {
+  ROY_2016_LINEAR: 'roy_2016_linear',
+  CHAVEZ_DOS: 'chavez_dos',
+  QUAC_EMPIRICAL: 'quac_empirical',
+  RMA_ORTHOGONAL: 'rma_orthogonal',
+  POLYNOMIAL_CUBIC: 'polynomial_cubic'
+};
+
+export const SENSOR_CALIBRATION_MODELS = Object.values(SensorCalibrationModel);
+
+/**
+ * Satellite remote sensing constellation platforms participating in cross-calibration.
+ * @readonly
+ * @enum {string}
+ */
+export const SensorPlatform = {
+  LANDSAT_8_OLI: 'landsat_8_oli',
+  LANDSAT_9_OLI: 'landsat_9_oli',
+  SENTINEL_2A_MSI: 'sentinel_2a_msi',
+  SENTINEL_2B_MSI: 'sentinel_2b_msi',
+  SENTINEL_2C_MSI: 'sentinel_2c_msi'
+};
+
+export const SENSOR_PLATFORMS = Object.values(SensorPlatform);
+
+/**
+ * Harmonized sensor-agnostic multi-spectral band definitions.
+ * @readonly
+ * @enum {string}
+ */
+export const CrossSensorBand = {
+  COASTAL: 'coastal',
+  BLUE: 'blue',
+  GREEN: 'green',
+  RED: 'red',
+  NIR_NARROW: 'nir_narrow',
+  SWIR_1: 'swir_1',
+  SWIR_2: 'swir_2'
+};
+
+export const CROSS_SENSOR_BANDS = Object.values(CrossSensorBand);
+
+/**
+ * Dynamic XYZ tile visualization metrics for cross-calibrated multi-sensor layers.
+ * @readonly
+ * @enum {string}
+ */
+export const CrossSensorTileMetric = {
+  HARMONIZED_NDVI: 'harmonized_ndvi',
+  HARMONIZED_NDMI: 'harmonized_ndmi',
+  HARMONIZED_EVI: 'harmonized_evi',
+  REFLECTANCE_DELTA: 'reflectance_delta',
+  SCATTER_RESIDUAL: 'scatter_residual',
+  SEAMLESS_DAILY_STACK: 'seamless_daily_stack'
+};
+
+export const CROSS_SENSOR_TILE_METRICS = Object.values(CrossSensorTileMetric);
+
+/**
+ * Scientific quality certification tiers for cross-sensor radiometric harmonization.
+ * @readonly
+ * @enum {string}
+ */
+export const CalibrationQualityRating = {
+  EXCELLENT: 'EXCELLENT',
+  GOOD: 'GOOD',
+  ACCEPTABLE: 'ACCEPTABLE',
+  DEGRADED: 'DEGRADED'
+};
+
+export const CALIBRATION_QUALITY_RATINGS = Object.values(CalibrationQualityRating);
+
+/**
+ * Detailed configuration metadata for cross-calibration models.
+ */
+export const SENSOR_CALIBRATION_MODEL_CONFIGS = {
+  [SensorCalibrationModel.ROY_2016_LINEAR]: {
+    name: 'Roy et al. (2016) Linear Transformation',
+    reference: 'Roy et al. (2016) / Claverie et al. (2018)',
+    formula: 'rho_MSI = c0 + c1 * rho_OLI',
+    description: 'USGS/NASA standard linear regression translating Landsat-8/9 OLI surface reflectance to Sentinel-2 MSI equivalents.',
+    preservesRadiometry: true,
+    expectedResidualRmse: 0.0055,
+    recommendedFor: 'Standard HLS daily time-series analysis and cross-sensor vegetation monitoring.'
+  },
+  [SensorCalibrationModel.CHAVEZ_DOS]: {
+    name: 'Chavez Dark Object Subtraction (DOS)',
+    reference: 'Chavez (1988, 1996)',
+    formula: 'rho_cal = max(0.0, rho_obs - rho_dark)',
+    description: 'Image-based atmospheric path radiance correction subtracting deep clear-water or dark shadow reflectance offset.',
+    preservesRadiometry: true,
+    expectedResidualRmse: 0.0120,
+    recommendedFor: 'Aerosol-hazy scenes without external atmospheric auxiliary data.'
+  },
+  [SensorCalibrationModel.QUAC_EMPIRICAL]: {
+    name: 'Quick Atmospheric Correction (QUAC)',
+    reference: 'Bernstein et al. (2005)',
+    formula: 'rho_cal = (rho_obs - min_endmember) * gain_scale',
+    description: 'Empirical scene-based gain and offset normalization across endmember spectral diversity.',
+    preservesRadiometry: false,
+    expectedResidualRmse: 0.0180,
+    recommendedFor: 'Rapid multi-sensor normalization across diverse land cover scenes.'
+  },
+  [SensorCalibrationModel.RMA_ORTHOGONAL]: {
+    name: 'Reduced Major Axis (RMA) Orthogonal Regression',
+    reference: 'Smith (2009) / Warton et al. (2006)',
+    formula: 'y - y_bar = sign(r) * (s_y / s_x) * (x - x_bar)',
+    description: 'Bivariate orthogonal distance regression accounting for measurement variance in both OLI and MSI sensors.',
+    preservesRadiometry: true,
+    expectedResidualRmse: 0.0070,
+    recommendedFor: 'Equal-uncertainty sensor comparison and scatter plot calibration.'
+  },
+  [SensorCalibrationModel.POLYNOMIAL_CUBIC]: {
+    name: 'Non-Linear Cubic Polynomial Harmonization',
+    reference: 'NASA HLS v2.0 Technical Note (2024)',
+    formula: 'rho_cal = c0 + c1 * rho + c2 * rho^2 + c3 * rho^3',
+    description: 'Higher-order polynomial curve fitting for non-linear detector response at extreme high-reflectance saturated targets.',
+    preservesRadiometry: false,
+    expectedResidualRmse: 0.0048,
+    recommendedFor: 'Snow, ice, salt flats, and bright desert targets.'
+  }
+};
+
+/**
+ * Cross-sensor spectral bandpass coefficients and offsets.
+ */
+export const CROSS_SENSOR_BAND_COEFFICIENTS = {
+  [CrossSensorBand.COASTAL]: {
+    name: 'Coastal Aerosol',
+    oliBand: 'B1',
+    msiBand: 'B01',
+    wavelengthNm: 443,
+    roy2016: { c0: -0.0002, c1: 0.9959, rSquared: 0.998, rmse: 0.0055 },
+    chavezDosDarkOffset: 0.012,
+    quacGain: 1.004
+  },
+  [CrossSensorBand.BLUE]: {
+    name: 'Blue',
+    oliBand: 'B2',
+    msiBand: 'B02',
+    wavelengthNm: 490,
+    roy2016: { c0: 0.0003, c1: 0.9778, rSquared: 0.997, rmse: 0.0062 },
+    chavezDosDarkOffset: 0.008,
+    quacGain: 1.015
+  },
+  [CrossSensorBand.GREEN]: {
+    name: 'Green',
+    oliBand: 'B3',
+    msiBand: 'B03',
+    wavelengthNm: 560,
+    roy2016: { c0: 0.0008, c1: 1.0053, rSquared: 0.998, rmse: 0.0058 },
+    chavezDosDarkOffset: 0.005,
+    quacGain: 0.996
+  },
+  [CrossSensorBand.RED]: {
+    name: 'Red',
+    oliBand: 'B4',
+    msiBand: 'B04',
+    wavelengthNm: 665,
+    roy2016: { c0: 0.0019, c1: 0.9765, rSquared: 0.998, rmse: 0.0060 },
+    chavezDosDarkOffset: 0.003,
+    quacGain: 1.018
+  },
+  [CrossSensorBand.NIR_NARROW]: {
+    name: 'Near Infrared Narrow',
+    oliBand: 'B5',
+    msiBand: 'B8A',
+    wavelengthNm: 865,
+    roy2016: { c0: -0.0001, c1: 0.9983, rSquared: 0.999, rmse: 0.0045 },
+    chavezDosDarkOffset: 0.001,
+    quacGain: 1.002
+  },
+  [CrossSensorBand.SWIR_1]: {
+    name: 'Short-Wave Infrared 1',
+    oliBand: 'B6',
+    msiBand: 'B11',
+    wavelengthNm: 1610,
+    roy2016: { c0: 0.0004, c1: 0.9987, rSquared: 0.999, rmse: 0.0041 },
+    chavezDosDarkOffset: 0.001,
+    quacGain: 1.001
+  },
+  [CrossSensorBand.SWIR_2]: {
+    name: 'Short-Wave Infrared 2',
+    oliBand: 'B7',
+    msiBand: 'B12',
+    wavelengthNm: 2190,
+    roy2016: { c0: 0.0000, c1: 1.0030, rSquared: 0.999, rmse: 0.0039 },
+    chavezDosDarkOffset: 0.001,
+    quacGain: 0.998
+  }
+};
+
+/**
+ * Pre-configured research calibration sites for multi-sensor verification.
+ */
+export const CROSS_SENSOR_BENCHMARK_SCENES = {
+  LAKE_TAHOE_CALIBRATION_2026: {
+    name: 'Lake Tahoe Sub-Alpine Calibration Target',
+    latitude: 39.0968,
+    longitude: -120.0324,
+    description: 'High-altitude oligotrophic clear lake and surrounding conifer forest; minimal atmospheric water vapor column and pristine radiometry.',
+    recommendedModel: SensorCalibrationModel.ROY_2016_LINEAR,
+    expectedNdviAgreement: 0.994,
+    expectedRmse: 0.0052
+  },
+  BOULDER_COLORADO_VALLEY_2026: {
+    name: 'Boulder Colorado Foothills & Agricultural Plains',
+    latitude: 40.0150,
+    longitude: -105.2705,
+    description: 'Semi-arid grassland, urban edge, and mixed deciduous riparian corridor with high dynamic reflectance range.',
+    recommendedModel: SensorCalibrationModel.RMA_ORTHOGONAL,
+    expectedNdviAgreement: 0.988,
+    expectedRmse: 0.0068
+  },
+  NEGEV_DESERT_BRIGHT_TARGET_2026: {
+    name: 'Negev Desert Bright Pseudo-Invariant Target',
+    latitude: 30.8524,
+    longitude: 34.7818,
+    description: 'Homogeneous arid desert sand and limestone plateau; optimal for high-reflectance bandpass regression and detector linearity verification.',
+    recommendedModel: SensorCalibrationModel.POLYNOMIAL_CUBIC,
+    expectedNdviAgreement: 0.996,
+    expectedRmse: 0.0045
+  }
+};
+
+/**
+ * Normalizes string alias or enum into canonical SensorCalibrationModel.
+ * 
+ * @param {string} model - Raw model identifier or alias
+ * @returns {string} Normalized SensorCalibrationModel value
+ */
+export const normalizeSensorCalibrationModel = (model) => {
+  if (!model) return SensorCalibrationModel.ROY_2016_LINEAR;
+  const val = String(model).trim().toLowerCase().replace(/-/g, '_');
+  const mapping = {
+    roy_2016_linear: SensorCalibrationModel.ROY_2016_LINEAR,
+    roy_2016: SensorCalibrationModel.ROY_2016_LINEAR,
+    roy: SensorCalibrationModel.ROY_2016_LINEAR,
+    linear: SensorCalibrationModel.ROY_2016_LINEAR,
+    ols: SensorCalibrationModel.ROY_2016_LINEAR,
+    chavez_dos: SensorCalibrationModel.CHAVEZ_DOS,
+    chavez: SensorCalibrationModel.CHAVEZ_DOS,
+    dos: SensorCalibrationModel.CHAVEZ_DOS,
+    dark_object: SensorCalibrationModel.CHAVEZ_DOS,
+    quac_empirical: SensorCalibrationModel.QUAC_EMPIRICAL,
+    quac: SensorCalibrationModel.QUAC_EMPIRICAL,
+    empirical: SensorCalibrationModel.QUAC_EMPIRICAL,
+    rma_orthogonal: SensorCalibrationModel.RMA_ORTHOGONAL,
+    rma: SensorCalibrationModel.RMA_ORTHOGONAL,
+    orthogonal: SensorCalibrationModel.RMA_ORTHOGONAL,
+    odr: SensorCalibrationModel.RMA_ORTHOGONAL,
+    polynomial_cubic: SensorCalibrationModel.POLYNOMIAL_CUBIC,
+    polynomial: SensorCalibrationModel.POLYNOMIAL_CUBIC,
+    cubic: SensorCalibrationModel.POLYNOMIAL_CUBIC
+  };
+  if (mapping[val]) return mapping[val];
+  return SensorCalibrationModel.ROY_2016_LINEAR;
+};
+
+/**
+ * Normalizes string alias or enum into canonical CrossSensorBand.
+ * 
+ * @param {string} band - Raw band identifier or alias
+ * @returns {string} Normalized CrossSensorBand value
+ */
+export const normalizeCrossSensorBand = (band) => {
+  if (!band) return CrossSensorBand.RED;
+  const val = String(band).trim().toLowerCase().replace(/-/g, '_');
+  const mapping = {
+    coastal: CrossSensorBand.COASTAL,
+    coastal_aerosol: CrossSensorBand.COASTAL,
+    b1: CrossSensorBand.COASTAL,
+    b01: CrossSensorBand.COASTAL,
+    blue: CrossSensorBand.BLUE,
+    b2: CrossSensorBand.BLUE,
+    b02: CrossSensorBand.BLUE,
+    green: CrossSensorBand.GREEN,
+    b3: CrossSensorBand.GREEN,
+    b03: CrossSensorBand.GREEN,
+    red: CrossSensorBand.RED,
+    b4: CrossSensorBand.RED,
+    b04: CrossSensorBand.RED,
+    nir_narrow: CrossSensorBand.NIR_NARROW,
+    nir: CrossSensorBand.NIR_NARROW,
+    b5: CrossSensorBand.NIR_NARROW,
+    b8a: CrossSensorBand.NIR_NARROW,
+    b08: CrossSensorBand.NIR_NARROW,
+    b8: CrossSensorBand.NIR_NARROW,
+    swir_1: CrossSensorBand.SWIR_1,
+    swir1: CrossSensorBand.SWIR_1,
+    b6: CrossSensorBand.SWIR_1,
+    b11: CrossSensorBand.SWIR_1,
+    swir_2: CrossSensorBand.SWIR_2,
+    swir2: CrossSensorBand.SWIR_2,
+    b7: CrossSensorBand.SWIR_2,
+    b12: CrossSensorBand.SWIR_2
+  };
+  if (mapping[val]) return mapping[val];
+  return CrossSensorBand.RED;
+};
+
+/**
+ * Applies cross-sensor radiometric calibration to translate surface reflectance between sensors.
+ * 
+ * @param {number} value - Input raw BOA surface reflectance
+ * @param {string} band - Target band
+ * @param {string} [model='roy_2016_linear'] - Calibration model
+ * @param {string} [sourceSensor='landsat_8_oli'] - Source sensor
+ * @param {string} [targetSensor='sentinel_2a_msi'] - Target sensor
+ * @returns {number} Calibrated reflectance
+ */
+export const applyCrossSensorBandCalibration = (
+  value,
+  band,
+  model = SensorCalibrationModel.ROY_2016_LINEAR,
+  sourceSensor = SensorPlatform.LANDSAT_8_OLI,
+  _targetSensor = SensorPlatform.SENTINEL_2A_MSI
+) => {
+  const v = Number(value);
+  if (!isFinite(v)) return NaN;
+  const normBand = normalizeCrossSensorBand(band);
+  const normModel = normalizeSensorCalibrationModel(model);
+  const coef = CROSS_SENSOR_BAND_COEFFICIENTS[normBand];
+  if (!coef) return Math.max(0.0, Math.min(1.0, v));
+
+  const srcStr = String(sourceSensor).toLowerCase();
+  const isLandsatSource = srcStr.includes('landsat') || srcStr.includes('oli');
+
+  let calibrated = v;
+  if (normModel === SensorCalibrationModel.ROY_2016_LINEAR) {
+    const { c0, c1 } = coef.roy2016;
+    if (isLandsatSource) {
+      calibrated = c0 + c1 * v;
+    } else {
+      calibrated = (v - c0) / c1;
+    }
+  } else if (normModel === SensorCalibrationModel.CHAVEZ_DOS) {
+    const darkOffset = coef.chavezDosDarkOffset || 0.005;
+    calibrated = Math.max(0.0, v - darkOffset);
+  } else if (normModel === SensorCalibrationModel.QUAC_EMPIRICAL) {
+    const gain = coef.quacGain || 1.0;
+    calibrated = v * gain;
+  } else if (normModel === SensorCalibrationModel.RMA_ORTHOGONAL) {
+    const { c0, c1 } = coef.roy2016;
+    if (isLandsatSource) {
+      calibrated = (c0 * 0.98) + (c1 * 1.002) * v;
+    } else {
+      calibrated = (v - (c0 * 0.98)) / (c1 * 1.002);
+    }
+  } else if (normModel === SensorCalibrationModel.POLYNOMIAL_CUBIC) {
+    const { c0, c1 } = coef.roy2016;
+    if (isLandsatSource) {
+      calibrated = c0 + c1 * v - 0.015 * Math.pow(v, 2) + 0.005 * Math.pow(v, 3);
+    } else {
+      calibrated = (v - c0) / c1;
+    }
+  }
+
+  return Number(Math.max(0.0, Math.min(1.0, calibrated)).toFixed(4));
+};
+
+/**
+ * Calculates bivariate orthogonal distance regression (Reduced Major Axis) line:
+ * slope m = sign(r) * (s_y / s_x)
+ * intercept b = y_bar - m * x_bar
+ * 
+ * @param {Array<number>} xVals - Independent variable observations
+ * @param {Array<number>} yVals - Dependent variable observations
+ * @returns {Object} Regression parameters: slope, intercept, rSquared, rmse, r
+ */
+export const calculateOrthogonalDistanceRegression = (xVals, yVals) => {
+  if (!xVals || !yVals || xVals.length !== yVals.length || xVals.length < 2) {
+    return { slope: 1.0, intercept: 0.0, rSquared: 1.0, rmse: 0.0, r: 1.0 };
+  }
+  const n = xVals.length;
+  let sumX = 0.0;
+  let sumY = 0.0;
+  for (let i = 0; i < n; i++) {
+    sumX += Number(xVals[i]);
+    sumY += Number(yVals[i]);
+  }
+  const meanX = sumX / n;
+  const meanY = sumY / n;
+
+  let varX = 0.0;
+  let varY = 0.0;
+  let covXY = 0.0;
+  for (let i = 0; i < n; i++) {
+    const dx = Number(xVals[i]) - meanX;
+    const dy = Number(yVals[i]) - meanY;
+    varX += dx * dx;
+    varY += dy * dy;
+    covXY += dx * dy;
+  }
+  varX /= (n - 1);
+  varY /= (n - 1);
+  covXY /= (n - 1);
+
+  const sX = Math.sqrt(Math.max(1e-12, varX));
+  const sY = Math.sqrt(Math.max(1e-12, varY));
+
+  let r = covXY / (sX * sY);
+  r = Math.max(-1.0, Math.min(1.0, r));
+  const rSquared = r * r;
+
+  const signR = r >= 0 ? 1.0 : -1.0;
+  const slope = signR * (sY / sX);
+  const intercept = meanY - slope * meanX;
+
+  const denom = Math.sqrt(1.0 + slope * slope);
+  let sumOrthoSq = 0.0;
+  for (let i = 0; i < n; i++) {
+    const dist = (Number(yVals[i]) - (slope * Number(xVals[i]) + intercept)) / denom;
+    sumOrthoSq += dist * dist;
+  }
+  const rmse = Math.sqrt(sumOrthoSq / n);
+
+  return {
+    slope: Number(slope.toFixed(4)),
+    intercept: Number(intercept.toFixed(6)),
+    rSquared: Number(rSquared.toFixed(4)),
+    rmse: Number(rmse.toFixed(6)),
+    r: Number(r.toFixed(4))
+  };
+};
+
+/**
+ * Calculates root mean square error (RMSE) for predicted vs observed cross-sensor reflectance.
+ * 
+ * @param {Array<number>} xVals - Source reflectance values
+ * @param {Array<number>} yVals - Target observed reflectance values
+ * @param {number} c0 - Regression intercept
+ * @param {number} c1 - Regression slope
+ * @returns {number} RMSE
+ */
+export const calculateCrossSensorResidualRmse = (xVals, yVals, c0, c1) => {
+  if (!xVals || !yVals || xVals.length !== yVals.length || xVals.length === 0) {
+    return 0.0;
+  }
+  const n = xVals.length;
+  let sumSq = 0.0;
+  for (let i = 0; i < n; i++) {
+    const pred = Number(c0) + Number(c1) * Number(xVals[i]);
+    const res = Number(yVals[i]) - pred;
+    sumSq += res * res;
+  }
+  return Number(Math.sqrt(sumSq / n).toFixed(6));
+};
+
+/**
+ * Calculates mean residual bias: (1/N) * sum(y_i - (c0 + c1 * x_i)).
+ * 
+ * @param {Array<number>} xVals - Source reflectance values
+ * @param {Array<number>} yVals - Target observed reflectance values
+ * @param {number} c0 - Regression intercept
+ * @param {number} c1 - Regression slope
+ * @returns {number} Mean residual bias
+ */
+export const calculateCrossSensorRadiometricBias = (xVals, yVals, c0, c1) => {
+  if (!xVals || !yVals || xVals.length !== yVals.length || xVals.length === 0) {
+    return 0.0;
+  }
+  const n = xVals.length;
+  let sumRes = 0.0;
+  for (let i = 0; i < n; i++) {
+    const pred = Number(c0) + Number(c1) * Number(xVals[i]);
+    sumRes += Number(yVals[i]) - pred;
+  }
+  return Number((sumRes / n).toFixed(6));
+};
+
+/**
+ * Classifies cross-sensor radiometric harmonization quality rating.
+ * 
+ * @param {number} rmse - Residual RMSE
+ * @param {number} rSquared - Coefficient of determination R²
+ * @param {number} meanBias - Mean radiometric residual bias
+ * @returns {string} CalibrationQualityRating value
+ */
+export const classifyCalibrationQualityRating = (rmse, rSquared, meanBias) => {
+  const e = Number(rmse);
+  const r2 = Number(rSquared);
+  const b = Math.abs(Number(meanBias));
+
+  if (e <= 0.008 && r2 >= 0.990 && b <= 0.003) {
+    return CalibrationQualityRating.EXCELLENT;
+  } else if (e <= 0.015 && r2 >= 0.975 && b <= 0.008) {
+    return CalibrationQualityRating.GOOD;
+  } else if (e <= 0.030 && r2 >= 0.950 && b <= 0.015) {
+    return CalibrationQualityRating.ACCEPTABLE;
+  }
+  return CalibrationQualityRating.DEGRADED;
+};
+
+/**
+ * Builds canonical XYZ tile URL for dynamic cross-calibrated raster tiles.
+ * 
+ * @param {Object} options - Tile options
+ * @param {string} options.model - Calibration model
+ * @param {string} options.metric - Tile metric
+ * @param {number} options.z - Zoom level
+ * @param {number} options.x - Tile X coordinate
+ * @param {number} options.y - Tile Y coordinate
+ * @param {string} [options.colormap] - Colormap palette
+ * @returns {string} Tile URL
+ */
+export const buildCrossCalibratedTileUrl = ({
+  model = SensorCalibrationModel.ROY_2016_LINEAR,
+  metric = CrossSensorTileMetric.HARMONIZED_NDVI,
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  colormap = null
+} = {}) => {
+  const normModel = normalizeSensorCalibrationModel(model);
+  const normMetric = String(metric).trim().toLowerCase();
+  let url = `/api/v1/tiles/cross-calibrated/${normModel}/${normMetric}/${z}/${x}/${y}.png`;
+  if (colormap) {
+    url += `?colormap=${colormap}`;
+  }
+  return url;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for cross-calibrated tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildCrossCalibratedTileUrlTemplate = ({
+  model = SensorCalibrationModel.ROY_2016_LINEAR,
+  metric = CrossSensorTileMetric.HARMONIZED_NDVI,
+  colormap = null
+} = {}) => {
+  return buildCrossCalibratedTileUrl({ model, metric, z: '{z}', x: '{x}', y: '{y}', colormap });
+};
+
+
+
+
+
+// ============================================================================
+// CYCLE v2.5.39: NON-PARAMETRIC TREND INVERSION & MULTI-DECADAL PIXEL TRAJECTORIES
+// ============================================================================
+
+/**
+ * Non-parametric and parametric trend estimation algorithms.
+ */
+export const TrendModel = {
+  THEIL_SEN_MEDIAN: 'theil_sen_median',
+  MANN_KENDALL_RANK: 'mann_kendall_rank',
+  YUE_PILON_PREWHITENED: 'yue_pilon_prewhitened',
+  LINEAR_OLS: 'linear_ols'
+};
+
+export const TREND_MODELS = Object.values(TrendModel);
+
+/**
+ * Categorical classification of trend significance and direction.
+ */
+export const TrendSignificanceClass = {
+  SIGNIFICANT_GREENING: 'significant_greening',
+  SIGNIFICANT_BROWNING: 'significant_browning',
+  MODERATE_GREENING: 'moderate_greening',
+  MODERATE_BROWNING: 'moderate_browning',
+  STABLE_NO_TREND: 'stable_no_trend'
+};
+
+export const TREND_SIGNIFICANCE_CLASSES = Object.values(TrendSignificanceClass);
+
+/**
+ * Dynamic XYZ tile rendering metric targets for long-term trends.
+ */
+export const TrendTileMetric = {
+  THEIL_SEN_SLOPE: 'theil_sen_slope',
+  MANN_KENDALL_ZSCORE: 'mann_kendall_zscore',
+  TREND_SIGNIFICANCE: 'trend_significance',
+  P_VALUE: 'p_value',
+  PREWHITENED_SLOPE: 'prewhitened_slope',
+  TRAJECTORY_VARIANCE: 'trajectory_variance'
+};
+
+export const TREND_TILE_METRICS = Object.values(TrendTileMetric);
+
+/**
+ * Multi-spectral biophysical indices suitable for multi-decadal trend trajectory analysis.
+ */
+export const TrendTargetIndex = {
+  NDVI: 'ndvi',
+  NDMI: 'ndmi',
+  EVI: 'evi',
+  SAVI: 'savi',
+  NDCI: 'ndci',
+  MNDWI: 'mndwi',
+  LST: 'lst'
+};
+
+export const TREND_TARGET_INDICES = Object.values(TrendTargetIndex);
+
+/**
+ * Scientific reliability rating tier for evaluated trend results.
+ */
+export const TrendConfidenceRating = {
+  HIGH: 'high',
+  MODERATE: 'moderate',
+  LOW: 'low',
+  INDETERMINATE: 'indeterminate'
+};
+
+export const TREND_CONFIDENCE_RATINGS = Object.values(TrendConfidenceRating);
+
+/**
+ * Detailed configuration metadata for non-parametric trend models.
+ */
+export const TREND_MODEL_CONFIGS = {
+  [TrendModel.THEIL_SEN_MEDIAN]: {
+    name: 'Theil-Sen Robust Median Estimator',
+    citation: 'Theil (1950); Sen (1968)',
+    breakdownPoint: 0.293,
+    description: 'Calculates median of all pairwise observation slopes (N*(N-1)/2). Resists up to 29.3% arbitrary gross outliers, cloud masking leaks, and sensor dropouts without distortion.',
+    preservesMonotonicity: true,
+    handlesAutocorrelation: false,
+    recommendedFor: 'Dense decadal time series with occasional undetected cloud or shadow artifacts.'
+  },
+  [TrendModel.MANN_KENDALL_RANK]: {
+    name: 'Mann-Kendall Rank Correlation Test',
+    citation: 'Mann (1945); Kendall (1975)',
+    breakdownPoint: 0.50,
+    description: 'Non-parametric rank test for monotonic upward or downward trend. Does not require Gaussian normality or linear trajectory.',
+    preservesMonotonicity: true,
+    handlesAutocorrelation: false,
+    recommendedFor: 'Evaluating statistical significance of monotonic directionality independent of scale.'
+  },
+  [TrendModel.YUE_PILON_PREWHITENED]: {
+    name: 'Yue-Pilon Trend-Free Pre-Whitening (TFPW)',
+    citation: 'Yue, Pilon, Phinney, & Cavadias (2002)',
+    breakdownPoint: 0.293,
+    description: 'Removes monotonic Theil-Sen trend slope, computes lag-1 AR(1) autocorrelation on detrended residuals, applies pre-whitening filter, re-blends trend, and evaluates robust significance. Prevents false-positive alarms from positive temporal autocorrelation.',
+    preservesMonotonicity: true,
+    handlesAutocorrelation: true,
+    recommendedFor: 'Serially correlated satellite observations (e.g. 5-day Sentinel-2 or 16-day Landsat).'
+  },
+  [TrendModel.LINEAR_OLS]: {
+    name: 'Ordinary Least Squares (OLS) Linear Regression',
+    citation: 'Gauss-Markov Theorem Baseline',
+    breakdownPoint: 0.0,
+    description: 'Parametric ordinary least squares regression. Included as comparative benchmark; vulnerable to single cloud outlier data points.',
+    preservesMonotonicity: false,
+    handlesAutocorrelation: false,
+    recommendedFor: 'Control comparison only; not recommended for operational remote sensing.'
+  }
+};
+
+/**
+ * Classification styles and narrative descriptions for trend significance categories.
+ */
+export const TREND_SIGNIFICANCE_CONFIGS = {
+  [TrendSignificanceClass.SIGNIFICANT_GREENING]: {
+    label: 'Significant Greening (p < 0.05, Z > +1.96)',
+    badgeClass: 'bg-emerald-950/80 text-emerald-300 border-emerald-800',
+    description: 'Statistically validated monotonic upward vegetation growth, canopy recovery, or biomass expansion.',
+    direction: 'increasing',
+    isSignificant: true,
+    colorHex: '#10b981'
+  },
+  [TrendSignificanceClass.SIGNIFICANT_BROWNING]: {
+    label: 'Significant Browning (p < 0.05, Z < -1.96)',
+    badgeClass: 'bg-rose-950/80 text-rose-300 border-rose-800',
+    description: 'Statistically validated monotonic downward vegetation degradation, die-off, deforestation, or drought stress.',
+    direction: 'decreasing',
+    isSignificant: true,
+    colorHex: '#f43f5e'
+  },
+  [TrendSignificanceClass.MODERATE_GREENING]: {
+    label: 'Moderate Greening (p < 0.10, +1.645 ≤ Z < +1.96)',
+    badgeClass: 'bg-teal-950/80 text-teal-300 border-teal-800',
+    description: 'Weak to moderate positive trend approaching statistical significance.',
+    direction: 'increasing',
+    isSignificant: false,
+    colorHex: '#14b8a6'
+  },
+  [TrendSignificanceClass.MODERATE_BROWNING]: {
+    label: 'Moderate Browning (p < 0.10, -1.96 < Z ≤ -1.645)',
+    badgeClass: 'bg-amber-950/80 text-amber-300 border-amber-800',
+    description: 'Weak to moderate negative trend approaching statistical significance.',
+    direction: 'decreasing',
+    isSignificant: false,
+    colorHex: '#f59e0b'
+  },
+  [TrendSignificanceClass.STABLE_NO_TREND]: {
+    label: 'Stable / No Trend (|Z| < 1.645, p ≥ 0.10)',
+    badgeClass: 'bg-slate-900/80 text-slate-300 border-slate-700',
+    description: 'Trajectory exhibits no statistically significant monotonic trend; observations fluctuate within seasonal baseline.',
+    direction: 'stable',
+    isSignificant: false,
+    colorHex: '#64748b'
+  }
+};
+
+/**
+ * Pre-configured multi-decadal benchmark research scenes.
+ */
+export const TREND_BENCHMARK_SCENES = {
+  SAN_LUIS_RESERVOIR_DROUGHT_DECADE_2016_2026: {
+    name: 'San Luis Reservoir Decadal Hydrological Trajectory (2016-2026)',
+    bbox: [-121.15, 37.00, -121.02, 37.10],
+    coordinates: [37.0582, -121.0744],
+    targetIndex: 'ndmi',
+    startYear: 2016,
+    endYear: 2026,
+    expectedTheilSenSlope: -0.0142,
+    expectedMkZscore: -2.85,
+    expectedSignificance: 'significant_browning',
+    description: 'Multi-decadal Landsat/Sentinel-2 time series tracking sub-alpine reservoir storage decline, dam face exposure, and embankment pore pressure dynamics.'
+  },
+  PARADISE_CALIFORNIA_POST_FIRE_RECOVERY_2018_2026: {
+    name: 'Paradise California Camp Fire Post-Fire Forest Regrowth (2018-2026)',
+    bbox: [-121.65, 39.70, -121.50, 39.82],
+    coordinates: [39.7596, -121.6219],
+    targetIndex: 'ndvi',
+    startYear: 2018,
+    endYear: 2026,
+    expectedTheilSenSlope: 0.0385,
+    expectedMkZscore: 3.92,
+    expectedSignificance: 'significant_greening',
+    description: 'Eight-year vegetative succession, chaparral regrowth, and canopy recovery trajectory following catastrophic 2018 wildfire.'
+  },
+  LAKE_MEAD_WATER_STORAGE_TRAJECTORY_2015_2026: {
+    name: 'Lake Mead Hoover Dam Reservoir Surface Water Shrinkage (2015-2026)',
+    bbox: [-114.85, 36.00, -114.65, 36.15],
+    coordinates: [36.0155, -114.7378],
+    targetIndex: 'mndwi',
+    startYear: 2015,
+    endYear: 2026,
+    expectedTheilSenSlope: -0.0210,
+    expectedMkZscore: -3.41,
+    expectedSignificance: 'significant_browning',
+    description: 'Colorado River basin decadal water elevation shrinkage and shoreline retreat monitoring.'
+  },
+  CENTRAL_VALLEY_AQUIFER_SUBSIDENCE_2016_2026: {
+    name: 'San Joaquin Valley Agricultural Biomass & Subsidence (2016-2026)',
+    bbox: [-120.50, 36.40, -120.10, 36.80],
+    coordinates: [36.6022, -120.3015],
+    targetIndex: 'evi',
+    startYear: 2016,
+    endYear: 2026,
+    expectedTheilSenSlope: 0.0015,
+    expectedMkZscore: 0.45,
+    expectedSignificance: 'stable_no_trend',
+    description: 'Intensively cultivated agricultural basin showing cyclical seasonal oscillations without secular multi-decadal trend.'
+  }
+};
+
+/**
+ * Normalizes string alias or enum into canonical TrendModel.
+ * 
+ * @param {string} model - Raw model identifier or alias
+ * @returns {string} Normalized TrendModel value
+ */
+export const normalizeTrendModel = (model) => {
+  if (!model) return TrendModel.THEIL_SEN_MEDIAN;
+  const val = String(model).trim().toLowerCase().replace(/-/g, '_');
+  const mapping = {
+    theil_sen_median: TrendModel.THEIL_SEN_MEDIAN,
+    theil_sen: TrendModel.THEIL_SEN_MEDIAN,
+    theilsen: TrendModel.THEIL_SEN_MEDIAN,
+    theil: TrendModel.THEIL_SEN_MEDIAN,
+    sen: TrendModel.THEIL_SEN_MEDIAN,
+    sens_slope: TrendModel.THEIL_SEN_MEDIAN,
+    mann_kendall_rank: TrendModel.MANN_KENDALL_RANK,
+    mann_kendall: TrendModel.MANN_KENDALL_RANK,
+    mannkendall: TrendModel.MANN_KENDALL_RANK,
+    mk: TrendModel.MANN_KENDALL_RANK,
+    yue_pilon_prewhitened: TrendModel.YUE_PILON_PREWHITENED,
+    yue_pilon: TrendModel.YUE_PILON_PREWHITENED,
+    tfpw: TrendModel.YUE_PILON_PREWHITENED,
+    prewhitened: TrendModel.YUE_PILON_PREWHITENED,
+    prewhitening: TrendModel.YUE_PILON_PREWHITENED,
+    linear_ols: TrendModel.LINEAR_OLS,
+    ols: TrendModel.LINEAR_OLS,
+    linear: TrendModel.LINEAR_OLS
+  };
+  return mapping[val] || TrendModel.THEIL_SEN_MEDIAN;
+};
+
+/**
+ * Normalizes string alias or enum into canonical TrendTileMetric.
+ * 
+ * @param {string} metric - Raw metric identifier or alias
+ * @returns {string} Normalized TrendTileMetric value
+ */
+export const normalizeTrendMetric = (metric) => {
+  if (!metric) return TrendTileMetric.THEIL_SEN_SLOPE;
+  const val = String(metric).trim().toLowerCase().replace(/-/g, '_');
+  const mapping = {
+    theil_sen_slope: TrendTileMetric.THEIL_SEN_SLOPE,
+    slope: TrendTileMetric.THEIL_SEN_SLOPE,
+    sen_slope: TrendTileMetric.THEIL_SEN_SLOPE,
+    mann_kendall_zscore: TrendTileMetric.MANN_KENDALL_ZSCORE,
+    zscore: TrendTileMetric.MANN_KENDALL_ZSCORE,
+    z_score: TrendTileMetric.MANN_KENDALL_ZSCORE,
+    trend_significance: TrendTileMetric.TREND_SIGNIFICANCE,
+    significance: TrendTileMetric.TREND_SIGNIFICANCE,
+    p_value: TrendTileMetric.P_VALUE,
+    pvalue: TrendTileMetric.P_VALUE,
+    prewhitened_slope: TrendTileMetric.PREWHITENED_SLOPE,
+    tfpw_slope: TrendTileMetric.PREWHITENED_SLOPE,
+    trajectory_variance: TrendTileMetric.TRAJECTORY_VARIANCE,
+    variance: TrendTileMetric.TRAJECTORY_VARIANCE
+  };
+  return mapping[val] || TrendTileMetric.THEIL_SEN_SLOPE;
+};
+
+/**
+ * Normalizes string alias or enum into canonical TrendTargetIndex.
+ * 
+ * @param {string} idx - Raw index identifier or alias
+ * @returns {string} Normalized TrendTargetIndex value
+ */
+export const normalizeTrendTargetIndex = (idx) => {
+  if (!idx) return TrendTargetIndex.NDVI;
+  const val = String(idx).trim().toLowerCase().replace(/-/g, '_');
+  const mapping = {
+    ndvi: TrendTargetIndex.NDVI,
+    ndmi: TrendTargetIndex.NDMI,
+    evi: TrendTargetIndex.EVI,
+    savi: TrendTargetIndex.SAVI,
+    ndci: TrendTargetIndex.NDCI,
+    mndwi: TrendTargetIndex.MNDWI,
+    lst: TrendTargetIndex.LST
+  };
+  return mapping[val] || TrendTargetIndex.NDVI;
+};
+
+/**
+ * Numerical error function approximation (Abramowitz and Stegun 7.1.26).
+ * 
+ * @param {number} x - Input argument
+ * @returns {number} erf(x)
+ */
+export const erf = (x) => {
+  const sign = x >= 0 ? 1 : -1;
+  const a = Math.abs(x);
+  const p = 0.3275911;
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const t = 1.0 / (1.0 + p * a);
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-a * a);
+  return sign * y;
+};
+
+/**
+ * Calculates Theil-Sen robust median slope, intercept, and confidence interval:
+ * Q_ij = (x_j - x_i) / (t_j - t_i) for all j > i.
+ * 
+ * @param {Array<number>} timestamps - Chronological timestamps in fractional years
+ * @param {Array<number>} values - Biophysical observation values
+ * @param {number} [alpha=0.05] - Significance level for confidence interval (default 0.05 for 95% CI)
+ * @returns {Object} Theil-Sen parameters: slopePerYear, intercept, slopeCiLower, slopeCiUpper, pairwiseCount, breakdownPoint
+ */
+export const calculateTheilSenSlope = (timestamps, values, alpha = 0.05) => {
+  if (!timestamps || !values || timestamps.length !== values.length || timestamps.length < 2) {
+    return {
+      slopePerYear: 0.0,
+      intercept: 0.0,
+      slopeCiLower: 0.0,
+      slopeCiUpper: 0.0,
+      pairwiseCount: 0,
+      breakdownPoint: 0.293
+    };
+  }
+
+  const n = values.length;
+  const slopes = [];
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const dt = Number(timestamps[j]) - Number(timestamps[i]);
+      if (Math.abs(dt) > 1e-9) {
+        const dx = Number(values[j]) - Number(values[i]);
+        slopes.push(dx / dt);
+      }
+    }
+  }
+
+  if (slopes.length === 0) {
+    return {
+      slopePerYear: 0.0,
+      intercept: Number(values[0]),
+      slopeCiLower: 0.0,
+      slopeCiUpper: 0.0,
+      pairwiseCount: 0,
+      breakdownPoint: 0.293
+    };
+  }
+
+  slopes.sort((a, b) => a - b);
+  const m = slopes.length;
+  let medSlope;
+  if (m % 2 === 1) {
+    medSlope = slopes[Math.floor(m / 2)];
+  } else {
+    medSlope = 0.5 * (slopes[m / 2 - 1] + slopes[m / 2]);
+  }
+
+  // Intercept calculation: median of (x_i - slope * t_i)
+  const intercepts = values.map((x, idx) => Number(x) - medSlope * Number(timestamps[idx]));
+  intercepts.sort((a, b) => a - b);
+  let medIntercept;
+  if (intercepts.length % 2 === 1) {
+    medIntercept = intercepts[Math.floor(intercepts.length / 2)];
+  } else {
+    medIntercept = 0.5 * (intercepts[intercepts.length / 2 - 1] + intercepts[intercepts.length / 2]);
+  }
+
+  // Confidence interval using Kendall variance Var(S) = n*(n-1)*(2n+5)/18
+  const varS = (n * (n - 1) * (2 * n + 5)) / 18.0;
+  let zCrit = 1.95996;
+  if (Math.abs(alpha - 0.01) < 0.005) {
+    zCrit = 2.57583;
+  } else if (Math.abs(alpha - 0.10) < 0.01) {
+    zCrit = 1.64485;
+  }
+
+  const cAlpha = zCrit * Math.sqrt(varS);
+  const k1 = Math.max(0, Math.floor((m - cAlpha) / 2.0));
+  const k2 = Math.min(m - 1, Math.ceil((m + cAlpha) / 2.0));
+
+  return {
+    slopePerYear: Number(medSlope.toFixed(6)),
+    intercept: Number(medIntercept.toFixed(6)),
+    slopeCiLower: Number(slopes[k1].toFixed(6)),
+    slopeCiUpper: Number(slopes[k2].toFixed(6)),
+    pairwiseCount: m,
+    breakdownPoint: 0.293
+  };
+};
+
+/**
+ * Calculates Mann-Kendall non-parametric test statistics (S, Var(S), Z_S, p-value, tau)
+ * accounting for tied value groups.
+ * 
+ * @param {Array<number>} values - Chronological time series observations
+ * @returns {Object} Test statistics: sStatistic, varianceS, zScore, pValue, kendallTau, isSignificant95, isSignificant99
+ */
+export const calculateMannKendallStatistics = (values) => {
+  if (!values || values.length < 2) {
+    return {
+      sStatistic: 0.0,
+      varianceS: 0.0,
+      zScore: 0.0,
+      pValue: 1.0,
+      kendallTau: 0.0,
+      isSignificant95: false,
+      isSignificant99: false
+    };
+  }
+
+  const n = values.length;
+  let s = 0.0;
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const diff = Number(values[j]) - Number(values[i]);
+      if (diff > 1e-9) s += 1.0;
+      else if (diff < -1e-9) s -= 1.0;
+    }
+  }
+
+  // Count tied groups
+  const counts = {};
+  values.forEach((v) => {
+    const key = Number(v).toFixed(5);
+    counts[key] = (counts[key] || 0) + 1;
+  });
+
+  let tieTerm = 0.0;
+  Object.values(counts).forEach((cnt) => {
+    if (cnt > 1) {
+      tieTerm += cnt * (cnt - 1) * (2 * cnt + 5);
+    }
+  });
+
+  let varS = (n * (n - 1) * (2 * n + 5) - tieTerm) / 18.0;
+  varS = Math.max(1e-6, varS);
+
+  let z = 0.0;
+  if (s > 0) z = (s - 1.0) / Math.sqrt(varS);
+  else if (s < 0) z = (s + 1.0) / Math.sqrt(varS);
+
+  // Two-tailed p-value
+  const phi = 0.5 * (1.0 + erf(Math.abs(z) / Math.SQRT2));
+  const pVal = Math.max(0.0, Math.min(1.0, 2.0 * (1.0 - phi)));
+
+  const totalPairs = (n * (n - 1)) / 2.0;
+  const tau = totalPairs > 0 ? s / totalPairs : 0.0;
+
+  return {
+    sStatistic: Number(s.toFixed(2)),
+    varianceS: Number(varS.toFixed(4)),
+    zScore: Number(z.toFixed(4)),
+    pValue: Number(pVal.toFixed(6)),
+    kendallTau: Number(tau.toFixed(4)),
+    isSignificant95: pVal < 0.05,
+    isSignificant99: pVal < 0.01
+  };
+};
+
+/**
+ * Applies Yue-Pilon (2002) Trend-Free Pre-Whitening (TFPW) autoregressive correction.
+ * 
+ * @param {Array<number>} timestamps - Fractional years
+ * @param {Array<number>} values - Observed values
+ * @param {number} [alpha=0.05] - Significance level
+ * @returns {Object} Pre-whitening result: lag1Autocorrelation, isAutocorrelated, autocorrelationCriticalValue, prewhitenedValues, prewhitenedSlope, prewhitenedZScore, prewhitenedPValue, prewhitenedS, prewhitenedTau
+ */
+export const calculateYuePilonPrewhitening = (timestamps, values, alpha = 0.05) => {
+  if (!timestamps || !values || timestamps.length !== values.length || timestamps.length < 3) {
+    const tsRes = calculateTheilSenSlope(timestamps, values, alpha);
+    const mkRes = calculateMannKendallStatistics(values);
+    return {
+      lag1Autocorrelation: 0.0,
+      isAutocorrelated: false,
+      autocorrelationCriticalValue: 0.0,
+      prewhitenedValues: [...(values || [])],
+      prewhitenedSlope: tsRes.slopePerYear,
+      prewhitenedZScore: mkRes.zScore,
+      prewhitenedPValue: mkRes.pValue,
+      prewhitenedS: mkRes.sStatistic,
+      prewhitenedTau: mkRes.kendallTau
+    };
+  }
+
+  const n = values.length;
+  const tsRes = calculateTheilSenSlope(timestamps, values, alpha);
+  const slope = tsRes.slopePerYear;
+  const intercept = tsRes.intercept;
+
+  // Detrend
+  const y = values.map((x, idx) => Number(x) - (slope * Number(timestamps[idx]) + intercept));
+
+  // Lag-1 autocorrelation r1
+  const meanY = y.reduce((acc, v) => acc + v, 0.0) / n;
+  let num = 0.0;
+  let den = 0.0;
+  for (let i = 0; i < n - 1; i++) {
+    num += (y[i] - meanY) * (y[i + 1] - meanY);
+  }
+  for (let i = 0; i < n; i++) {
+    den += (y[i] - meanY) * (y[i] - meanY);
+  }
+  let r1 = den > 1e-12 ? num / den : 0.0;
+  r1 = Math.max(-0.999, Math.min(0.999, r1));
+
+  // Critical threshold at 95%
+  const rCritUpper = (-1.0 + 1.95996 * Math.sqrt(Math.max(0, n - 2))) / (n - 1);
+  const rCritLower = (-1.0 - 1.95996 * Math.sqrt(Math.max(0, n - 2))) / (n - 1);
+  const isAutocorrelated = r1 > rCritUpper || r1 < rCritLower;
+
+  let xPrime;
+  if (isAutocorrelated && n >= 3) {
+    const yPrime = [y[0]];
+    for (let i = 1; i < n; i++) {
+      yPrime.push(y[i] - r1 * y[i - 1]);
+    }
+    xPrime = yPrime.map((yp, idx) => yp + (slope * Number(timestamps[idx]) + intercept));
+  } else {
+    xPrime = values.map(Number);
+  }
+
+  const pwTs = calculateTheilSenSlope(timestamps, xPrime, alpha);
+  const pwMk = calculateMannKendallStatistics(xPrime);
+
+  return {
+    lag1Autocorrelation: Number(r1.toFixed(4)),
+    isAutocorrelated,
+    autocorrelationCriticalValue: Number(rCritUpper.toFixed(4)),
+    prewhitenedValues: xPrime.map((v) => Number(v.toFixed(4))),
+    prewhitenedSlope: pwTs.slopePerYear,
+    prewhitenedZScore: pwMk.zScore,
+    prewhitenedPValue: pwMk.pValue,
+    prewhitenedS: pwMk.sStatistic,
+    prewhitenedTau: pwMk.kendallTau
+  };
+};
+
+/**
+ * Classifies trend significance tier based on Mann-Kendall Z_S score and p-value.
+ * 
+ * @param {number} zScore - Standardized Z_S score
+ * @param {number} pValue - Two-tailed p-value
+ * @param {number} slope - Theil-Sen slope
+ * @returns {string} TrendSignificanceClass value
+ */
+export const classifyTrendSignificance = (zScore, pValue, slope) => {
+  const p = Number(pValue);
+  const z = Number(zScore);
+  const s = Number(slope);
+
+  if (p < 0.05) {
+    if (z > 0 || (Math.abs(z) < 1e-6 && s > 0)) {
+      return TrendSignificanceClass.SIGNIFICANT_GREENING;
+    } else {
+      return TrendSignificanceClass.SIGNIFICANT_BROWNING;
+    }
+  } else if (p < 0.10) {
+    if (z > 0 || (Math.abs(z) < 1e-6 && s > 0)) {
+      return TrendSignificanceClass.MODERATE_GREENING;
+    } else {
+      return TrendSignificanceClass.MODERATE_BROWNING;
+    }
+  } else {
+    return TrendSignificanceClass.STABLE_NO_TREND;
+  }
+};
+
+/**
+ * Builds canonical XYZ tile URL for dynamic trend significance raster tiles.
+ * 
+ * @param {Object} options - Tile options
+ * @param {string} [options.model='theil_sen_median'] - Trend model
+ * @param {string} [options.metric='theil_sen_slope'] - Trend tile metric
+ * @param {number|string} [options.z='{z}'] - Zoom level
+ * @param {number|string} [options.x='{x}'] - Tile X coordinate
+ * @param {number|string} [options.y='{y}'] - Tile Y coordinate
+ * @param {string} [options.colormap=null] - Colormap palette
+ * @param {string} [options.index=null] - Target index
+ * @returns {string} Tile URL
+ */
+export const buildTrendTileUrl = ({
+  model = TrendModel.THEIL_SEN_MEDIAN,
+  metric = TrendTileMetric.THEIL_SEN_SLOPE,
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  colormap = null,
+  index = null
+} = {}) => {
+  const normModel = normalizeTrendModel(model);
+  const normMetric = normalizeTrendMetric(metric);
+  let url = `/api/v1/tiles/trend/${normModel}/${normMetric}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (colormap) params.push(`colormap=${colormap}`);
+  if (index) params.push(`index=${index}`);
+  if (params.length > 0) {
+    url += `?${params.join('&')}`;
+  }
+  return url;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for trend raster tiles.
+ * 
+ * @param {Object} [options={}] - Options
+ * @returns {string} Leaflet tile URL template
+ */
+export const buildTrendTileUrlTemplate = ({
+  model = TrendModel.THEIL_SEN_MEDIAN,
+  metric = TrendTileMetric.THEIL_SEN_SLOPE,
+  colormap = null,
+  index = null
+} = {}) => {
+  return buildTrendTileUrl({ model, metric, z: '{z}', x: '{x}', y: '{y}', colormap, index });
+};

@@ -211,6 +211,7 @@ import ThermalLstModal from '../components/ThermalLstModal';
 import ExportDatasetModal from '../components/ExportDatasetModal';
 import PhenologySeasonalityModal from '../components/PhenologySeasonalityModal';
 import SpectralSharpeningModal from '../components/SpectralSharpeningModal';
+import CrossSensorCalibrationModal from '../components/CrossSensorCalibrationModal';
 import BYOCStorageModal from '../components/BYOCStorageModal';
 import PointCloudCHMModal from '../components/PointCloudCHMModal';
 import CoRegistrationModal from '../components/CoRegistrationModal';
@@ -373,7 +374,11 @@ import {
   buildSharpenedTileUrlTemplate,
   SharpeningMethod,
   SharpeningIndexTarget,
-  SharpeningQualityRating
+  SharpeningQualityRating,
+  buildCrossCalibratedTileUrlTemplate,
+  SensorCalibrationModel,
+  CrossSensorTileMetric,
+  CalibrationQualityRating
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -949,6 +954,27 @@ export default function MapExplorer() {
     quality_rating: SharpeningQualityRating?.EXCELLENT || 'EXCELLENT',
     preserves_radiometry: true
   });
+
+  // Cycle v2.5.38 Multi-Sensor Cross-Calibration & Harmonized Surface Reflectance State (Task T-290)
+  const [crossCalibrationModalOpen, setCrossCalibrationModalOpen] = useState(false);
+  const [showCrossCalibratedTileLayer, setShowCrossCalibratedTileLayer] = useState(false);
+  const [crossCalibratedSceneKey, setCrossCalibratedSceneKey] = useState('LAKE_TAHOE_CALIBRATION_2026');
+  const [crossCalibratedSceneName, setCrossCalibratedSceneName] = useState('Lake Tahoe Sub-Alpine Calibration Target');
+  const [crossCalibratedModel, setCrossCalibratedModel] = useState(SensorCalibrationModel?.ROY_2016_LINEAR || 'roy_2016_linear');
+  const [crossCalibratedMetric, setCrossCalibratedMetric] = useState(CrossSensorTileMetric?.HARMONIZED_NDVI || 'harmonized_ndvi');
+  const [crossCalibratedColormap, setCrossCalibratedColormap] = useState('viridis');
+  const [crossCalibratedOpacity, setCrossCalibratedOpacity] = useState(0.85);
+  const [crossCalibratedTileUrl, setCrossCalibratedTileUrl] = useState('');
+  const [crossCalibratedSummary, setCrossCalibratedSummary] = useState({
+    model: 'roy_2016_linear',
+    rmse: 0.0052,
+    r_squared: 0.998,
+    mean_bias: 0.0002,
+    odr_slope: 1.002,
+    odr_intercept: -0.0001,
+    quality_rating: CalibrationQualityRating?.EXCELLENT || 'EXCELLENT'
+  });
+  const [crossSensorBlendRatio, setCrossSensorBlendRatio] = useState(0.5);
 
   // T-79 & T-81 Dense Point Cloud Filtering & Canopy Height Model (CHM) State
   const [pointCloudModalOpen, setPointCloudModalOpen] = useState(false);
@@ -5136,6 +5162,23 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={449}
+              />
+            )}
+
+            {/* Cycle v2.5.38 Multi-Sensor Cross-Calibrated Dynamic TileLayer (Task T-290) */}
+            {showCrossCalibratedTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`cross-calibrated-tile-${crossCalibratedSceneKey}-${crossCalibratedModel}-${crossCalibratedMetric}-${crossCalibratedColormap}-${crossCalibratedOpacity}`}
+                url={crossCalibratedTileUrl || buildCrossCalibratedTileUrlTemplate({
+                  model: crossCalibratedModel,
+                  metric: crossCalibratedMetric,
+                  colormap: crossCalibratedColormap
+                })}
+                opacity={crossCalibratedOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={450}
               />
             )}
 
@@ -10322,6 +10365,112 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* Cycle v2.5.38 Floating Multi-Sensor Cross-Calibration HUD Card (Task T-290) */}
+          {showCrossCalibratedTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-amber-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[700px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <GitCompare className="w-4 h-4 text-amber-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[200px]" title={crossCalibratedSceneName}>
+                    {crossCalibratedSceneName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    {crossCalibratedMetric.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                    {crossCalibratedModel.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    R² = {crossCalibratedSummary?.r_squared ?? '0.998'}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {crossCalibratedSummary?.quality_rating ?? 'EXCELLENT'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setCrossCalibrationModalOpen(true)}
+                    className="px-2 py-1 bg-amber-950 hover:bg-amber-900 border border-amber-500/40 text-amber-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowCrossCalibratedTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Cross-Calibrated Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">RMSE:</span>
+                  <span className="text-emerald-400 font-bold">{Number(crossCalibratedSummary?.rmse ?? 0.0052).toFixed(4)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Bias:</span>
+                  <span className="text-purple-400 font-bold">{Number(crossCalibratedSummary?.mean_bias ?? 0.0002) > 0 ? '+' : ''}{Number(crossCalibratedSummary?.mean_bias ?? 0.0002).toFixed(4)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">ODR Slope:</span>
+                  <span className="text-amber-400 font-bold">{Number(crossCalibratedSummary?.odr_slope ?? 1.002).toFixed(3)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Intercept:</span>
+                  <span className="text-zinc-300 font-bold">{Number(crossCalibratedSummary?.odr_intercept ?? -0.0001).toFixed(4)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Blend:</span>
+                  <span className="text-cyan-400 font-bold">{Math.round((1 - crossSensorBlendRatio) * 100)}% L8 / {Math.round(crossSensorBlendRatio * 100)}% S2</span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Metric:</span>
+                  {['harmonized_ndvi', 'harmonized_ndmi', 'harmonized_evi', 'reflectance_delta', 'seamless_daily_stack'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setCrossCalibratedMetric(m)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        crossCalibratedMetric === m
+                          ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {m.replace('harmonized_', '').replace(/_/g, ' ')}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Blend:</span>
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="1.0"
+                      step="0.05"
+                      value={crossSensorBlendRatio}
+                      onChange={(e) => setCrossSensorBlendRatio(parseFloat(e.target.value))}
+                      className="w-16 accent-amber-400 cursor-pointer"
+                      title="Landsat (left) to Sentinel-2 (right) blend ratio"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={crossCalibratedOpacity}
+                      onChange={(e) => setCrossCalibratedOpacity(parseFloat(e.target.value))}
+                      className="w-16 accent-amber-400 cursor-pointer"
+                    />
+                    <span className="text-amber-400 font-bold">{Math.round(crossCalibratedOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -11331,6 +11480,18 @@ export default function MapExplorer() {
               >
                 <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Super-Resolution (v2.5.37)</span>
+              </button>
+
+              {/* Cycle v2.5.38 Multi-Sensor Cross-Calibration Studio Shortcut (Task T-290) */}
+              <button
+                onClick={() => setCrossCalibrationModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-amber-300 hover:text-white hover:bg-amber-500/20 border border-amber-500/30 ${
+                  crossCalibrationModalOpen || showCrossCalibratedTileLayer ? 'bg-amber-600 text-white font-extrabold shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
+                }`}
+                title="Multi-Sensor Cross-Calibration Studio, Scatter Plot & Orthogonal Regression Line Inspector, Sensor Blend Ratio Slider & Dynamic Harmonized TileLayer (Cycle v2.5.38)"
+              >
+                <GitCompare className="w-3.5 h-3.5 text-amber-400" />
+                <span>Cross-Calibration (v2.5.38)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -23539,6 +23700,39 @@ export default function MapExplorer() {
           if (extra.sceneName) setSharpenedSceneName(extra.sceneName);
           setShowSharpenedTileLayer(true);
           setSpectralSharpeningModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.38 Multi-Sensor Cross-Calibration Studio Modal (Task T-290) */}
+      <CrossSensorCalibrationModal
+        isOpen={crossCalibrationModalOpen}
+        onClose={() => setCrossCalibrationModalOpen(false)}
+        initialSceneKey={crossCalibratedSceneKey}
+        onApply={(payload) => {
+          setCrossCalibratedSceneKey(payload.sceneKey || 'LAKE_TAHOE_CALIBRATION_2026');
+          setCrossCalibratedSceneName(payload.sceneName || 'Lake Tahoe Sub-Alpine Calibration Target');
+          setCrossCalibratedModel(payload.model || 'roy_2016_linear');
+          setCrossCalibratedMetric(payload.metric || 'harmonized_ndvi');
+          setCrossCalibratedColormap(payload.colormap || 'viridis');
+          setCrossCalibratedOpacity(payload.opacity ?? 0.85);
+          setCrossSensorBlendRatio(payload.blendRatio ?? 0.5);
+          setCrossCalibratedTileUrl(payload.tileUrl || payload.tileUrlTemplate || '');
+          if (payload.summary) {
+            setCrossCalibratedSummary(payload.summary);
+          }
+          setShowCrossCalibratedTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setCrossCalibratedTileUrl(url);
+          if (extra.model) setCrossCalibratedModel(extra.model);
+          if (extra.metric) setCrossCalibratedMetric(extra.metric);
+          if (extra.colormap) setCrossCalibratedColormap(extra.colormap);
+          if (extra.opacity !== undefined) setCrossCalibratedOpacity(extra.opacity);
+          if (extra.blendRatio !== undefined) setCrossSensorBlendRatio(extra.blendRatio);
+          if (extra.summary) setCrossCalibratedSummary(extra.summary);
+          if (extra.sceneName) setCrossCalibratedSceneName(extra.sceneName);
+          setShowCrossCalibratedTileLayer(true);
+          setCrossCalibrationModalOpen(false);
         }}
       />
 

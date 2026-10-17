@@ -13882,6 +13882,268 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             "/tiles/sharpened/10/100/200.png"
         )
 
+    def test_task_t288_cross_calibration_schemas_and_contracts(self):
+        """Verify Cycle v2.5.38 Multi-Sensor Cross-Calibration Schemas, Models & Route Contracts."""
+        from app.models.schemas import (
+            SensorCalibrationModel,
+            SensorPlatform,
+            CrossSensorBand,
+            CrossSensorTileMetric,
+            CalibrationQualityRating,
+            SENSOR_CALIBRATION_MODEL_CONFIGS,
+            CROSS_SENSOR_BAND_COEFFICIENTS,
+            CROSS_SENSOR_BENCHMARK_SCENES,
+            normalize_sensor_calibration_model,
+            normalize_cross_sensor_band,
+            apply_cross_sensor_band_calibration,
+            calculate_orthogonal_distance_regression,
+            calculate_cross_sensor_residual_rmse,
+            calculate_cross_sensor_radiometric_bias,
+            classify_calibration_quality_rating,
+            build_cross_calibrated_tile_url,
+            build_cross_calibrated_tile_url_template,
+            CrossSensorBandCalibrationResult,
+            CrossSensorCalibrationQualitySummary,
+            CrossSensorCalibrationRequest,
+            CrossSensorCalibrationResponse,
+            CrossSensorTileRequestParams,
+            CrossSensorModelsResponse,
+            API_ROUTE_CONTRACTS,
+            format_api_route
+        )
+
+        # 1. Enums and Canonical Normalizers
+        self.assertEqual(SensorCalibrationModel.ROY_2016_LINEAR.value, "roy_2016_linear")
+        self.assertEqual(SensorCalibrationModel.CHAVEZ_DOS.value, "chavez_dos")
+        self.assertEqual(SensorCalibrationModel.QUAC_EMPIRICAL.value, "quac_empirical")
+        self.assertEqual(SensorCalibrationModel.RMA_ORTHOGONAL.value, "rma_orthogonal")
+        self.assertEqual(SensorCalibrationModel.POLYNOMIAL_CUBIC.value, "polynomial_cubic")
+
+        self.assertEqual(normalize_sensor_calibration_model("roy"), SensorCalibrationModel.ROY_2016_LINEAR)
+        self.assertEqual(normalize_sensor_calibration_model("roy_2016"), SensorCalibrationModel.ROY_2016_LINEAR)
+        self.assertEqual(normalize_sensor_calibration_model("dos"), SensorCalibrationModel.CHAVEZ_DOS)
+        self.assertEqual(normalize_sensor_calibration_model("quac"), SensorCalibrationModel.QUAC_EMPIRICAL)
+        self.assertEqual(normalize_sensor_calibration_model("rma"), SensorCalibrationModel.RMA_ORTHOGONAL)
+        self.assertEqual(normalize_sensor_calibration_model("cubic"), SensorCalibrationModel.POLYNOMIAL_CUBIC)
+        with self.assertRaises(ValueError):
+            normalize_sensor_calibration_model("invalid_model")
+
+        self.assertEqual(SensorPlatform.LANDSAT_8_OLI.value, "landsat_8_oli")
+        self.assertEqual(SensorPlatform.SENTINEL_2A_MSI.value, "sentinel_2a_msi")
+
+        self.assertEqual(CrossSensorBand.COASTAL.value, "coastal")
+        self.assertEqual(CrossSensorBand.BLUE.value, "blue")
+        self.assertEqual(CrossSensorBand.GREEN.value, "green")
+        self.assertEqual(CrossSensorBand.RED.value, "red")
+        self.assertEqual(CrossSensorBand.NIR_NARROW.value, "nir_narrow")
+        self.assertEqual(CrossSensorBand.SWIR_1.value, "swir_1")
+        self.assertEqual(CrossSensorBand.SWIR_2.value, "swir_2")
+
+        self.assertEqual(normalize_cross_sensor_band("b1"), CrossSensorBand.COASTAL)
+        self.assertEqual(normalize_cross_sensor_band("B02"), CrossSensorBand.BLUE)
+        self.assertEqual(normalize_cross_sensor_band("green"), CrossSensorBand.GREEN)
+        self.assertEqual(normalize_cross_sensor_band("B4"), CrossSensorBand.RED)
+        self.assertEqual(normalize_cross_sensor_band("b8a"), CrossSensorBand.NIR_NARROW)
+        self.assertEqual(normalize_cross_sensor_band("B11"), CrossSensorBand.SWIR_1)
+        self.assertEqual(normalize_cross_sensor_band("swir2"), CrossSensorBand.SWIR_2)
+        with self.assertRaises(ValueError):
+            normalize_cross_sensor_band("invalid_band")
+
+        self.assertEqual(CrossSensorTileMetric.HARMONIZED_NDVI.value, "harmonized_ndvi")
+        self.assertEqual(CrossSensorTileMetric.HARMONIZED_NDMI.value, "harmonized_ndmi")
+        self.assertEqual(CrossSensorTileMetric.REFLECTANCE_DELTA.value, "reflectance_delta")
+
+        self.assertEqual(CalibrationQualityRating.EXCELLENT.value, "EXCELLENT")
+        self.assertEqual(CalibrationQualityRating.GOOD.value, "GOOD")
+        self.assertEqual(CalibrationQualityRating.ACCEPTABLE.value, "ACCEPTABLE")
+        self.assertEqual(CalibrationQualityRating.DEGRADED.value, "DEGRADED")
+
+        # 2. Configuration Mappings
+        self.assertIn(SensorCalibrationModel.ROY_2016_LINEAR.value, SENSOR_CALIBRATION_MODEL_CONFIGS)
+        self.assertTrue(SENSOR_CALIBRATION_MODEL_CONFIGS[SensorCalibrationModel.ROY_2016_LINEAR.value]["preserves_radiometry"])
+        self.assertIn("LAKE_TAHOE_CALIBRATION_2026", CROSS_SENSOR_BENCHMARK_SCENES)
+        self.assertIn("BOULDER_COLORADO_VALLEY_2026", CROSS_SENSOR_BENCHMARK_SCENES)
+        self.assertIn("NEGEV_DESERT_BRIGHT_TARGET_2026", CROSS_SENSOR_BENCHMARK_SCENES)
+
+        self.assertIn(CrossSensorBand.RED.value, CROSS_SENSOR_BAND_COEFFICIENTS)
+        red_coef = CROSS_SENSOR_BAND_COEFFICIENTS[CrossSensorBand.RED.value]
+        self.assertEqual(red_coef["oli_band"], "B4")
+        self.assertEqual(red_coef["msi_band"], "B04")
+        self.assertAlmostEqual(red_coef["roy_2016"]["c1"], 0.9765, places=4)
+
+        # 3. Mathematical Solvers & Transformations
+        # Forward translation: Landsat OLI -> Sentinel-2 MSI
+        # For RED: MSI = 0.0019 + 0.9765 * OLI
+        oli_red = 0.20
+        expected_msi_red = round(0.0019 + 0.9765 * oli_red, 4)
+        actual_msi_red = apply_cross_sensor_band_calibration(
+            oli_red,
+            CrossSensorBand.RED,
+            model=SensorCalibrationModel.ROY_2016_LINEAR,
+            source_sensor=SensorPlatform.LANDSAT_8_OLI,
+            target_sensor=SensorPlatform.SENTINEL_2A_MSI
+        )
+        self.assertEqual(actual_msi_red, expected_msi_red)
+
+        # Inverse translation: Sentinel-2 MSI -> Landsat OLI
+        # OLI = (MSI - 0.0019) / 0.9765
+        msi_red = actual_msi_red
+        expected_oli_red = round((msi_red - 0.0019) / 0.9765, 4)
+        actual_oli_red = apply_cross_sensor_band_calibration(
+            msi_red,
+            CrossSensorBand.RED,
+            model=SensorCalibrationModel.ROY_2016_LINEAR,
+            source_sensor=SensorPlatform.SENTINEL_2A_MSI,
+            target_sensor=SensorPlatform.LANDSAT_8_OLI
+        )
+        self.assertAlmostEqual(actual_oli_red, expected_oli_red, places=3)
+
+        # Chavez DOS offset subtraction
+        dos_cal = apply_cross_sensor_band_calibration(
+            0.10,
+            CrossSensorBand.BLUE,
+            model=SensorCalibrationModel.CHAVEZ_DOS
+        )
+        self.assertEqual(dos_cal, round(0.10 - CROSS_SENSOR_BAND_COEFFICIENTS["blue"]["chavez_dos_dark_offset"], 4))
+
+        # Boundary checks
+        self.assertTrue(math.isnan(apply_cross_sensor_band_calibration(float("nan"), CrossSensorBand.RED)))
+        self.assertEqual(apply_cross_sensor_band_calibration(1.5, CrossSensorBand.RED), 1.0)
+        self.assertEqual(apply_cross_sensor_band_calibration(-0.5, CrossSensorBand.RED), 0.0)
+
+        # Orthogonal Distance Regression (Reduced Major Axis)
+        x_vals = [0.05, 0.10, 0.20, 0.35, 0.50]
+        y_vals = [0.051, 0.099, 0.198, 0.347, 0.495]
+        odr_res = calculate_orthogonal_distance_regression(x_vals, y_vals)
+        self.assertAlmostEqual(odr_res["slope"], 0.99, delta=0.03)
+        self.assertGreater(odr_res["r_squared"], 0.99)
+        self.assertGreaterEqual(odr_res["rmse"], 0.0)
+
+        # Residual RMSE and Radiometric Bias
+        rmse = calculate_cross_sensor_residual_rmse(x_vals, y_vals, c0=0.001, c1=0.99)
+        self.assertLess(rmse, 0.01)
+        bias = calculate_cross_sensor_radiometric_bias(x_vals, y_vals, c0=0.001, c1=0.99)
+        self.assertLess(abs(bias), 0.01)
+
+        # Quality Rating Classification
+        self.assertEqual(classify_calibration_quality_rating(0.005, 0.995, 0.002), CalibrationQualityRating.EXCELLENT)
+        self.assertEqual(classify_calibration_quality_rating(0.012, 0.980, 0.006), CalibrationQualityRating.GOOD)
+        self.assertEqual(classify_calibration_quality_rating(0.025, 0.960, 0.010), CalibrationQualityRating.ACCEPTABLE)
+        self.assertEqual(classify_calibration_quality_rating(0.045, 0.920, 0.025), CalibrationQualityRating.DEGRADED)
+
+        # 4. Pydantic Models & Request/Response Schemas
+        band_res = CrossSensorBandCalibrationResult(
+            band=CrossSensorBand.RED,
+            source_reflectance=0.20,
+            calibrated_reflectance=actual_msi_red,
+            delta_reflectance=round(actual_msi_red - 0.20, 4),
+            applied_slope=0.9765,
+            applied_intercept=0.0019
+        )
+        self.assertEqual(band_res.band, CrossSensorBand.RED)
+        self.assertEqual(band_res.source_reflectance, 0.20)
+
+        quality_summary = CrossSensorCalibrationQualitySummary(
+            model=SensorCalibrationModel.ROY_2016_LINEAR,
+            mean_rmse=0.0055,
+            mean_r_squared=0.998,
+            mean_bias=0.0004,
+            energy_conservation_ratio=1.001,
+            quality_rating=CalibrationQualityRating.EXCELLENT,
+            preserves_radiometry=True
+        )
+        self.assertTrue(quality_summary.preserves_radiometry)
+        self.assertEqual(quality_summary.quality_rating, CalibrationQualityRating.EXCELLENT)
+
+        req = CrossSensorCalibrationRequest(
+            aoi_name="Lake Tahoe Test",
+            source_sensor="landsat_8_oli",
+            target_sensor="sentinel_2a_msi",
+            calibration_model="roy",  # String alias handled by validator
+            bands=["red", "nir_narrow"],
+            apply_nbar_brdf=True,
+            metric="harmonized_ndvi"
+        )
+        self.assertEqual(req.calibration_model, SensorCalibrationModel.ROY_2016_LINEAR)
+        self.assertEqual(req.source_sensor, SensorPlatform.LANDSAT_8_OLI)
+
+        resp = CrossSensorCalibrationResponse(
+            request_id="XCAL-TEST-001",
+            aoi_name=req.aoi_name,
+            source_sensor=req.source_sensor,
+            target_sensor=req.target_sensor,
+            calibration_model=req.calibration_model,
+            calibrated_bands={"red": band_res},
+            quality_summary=quality_summary,
+            tile_url_template="/api/v1/tiles/cross-calibrated/roy_2016_linear/{metric}/{z}/{x}/{y}.png",
+            daily_stack_count=14,
+            status="success"
+        )
+        self.assertEqual(resp.request_id, "XCAL-TEST-001")
+        self.assertEqual(resp.status, "success")
+        self.assertEqual(resp.daily_stack_count, 14)
+
+        tile_params = CrossSensorTileRequestParams(
+            model=SensorCalibrationModel.ROY_2016_LINEAR,
+            metric=CrossSensorTileMetric.HARMONIZED_NDMI
+        )
+        self.assertEqual(tile_params.metric, CrossSensorTileMetric.HARMONIZED_NDMI)
+
+        models_resp = CrossSensorModelsResponse(
+            models=SENSOR_CALIBRATION_MODEL_CONFIGS,
+            benchmark_scenes=CROSS_SENSOR_BENCHMARK_SCENES,
+            band_coefficients=CROSS_SENSOR_BAND_COEFFICIENTS,
+            supported_platforms=[e.value for e in SensorPlatform],
+            supported_metrics=[e.value for e in CrossSensorTileMetric]
+        )
+        self.assertIn("roy_2016_linear", models_resp.models)
+        self.assertIn("LAKE_TAHOE_CALIBRATION_2026", models_resp.benchmark_scenes)
+
+        # 5. Dynamic Tile URLs & Canonical Route Contracts
+        tile_url = build_cross_calibrated_tile_url("roy_2016_linear", "harmonized_ndvi", 12, 650, 1580)
+        self.assertEqual(tile_url, "/api/v1/tiles/cross-calibrated/roy_2016_linear/harmonized_ndvi/12/650/1580.png")
+
+        tile_url_cmap = build_cross_calibrated_tile_url(
+            SensorCalibrationModel.RMA_ORTHOGONAL,
+            CrossSensorTileMetric.HARMONIZED_NDMI,
+            14, 2600, 6320,
+            colormap="viridis"
+        )
+        self.assertEqual(tile_url_cmap, "/api/v1/tiles/cross-calibrated/rma_orthogonal/harmonized_ndmi/14/2600/6320.png?colormap=viridis")
+
+        tmpl = build_cross_calibrated_tile_url_template("chavez_dos", "reflectance_delta")
+        self.assertEqual(tmpl, "/api/v1/tiles/cross-calibrated/chavez_dos/reflectance_delta/{z}/{x}/{y}.png")
+
+        # Route Contracts
+        self.assertIn("analysis_cross_calibration_calibrate", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_cross_calibration_models", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_cross_calibration_evaluate", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_cross_calibrated", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_cross_calibrated_xyz", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_cross_calibration_calibrate"), "/api/v1/analysis/cross-calibration/calibrate")
+        self.assertEqual(format_api_route("analysis_cross_calibration_calibrate_short"), "/analysis/cross-calibration/calibrate")
+        self.assertEqual(format_api_route("analysis_cross_calibration_models"), "/api/v1/analysis/cross-calibration/models")
+        self.assertEqual(format_api_route("analysis_cross_calibration_models_short"), "/analysis/cross-calibration/models")
+        self.assertEqual(format_api_route("analysis_cross_calibration_evaluate"), "/api/v1/analysis/cross-calibration/evaluate")
+        self.assertEqual(format_api_route("analysis_cross_calibration_evaluate_short"), "/analysis/cross-calibration/evaluate")
+        self.assertEqual(
+            format_api_route("tiles_cross_calibrated", model="roy_2016_linear", metric="harmonized_ndvi", z=12, x=650, y=1580),
+            "/api/v1/tiles/cross-calibrated/roy_2016_linear/harmonized_ndvi/12/650/1580.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_cross_calibrated_short", model=SensorCalibrationModel.CHAVEZ_DOS, metric="reflectance_delta", z=10, x=163, y=395),
+            "/tiles/cross-calibrated/chavez_dos/reflectance_delta/10/163/395.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_cross_calibrated_xyz", z=10, x=100, y=200),
+            "/api/v1/tiles/cross-calibrated/10/100/200.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_cross_calibrated_xyz_short", z=10, x=100, y=200),
+            "/tiles/cross-calibrated/10/100/200.png"
+        )
+
 if __name__ == "__main__":
     unittest.main()
 

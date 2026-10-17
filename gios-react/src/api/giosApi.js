@@ -132,7 +132,40 @@ import {
   HPF_KERNELS,
   SHARPENING_BENCHMARK_SCENES,
   normalizeSharpeningMethod,
-  buildSharpenedTileUrlTemplate
+  buildSharpenedTileUrlTemplate,
+  SensorPlatform,
+  SENSOR_PLATFORMS,
+  CalibrationQualityRating,
+  SENSOR_CALIBRATION_MODEL_CONFIGS,
+  CROSS_SENSOR_BAND_COEFFICIENTS,
+  CROSS_SENSOR_BENCHMARK_SCENES,
+  CROSS_SENSOR_TILE_METRICS,
+  normalizeSensorCalibrationModel,
+  normalizeCrossSensorBand,
+  applyCrossSensorBandCalibration,
+  buildCrossCalibratedTileUrlTemplate,
+  TrendModel,
+  TREND_MODELS,
+  TrendSignificanceClass,
+  TREND_SIGNIFICANCE_CLASSES,
+  TrendTileMetric,
+  TREND_TILE_METRICS,
+  TrendTargetIndex,
+  TREND_TARGET_INDICES,
+  TrendConfidenceRating,
+  TREND_CONFIDENCE_RATINGS,
+  TREND_MODEL_CONFIGS,
+  TREND_SIGNIFICANCE_CONFIGS,
+  TREND_BENCHMARK_SCENES,
+  normalizeTrendModel,
+  normalizeTrendMetric,
+  normalizeTrendTargetIndex,
+  calculateTheilSenSlope,
+  calculateMannKendallStatistics,
+  calculateYuePilonPrewhitening,
+  classifyTrendSignificance,
+  buildTrendTileUrl,
+  buildTrendTileUrlTemplate
 } from '../config/constants.js';
 
 export {
@@ -3647,6 +3680,199 @@ const demoAdapter = async (config) => {
           rmse: 0.012,
           quality_rating: SharpeningQualityRating.EXCELLENT,
           preserves_radiometry: method !== 'brovey'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/cross-calibration/models') || url.includes('/analysis/cross-calibration/models')) {
+        data = {
+          models: SENSOR_CALIBRATION_MODEL_CONFIGS,
+          benchmark_scenes: CROSS_SENSOR_BENCHMARK_SCENES,
+          band_coefficients: CROSS_SENSOR_BAND_COEFFICIENTS,
+          supported_platforms: SENSOR_PLATFORMS,
+          supported_metrics: CROSS_SENSOR_TILE_METRICS
+        };
+      }
+      else if (url.includes('/api/v1/analysis/cross-calibration/calibrate') || url.includes('/analysis/cross-calibration/calibrate')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const model = normalizeSensorCalibrationModel(parsed.calibration_model);
+        const sourceSensor = parsed.source_sensor || SensorPlatform.LANDSAT_8_OLI;
+        const targetSensor = parsed.target_sensor || SensorPlatform.SENTINEL_2A_MSI;
+        const reqId = `XCAL-${Date.now()}`;
+        const bands = parsed.bands || ['blue', 'green', 'red', 'nir_narrow', 'swir_1', 'swir_2'];
+        const calibratedBands = {};
+        bands.forEach((b) => {
+          const normB = normalizeCrossSensorBand(b);
+          const rawRef = 0.20;
+          const calRef = applyCrossSensorBandCalibration(rawRef, normB, model, sourceSensor, targetSensor);
+          calibratedBands[normB] = {
+            band: normB,
+            source_reflectance: rawRef,
+            calibrated_reflectance: calRef,
+            delta_reflectance: Number((calRef - rawRef).toFixed(4)),
+            applied_slope: 0.9983,
+            applied_intercept: 0.0003
+          };
+        });
+        data = {
+          request_id: reqId,
+          aoi_name: parsed.aoi_name || 'Lake Tahoe Sub-Alpine Calibration Target',
+          source_sensor: sourceSensor,
+          target_sensor: targetSensor,
+          calibration_model: model,
+          calibrated_bands: calibratedBands,
+          quality_summary: {
+            model,
+            mean_rmse: 0.0055,
+            mean_r_squared: 0.998,
+            mean_bias: 0.0004,
+            energy_conservation_ratio: 1.001,
+            quality_rating: CalibrationQualityRating.EXCELLENT,
+            preserves_radiometry: model !== 'quac_empirical'
+          },
+          tile_url_template: `/api/v1/tiles/cross-calibrated/${model}/{metric}/{z}/{x}/{y}.png`,
+          daily_stack_count: 14,
+          processed_at: new Date().toISOString(),
+          status: 'success'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/cross-calibration/evaluate') || url.includes('/analysis/cross-calibration/evaluate')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const model = normalizeSensorCalibrationModel(parsed.calibration_model);
+        data = {
+          model,
+          mean_rmse: 0.0055,
+          mean_r_squared: 0.998,
+          mean_bias: 0.0004,
+          energy_conservation_ratio: 1.001,
+          quality_rating: CalibrationQualityRating.EXCELLENT,
+          preserves_radiometry: model !== 'quac_empirical'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/trend/models') || url.includes('/analysis/trend/models')) {
+        data = {
+          models: TREND_MODEL_CONFIGS,
+          benchmark_scenes: TREND_BENCHMARK_SCENES,
+          significance_classes: TREND_SIGNIFICANCE_CONFIGS,
+          supported_indices: TREND_TARGET_INDICES,
+          supported_metrics: TREND_TILE_METRICS
+        };
+      }
+      else if (url.includes('/api/v1/analysis/trend/analyze') || url.includes('/analysis/trend/analyze')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const model = normalizeTrendModel(parsed.model);
+        const targetIndex = normalizeTrendTargetIndex(parsed.target_index);
+        const reqId = `TREND-${Date.now()}`;
+        
+        const startYear = 2016;
+        const totalMonths = 120;
+        const timestamps = [];
+        const values = [];
+        const trajectoryPoints = [];
+        
+        for (let i = 0; i < totalMonths; i++) {
+          const year = startYear + Math.floor(i / 12);
+          const month = (i % 12) + 1;
+          const monthStr = month < 10 ? `0${month}` : `${month}`;
+          const date = `${year}-${monthStr}-15`;
+          const tYears = year + (month - 1) / 12.0;
+          const seasonal = 0.12 * Math.sin((2 * Math.PI * (month - 1)) / 12.0);
+          const trend = -0.0142 * (tYears - startYear);
+          const noise = 0.02 * Math.sin(i * 1.7);
+          const rawVal = Math.max(0.05, Math.min(0.95, 0.55 + trend + seasonal + noise));
+          
+          timestamps.push(tYears);
+          values.push(rawVal);
+        }
+
+        const ts = calculateTheilSenSlope(timestamps, values);
+        const mk = calculateMannKendallStatistics(values);
+        const yuePilon = calculateYuePilonPrewhitening(timestamps, values);
+        const sigClass = classifyTrendSignificance(yuePilon.prewhitenedZScore, yuePilon.prewhitenedPValue, yuePilon.prewhitenedSlope);
+
+        for (let i = 0; i < totalMonths; i++) {
+          const fitted = Number((ts.intercept + ts.slopePerYear * timestamps[i]).toFixed(4));
+          const yr = startYear + Math.floor(i / 12);
+          const mo = (i % 12) + 1;
+          const dateStr = `${yr}-${mo < 10 ? '0' : ''}${mo}-15`;
+          trajectoryPoints.push({
+            date: dateStr,
+            timestamp_years: Number(timestamps[i].toFixed(3)),
+            value: Number(values[i].toFixed(4)),
+            prewhitened_value: yuePilon.prewhitenedValues[i],
+            fitted_value: fitted,
+            residual: Number((values[i] - fitted).toFixed(4))
+          });
+        }
+
+        data = {
+          request_id: reqId,
+          aoi_name: parsed.aoi_name || 'San Luis Reservoir Decadal Hydrological Trajectory',
+          target_index: targetIndex,
+          model,
+          theil_sen: {
+            slope_per_year: ts.slopePerYear,
+            intercept: ts.intercept,
+            slope_ci_lower: ts.slopeCiLower,
+            slope_ci_upper: ts.slopeCiUpper,
+            pairwise_count: ts.pairwiseCount,
+            breakdown_point: ts.breakdownPoint
+          },
+          mann_kendall: {
+            s_statistic: mk.sStatistic,
+            variance_s: mk.varianceS,
+            z_score: mk.zScore,
+            p_value: mk.pValue,
+            kendall_tau: mk.kendallTau,
+            is_significant_95: mk.isSignificant95,
+            is_significant_99: mk.isSignificant99
+          },
+          yue_pilon: {
+            lag1_autocorrelation: yuePilon.lag1Autocorrelation,
+            is_autocorrelated: yuePilon.isAutocorrelated,
+            autocorrelation_critical_value: yuePilon.autocorrelationCriticalValue,
+            prewhitened_slope: yuePilon.prewhitenedSlope,
+            prewhitened_z_score: yuePilon.prewhitenedZScore,
+            prewhitened_p_value: yuePilon.prewhitenedPValue
+          },
+          summary: {
+            model,
+            target_index: targetIndex,
+            theil_sen_slope: yuePilon.prewhitenedSlope,
+            mann_kendall_zscore: yuePilon.prewhitenedZScore,
+            p_value: yuePilon.prewhitenedPValue,
+            kendall_tau: yuePilon.prewhitenedTau,
+            significance_class: sigClass,
+            confidence_rating: TrendConfidenceRating.HIGH,
+            is_prewhitened: true,
+            annual_change_percent: Number(((yuePilon.prewhitenedSlope / 0.55) * 100.0).toFixed(2)),
+            narrative: `Statistically significant multi-decadal ${sigClass.replace('_', ' ')} trajectory detected with Theil-Sen slope ${yuePilon.prewhitenedSlope}/yr (p=${yuePilon.prewhitenedPValue}, Z=${yuePilon.prewhitenedZScore}).`
+          },
+          trajectory_points: trajectoryPoints,
+          tile_url_template: `/api/v1/tiles/trend/${model}/{metric}/{z}/{x}/{y}.png`,
+          observation_count: totalMonths,
+          processed_at: new Date().toISOString(),
+          status: 'success'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/trend/evaluate') || url.includes('/analysis/trend/evaluate')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const model = normalizeTrendModel(parsed.model);
+        const targetIndex = normalizeTrendTargetIndex(parsed.target_index);
+        data = {
+          model,
+          target_index: targetIndex,
+          theil_sen_slope: -0.0142,
+          mann_kendall_zscore: -2.85,
+          p_value: 0.0044,
+          kendall_tau: -0.34,
+          significance_class: TrendSignificanceClass.SIGNIFICANT_BROWNING,
+          confidence_rating: TrendConfidenceRating.HIGH,
+          is_prewhitened: true,
+          annual_change_percent: -2.58,
+          narrative: 'Statistically significant browning trajectory detected with Theil-Sen slope -0.0142/yr (p=0.0044, Z=-2.85).'
         };
       }
       else if (url.includes('/api/v1/analysis/phenology/benchmarks') || url.includes('/analysis/phenology/benchmarks')) {
@@ -9203,6 +9429,48 @@ export const getSharpenedTileUrlTemplate = (options = {}) => {
   return buildSharpenedTileUrlTemplate(options);
 };
 
+/**
+ * Fetches available cross-calibration models, benchmark targets, and band coefficients.
+ * 
+ * @returns {Promise<Object>} Cross-calibration capabilities response
+ */
+export const fetchCrossCalibrationModels = async () => {
+  const response = await giosApi.get('/api/v1/analysis/cross-calibration/models');
+  return response.data;
+};
+
+/**
+ * Submits a multi-sensor radiometric cross-calibration and harmonization request.
+ * 
+ * @param {Object} [params={}] - Cross-calibration request parameters
+ * @returns {Promise<Object>} Harmonized dataset response with quality metrics and tile template
+ */
+export const requestCrossCalibration = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/cross-calibration/calibrate', params);
+  return response.data;
+};
+
+/**
+ * Evaluates cross-sensor calibration quality metrics (RMSE, R², bias) for a given sensor pair and model.
+ * 
+ * @param {Object} [params={}] - Evaluation request parameters
+ * @returns {Promise<Object>} Quantitative quality summary
+ */
+export const evaluateCrossCalibrationQuality = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/cross-calibration/evaluate', params);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for cross-calibrated raster tiles.
+ * 
+ * @param {Object} [options={}] - Options (model, metric, colormap)
+ * @returns {string} Leaflet tile URL template
+ */
+export const getCrossCalibratedTileUrlTemplate = (options = {}) => {
+  return buildCrossCalibratedTileUrlTemplate(options);
+};
+
 
 export {
   InSARDeformationHazardTier,
@@ -9537,7 +9805,29 @@ export {
   calculateEnergyConservationRatio,
   classifySharpeningQualityRating,
   buildSharpenedTileUrl,
-  buildSharpenedTileUrlTemplate
+  buildSharpenedTileUrlTemplate,
+  SensorCalibrationModel,
+  SENSOR_CALIBRATION_MODELS,
+  SensorPlatform,
+  SENSOR_PLATFORMS,
+  CrossSensorBand,
+  CROSS_SENSOR_BANDS,
+  CrossSensorTileMetric,
+  CROSS_SENSOR_TILE_METRICS,
+  CalibrationQualityRating,
+  CALIBRATION_QUALITY_RATINGS,
+  SENSOR_CALIBRATION_MODEL_CONFIGS,
+  CROSS_SENSOR_BAND_COEFFICIENTS,
+  CROSS_SENSOR_BENCHMARK_SCENES,
+  normalizeSensorCalibrationModel,
+  normalizeCrossSensorBand,
+  applyCrossSensorBandCalibration,
+  calculateOrthogonalDistanceRegression,
+  calculateCrossSensorResidualRmse,
+  calculateCrossSensorRadiometricBias,
+  classifyCalibrationQualityRating,
+  buildCrossCalibratedTileUrl,
+  buildCrossCalibratedTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;

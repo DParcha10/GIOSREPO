@@ -1026,6 +1026,17 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_cross_calibrated_short": "/tiles/cross-calibrated/{model}/{metric}/{z}/{x}/{y}.png",
     "tiles_cross_calibrated_xyz": "/api/v1/tiles/cross-calibrated/{z}/{x}/{y}.png",
     "tiles_cross_calibrated_xyz_short": "/tiles/cross-calibrated/{z}/{x}/{y}.png",
+    # Cycle v2.5.39: Non-Parametric Trend Inversion, Mann-Kendall & Multi-Decadal Pixel Trajectory Tiles Contracts
+    "analysis_trend_analyze": "/api/v1/analysis/trend/analyze",
+    "analysis_trend_analyze_short": "/analysis/trend/analyze",
+    "analysis_trend_models": "/api/v1/analysis/trend/models",
+    "analysis_trend_models_short": "/analysis/trend/models",
+    "analysis_trend_evaluate": "/api/v1/analysis/trend/evaluate",
+    "analysis_trend_evaluate_short": "/analysis/trend/evaluate",
+    "tiles_trend": "/api/v1/tiles/trend/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_trend_short": "/tiles/trend/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_trend_xyz": "/api/v1/tiles/trend/{z}/{x}/{y}.png",
+    "tiles_trend_xyz_short": "/tiles/trend/{z}/{x}/{y}.png",
 }
 
 def format_api_route(route_name: str, **kwargs) -> str:
@@ -1298,6 +1309,29 @@ def format_api_route(route_name: str, **kwargs) -> str:
                     break
             if "metric" not in kwargs:
                 kwargs["metric"] = "harmonized_ndvi"
+    elif route_name in ("tiles_trend", "tiles_trend_short"):
+        if "model" in kwargs:
+            val = kwargs["model"]
+            kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("trend_model", "trendModel", "algorithm"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "model" not in kwargs:
+                kwargs["model"] = "theil_sen_median"
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            for alt in ("trend_metric", "trendMetric", "target"):
+                if alt in kwargs:
+                    val = kwargs[alt]
+                    kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+                    break
+            if "metric" not in kwargs:
+                kwargs["metric"] = "theil_sen_slope"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -33292,7 +33326,7 @@ HPF_KERNELS: Dict[str, List[List[float]]] = {
     HPFKernelType.GAUSSIAN_DIFFERENCE_5X5.value: [
         [-0.05, -0.10, -0.15, -0.10, -0.05],
         [-0.10, -0.20, -0.30, -0.20, -0.10],
-        [-0.15, -0.30,  3.50, -0.30, -0.15],
+        [-0.15, -0.30,  3.60, -0.30, -0.15],
         [-0.10, -0.20, -0.30, -0.20, -0.10],
         [-0.05, -0.10, -0.15, -0.10, -0.05],
     ],
@@ -33910,7 +33944,7 @@ def calculate_orthogonal_distance_regression(
     slope m = sign(r) * (s_y / s_x)
     intercept b = y_bar - m * x_bar
     """
-    if not x_vals or not y_vals or len(x_vals) != len(y_vals) or len(x_vals) < 2:
+    if x_vals is None or y_vals is None or len(x_vals) == 0 or len(y_vals) == 0 or len(x_vals) != len(y_vals) or len(x_vals) < 2:
         return {"slope": 1.0, "intercept": 0.0, "r_squared": 1.0, "rmse": 0.0, "r": 1.0}
     
     n = len(x_vals)
@@ -33952,7 +33986,7 @@ def calculate_cross_sensor_residual_rmse(
     c1: float,
 ) -> float:
     """Calculates root mean square error (RMSE) for predicted vs observed cross-sensor reflectance."""
-    if not x_vals or not y_vals or len(x_vals) != len(y_vals) or len(x_vals) == 0:
+    if x_vals is None or y_vals is None or len(x_vals) == 0 or len(y_vals) == 0 or len(x_vals) != len(y_vals):
         return 0.0
     n = len(x_vals)
     residuals_sq = [(float(y) - (float(c0) + float(c1) * float(x))) ** 2 for x, y in zip(x_vals, y_vals)]
@@ -33965,7 +33999,7 @@ def calculate_cross_sensor_radiometric_bias(
     c1: float,
 ) -> float:
     """Calculates mean residual bias: (1/N) * sum(y_i - (c0 + c1 * x_i))."""
-    if not x_vals or not y_vals or len(x_vals) != len(y_vals) or len(x_vals) == 0:
+    if x_vals is None or y_vals is None or len(x_vals) == 0 or len(y_vals) == 0 or len(x_vals) != len(y_vals):
         return 0.0
     n = len(x_vals)
     residuals = [float(y) - (float(c0) + float(c1) * float(x)) for x, y in zip(x_vals, y_vals)]
@@ -34088,3 +34122,654 @@ class CrossSensorModelsResponse(BaseModel):
 
 
 
+
+
+# ============================================================================
+# CYCLE v2.5.39: NON-PARAMETRIC TREND INVERSION & MULTI-DECADAL PIXEL TRAJECTORIES
+# ============================================================================
+
+class TrendModel(str, Enum):
+    """Non-parametric and parametric trend estimation algorithms."""
+    THEIL_SEN_MEDIAN = "theil_sen_median"
+    MANN_KENDALL_RANK = "mann_kendall_rank"
+    YUE_PILON_PREWHITENED = "yue_pilon_prewhitened"
+    LINEAR_OLS = "linear_ols"
+
+class TrendSignificanceClass(str, Enum):
+    """Categorical classification of trend significance and direction."""
+    SIGNIFICANT_GREENING = "significant_greening"
+    SIGNIFICANT_BROWNING = "significant_browning"
+    MODERATE_GREENING = "moderate_greening"
+    MODERATE_BROWNING = "moderate_browning"
+    STABLE_NO_TREND = "stable_no_trend"
+
+class TrendTileMetric(str, Enum):
+    """Dynamic XYZ tile rendering metric targets for long-term trends."""
+    THEIL_SEN_SLOPE = "theil_sen_slope"
+    MANN_KENDALL_ZSCORE = "mann_kendall_zscore"
+    TREND_SIGNIFICANCE = "trend_significance"
+    P_VALUE = "p_value"
+    PREWHITENED_SLOPE = "prewhitened_slope"
+    TRAJECTORY_VARIANCE = "trajectory_variance"
+
+class TrendTargetIndex(str, Enum):
+    """Multi-spectral biophysical indices suitable for multi-decadal trend trajectory analysis."""
+    NDVI = "ndvi"
+    NDMI = "ndmi"
+    EVI = "evi"
+    SAVI = "savi"
+    NDCI = "ndci"
+    MNDWI = "mndwi"
+    LST = "lst"
+
+class TrendConfidenceRating(str, Enum):
+    """Scientific reliability rating tier for evaluated trend results."""
+    HIGH = "high"
+    MODERATE = "moderate"
+    LOW = "low"
+    INDETERMINATE = "indeterminate"
+
+TREND_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    TrendModel.THEIL_SEN_MEDIAN.value: {
+        "name": "Theil-Sen Robust Median Estimator",
+        "citation": "Theil (1950); Sen (1968)",
+        "breakdown_point": 0.293,
+        "description": "Calculates median of all pairwise observation slopes (N*(N-1)/2). Resists up to 29.3% arbitrary gross outliers, cloud masking leaks, and sensor dropouts without distortion.",
+        "preserves_monotonicity": True,
+        "handles_autocorrelation": False,
+        "recommended_for": "Dense decadal time series with occasional undetected cloud or shadow artifacts."
+    },
+    TrendModel.MANN_KENDALL_RANK.value: {
+        "name": "Mann-Kendall Rank Correlation Test",
+        "citation": "Mann (1945); Kendall (1975)",
+        "breakdown_point": 0.50,
+        "description": "Non-parametric rank test for monotonic upward or downward trend. Does not require Gaussian normality or linear trajectory.",
+        "preserves_monotonicity": True,
+        "handles_autocorrelation": False,
+        "recommended_for": "Evaluating statistical significance of monotonic directionality independent of scale."
+    },
+    TrendModel.YUE_PILON_PREWHITENED.value: {
+        "name": "Yue-Pilon Trend-Free Pre-Whitening (TFPW)",
+        "citation": "Yue, Pilon, Phinney, & Cavadias (2002)",
+        "breakdown_point": 0.293,
+        "description": "Removes monotonic Theil-Sen trend slope, computes lag-1 AR(1) autocorrelation on detrended residuals, applies pre-whitening filter, re-blends trend, and evaluates robust significance. Prevents false-positive alarms from positive temporal autocorrelation.",
+        "preserves_monotonicity": True,
+        "handles_autocorrelation": True,
+        "recommended_for": "Serially correlated satellite observations (e.g. 5-day Sentinel-2 or 16-day Landsat)."
+    },
+    TrendModel.LINEAR_OLS.value: {
+        "name": "Ordinary Least Squares (OLS) Linear Regression",
+        "citation": "Gauss-Markov Theorem Baseline",
+        "breakdown_point": 0.0,
+        "description": "Parametric ordinary least squares regression. Included as comparative benchmark; vulnerable to single cloud outlier data points.",
+        "preserves_monotonicity": False,
+        "handles_autocorrelation": False,
+        "recommended_for": "Control comparison only; not recommended for operational remote sensing."
+    }
+}
+
+TREND_SIGNIFICANCE_CONFIGS: Dict[str, Dict[str, Any]] = {
+    TrendSignificanceClass.SIGNIFICANT_GREENING.value: {
+        "label": "Significant Greening (p < 0.05, Z > +1.96)",
+        "badge_class": "bg-emerald-950/80 text-emerald-300 border-emerald-800",
+        "description": "Statistically validated monotonic upward vegetation growth, canopy recovery, or biomass expansion.",
+        "direction": "increasing",
+        "is_significant": True,
+        "color_hex": "#10b981"
+    },
+    TrendSignificanceClass.SIGNIFICANT_BROWNING.value: {
+        "label": "Significant Browning (p < 0.05, Z < -1.96)",
+        "badge_class": "bg-rose-950/80 text-rose-300 border-rose-800",
+        "description": "Statistically validated monotonic downward vegetation degradation, die-off, deforestation, or drought stress.",
+        "direction": "decreasing",
+        "is_significant": True,
+        "color_hex": "#f43f5e"
+    },
+    TrendSignificanceClass.MODERATE_GREENING.value: {
+        "label": "Moderate Greening (p < 0.10, +1.645 ≤ Z < +1.96)",
+        "badge_class": "bg-teal-950/80 text-teal-300 border-teal-800",
+        "description": "Weak to moderate positive trend approaching statistical significance.",
+        "direction": "increasing",
+        "is_significant": False,
+        "color_hex": "#14b8a6"
+    },
+    TrendSignificanceClass.MODERATE_BROWNING.value: {
+        "label": "Moderate Browning (p < 0.10, -1.96 < Z ≤ -1.645)",
+        "badge_class": "bg-amber-950/80 text-amber-300 border-amber-800",
+        "description": "Weak to moderate negative trend approaching statistical significance.",
+        "direction": "decreasing",
+        "is_significant": False,
+        "color_hex": "#f59e0b"
+    },
+    TrendSignificanceClass.STABLE_NO_TREND.value: {
+        "label": "Stable / No Trend (|Z| < 1.645, p ≥ 0.10)",
+        "badge_class": "bg-slate-900/80 text-slate-300 border-slate-700",
+        "description": "Trajectory exhibits no statistically significant monotonic trend; observations fluctuate within seasonal baseline.",
+        "direction": "stable",
+        "is_significant": False,
+        "color_hex": "#64748b"
+    }
+}
+
+TREND_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "SAN_LUIS_RESERVOIR_DROUGHT_DECADE_2016_2026": {
+        "name": "San Luis Reservoir Decadal Hydrological Trajectory (2016-2026)",
+        "bbox": [-121.15, 37.00, -121.02, 37.10],
+        "coordinates": [37.0582, -121.0744],
+        "target_index": "ndmi",
+        "start_year": 2016,
+        "end_year": 2026,
+        "expected_theil_sen_slope": -0.0142,
+        "expected_mk_zscore": -2.85,
+        "expected_significance": "significant_browning",
+        "description": "Multi-decadal Landsat/Sentinel-2 time series tracking sub-alpine reservoir storage decline, dam face exposure, and embankment pore pressure dynamics."
+    },
+    "PARADISE_CALIFORNIA_POST_FIRE_RECOVERY_2018_2026": {
+        "name": "Paradise California Camp Fire Post-Fire Forest Regrowth (2018-2026)",
+        "bbox": [-121.65, 39.70, -121.50, 39.82],
+        "coordinates": [39.7596, -121.6219],
+        "target_index": "ndvi",
+        "start_year": 2018,
+        "end_year": 2026,
+        "expected_theil_sen_slope": 0.0385,
+        "expected_mk_zscore": 3.92,
+        "expected_significance": "significant_greening",
+        "description": "Eight-year vegetative succession, chaparral regrowth, and canopy recovery trajectory following catastrophic 2018 wildfire."
+    },
+    "LAKE_MEAD_WATER_STORAGE_TRAJECTORY_2015_2026": {
+        "name": "Lake Mead Hoover Dam Reservoir Surface Water Shrinkage (2015-2026)",
+        "bbox": [-114.85, 36.00, -114.65, 36.15],
+        "coordinates": [36.0155, -114.7378],
+        "target_index": "mndwi",
+        "start_year": 2015,
+        "end_year": 2026,
+        "expected_theil_sen_slope": -0.0210,
+        "expected_mk_zscore": -3.41,
+        "expected_significance": "significant_browning",
+        "description": "Colorado River basin decadal water elevation shrinkage and shoreline retreat monitoring."
+    },
+    "CENTRAL_VALLEY_AQUIFER_SUBSIDENCE_2016_2026": {
+        "name": "San Joaquin Valley Agricultural Biomass & Subsidence (2016-2026)",
+        "bbox": [-120.50, 36.40, -120.10, 36.80],
+        "coordinates": [36.6022, -120.3015],
+        "target_index": "evi",
+        "start_year": 2016,
+        "end_year": 2026,
+        "expected_theil_sen_slope": 0.0015,
+        "expected_mk_zscore": 0.45,
+        "expected_significance": "stable_no_trend",
+        "description": "Intensively cultivated agricultural basin showing cyclical seasonal oscillations without secular multi-decadal trend."
+    }
+}
+
+def normalize_trend_model(model: Any) -> TrendModel:
+    """Normalizes string alias or enum into canonical TrendModel."""
+    if isinstance(model, TrendModel):
+        return model
+    if not model:
+        return TrendModel.THEIL_SEN_MEDIAN
+    val = str(model).strip().lower().replace("-", "_")
+    mapping = {
+        "theil_sen_median": TrendModel.THEIL_SEN_MEDIAN,
+        "theil_sen": TrendModel.THEIL_SEN_MEDIAN,
+        "theilsen": TrendModel.THEIL_SEN_MEDIAN,
+        "theil": TrendModel.THEIL_SEN_MEDIAN,
+        "sen": TrendModel.THEIL_SEN_MEDIAN,
+        "sens_slope": TrendModel.THEIL_SEN_MEDIAN,
+        "mann_kendall_rank": TrendModel.MANN_KENDALL_RANK,
+        "mann_kendall": TrendModel.MANN_KENDALL_RANK,
+        "mannkendall": TrendModel.MANN_KENDALL_RANK,
+        "mk": TrendModel.MANN_KENDALL_RANK,
+        "yue_pilon_prewhitened": TrendModel.YUE_PILON_PREWHITENED,
+        "yue_pilon": TrendModel.YUE_PILON_PREWHITENED,
+        "tfpw": TrendModel.YUE_PILON_PREWHITENED,
+        "prewhitened": TrendModel.YUE_PILON_PREWHITENED,
+        "prewhitening": TrendModel.YUE_PILON_PREWHITENED,
+        "linear_ols": TrendModel.LINEAR_OLS,
+        "ols": TrendModel.LINEAR_OLS,
+        "linear": TrendModel.LINEAR_OLS
+    }
+    return mapping.get(val, TrendModel.THEIL_SEN_MEDIAN)
+
+def normalize_trend_metric(metric: Any) -> TrendTileMetric:
+    """Normalizes string alias or enum into canonical TrendTileMetric."""
+    if isinstance(metric, TrendTileMetric):
+        return metric
+    if not metric:
+        return TrendTileMetric.THEIL_SEN_SLOPE
+    val = str(metric).strip().lower().replace("-", "_")
+    mapping = {
+        "theil_sen_slope": TrendTileMetric.THEIL_SEN_SLOPE,
+        "slope": TrendTileMetric.THEIL_SEN_SLOPE,
+        "sen_slope": TrendTileMetric.THEIL_SEN_SLOPE,
+        "mann_kendall_zscore": TrendTileMetric.MANN_KENDALL_ZSCORE,
+        "zscore": TrendTileMetric.MANN_KENDALL_ZSCORE,
+        "z_score": TrendTileMetric.MANN_KENDALL_ZSCORE,
+        "trend_significance": TrendTileMetric.TREND_SIGNIFICANCE,
+        "significance": TrendTileMetric.TREND_SIGNIFICANCE,
+        "p_value": TrendTileMetric.P_VALUE,
+        "pvalue": TrendTileMetric.P_VALUE,
+        "prewhitened_slope": TrendTileMetric.PREWHITENED_SLOPE,
+        "tfpw_slope": TrendTileMetric.PREWHITENED_SLOPE,
+        "trajectory_variance": TrendTileMetric.TRAJECTORY_VARIANCE,
+        "variance": TrendTileMetric.TRAJECTORY_VARIANCE
+    }
+    return mapping.get(val, TrendTileMetric.THEIL_SEN_SLOPE)
+
+def normalize_trend_target_index(idx: Any) -> TrendTargetIndex:
+    """Normalizes string alias or enum into canonical TrendTargetIndex."""
+    if isinstance(idx, TrendTargetIndex):
+        return idx
+    if not idx:
+        return TrendTargetIndex.NDVI
+    val = str(idx).strip().lower().replace("-", "_")
+    mapping = {
+        "ndvi": TrendTargetIndex.NDVI,
+        "ndmi": TrendTargetIndex.NDMI,
+        "evi": TrendTargetIndex.EVI,
+        "savi": TrendTargetIndex.SAVI,
+        "ndci": TrendTargetIndex.NDCI,
+        "mndwi": TrendTargetIndex.MNDWI,
+        "lst": TrendTargetIndex.LST
+    }
+    return mapping.get(val, TrendTargetIndex.NDVI)
+
+def calculate_theil_sen_slope(
+    timestamps: Sequence[float],
+    values: Sequence[float],
+    alpha: float = 0.05
+) -> Dict[str, float]:
+    """Calculates Theil-Sen robust median slope, intercept, and confidence interval:
+    Q_ij = (x_j - x_i) / (t_j - t_i) for all j > i.
+    Resistant to up to 29.3% arbitrary outliers (e.g. undetected cloud masks).
+    """
+    if not timestamps or not values or len(timestamps) != len(values) or len(timestamps) < 2:
+        return {
+            "slope_per_year": 0.0,
+            "intercept": float(values[0]) if values else 0.0,
+            "slope_ci_lower": 0.0,
+            "slope_ci_upper": 0.0,
+            "pairwise_count": 0,
+            "breakdown_point": 0.293,
+            "trend_direction": "no_trend",
+            "kendall_tau": 0.0,
+            "mann_kendall_s": 0,
+            "p_value": 1.0,
+            "z_score": 0.0,
+            "is_significant": False
+        }
+    
+    n = len(values)
+    slopes: List[float] = []
+    for i in range(n - 1):
+        for j in range(i + 1, n):
+            dt = float(timestamps[j]) - float(timestamps[i])
+            if abs(dt) > 1e-9:
+                dx = float(values[j]) - float(values[i])
+                slopes.append(dx / dt)
+    
+    if not slopes:
+        return {
+            "slope_per_year": 0.0,
+            "intercept": float(values[0]),
+            "slope_ci_lower": 0.0,
+            "slope_ci_upper": 0.0,
+            "pairwise_count": 0,
+            "breakdown_point": 0.293,
+            "trend_direction": "no_trend",
+            "kendall_tau": 0.0,
+            "mann_kendall_s": 0,
+            "p_value": 1.0,
+            "z_score": 0.0,
+            "is_significant": False
+        }
+    
+    slopes.sort()
+    m = len(slopes)
+    if m % 2 == 1:
+        med_slope = slopes[m // 2]
+    else:
+        med_slope = 0.5 * (slopes[m // 2 - 1] + slopes[m // 2])
+    
+    # Calculate robust median intercept
+    intercepts = [float(x) - med_slope * float(t) for t, x in zip(timestamps, values)]
+    intercepts.sort()
+    if len(intercepts) % 2 == 1:
+        med_intercept = intercepts[len(intercepts) // 2]
+    else:
+        med_intercept = 0.5 * (intercepts[len(intercepts) // 2 - 1] + intercepts[len(intercepts) // 2])
+    
+    # Confidence Interval via Kendall variance approximation
+    var_s = (n * (n - 1) * (2 * n + 5)) / 18.0
+    z_crit = 1.95996  # for alpha = 0.05 (95% CI)
+    if abs(alpha - 0.01) < 0.005:
+        z_crit = 2.57583
+    elif abs(alpha - 0.10) < 0.01:
+        z_crit = 1.64485
+    
+    c_alpha = z_crit * math.sqrt(var_s)
+    k1 = max(0, int(math.floor((m - c_alpha) / 2.0)))
+    k2 = min(m - 1, int(math.ceil((m + c_alpha) / 2.0)))
+    
+    ci_lower = slopes[k1]
+    ci_upper = slopes[k2]
+    
+    mk_res = calculate_mann_kendall_test([float(v) for v in values if v is not None and not math.isnan(v)])
+    direction = mk_res.get("trend_direction", "increasing" if med_slope > 1e-6 else ("decreasing" if med_slope < -1e-6 else "no_trend"))
+    if direction == "no_trend" and abs(med_slope) > 1e-4:
+        direction = "increasing" if med_slope > 0 else "decreasing"
+    
+    return {
+        "slope_per_year": float(round(med_slope, 6)),
+        "intercept": float(round(med_intercept, 6)),
+        "slope_ci_lower": float(round(ci_lower, 6)),
+        "slope_ci_upper": float(round(ci_upper, 6)),
+        "pairwise_count": m,
+        "breakdown_point": 0.293,
+        "trend_direction": direction,
+        "kendall_tau": mk_res.get("kendall_tau", 0.0),
+        "mann_kendall_s": mk_res.get("mann_kendall_s", 0),
+        "p_value": mk_res.get("p_value", 1.0),
+        "z_score": mk_res.get("z_score", 0.0),
+        "is_significant": mk_res.get("is_significant", False)
+    }
+
+def calculate_mann_kendall_statistics(values: Sequence[float]) -> Dict[str, float]:
+    """Calculates Mann-Kendall non-parametric test statistics (S, Var(S), Z_S, p-value, tau)
+    accounting for tied value groups.
+    """
+    if not values or len(values) < 2:
+        return {
+            "s_statistic": 0.0,
+            "variance_s": 0.0,
+            "z_score": 0.0,
+            "p_value": 1.0,
+            "kendall_tau": 0.0,
+            "is_significant_95": False,
+            "is_significant_99": False
+        }
+    
+    n = len(values)
+    s = 0.0
+    for i in range(n - 1):
+        for j in range(i + 1, n):
+            diff = float(values[j]) - float(values[i])
+            if diff > 1e-9:
+                s += 1.0
+            elif diff < -1e-9:
+                s -= 1.0
+    
+    # Compute tied group correction
+    counts: Dict[float, int] = {}
+    for v in values:
+        rounded_v = round(float(v), 5)
+        counts[rounded_v] = counts.get(rounded_v, 0) + 1
+    
+    tie_term = 0.0
+    for cnt in counts.values():
+        if cnt > 1:
+            tie_term += cnt * (cnt - 1) * (2 * cnt + 5)
+    
+    var_s = (n * (n - 1) * (2 * n + 5) - tie_term) / 18.0
+    var_s = max(1e-6, var_s)
+    
+    # Continuity correction
+    if s > 0:
+        z = (s - 1.0) / math.sqrt(var_s)
+    elif s < 0:
+        z = (s + 1.0) / math.sqrt(var_s)
+    else:
+        z = 0.0
+    
+    # Two-tailed asymptotic p-value from standard normal distribution
+    phi = 0.5 * (1.0 + math.erf(abs(z) / math.sqrt(2.0)))
+    p_val = max(0.0, min(1.0, 2.0 * (1.0 - phi)))
+    
+    total_pairs = (n * (n - 1)) / 2.0
+    tau = s / total_pairs if total_pairs > 0 else 0.0
+    
+    return {
+        "s_statistic": float(round(s, 2)),
+        "variance_s": float(round(var_s, 4)),
+        "z_score": float(round(z, 4)),
+        "p_value": float(round(p_val, 6)),
+        "kendall_tau": float(round(tau, 4)),
+        "is_significant_95": bool(p_val < 0.05),
+        "is_significant_99": bool(p_val < 0.01)
+    }
+
+def calculate_yue_pilon_prewhitening(
+    timestamps: Sequence[float],
+    values: Sequence[float],
+    alpha: float = 0.05
+) -> Dict[str, Any]:
+    """Applies Yue-Pilon (2002) Trend-Free Pre-Whitening (TFPW):
+    1. Estimate Theil-Sen slope Q_med.
+    2. Detrend series: y_i = x_i - (Q_med * t_i + intercept).
+    3. Calculate lag-1 autocorrelation r_1 on detrended series.
+    4. If r_1 is statistically significant, pre-whiten: y'_i = y_i - r_1 * y_{i-1}.
+    5. Re-blend slope: x'_i = y'_i + (Q_med * t_i + intercept).
+    6. Evaluate Mann-Kendall and Theil-Sen on pre-whitened series x'.
+    """
+    if not timestamps or not values or len(timestamps) != len(values) or len(timestamps) < 3:
+        ts_res = calculate_theil_sen_slope(timestamps, values, alpha)
+        mk_res = calculate_mann_kendall_statistics(values)
+        return {
+            "lag1_autocorrelation": 0.0,
+            "is_autocorrelated": False,
+            "autocorrelation_critical_value": 0.0,
+            "prewhitened_values": list(values),
+            "prewhitened_slope": ts_res["slope_per_year"],
+            "prewhitened_z_score": mk_res["z_score"],
+            "prewhitened_p_value": mk_res["p_value"],
+            "prewhitened_s": mk_res["s_statistic"],
+            "prewhitened_tau": mk_res["kendall_tau"]
+        }
+    
+    n = len(values)
+    ts_res = calculate_theil_sen_slope(timestamps, values, alpha)
+    slope = ts_res["slope_per_year"]
+    intercept = ts_res["intercept"]
+    
+    # Detrend
+    y = [float(x) - (slope * float(t) + intercept) for t, x in zip(timestamps, values)]
+    
+    # Lag-1 autocorrelation r1
+    mean_y = sum(y) / n
+    num = sum((y[i] - mean_y) * (y[i + 1] - mean_y) for i in range(n - 1))
+    den = sum((y[i] - mean_y) ** 2 for i in range(n))
+    r1 = num / den if den > 1e-12 else 0.0
+    r1 = max(-0.999, min(0.999, r1))
+    
+    # Critical threshold for r1 at 95% confidence
+    r_crit_upper = (-1.0 + 1.95996 * math.sqrt(max(0, n - 2))) / (n - 1)
+    r_crit_lower = (-1.0 - 1.95996 * math.sqrt(max(0, n - 2))) / (n - 1)
+    is_autocorrelated = bool(r1 > r_crit_upper or r1 < r_crit_lower)
+    
+    if is_autocorrelated and n >= 3:
+        y_prime = [y[0]] + [y[i] - r1 * y[i - 1] for i in range(1, n)]
+        x_prime = [y_prime[i] + (slope * float(timestamps[i]) + intercept) for i in range(n)]
+    else:
+        x_prime = [float(v) for v in values]
+    
+    pw_ts = calculate_theil_sen_slope(timestamps, x_prime, alpha)
+    pw_mk = calculate_mann_kendall_statistics(x_prime)
+    
+    return {
+        "lag1_autocorrelation": float(round(r1, 4)),
+        "is_autocorrelated": is_autocorrelated,
+        "autocorrelation_critical_value": float(round(r_crit_upper, 4)),
+        "prewhitened_values": [float(round(v, 4)) for v in x_prime],
+        "prewhitened_slope": pw_ts["slope_per_year"],
+        "prewhitened_z_score": pw_mk["z_score"],
+        "prewhitened_p_value": pw_mk["p_value"],
+        "prewhitened_s": pw_mk["s_statistic"],
+        "prewhitened_tau": pw_mk["kendall_tau"]
+    }
+
+def classify_trend_significance(
+    z_score: float,
+    p_value: float,
+    slope: float
+) -> TrendSignificanceClass:
+    """Classifies trend significance tier based on Mann-Kendall Z_S score and p-value."""
+    p = float(p_value)
+    z = float(z_score)
+    s = float(slope)
+    
+    if p < 0.05:
+        if z > 0 or (abs(z) < 1e-6 and s > 0):
+            return TrendSignificanceClass.SIGNIFICANT_GREENING
+        else:
+            return TrendSignificanceClass.SIGNIFICANT_BROWNING
+    elif p < 0.10:
+        if z > 0 or (abs(z) < 1e-6 and s > 0):
+            return TrendSignificanceClass.MODERATE_GREENING
+        else:
+            return TrendSignificanceClass.MODERATE_BROWNING
+    else:
+        return TrendSignificanceClass.STABLE_NO_TREND
+
+def build_trend_tile_url(
+    model: Union[str, TrendModel] = TrendModel.THEIL_SEN_MEDIAN,
+    metric: Union[str, TrendTileMetric] = TrendTileMetric.THEIL_SEN_SLOPE,
+    z: int = 12,
+    x: int = 650,
+    y: int = 1580,
+    colormap: Optional[str] = None,
+    index: Optional[str] = None
+) -> str:
+    """Builds canonical XYZ tile URL for dynamic trend significance raster tiles."""
+    norm_model = normalize_trend_model(model).value
+    norm_metric = normalize_trend_metric(metric).value
+    url = f"/api/v1/tiles/trend/{norm_model}/{norm_metric}/{z}/{x}/{y}.png"
+    params = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if index:
+        params.append(f"index={index}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+def build_trend_tile_url_template(
+    model: Union[str, TrendModel] = TrendModel.THEIL_SEN_MEDIAN,
+    metric: Union[str, TrendTileMetric] = TrendTileMetric.THEIL_SEN_SLOPE,
+    colormap: Optional[str] = None,
+    index: Optional[str] = None
+) -> str:
+    """Constructs dynamic Leaflet tile URL template for trend raster tiles."""
+    norm_model = normalize_trend_model(model).value
+    norm_metric = normalize_trend_metric(metric).value
+    url = f"/api/v1/tiles/trend/{norm_model}/{norm_metric}/{{z}}/{{x}}/{{y}}.png"
+    params = []
+    if colormap:
+        params.append(f"colormap={colormap}")
+    if index:
+        params.append(f"index={index}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+class TrendTrajectoryPoint(BaseModel):
+    """Single temporal observation along a multi-decadal pixel trajectory."""
+    date: str = Field(..., description="Acquisition date (YYYY-MM-DD)")
+    timestamp_years: float = Field(..., description="Decimal fractional year (e.g. 2021.45)")
+    value: float = Field(..., description="Observed biophysical spectral index value")
+    prewhitened_value: Optional[float] = Field(default=None, description="Yue-Pilon pre-whitened value")
+    fitted_value: Optional[float] = Field(default=None, description="Theil-Sen robust linear fit line value")
+    residual: Optional[float] = Field(default=None, description="Observation residual from fitted line")
+
+class TheilSenResult(BaseModel):
+    """Theil-Sen non-parametric median pairwise slope estimation result."""
+    slope_per_year: float = Field(..., description="Robust median slope rate of change per calendar year")
+    intercept: float = Field(..., description="Theil-Sen median regression intercept")
+    slope_ci_lower: float = Field(..., description="95% confidence interval lower bound for slope")
+    slope_ci_upper: float = Field(..., description="95% confidence interval upper bound for slope")
+    pairwise_count: int = Field(..., ge=0, description="Total number of evaluated pairwise slopes N*(N-1)/2")
+    breakdown_point: float = Field(default=0.293, description="Theoretical outlier breakdown point fraction")
+
+class MannKendallResult(BaseModel):
+    """Mann-Kendall non-parametric monotonic rank trend test result."""
+    s_statistic: float = Field(..., description="Mann-Kendall sum of pairwise sign differences S")
+    variance_s: float = Field(..., ge=0.0, description="Theoretical variance Var(S) with tie adjustments")
+    z_score: float = Field(..., description="Continuity-corrected standard normal test statistic Z_S")
+    p_value: float = Field(..., ge=0.0, le=1.0, description="Two-tailed asymptotic p-value")
+    kendall_tau: float = Field(..., ge=-1.0, le=1.0, description="Kendall rank correlation coefficient tau")
+    is_significant_95: bool = Field(..., description="Whether trend is statistically significant at alpha = 0.05")
+    is_significant_99: bool = Field(..., description="Whether trend is statistically significant at alpha = 0.01")
+
+class YuePilonResult(BaseModel):
+    """Yue-Pilon (2002) Trend-Free Pre-Whitening (TFPW) autoregressive correction result."""
+    lag1_autocorrelation: float = Field(..., ge=-1.0, le=1.0, description="Lag-1 serial autocorrelation coefficient r1")
+    is_autocorrelated: bool = Field(..., description="Whether lag-1 serial autocorrelation is statistically significant")
+    autocorrelation_critical_value: float = Field(..., description="Two-tailed critical threshold for r1 at alpha = 0.05")
+    prewhitened_slope: float = Field(..., description="Theil-Sen slope re-computed on pre-whitened series")
+    prewhitened_z_score: float = Field(..., description="Mann-Kendall Z_S score on pre-whitened series")
+    prewhitened_p_value: float = Field(..., ge=0.0, le=1.0, description="p-value evaluated on pre-whitened series")
+
+class TrendMilestoneSummary(BaseModel):
+    """High-level executive synthesis of multi-decadal trend trajectory analysis."""
+    model: TrendModel = Field(..., description="Applied trend estimation algorithm")
+    target_index: TrendTargetIndex = Field(..., description="Analyzed biophysical index")
+    theil_sen_slope: float = Field(..., description="Annual rate of change")
+    mann_kendall_zscore: float = Field(..., description="Standardized Z_S score")
+    p_value: float = Field(..., description="Statistical significance p-value")
+    kendall_tau: float = Field(..., description="Kendall rank correlation coefficient")
+    significance_class: TrendSignificanceClass = Field(..., description="Categorical significance tier")
+    confidence_rating: TrendConfidenceRating = Field(..., description="Scientific confidence rating")
+    is_prewhitened: bool = Field(default=True, description="Whether autoregressive pre-whitening filter was applied")
+    annual_change_percent: float = Field(..., description="Projected annual percentage rate of change")
+    narrative: str = Field(..., description="Scientific plain-language interpretation of trend trajectory")
+
+class TrendAnalysisRequest(BaseModel):
+    """Request payload for multi-decadal non-parametric trend inversion."""
+    aoi_name: Optional[str] = Field(default="San Luis Reservoir Decadal Hydrological Trajectory", description="AOI label")
+    target_index: TrendTargetIndex = Field(default=TrendTargetIndex.NDVI, description="Target biophysical spectral index")
+    model: TrendModel = Field(default=TrendModel.YUE_PILON_PREWHITENED, description="Trend estimation algorithm")
+    confidence_level: float = Field(default=0.95, ge=0.80, le=0.999, description="Confidence interval level")
+    apply_prewhitening: bool = Field(default=True, description="Whether to apply Yue-Pilon lag-1 AR(1) pre-whitening")
+    observations: Optional[List[Dict[str, Any]]] = Field(default=None, description="Optional custom observation sequence")
+    bbox: Optional[Any] = Field(default=None, description="Optional bounding box envelope")
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def validate_trend_model(cls, v: Any) -> TrendModel:
+        return normalize_trend_model(v)
+
+    @field_validator("target_index", mode="before")
+    @classmethod
+    def validate_trend_target_index(cls, v: Any) -> TrendTargetIndex:
+        return normalize_trend_target_index(v)
+
+class TrendAnalysisResponse(BaseModel):
+    """Response payload containing comprehensive non-parametric trend results and Leaflet tile endpoints."""
+    request_id: str = Field(..., description="Unique trend analysis request identifier")
+    aoi_name: str = Field(..., description="Area of interest label")
+    target_index: TrendTargetIndex = Field(..., description="Analyzed spectral index")
+    model: TrendModel = Field(..., description="Applied trend algorithm")
+    theil_sen: TheilSenResult = Field(..., description="Theil-Sen slope and confidence intervals")
+    mann_kendall: MannKendallResult = Field(..., description="Mann-Kendall rank statistics")
+    yue_pilon: Optional[YuePilonResult] = Field(default=None, description="Yue-Pilon pre-whitening results")
+    summary: TrendMilestoneSummary = Field(..., description="Executive summary and significance classification")
+    trajectory_points: List[TrendTrajectoryPoint] = Field(default_factory=list, description="Trajectory observations and fitted line")
+    tile_url_template: str = Field(..., description="Canonical XYZ tile URL template for dynamic Leaflet overlay")
+    observation_count: int = Field(..., ge=0, description="Total number of evaluated satellite observations")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Execution timestamp")
+    status: str = Field(default="success", description="Execution status")
+
+class TrendTileRequestParams(BaseModel):
+    """Query parameters for dynamic XYZ trend tile rendering."""
+    model: TrendModel = Field(default=TrendModel.THEIL_SEN_MEDIAN, description="Trend algorithm")
+    metric: TrendTileMetric = Field(default=TrendTileMetric.THEIL_SEN_SLOPE, description="Tile metric")
+    index: TrendTargetIndex = Field(default=TrendTargetIndex.NDVI, description="Target index")
+    colormap: Optional[str] = Field(default=None, description="Colormap palette")
+    rescale: Optional[str] = Field(default=None, description="Rescale range min,max")
+
+class TrendModelsResponse(BaseModel):
+    """Capabilities response describing supported trend models, benchmark scenes, and significance classes."""
+    models: Dict[str, Any] = Field(..., description="Trend model configuration dictionary")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Multi-decadal benchmark research scenes")
+    significance_classes: Dict[str, Any] = Field(..., description="Significance tier configurations")
+    supported_indices: List[str] = Field(default_factory=list, description="Supported biophysical index keys")
+    supported_metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")

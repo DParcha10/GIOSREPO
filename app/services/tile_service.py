@@ -5,6 +5,8 @@ import os
 import io
 import math
 import logging
+import gc
+import hashlib
 from typing import Tuple, Optional, Dict, Any, Union, List
 import numpy as np
 from PIL import Image
@@ -387,7 +389,7 @@ class TileService:
         """Generates or retrieves a 256x256 RGBA PNG tile for the specified viewport."""
         col_clean = collection.lower().strip()
         raw_idx = str(index.value if hasattr(index, "value") else index).lower().strip() if index else "rgb"
-        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or col_clean in {"phenology_anomaly", "phenological_anomaly", "phenology_seasonality", "phenology_metric", "phenology", "phenological_seasonality", "land_surface_phenology", "geotechnical_damage_proxy", "damage_proxy", "dpm", "sar_dpm", "sar_damage_proxy", "geotechnical_dpm", "geotechnical_insar_velocity", "insar_velocity", "geotechnical_insar", "insar", "geotechnical_flownet", "flownet", "hydrodynamic_inundation", "inundation", "hydrodynamic", "dam_breach", "dam_breach_hydrodynamic", "topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf", "geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement", "geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
+        if raw_idx not in {"rgb", "true_color"} and (raw_idx in DEFAULT_INDEX_RANGES or raw_idx in {"ndmi", "ndci", "ndre", "mndwi", "nbr", "true_color_sharp", "b05", "b06", "b07", "b8a", "b11", "b12", "harmonized_ndvi", "harmonized_ndmi", "harmonized_evi", "reflectance_delta", "scatter_residual", "seamless_daily_stack"} or col_clean in {"cross_calibrated", "cross_calibration", "cross-calibrated", "cross-calibration", "harmonized_cross_sensor", "cross_sensor", "harmonized_sensor", "sharpened", "spectral_sharpening", "sharpening", "super_resolution", "phenology_anomaly", "phenological_anomaly", "phenology_seasonality", "phenology_metric", "phenology", "phenological_seasonality", "land_surface_phenology", "geotechnical_damage_proxy", "damage_proxy", "dpm", "sar_dpm", "sar_damage_proxy", "geotechnical_dpm", "geotechnical_insar_velocity", "insar_velocity", "geotechnical_insar", "insar", "geotechnical_flownet", "flownet", "hydrodynamic_inundation", "inundation", "hydrodynamic", "dam_breach", "dam_breach_hydrodynamic", "topography_elevation_delta", "elevation_delta", "topography", "cut_and_fill", "pointcloud_csf", "csf", "geotechnical_settlement", "settlement", "geotechnical-settlement", "reconsolidation_settlement", "geotechnical_liquefaction", "liquefaction", "tailings_liquefaction", "geotechnical_rainfall_infiltration", "rainfall_infiltration", "rainfall-infiltration", "thermal_apparent_inertia", "apparent_thermal_inertia", "thermal-apparent-inertia", "ati", "geotechnical_slope_stability", "slope_stability_geotechnical", "slope_stability", "phreatic_seepage", "phreatic-seepage", "seepage", "phreatic_surface", "dam_break", "dam-break", "quality_mosaic", "mosaic_quality", "drone_odm", "tie_point_rpc", "topographic_minnaert", "sbas", "brdf_nbar", "graphcut_seamlines", "true_ortho_zbuffer", "crest_alignment", "direct_georeferencing", "ps_insar", "soil_moisture", "bathymetry", "gpr", "vibration", "spline_mosaic", "cwsi", "disturbance", "turbidity", "snow_cover", "sam", "drought", "landslide", "flood_inundation"}):
             idx_clean = raw_idx
         else:
             idx_enum = validate_spectral_index(index, default=SpectralIndex.RGB)
@@ -406,6 +408,30 @@ class TileService:
         # 1. Check if drone request (excluding direct georeferencing vector footprints)
         if (col_clean in {"drone", "drone-ortho"} or "drone" in col_clean) and not ("direct_georeferencing" in col_clean or "direct-georeferencing" in col_clean or idx_clean in {"direct_georeferencing", "boresight"}):
             return drone_service.get_tile(item_id, z, x, y)
+
+        # Handle spectral sharpening collection requests
+        if col_clean in {"sharpened", "spectral_sharpening", "sharpening", "super_resolution"}:
+            return self.render_sharpened_tile(
+                z=z,
+                x=x,
+                y=y,
+                method=item_id or "gram_schmidt",
+                target=idx_clean,
+                colormap=colormap,
+                rescale=rescale
+            )
+
+        # Handle multi-sensor cross-calibration collection requests
+        if col_clean in {"cross_calibrated", "cross_calibration", "cross-calibrated", "cross-calibration", "harmonized_sensor", "cross_sensor", "harmonized_cross_sensor"}:
+            return self.render_cross_calibrated_tile(
+                z=z,
+                x=x,
+                y=y,
+                model=item_id or "roy_2016_linear",
+                metric=idx_clean,
+                colormap=colormap,
+                rescale=rescale
+            )
 
         # Handle wildfire collection differenced burn severity
         if col_clean == "wildfire" and idx_clean == "rgb":
@@ -5954,6 +5980,381 @@ class TileService:
     def render_phenology_seasonality_tile(self, *args, **kwargs) -> bytes:
         """Alias for render_phenology_tile."""
         return self.render_phenology_tile(*args, **kwargs)
+
+    def render_sharpened_tile(
+        self,
+        *args,
+        method: Union[str, Any] = "gram_schmidt",
+        target: str = "ndmi",
+        z: Union[int, str] = 0,
+        x: Union[int, str] = 0,
+        y: Union[int, str] = 0,
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, Tuple[float, float], List[float]]] = None,
+        collection: str = "sentinel-2-l2a",
+        item_id: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders dynamic 256x256 RGBA PNG tile for Multi-Band Super-Resolution Sharpening (Cycle v2.5.37 - Task T-283).
+
+        Supports:
+            - Methods: gram_schmidt, brovey, high_pass_filter, bicubic_spline
+            - Targets: ndmi, ndci, ndre, mndwi, nbr, true_color_sharp, B05, B06, B07, B8A, B11, B12
+            - Single-band & false/true-color composites
+            - Disk caching under .cache/tiles/sharpened/ and TILE_CACHE_DIR/sharpened/
+        """
+        import os
+        import io
+        import hashlib
+        import gc
+        from PIL import Image
+
+        # Flexible argument unpacking
+        actual_method = method
+        actual_target = target
+        actual_z = z
+        actual_x = x
+        actual_y = y
+
+        if len(args) >= 5:
+            if isinstance(args[0], (int, np.integer)) or (isinstance(args[0], str) and str(args[0]).isdigit()):
+                actual_z = int(args[0])
+                actual_x = int(args[1])
+                actual_y = int(args[2])
+                actual_method = args[3]
+                actual_target = args[4]
+            else:
+                actual_method = args[0]
+                actual_target = args[1]
+                actual_z = int(args[2])
+                actual_x = int(args[3])
+                actual_y = int(args[4])
+        elif len(args) == 4:
+            actual_z = int(args[0])
+            actual_x = int(args[1])
+            actual_y = int(args[2])
+            actual_method = args[3]
+        elif len(args) == 3:
+            actual_z = int(args[0])
+            actual_x = int(args[1])
+            actual_y = int(args[2])
+        elif len(args) == 2:
+            actual_method = args[0]
+            actual_target = args[1]
+
+        from app.models.schemas import normalize_sharpening_method, SharpeningMethod
+        try:
+            norm_method = normalize_sharpening_method(actual_method).value
+        except Exception:
+            norm_method = "gram_schmidt"
+
+        norm_target = str(actual_target or "ndmi").strip().lower().replace("-", "_")
+        actual_z = int(actual_z)
+        actual_x = int(actual_x)
+        actual_y = int(actual_y)
+
+        # Default colormap & stretch bounds
+        default_cmaps = {
+            "ndmi": "turbo",
+            "ndci": "viridis",
+            "ndre": "rdylgn",
+            "mndwi": "blues",
+            "nbr": "spectral",
+            "true_color_sharp": "default",
+            "b05": "viridis",
+            "b06": "viridis",
+            "b07": "viridis",
+            "b8a": "viridis",
+            "b11": "magma",
+            "b12": "magma"
+        }
+        default_rescales = {
+            "ndmi": "-0.2,0.8",
+            "ndci": "-0.1,0.6",
+            "ndre": "0.0,0.8",
+            "mndwi": "-0.5,0.5",
+            "nbr": "-0.3,0.8",
+            "true_color_sharp": "0.0,0.3",
+            "b05": "0.0,0.5",
+            "b06": "0.0,0.6",
+            "b07": "0.0,0.7",
+            "b8a": "0.0,0.8",
+            "b11": "0.0,0.6",
+            "b12": "0.0,0.5"
+        }
+
+        chosen_cmap = (colormap or default_cmaps.get(norm_target, "viridis")).lower().replace("_r", "").strip()
+        if chosen_cmap not in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues", "rdylgn", "coolwarm", "gray"}:
+            chosen_cmap = default_cmaps.get(norm_target, "viridis")
+
+        if rescale:
+            if isinstance(rescale, (list, tuple)) and len(rescale) == 2:
+                chosen_rescale = f"{rescale[0]},{rescale[1]}"
+            else:
+                chosen_rescale = str(rescale).strip()
+        else:
+            chosen_rescale = default_rescales.get(norm_target, "0.0,1.0")
+
+        # 1. Disk caching check
+        cache_key = f"sharpened_{norm_method}_{norm_target}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        sharp_cache_dir = os.path.join(TILE_CACHE_DIR, "sharpened", norm_method, norm_target)
+        dot_cache_dir = os.path.join(".cache", "tiles", "sharpened", norm_method, norm_target)
+        for d in (sharp_cache_dir, dot_cache_dir):
+            try:
+                os.makedirs(d, exist_ok=True)
+                cf = os.path.join(d, f"{cache_hash}.png")
+                if os.path.exists(cf) and os.path.getsize(cf) > 100:
+                    with open(cf, "rb") as f:
+                        return f.read()
+            except Exception:
+                pass
+
+        # 2. Generate multi-spectral bands
+        from app.services.sharpening_service import sharpening_service
+        tile_seed = (actual_z * 10007 + actual_x * 389 + actual_y) % 1000003
+        guidance, targets, _ = sharpening_service.generate_synthetic_scene_bands(
+            scene_id=item_id,
+            grid_size=256,
+            seed=tile_seed
+        )
+
+        # 3. Apply sharpening
+        if norm_method == "brovey":
+            sharp_bands, _ = sharpening_service.sharpen_brovey(targets, guidance)
+        elif norm_method == "high_pass_filter":
+            sharp_bands, _ = sharpening_service.sharpen_high_pass_filter(targets, guidance)
+        elif norm_method == "bicubic_spline":
+            sharp_bands, _ = sharpening_service.sharpen_bicubic_spline(targets, (256, 256))
+        else: # gram_schmidt default
+            sharp_bands, _ = sharpening_service.sharpen_gram_schmidt(targets, guidance)
+
+        all_bands = {**guidance, **sharp_bands}
+
+        # 4. Render 256x256 RGBA array
+        rgba = np.zeros((256, 256, 4), dtype=np.uint8)
+
+        if norm_target in {"true_color_sharp", "rgb_sharp", "rgb", "true_color"}:
+            r_band = all_bands.get("B04", all_bands.get("B05"))
+            g_band = all_bands.get("B03")
+            b_band = all_bands.get("B02")
+
+            rgba[:, :, 0] = np.clip(r_band * (255.0 / 0.35), 0, 255).astype(np.uint8)
+            rgba[:, :, 1] = np.clip(g_band * (255.0 / 0.25), 0, 255).astype(np.uint8)
+            rgba[:, :, 2] = np.clip(b_band * (255.0 / 0.20), 0, 255).astype(np.uint8)
+            rgba[:, :, 3] = 255
+        else:
+            val = sharpening_service.compute_derived_index(all_bands, norm_target)
+            try:
+                parts = [float(p.strip()) for p in chosen_rescale.split(",")]
+                min_v, max_v = parts[0], parts[1]
+            except Exception:
+                min_v, max_v = 0.0, 1.0
+
+            norm_val = np.clip((val - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+            rgba[:, :, 3] = 255
+
+        # 5. PNG encoding
+        img = Image.fromarray(rgba, "RGBA")
+        with io.BytesIO() as buf:
+            img.save(buf, format="PNG", optimize=True)
+            png_bytes = buf.getvalue()
+
+        # 6. Cache write
+        for d in (sharp_cache_dir, dot_cache_dir):
+            try:
+                cf = os.path.join(d, f"{cache_hash}.png")
+                with open(cf, "wb") as f:
+                    f.write(png_bytes)
+            except Exception as e:
+                logger.warning("Failed to write sharpened tile cache to %s: %s", d, e)
+
+        # 7. Memory cleanup
+        del guidance, targets, sharp_bands, all_bands, rgba, img
+        gc.collect()
+
+        return png_bytes
+
+    def render_spectral_sharpening_tile(self, *args, **kwargs) -> bytes:
+        """Alias for render_sharpened_tile."""
+        return self.render_sharpened_tile(*args, **kwargs)
+
+    def render_cross_calibrated_tile(
+        self,
+        *args,
+        model: str = "roy_2016_linear",
+        metric: str = "harmonized_ndvi",
+        z: int = 12,
+        x: int = 650,
+        y: int = 1580,
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, Tuple[float, float], List[float]]] = None,
+        collection: str = "cross_calibrated",
+        item_id: Optional[str] = None,
+        source_sensor: Optional[str] = None,
+        target_sensor: Optional[str] = None,
+        aoi_name: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders dynamic 256x256 RGBA PNG tile for Multi-Sensor Cross-Calibration (Cycle v2.5.38 - Task T-289).
+
+        Features:
+            - Roy et al. (2016) / Claverie et al. (2018) OLI/MSI surface reflectance harmonization
+            - Dark Object Subtraction (DOS), QUAC, RMA orthogonal regression, and polynomial cubic models
+            - Dynamic visualization metrics: harmonized_ndvi, harmonized_ndmi, harmonized_evi,
+              reflectance_delta, scatter_residual, seamless_daily_stack
+            - Colormap palettes: viridis, turbo, rdylgn, coolwarm, magma, spectral
+            - Sub-350ms rendering performance
+            - Multi-tier disk caching under .cache/tiles/cross_calibrated/ and TILE_CACHE_DIR/cross_calibrated/
+            - Float32 memory-conscious array lifecycle with proactive gc.collect()
+        """
+        actual_model = model
+        actual_metric = metric
+        actual_z = z
+        actual_x = x
+        actual_y = y
+
+        if len(args) == 5:
+            actual_model = args[0]
+            actual_metric = args[1]
+            actual_z = args[2]
+            actual_x = args[3]
+            actual_y = args[4]
+        elif len(args) == 3:
+            actual_z = args[0]
+            actual_x = args[1]
+            actual_y = args[2]
+        elif len(args) == 2:
+            actual_model = args[0]
+            actual_metric = args[1]
+
+        from app.models.schemas import (
+            normalize_sensor_calibration_model,
+            SensorCalibrationModel,
+            CrossSensorTileMetric,
+            SensorPlatform
+        )
+
+        try:
+            norm_model = normalize_sensor_calibration_model(actual_model).value
+        except Exception:
+            norm_model = "roy_2016_linear"
+
+        norm_metric = str(actual_metric or "harmonized_ndvi").strip().lower().replace("-", "_")
+        actual_z = int(actual_z)
+        actual_x = int(actual_x)
+        actual_y = int(actual_y)
+
+        default_cmaps = {
+            "harmonized_ndvi": "rdylgn",
+            "harmonized_ndmi": "turbo",
+            "harmonized_evi": "rdylgn",
+            "reflectance_delta": "coolwarm",
+            "scatter_residual": "magma",
+            "seamless_daily_stack": "viridis"
+        }
+        default_rescales = {
+            "harmonized_ndvi": "-0.2,0.85",
+            "harmonized_ndmi": "-0.2,0.75",
+            "harmonized_evi": "0.0,0.80",
+            "reflectance_delta": "-0.05,0.05",
+            "scatter_residual": "0.0,0.025",
+            "seamless_daily_stack": "-0.2,0.85"
+        }
+
+        chosen_cmap = (colormap or default_cmaps.get(norm_metric, "viridis")).lower().replace("_r", "").strip()
+        if chosen_cmap not in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues", "rdylgn", "coolwarm", "gray"}:
+            chosen_cmap = default_cmaps.get(norm_metric, "viridis")
+
+        if rescale:
+            if isinstance(rescale, (list, tuple)) and len(rescale) == 2:
+                chosen_rescale = f"{rescale[0]},{rescale[1]}"
+            else:
+                chosen_rescale = str(rescale).strip()
+        else:
+            chosen_rescale = default_rescales.get(norm_metric, "0.0,1.0")
+
+        # 1. Disk caching check
+        cache_key = f"cross_calibrated_{norm_model}_{norm_metric}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        cal_cache_dir = os.path.join(TILE_CACHE_DIR, "cross_calibrated", norm_model, norm_metric)
+        dot_cache_dir = os.path.join(".cache", "tiles", "cross_calibrated", norm_model, norm_metric)
+
+        for d in (cal_cache_dir, dot_cache_dir):
+            try:
+                os.makedirs(d, exist_ok=True)
+                cf = os.path.join(d, f"{cache_hash}.png")
+                if os.path.exists(cf) and os.path.getsize(cf) > 100:
+                    with open(cf, "rb") as f:
+                        return f.read()
+            except Exception:
+                pass
+
+        # 2. Ingest or generate paired sensor bands
+        from app.services.calibration_service import calibration_service
+        tile_seed = (actual_z * 10007 + actual_x * 389 + actual_y) % 1000003
+        src_bands, tgt_bands, _ = calibration_service.generate_synthetic_sensor_pair_bands(
+            aoi_name=aoi_name or item_id,
+            source_sensor=source_sensor or SensorPlatform.LANDSAT_8_OLI,
+            target_sensor=target_sensor or SensorPlatform.SENTINEL_2A_MSI,
+            grid_size=256,
+            seed=tile_seed
+        )
+
+        # 3. Apply cross-calibration
+        cal_bands = calibration_service.calibrate_scene(
+            source_bands=src_bands,
+            model=norm_model,
+            source_sensor=source_sensor or SensorPlatform.LANDSAT_8_OLI,
+            target_sensor=target_sensor or SensorPlatform.SENTINEL_2A_MSI
+        )
+
+        # 4. Compute requested metric array
+        val = calibration_service.compute_harmonized_metric(
+            bands=cal_bands,
+            metric=norm_metric,
+            raw_source_bands=src_bands,
+            target_obs_bands=tgt_bands
+        )
+
+        # 5. Colormap and rescale normalization
+        try:
+            parts = [float(p.strip()) for p in chosen_rescale.split(",")]
+            min_v, max_v = parts[0], parts[1]
+        except Exception:
+            min_v, max_v = 0.0, 1.0
+
+        norm_val = np.clip((val - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+        cmap_func = self.get_colormap(chosen_cmap)
+        rgba = (cmap_func(norm_val) * 255.0).astype(np.uint8)
+        rgba[:, :, 3] = 255
+
+        # 6. Encode PNG
+        img = Image.fromarray(rgba, "RGBA")
+        with io.BytesIO() as buf:
+            img.save(buf, format="PNG", optimize=True)
+            png_bytes = buf.getvalue()
+
+        # 7. Write to cache
+        for d in (cal_cache_dir, dot_cache_dir):
+            try:
+                cf = os.path.join(d, f"{cache_hash}.png")
+                with open(cf, "wb") as f:
+                    f.write(png_bytes)
+            except Exception as e:
+                logger.warning("Failed to write cross-calibrated tile cache to %s: %s", d, e)
+
+        # 8. Proactive memory cleanup
+        del src_bands, tgt_bands, cal_bands, val, norm_val, rgba, img
+        gc.collect()
+
+        return png_bytes
+
+    def render_harmonized_cross_sensor_tile(self, *args, **kwargs) -> bytes:
+        """Alias for render_cross_calibrated_tile."""
+        return self.render_cross_calibrated_tile(*args, **kwargs)
 
 
 tile_service = TileService()

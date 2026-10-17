@@ -4265,9 +4265,161 @@ class TestScientificRigor(unittest.TestCase):
         self.assertEqual(empty_m["sos_doy"], 0.0)
         self.assertEqual(empty_m["los_days"], 0.0)
 
+    def test_spectral_sharpening_scientific_rigor_and_safety_invariants(self):
+        """Task T-286: Continuous Scientific QA: Gram-Schmidt Radiometric Energy Conservation,
+        MTF Spatial Frequency High-Pass Detail Transfer, Spectral Distortion Index (SAM / UIQI Q4),
+        and Dimensionless Synthesis Error (ERGAS) Safety Invariants.
+        """
+        from app.models.schemas import (
+            calculate_spectral_angle_mapper,
+            calculate_synthetic_panchromatic,
+            calculate_brovey_sharpened_value,
+            calculate_high_pass_injected_value,
+            calculate_ergas,
+            calculate_uiqi_q4,
+            calculate_energy_conservation_ratio,
+            classify_sharpening_quality_rating,
+            SharpeningQualityRating,
+            SYNTHETIC_PAN_WEIGHTS,
+            HPF_KERNELS,
+            HPFKernelType
+        )
+
+        # -------------------------------------------------------------
+        # 1. Gram-Schmidt Radiometric Energy Conservation Invariant
+        # -------------------------------------------------------------
+        # For equal mean radiance across multi-band original and sharpened arrays:
+        # \int \rho_{sharp} / \int \rho_{orig} \equiv 1.0 (within \pm 0.1%)
+        orig_bands = [0.18, 0.22, 0.28, 0.42, 0.25, 0.16]
+        sharp_bands_conserved = [0.181, 0.219, 0.282, 0.418, 0.251, 0.159]
+        ratio = calculate_energy_conservation_ratio(orig_bands, sharp_bands_conserved)
+        self.assertAlmostEqual(ratio, 1.000, delta=0.005, msg="Radiometric energy conservation ratio must be approx 1.0")
+
+        # Zero mean radiance edge case: Must safely return 1.0 without ZeroDivisionError
+        ratio_zero = calculate_energy_conservation_ratio([0.0, 0.0], [0.0, 0.0])
+        self.assertEqual(ratio_zero, 1.0)
+
+        # Synthetic Panchromatic Weight Presets: Partition of Unity (\sum w_i = 1.0)
+        for preset_name, w_dict in SYNTHETIC_PAN_WEIGHTS.items():
+            total_w = sum(w_dict.values())
+            self.assertAlmostEqual(
+                total_w,
+                1.000,
+                places=5,
+                msg=fr"Synthetic pan preset '{preset_name}' must satisfy partition of unity \sum w_i = 1.0"
+            )
+
+        # -------------------------------------------------------------
+        # 2. Modulation Transfer Function (MTF) & High-Frequency Spatial Kernels
+        # -------------------------------------------------------------
+        # Laplacian 3x3: Zero DC gain (zero-frequency rejection) -> sum of kernel elements == 0.0
+        laplacian = np.array(HPF_KERNELS[HPFKernelType.LAPLACIAN_3X3.value], dtype=np.float64)
+        self.assertAlmostEqual(float(np.sum(laplacian)), 0.0, places=6, msg="Laplacian 3x3 must sum to 0.0 for zero-frequency DC rejection")
+
+        # Gaussian Difference 5x5: Zero DC gain -> sum of kernel elements == 0.0
+        gauss_diff = np.array(HPF_KERNELS[HPFKernelType.GAUSSIAN_DIFFERENCE_5X5.value], dtype=np.float64)
+        self.assertAlmostEqual(float(np.sum(gauss_diff)), 0.0, places=6, msg="Gaussian Difference 5x5 must sum to 0.0")
+
+        # High-Boost 3x3: All-pass DC preservation + boost -> sum of kernel elements == 1.0
+        high_boost = np.array(HPF_KERNELS[HPFKernelType.HIGH_BOOST_3X3.value], dtype=np.float64)
+        self.assertAlmostEqual(float(np.sum(high_boost)), 1.0, places=6, msg="High-Boost 3x3 kernel must sum to 1.0 for DC preservation")
+
+        # High-Pass Detail Injection: Non-negativity invariant & gain scaling
+        # Large negative spatial frequency delta must not drive surface reflectance below 0.0
+        clamped_sharp = calculate_high_pass_injected_value(low_res_val=0.10, high_freq_delta=-0.50, gain=1.0)
+        self.assertGreaterEqual(clamped_sharp, 0.0, "High-pass detail injection must preserve non-negativity")
+        self.assertEqual(clamped_sharp, 0.0)
+
+        # Monotonic gain scaling
+        boost_gain1 = calculate_high_pass_injected_value(low_res_val=0.20, high_freq_delta=0.10, gain=0.50)
+        boost_gain2 = calculate_high_pass_injected_value(low_res_val=0.20, high_freq_delta=0.10, gain=1.00)
+        self.assertGreater(boost_gain2, boost_gain1, "Higher spatial gain must yield larger detail injection")
+
+        # -------------------------------------------------------------
+        # 3. Spectral Distortion Indices (SAM & UIQI / Q4) Invariants
+        # -------------------------------------------------------------
+        # SAM: Identical vectors must yield exact 0.0 radians
+        sam_self = calculate_spectral_angle_mapper([0.15, 0.25, 0.40], [0.15, 0.25, 0.40])
+        self.assertEqual(sam_self, 0.0)
+
+        # SAM: Scale Invariance -> pure intensity scaling u and c*u must yield SAM = 0.0
+        v_base = [0.10, 0.20, 0.30, 0.40]
+        v_scaled = [c * 2.5 for c in v_base]
+        sam_scaled = calculate_spectral_angle_mapper(v_base, v_scaled)
+        self.assertAlmostEqual(sam_scaled, 0.0, places=5, msg="SAM must be strictly invariant under scalar multiplication")
+
+        # SAM: Orthogonal vectors -> SAM = pi / 2
+        sam_ortho = calculate_spectral_angle_mapper([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+        self.assertAlmostEqual(sam_ortho, math.pi / 2.0, places=5)
+
+        # SAM: NumPy 1D ndarray sequence compatibility
+        np_u = np.array([0.2, 0.4, 0.6])
+        np_v = np.array([0.2, 0.4, 0.6])
+        self.assertAlmostEqual(calculate_spectral_angle_mapper(np_u, np_v), 0.0, places=5)
+
+        # SAM: Type mismatch safety -> mixing Dict and Sequence must raise TypeError cleanly
+        with self.assertRaises(TypeError):
+            calculate_spectral_angle_mapper({"B02": 0.2}, [0.2])
+        with self.assertRaises(TypeError):
+            calculate_spectral_angle_mapper([0.2], {"B02": 0.2})
+
+        # UIQI / Q4 Universal Image Quality Index: Identical signals yield 1.0
+        q4_self = calculate_uiqi_q4([0.1, 0.2, 0.3, 0.4], [0.1, 0.2, 0.3, 0.4])
+        self.assertEqual(q4_self, 1.0)
+
+        # UIQI / Q4: Zero-radiance edge cases must return 1.0
+        q4_zero = calculate_uiqi_q4([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+        self.assertEqual(q4_zero, 1.0)
+
+        # -------------------------------------------------------------
+        # 4. Dimensionless Synthesis Relative Error (ERGAS) Safety Invariants
+        # -------------------------------------------------------------
+        # Zero error invariant: Perfect reconstruction yields ERGAS = 0.0
+        ergas_zero = calculate_ergas([0.0, 0.0, 0.0], [0.2, 0.3, 0.4], high_res=10.0, low_res=20.0)
+        self.assertEqual(ergas_zero, 0.0)
+
+        # Spatial resolution ratio scaling: Doubling h/l from 10/20 (0.5) to 20/20 (1.0) doubles ERGAS
+        ergas_half = calculate_ergas([0.01, 0.01], [0.2, 0.2], high_res=10.0, low_res=20.0)
+        ergas_full = calculate_ergas([0.01, 0.01], [0.2, 0.2], high_res=20.0, low_res=20.0)
+        self.assertAlmostEqual(ergas_full / ergas_half, 2.0, places=4, msg="ERGAS must scale linearly with (h/l)")
+
+        # Zero/negative resolution floor safety: Must not raise ZeroDivisionError
+        ergas_zero_div = calculate_ergas([0.01], [0.2], high_res=10.0, low_res=0.0)
+        self.assertEqual(ergas_zero_div, 0.0)
+        ergas_neg_div = calculate_ergas([0.01], [0.2], high_res=10.0, low_res=-10.0)
+        self.assertEqual(ergas_neg_div, 0.0)
+
+        # -------------------------------------------------------------
+        # 5. Brovey Ratio Fusion Safety & Epsilon Clamping
+        # -------------------------------------------------------------
+        # Zero denominator safety: When low_res_pan = 0.0, denominator is clamped to epsilon=1e-6
+        brovey_zero_pan = calculate_brovey_sharpened_value(low_res_val=0.20, high_res_pan=0.40, low_res_pan=0.0)
+        self.assertGreater(brovey_zero_pan, 0.0, "Brovey must safely handle zero low-res pan via epsilon clamping")
+
+        # Identity preservation: When P_high == P_low, rho_sharp == rho_low
+        brovey_identity = calculate_brovey_sharpened_value(low_res_val=0.35, high_res_pan=0.25, low_res_pan=0.25)
+        self.assertAlmostEqual(brovey_identity, 0.35, places=5)
+
+        # -------------------------------------------------------------
+        # 6. Synthetic Panchromatic Weight Preset Resolution
+        # -------------------------------------------------------------
+        guidance = {"B02": 0.10, "B03": 0.20, "B04": 0.30, "B08": 0.40}
+        # String preset lookup with case-insensitivity
+        pan_equal_str = calculate_synthetic_panchromatic(guidance, weights="equal")
+        pan_equal_dict = calculate_synthetic_panchromatic(guidance, weights=SYNTHETIC_PAN_WEIGHTS["equal"])
+        self.assertEqual(pan_equal_str, pan_equal_dict)
+
+        pan_rgb_str = calculate_synthetic_panchromatic(guidance, weights="NATURAL_RGB")
+        pan_rgb_dict = calculate_synthetic_panchromatic(guidance, weights=SYNTHETIC_PAN_WEIGHTS["natural_rgb"])
+        self.assertEqual(pan_rgb_str, pan_rgb_dict)
+
+        # Empty guidance bands
+        self.assertEqual(calculate_synthetic_panchromatic({}), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
