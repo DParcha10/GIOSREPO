@@ -1635,7 +1635,7 @@ class TileService:
         # Encode to PNG
         img = Image.fromarray(rgba, "RGBA")
         with io.BytesIO() as buf:
-            img.save(buf, format="PNG", optimize=True)
+            img.save(buf, format="PNG")
             png_bytes = buf.getvalue()
 
         # Free memory buffers
@@ -2698,8 +2698,11 @@ class TileService:
         chosen_cmap = (colormap or default_cmaps.get(norm_metric, "spectral")).lower().replace("_r", "").strip()
         chosen_rescale = str(rescale).strip() if rescale else default_rescales.get(norm_metric, "0.0,45.0")
 
+        collection = kwargs.get("collection", "sentinel-2-l2a")
+        col_clean = str(collection or "sentinel-2-l2a").lower().strip()
+
         # 1. Disk Caching check
-        cache_key = f"sdb_{norm_model.value}_{norm_metric.value}_{chosen_cmap}_{chosen_rescale}_{asset_id}_{z}_{x}_{y}"
+        cache_key = f"sdb_{norm_model.value}_{norm_metric.value}_{chosen_cmap}_{chosen_rescale}_{asset_id}_{col_clean}_{z}_{x}_{y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
         sdb_cache_dir = os.path.join(TILE_CACHE_DIR, "bathymetry", norm_model.value, norm_metric.value)
         dot_cache_dir = os.path.join(".cache", "tiles", "bathymetry", norm_model.value, norm_metric.value)
@@ -2716,11 +2719,28 @@ class TileService:
 
         # 2. Generate aquatic multi-spectral & bathymetric data
         from app.services.bathymetry_service import bathymetry_service
-        scene_data = bathymetry_service.generate_synthetic_bathymetry_scene(asset_id_or_benchmark=asset_id, grid_size=256)
-        depth_arr = scene_data["depth"]
-        water_mask = scene_data["water_mask"]
-        blue_arr = scene_data["blue"]
-        green_arr = scene_data["green"]
+        from app.services.data_acquisition import data_acquisition_service
+        try:
+            ds, meta = data_acquisition_service.load_bathymetry_data_cube(
+                asset_id=asset_id,
+                grid_size=256,
+                collection=col_clean,
+                bbox=kwargs.get("bbox")
+            )
+            depth_arr = np.asarray(ds["depth_ground_truth"].values, dtype=np.float32)
+            water_mask = np.asarray(ds["water_mask"].values > 0.5, dtype=bool)
+            blue_arr = np.asarray(ds["blue"].values, dtype=np.float32)
+            green_arr = np.asarray(ds["green"].values, dtype=np.float32)
+            del ds, meta
+            gc.collect()
+        except Exception:
+            scene_data = bathymetry_service.generate_synthetic_bathymetry_scene(asset_id_or_benchmark=asset_id, grid_size=256)
+            depth_arr = scene_data["depth"]
+            water_mask = scene_data["water_mask"]
+            blue_arr = scene_data["blue"]
+            green_arr = scene_data["green"]
+            del scene_data
+            gc.collect()
 
         if norm_metric == SDBTileMetric.BATHYMETRY_DEPTH:
             grid = depth_arr
@@ -2757,7 +2777,7 @@ class TileService:
         # 4. Save PNG bytes
         img = Image.fromarray(rgba, mode="RGBA")
         bio = io.BytesIO()
-        img.save(bio, format="PNG", optimize=True)
+        img.save(bio, format="PNG")
         png_bytes = bio.getvalue()
 
         # 5. Write to cache
@@ -2769,7 +2789,7 @@ class TileService:
             except Exception:
                 pass
 
-        del scene_data, depth_arr, water_mask, blue_arr, green_arr, grid, norm_grid, rgba, img, bio
+        del depth_arr, water_mask, blue_arr, green_arr, grid, norm_grid, rgba, img, bio
         gc.collect()
 
         return png_bytes

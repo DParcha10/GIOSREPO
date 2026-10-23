@@ -216,6 +216,7 @@ import TrendAnalysisModal from '../components/TrendAnalysisModal';
 import MultimodalFusionModal from '../components/MultimodalFusionModal';
 import InSARDeformationModal from '../components/InSARDeformationModal';
 import SpectralUnmixingModal from '../components/SpectralUnmixingModal';
+import BathymetryStudioModal from '../components/BathymetryStudioModal';
 import BYOCStorageModal from '../components/BYOCStorageModal';
 import PointCloudCHMModal from '../components/PointCloudCHMModal';
 import CoRegistrationModal from '../components/CoRegistrationModal';
@@ -1081,6 +1082,26 @@ export default function MapExplorer() {
     dominant_class: 'bare_soil_tailings'
   });
   const [unmixingSamplePoints, setUnmixingSamplePoints] = useState([]);
+
+  // Cycle v2.5.44 Satellite-Derived Bathymetry (SDB) Studio State (Task T-326)
+  const [bathymetryModalOpen, setBathymetryModalOpen] = useState(false);
+  const [showBathymetryTileLayer, setShowBathymetryTileLayer] = useState(false);
+  const [bathymetryAssetId, setBathymetryAssetId] = useState('SAN_LUIS_RES_CA');
+  const [bathymetryAssetName, setBathymetryAssetName] = useState('San Luis Reservoir');
+  const [bathymetryModel, setBathymetryModel] = useState('stumpf_log_ratio');
+  const [bathymetryMetric, setBathymetryMetric] = useState('bathymetry_depth');
+  const [bathymetryColormap, setBathymetryColormap] = useState('blues');
+  const [bathymetryRescale, setBathymetryRescale] = useState('0.0,45.0');
+  const [bathymetryOpacity, setBathymetryOpacity] = useState(0.85);
+  const [bathymetryTileUrl, setBathymetryTileUrl] = useState('');
+  const [bathymetrySummary, setBathymetrySummary] = useState({
+    mean_depth_m: 18.42,
+    max_depth_m: 35.42,
+    estimated_volume_m3: 21500000.0,
+    siltation_loss_percentage: 14.0,
+    severity_tier: 'minor_siltation',
+    mean_attenuation_kd: 0.125
+  });
 
   // T-79 & T-81 Dense Point Cloud Filtering & Canopy Height Model (CHM) State
   const [pointCloudModalOpen, setPointCloudModalOpen] = useState(false);
@@ -5357,6 +5378,19 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={458}
+              />
+            )}
+
+            {/* Cycle v2.5.44 Dynamic Satellite-Derived Bathymetry (SDB) TileLayer (Task T-326) */}
+            {showBathymetryTileLayer && !curtainActive && (
+              <TileLayer
+                key={`bathymetry-tile-${bathymetryAssetId}-${bathymetryModel}-${bathymetryMetric}-${bathymetryColormap}-${bathymetryRescale}-${bathymetryOpacity}`}
+                url={bathymetryTileUrl || `/api/v1/tiles/bathymetry/${bathymetryModel}/${bathymetryMetric}/{z}/{x}/{y}.png?colormap=${bathymetryColormap}${bathymetryRescale ? `&rescale=${bathymetryRescale}` : ''}&asset_id=${bathymetryAssetId}`}
+                opacity={bathymetryOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={460}
               />
             )}
 
@@ -11159,6 +11193,64 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* Cycle v2.5.44 Floating Satellite-Derived Bathymetry HUD Card (Task T-326) */}
+          {showBathymetryTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-sky-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[760px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Waves className="w-4 h-4 text-sky-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[220px]" title={bathymetryAssetName}>
+                    {bathymetryAssetName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                    {bathymetryModel.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    {bathymetryMetric.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-sky-500/20 text-sky-300 border border-sky-500/40">
+                    MAX DEPTH: {bathymetrySummary?.max_depth_m || 35.4}M
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setBathymetryModalOpen(true)}
+                    className="px-2 py-1 bg-sky-950 hover:bg-sky-900 border border-sky-500/40 text-sky-300 rounded text-[10px] font-bold uppercase transition-all cursor-pointer"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowBathymetryTileLayer(false)}
+                    className="text-slate-400 hover:text-white cursor-pointer"
+                    title="Dismiss Bathymetry Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-mono text-gray-300 px-1">
+                <div className="flex items-center gap-4">
+                  <span>
+                    <strong className="text-white">Mean Depth:</strong> {bathymetrySummary?.mean_depth_m || 18.4}m
+                  </span>
+                  <span>
+                    <strong className="text-white">Active Volume:</strong> {((bathymetrySummary?.estimated_volume_m3 || 2.15e7) / 1e6).toFixed(1)}M m³
+                  </span>
+                  <span>
+                    <strong className="text-white">Siltation Loss:</strong> {bathymetrySummary?.siltation_loss_percentage || 14.0}%
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-400">Palette:</span>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-zinc-800 text-sky-300 font-bold uppercase">
+                    {bathymetryColormap}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -12228,6 +12320,18 @@ export default function MapExplorer() {
               >
                 <PieChart className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Spectral Unmixing (v2.5.42)</span>
+              </button>
+
+              {/* Cycle v2.5.44 Satellite-Derived Bathymetry (SDB) Studio Shortcut (Task T-326) */}
+              <button
+                onClick={() => setBathymetryModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-sky-300 hover:text-white hover:bg-sky-500/20 border border-sky-500/30 ${
+                  bathymetryModalOpen || showBathymetryTileLayer ? 'bg-sky-600 text-white font-extrabold shadow-[0_0_12px_rgba(2,132,199,0.6)]' : ''
+                }`}
+                title="Satellite-Derived Bathymetry (SDB) Studio, Stumpf Log-Ratio Depth, 3D Sub-Surface Contour Visualizer, EAC Storage Capacity & Dynamic Bathymetry Tiles (Cycle v2.5.44)"
+              >
+                <Waves className="w-3.5 h-3.5 text-sky-400" />
+                <span>Bathymetry Studio (v2.5.44)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -24613,6 +24717,54 @@ export default function MapExplorer() {
           if (extra.sceneName) setUnmixingSceneName(extra.sceneName);
           setShowUnmixingTileLayer(true);
           setUnmixingModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.44 Satellite-Derived Bathymetry (SDB) Studio Modal (Task T-326) */}
+      <BathymetryStudioModal
+        isOpen={bathymetryModalOpen}
+        onClose={() => setBathymetryModalOpen(false)}
+        initialAssetId={bathymetryAssetId}
+        onApply={(payload) => {
+          setBathymetryAssetId(payload.assetId || 'SAN_LUIS_RES_CA');
+          setBathymetryAssetName(payload.assetName || 'San Luis Reservoir');
+          setBathymetryModel(payload.model || 'stumpf_log_ratio');
+          setBathymetryMetric(payload.metric || 'bathymetry_depth');
+          setBathymetryColormap(payload.colormap || 'blues');
+          setBathymetryRescale(payload.rescale || '0.0,45.0');
+          setBathymetryOpacity(payload.opacity ?? 0.85);
+          setBathymetryTileUrl(payload.urlTemplate || payload.tileUrl || '');
+          if (payload.summary) {
+            setBathymetrySummary(payload.summary);
+          }
+          if (payload.centerCoords && Array.isArray(payload.centerCoords)) {
+            setCustomFlyTarget({
+              lat: payload.centerCoords[0],
+              lng: payload.centerCoords[1],
+              zoom: 13
+            });
+          }
+          setShowBathymetryTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setBathymetryTileUrl(url);
+          if (extra.assetId) setBathymetryAssetId(extra.assetId);
+          if (extra.assetName) setBathymetryAssetName(extra.assetName);
+          if (extra.model) setBathymetryModel(extra.model);
+          if (extra.metric) setBathymetryMetric(extra.metric);
+          if (extra.colormap) setBathymetryColormap(extra.colormap);
+          if (extra.rescale) setBathymetryRescale(extra.rescale);
+          if (extra.opacity !== undefined) setBathymetryOpacity(extra.opacity);
+          if (extra.summary) setBathymetrySummary(extra.summary);
+          if (extra.centerCoords && Array.isArray(extra.centerCoords)) {
+            setCustomFlyTarget({
+              lat: extra.centerCoords[0],
+              lng: extra.centerCoords[1],
+              zoom: 13
+            });
+          }
+          setShowBathymetryTileLayer(true);
+          setBathymetryModalOpen(false);
         }}
       />
 

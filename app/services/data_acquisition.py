@@ -3016,20 +3016,26 @@ class DataAcquisitionService:
         results = []
         q = query.lower().strip() if query else ""
         for scene_id, scene in SDB_BENCHMARK_SCENES.items():
-            if not q or q in scene_id.lower() or q in scene["name"].lower() or q in scene["location"].lower():
-                results.append({
-                    "id": scene_id,
-                    "name": scene["name"],
-                    "location": scene["location"],
-                    "center": scene["center"],
-                    "bbox": scene["bbox"],
-                    "design_capacity_m3": scene["design_capacity_m3"],
-                    "design_max_depth_m": scene["design_max_depth_m"],
-                    "nominal_sdb_max_depth_m": scene["nominal_sdb_max_depth_m"],
-                    "surface_area_ha": scene["surface_area_ha"],
-                    "clarity": scene["clarity"],
-                    "description": scene["description"]
-                })
+            if q and not (q in scene_id.lower() or q in scene["name"].lower() or q in scene["location"].lower()):
+                continue
+            if bbox is not None:
+                sc_b = scene.get("bbox")
+                if sc_b and len(sc_b) == 4 and len(bbox) == 4:
+                    if (bbox[2] < sc_b[0] or bbox[0] > sc_b[2] or bbox[3] < sc_b[1] or bbox[1] > sc_b[3]):
+                        continue
+            results.append({
+                "id": scene_id,
+                "name": scene["name"],
+                "location": scene["location"],
+                "center": scene["center"],
+                "bbox": scene["bbox"],
+                "design_capacity_m3": scene["design_capacity_m3"],
+                "design_max_depth_m": scene["design_max_depth_m"],
+                "nominal_sdb_max_depth_m": scene["nominal_sdb_max_depth_m"],
+                "surface_area_ha": scene["surface_area_ha"],
+                "clarity": scene["clarity"],
+                "description": scene["description"]
+            })
         return results
 
     def load_bathymetry_data_cube(
@@ -3052,22 +3058,39 @@ class DataAcquisitionService:
                 matched = sc_data
                 break
 
-        if matched:
+        if matched and bbox is None:
             c_lat, c_lon = matched["center"][0], matched["center"][1]
             max_d = float(matched["nominal_sdb_max_depth_m"])
             base_b = float(matched["typical_blue_r"])
             base_g = float(matched["typical_green_r"])
             scene_name = matched["name"]
+            nx = ny = int(grid_size)
+            x_coords = np.linspace(c_lon - 0.05, c_lon + 0.05, nx, dtype=np.float32)
+            y_coords = np.linspace(c_lat - 0.05, c_lat + 0.05, ny, dtype=np.float32)
         else:
-            c_lat, c_lon = 37.058, -121.072
-            max_d = 42.0
-            base_b = 0.065
-            base_g = 0.042
-            scene_name = asset_id or "San Luis Reservoir"
-
-        nx = ny = int(grid_size)
-        x_coords = np.linspace(c_lon - 0.05, c_lon + 0.05, nx, dtype=np.float32)
-        y_coords = np.linspace(c_lat - 0.05, c_lat + 0.05, ny, dtype=np.float32)
+            if bbox is not None:
+                try:
+                    b_parsed = parse_bbox(bbox)
+                    b_min_lon, b_min_lat, b_max_lon, b_max_lat = b_parsed.to_list() if hasattr(b_parsed, "to_list") else (float(b_parsed[0]), float(b_parsed[1]), float(b_parsed[2]), float(b_parsed[3]))
+                    c_lat = (b_min_lat + b_max_lat) / 2.0
+                    c_lon = (b_min_lon + b_max_lon) / 2.0
+                    nx = ny = int(grid_size)
+                    x_coords = np.linspace(b_min_lon, b_max_lon, nx, dtype=np.float32)
+                    y_coords = np.linspace(b_min_lat, b_max_lat, ny, dtype=np.float32)
+                except Exception:
+                    c_lat, c_lon = 37.058, -121.072
+                    nx = ny = int(grid_size)
+                    x_coords = np.linspace(c_lon - 0.05, c_lon + 0.05, nx, dtype=np.float32)
+                    y_coords = np.linspace(c_lat - 0.05, c_lat + 0.05, ny, dtype=np.float32)
+            else:
+                c_lat, c_lon = 37.058, -121.072
+                nx = ny = int(grid_size)
+                x_coords = np.linspace(c_lon - 0.05, c_lon + 0.05, nx, dtype=np.float32)
+                y_coords = np.linspace(c_lat - 0.05, c_lat + 0.05, ny, dtype=np.float32)
+            max_d = float(matched["nominal_sdb_max_depth_m"]) if matched else 42.0
+            base_b = float(matched["typical_blue_r"]) if matched else 0.065
+            base_g = float(matched["typical_green_r"]) if matched else 0.042
+            scene_name = matched["name"] if matched else (asset_id or "Custom Bathymetric AOI")
 
         seed = abs(int(c_lat * 1000 + c_lon * 100)) % 100003
         rng = np.random.RandomState(seed)
@@ -3090,6 +3113,9 @@ class DataAcquisitionService:
         red_band = np.clip(red_band, 0.001, 1.0)
         nir_band = np.clip(nir_band, 0.001, 1.0)
 
+        col_clean = str(collection or "sentinel-2-l2a").lower().strip()
+        is_sentinel = "sentinel" in col_clean
+
         data_vars = {
             "blue": (("y", "x"), blue_band),
             "green": (("y", "x"), green_band),
@@ -3099,12 +3125,37 @@ class DataAcquisitionService:
             "water_mask": (("y", "x"), water_mask)
         }
 
+        # Multi-sensor native band aliases for Sentinel-2 MSI and Landsat-8/9 OLI
+        if is_sentinel:
+            data_vars["B02"] = data_vars["blue"]
+            data_vars["B03"] = data_vars["green"]
+            data_vars["B04"] = data_vars["red"]
+            data_vars["B08"] = data_vars["nir"]
+            data_vars["B8A"] = data_vars["nir"]
+        else:
+            data_vars["B2"] = data_vars["blue"]
+            data_vars["B3"] = data_vars["green"]
+            data_vars["B4"] = data_vars["red"]
+            data_vars["B5"] = data_vars["nir"]
+            data_vars["nir08"] = data_vars["nir"]
+
         metadata = {
             "asset_id": asset_id or "SAN_LUIS_RES_CA",
             "aoi_name": scene_name,
-            "collection": collection,
+            "collection": col_clean,
+            "sensor": "Sentinel-2 MSI" if is_sentinel else "Landsat-8/9 OLI",
+            "pixel_resolution_m": 10.0 if is_sentinel else 30.0,
+            "band_wavelengths_nm": {
+                "blue": 490.0 if is_sentinel else 482.0,
+                "green": 560.0 if is_sentinel else 561.0,
+                "red": 665.0 if is_sentinel else 655.0,
+                "nir": 842.0 if is_sentinel else 865.0,
+            },
             "grid_size": (ny, nx),
             "max_depth_m": max_d,
+            "design_capacity_m3": float(matched["design_capacity_m3"]) if matched else 2.5e7,
+            "surface_area_ha": float(matched["surface_area_ha"]) if matched else 500.0,
+            "clarity": matched.get("clarity", "moderate_mesotrophic") if matched else "moderate_mesotrophic",
             "memory_usage_mb": round((6 * ny * nx * 4) / (1024 * 1024), 2)
         }
 

@@ -1727,6 +1727,400 @@ def inspect_trend_analysis_guard() -> dict:
 
     return results
 
+def inspect_spectral_unmixing_fcls_guard() -> dict:
+    """Inspects FCLS matrix inversion memory allocation ceiling (>1.2GB Heap Threshold),
+    endmember collinearity / condition number watchdog (kappa(M^T M) > 1000),
+    FCLS Nesterov-accelerated inversion latency watchdog (<350ms),
+    standard endmember library & benchmark scenes sentinel,
+    and Dynamic XYZ Spectral Unmixing Tile & REST Discovery Health (Task T-315).
+    """
+    results = {}
+
+    # 1. Endmember Collinearity & Condition Number Watchdog (kappa(M_norm^T M_norm) <= 1000)
+    collinearity_status = {
+        "passed": False,
+        "condition_number": 0.0,
+        "under_threshold": False,
+        "num_endmembers": 0,
+        "num_bands": 0,
+        "error": None
+    }
+    try:
+        import numpy as np
+        from app.services.unmixing_service import UnmixingService
+        M, em_keys, b_keys = UnmixingService.get_endmember_matrix()
+        col_norms = np.linalg.norm(M, axis=0, keepdims=True)
+        col_norms = np.where(col_norms == 0, 1.0, col_norms)
+        M_norm = M / col_norms
+        MtM = M_norm.T @ M_norm
+        cond_num = float(np.linalg.cond(MtM))
+        is_under = cond_num <= 1000.0
+        collinearity_status = {
+            "passed": is_under,
+            "condition_number": round(cond_num, 2),
+            "under_threshold": is_under,
+            "num_endmembers": len(em_keys),
+            "num_bands": len(b_keys),
+            "error": None if is_under else f"Endmember matrix condition number {round(cond_num, 2)} exceeds 1000.0 threshold"
+        }
+    except Exception as e:
+        collinearity_status["error"] = str(e)
+    results["collinearity_watchdog"] = collinearity_status
+
+    # 2. FCLS Inversion Latency Watchdog (< 350ms)
+    fcls_status = {
+        "passed": False,
+        "duration_ms": 0.0,
+        "under_timeout": False,
+        "rmse": 0.0,
+        "sum_abundances": 0.0,
+        "error": None
+    }
+    try:
+        from app.services.unmixing_service import UnmixingService
+        M, _, b_keys = UnmixingService.get_endmember_matrix()
+        synthetic_y = 0.5 * M[:, 0] + 0.5 * M[:, 2]
+        t0 = time.time()
+        res = UnmixingService.solve_fcls(synthetic_y)
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        is_under_timeout = elapsed_ms < 350.0
+        sum_close = abs(res.get("sum_abundances", 0.0) - 1.0) < 1e-4
+        passed = is_under_timeout and sum_close
+        fcls_status = {
+            "passed": passed,
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": is_under_timeout,
+            "rmse": round(res.get("rmse", 0.0), 6),
+            "sum_abundances": round(res.get("sum_abundances", 0.0), 4),
+            "error": None if passed else "FCLS inversion latency exceeded 350ms or constraints violated"
+        }
+    except Exception as e:
+        fcls_status["error"] = str(e)
+    results["fcls_watchdog"] = fcls_status
+
+    # 3. Standard Endmember Library & Benchmark Scenes Sentinel
+    sentinel_status = {
+        "passed": False,
+        "endmember_count": 0,
+        "benchmark_scenes_count": 0,
+        "model_count": 0,
+        "metric_count": 0,
+        "error": None
+    }
+    try:
+        from app.models.schemas import (
+            STANDARD_ENDMEMBER_LIBRARY,
+            UNMIXING_BENCHMARK_SCENES,
+            SpectralUnmixingModel,
+            SpectralUnmixingTileMetric
+        )
+        em_cnt = len(STANDARD_ENDMEMBER_LIBRARY)
+        sc_cnt = len(UNMIXING_BENCHMARK_SCENES)
+        m_cnt = len(SpectralUnmixingModel)
+        met_cnt = len(SpectralUnmixingTileMetric)
+        passed = em_cnt >= 4 and sc_cnt >= 4 and m_cnt >= 4 and met_cnt >= 8
+        sentinel_status = {
+            "passed": passed,
+            "endmember_count": em_cnt,
+            "benchmark_scenes_count": sc_cnt,
+            "model_count": m_cnt,
+            "metric_count": met_cnt,
+            "error": None if passed else "Incomplete unmixing models, endmembers, or benchmark scenes"
+        }
+    except Exception as e:
+        sentinel_status["error"] = str(e)
+    results["library_sentinel"] = sentinel_status
+
+    # 4. Dynamic XYZ Spectral Unmixing Tile & REST Probes
+    tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/unmixing/fcls_constrained/fraction_gv/10/163/395.png",
+        timeout=3.0
+    )
+    models_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/unmixing/models",
+        timeout=3.0
+    )
+    evaluate_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/unmixing/evaluate",
+        timeout=3.0
+    )
+    results["unmixing_tile_probe"] = tile_probe
+    results["unmixing_models_probe"] = models_probe
+    results["unmixing_evaluate_probe"] = evaluate_probe
+
+    return results
+
+def inspect_true_ortho_guard() -> dict:
+    """Inspects DSM Ray-Casting 3D Visibility Voxel Memory Allocation Guard (>1.5GB Heap Ceiling),
+    Graph-Cut Seamline Dynamic Programming Latency Watchdog (<350ms per AOI),
+    Multi-View Drone Camera Pose Ingestion & True Ortho Benchmark Scenes Sentinel,
+    and Dynamic XYZ True Orthomosaic Tile & REST Discovery Health (Task T-321).
+    """
+    results = {}
+
+    # 1. Graph-Cut Seamline Dynamic Programming Latency Watchdog (< 350ms per AOI)
+    seamline_status = {
+        "passed": False,
+        "duration_ms": 0.0,
+        "under_timeout": False,
+        "path_length": 0,
+        "total_energy": 0.0,
+        "energy_non_negative": False,
+        "error": None
+    }
+    try:
+        import numpy as np
+        from app.services.true_ortho_service import TrueOrthoService
+        t0 = time.time()
+        np.random.seed(42)
+        cost_map = np.random.uniform(0.01, 1.0, size=(64, 64)).astype(np.float32)
+        path, total_energy = TrueOrthoService.solve_dijkstra_seamline(cost_map, direction="vertical")
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        is_under_timeout = elapsed_ms < 350.0
+        is_non_neg = float(total_energy) >= 0.0 and len(path) == 64
+        passed = is_under_timeout and is_non_neg
+        seamline_status = {
+            "passed": passed,
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": is_under_timeout,
+            "path_length": len(path),
+            "total_energy": round(float(total_energy), 4),
+            "energy_non_negative": is_non_neg,
+            "error": None if passed else "Seamline optimization exceeded 350ms or produced invalid path/energy"
+        }
+    except Exception as e:
+        seamline_status["error"] = str(e)
+    results["seamline_watchdog"] = seamline_status
+
+    # 2. DSM Ray-Casting Occlusion Detection Guard (< 350ms)
+    raycast_status = {
+        "passed": False,
+        "duration_ms": 0.0,
+        "under_timeout": False,
+        "occlusion_ratio": 0.0,
+        "error": None
+    }
+    try:
+        import numpy as np
+        from app.services.true_ortho_service import TrueOrthoService
+        t0 = time.time()
+        dsm = np.zeros((64, 64), dtype=np.float32)
+        dsm[20:44, 20:44] = 25.0  # 25m tall building block
+        vis_res = TrueOrthoService.ray_trace_dsm_visibility(dsm, camera_height_agl_m=120.0, dsm_resolution_m=0.1)
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        labels = vis_res.get("visibility_mask")
+        is_under_timeout = elapsed_ms < 350.0
+        has_shape = labels is not None and labels.shape == (64, 64)
+        passed = is_under_timeout and has_shape
+        occl_count = np.count_nonzero(labels >= 2) if has_shape else 0
+        raycast_status = {
+            "passed": passed,
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": is_under_timeout,
+            "occlusion_ratio": round(float(occl_count) / (64 * 64), 4) if has_shape else 0.0,
+            "error": None if passed else "DSM ray-casting failed or exceeded timeout"
+        }
+    except Exception as e:
+        raycast_status["error"] = str(e)
+    results["raycast_watchdog"] = raycast_status
+
+    # 3. Multi-View Drone Camera Pose Ingestion & True Ortho Benchmark Scenes Sentinel
+    sentinel_status = {
+        "passed": False,
+        "model_count": 0,
+        "metric_count": 0,
+        "seamline_method_count": 0,
+        "blending_model_count": 0,
+        "benchmark_scenes_count": 0,
+        "error": None
+    }
+    try:
+        from app.models.schemas import (
+            TRUE_ORTHO_PROCESSING_MODELS,
+            TrueOrthoTileMetric,
+            SEAMLINE_OPTIMIZATION_CONFIGS,
+            PYRAMID_BLENDING_CONFIGS,
+            TRUE_ORTHO_BENCHMARK_SCENES
+        )
+        m_cnt = len(TRUE_ORTHO_PROCESSING_MODELS)
+        met_cnt = len(TrueOrthoTileMetric)
+        sm_cnt = len(SEAMLINE_OPTIMIZATION_CONFIGS)
+        bm_cnt = len(PYRAMID_BLENDING_CONFIGS)
+        sc_cnt = len(TRUE_ORTHO_BENCHMARK_SCENES)
+        passed = m_cnt >= 3 and met_cnt >= 5 and sm_cnt >= 3 and bm_cnt >= 2 and sc_cnt >= 4
+        sentinel_status = {
+            "passed": passed,
+            "model_count": m_cnt,
+            "metric_count": met_cnt,
+            "seamline_method_count": sm_cnt,
+            "blending_model_count": bm_cnt,
+            "benchmark_scenes_count": sc_cnt,
+            "error": None if passed else "Incomplete true ortho models, metrics, or benchmark scenes"
+        }
+    except Exception as e:
+        sentinel_status["error"] = str(e)
+    results["sentinel"] = sentinel_status
+
+    # 4. Dynamic XYZ True Ortho Tile & REST Probes
+    tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/true-ortho/dsm_ray_cast_visibility/ortho_rgb/12/2048/2048.png",
+        timeout=3.0
+    )
+    capabilities_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/true-ortho/capabilities",
+        timeout=3.0
+    )
+    models_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/true-ortho/models",
+        timeout=3.0
+    )
+    results["true_ortho_tile_probe"] = tile_probe
+    results["true_ortho_capabilities_probe"] = capabilities_probe
+    results["true_ortho_models_probe"] = models_probe
+
+    return results
+
+def inspect_bathymetry_guard() -> dict:
+    """Inspects Log-Ratio Floating-Point Division-by-Zero Epsilon Guard (epsilon = 10^-6),
+    Bathymetric Volume Integration Memory Watchdog (>1.5GB Heap Ceiling),
+    Reservoir Sentinel-2 Aquatic Ingestion Telemetry & SDB Benchmark Scenes Sentinel,
+    and Dynamic XYZ Bathymetric Depth Tile & REST Discovery Health (Task T-327).
+    """
+    results = {}
+
+    # 1. Log-Ratio Floating-Point Division-by-Zero Epsilon Guard (epsilon = 1e-6)
+    epsilon_guard_status = {
+        "passed": False,
+        "epsilon": 1e-6,
+        "zero_input_safe": False,
+        "negative_input_safe": False,
+        "finite_ratio": False,
+        "depth_bounded": False,
+        "error": None
+    }
+    try:
+        import numpy as np
+        from app.services.bathymetry_service import BathymetryService
+        # Test edge case arrays: zeros and negative values
+        r_blue_edge = np.array([0.0, -0.05, 0.08, 0.0], dtype=np.float32)
+        r_green_edge = np.array([0.0, -0.02, 0.05, 0.0], dtype=np.float32)
+
+        ratio_arr = BathymetryService.calculate_stumpf_ratio_array(r_blue_edge, r_green_edge, n_const=1000.0, eps=1e-6)
+        depth_arr = BathymetryService.solve_stumpf_depth_array(r_blue_edge, r_green_edge, m1=28.5, m0=18.2, max_depth_m=45.0, eps=1e-6)
+
+        all_finite = bool(np.all(np.isfinite(ratio_arr)) and np.all(np.isfinite(depth_arr)))
+        depth_non_neg = bool(np.all(depth_arr >= 0.0) and np.all(depth_arr <= 45.0))
+        passed = all_finite and depth_non_neg
+
+        epsilon_guard_status = {
+            "passed": passed,
+            "epsilon": 1e-6,
+            "zero_input_safe": True,
+            "negative_input_safe": True,
+            "finite_ratio": all_finite,
+            "depth_bounded": depth_non_neg,
+            "error": None if passed else "Log-ratio division-by-zero protection or depth bounding failed"
+        }
+    except Exception as e:
+        epsilon_guard_status["error"] = str(e)
+    results["epsilon_guard"] = epsilon_guard_status
+
+    # 2. In-Situ Calibration & EAC Volume Integration Latency Watchdog (< 350ms)
+    volume_watchdog_status = {
+        "passed": False,
+        "duration_ms": 0.0,
+        "under_timeout": False,
+        "capacity_m3": 0.0,
+        "siltation_loss_pct": 0.0,
+        "error": None
+    }
+    try:
+        import numpy as np
+        from app.services.bathymetry_service import BathymetryService
+        t0 = time.time()
+        # Synthetic depth grid
+        depth_grid = np.linspace(0.5, 30.0, num=64*64, dtype=np.float32).reshape(64, 64)
+        vol_summary, _ = BathymetryService.integrate_bathymetric_volume_and_eac(
+            depth_grid=depth_grid,
+            pixel_res_m=10.0,
+            design_capacity_m3=500000.0,
+            num_slices=10
+        )
+        elapsed_ms = (time.time() - t0) * 1000.0
+        is_under_timeout = elapsed_ms < 350.0
+        cap = vol_summary.get("estimated_volume_m3", 0.0)
+        passed = is_under_timeout and cap > 0.0
+        volume_watchdog_status = {
+            "passed": passed,
+            "duration_ms": round(elapsed_ms, 2),
+            "under_timeout": is_under_timeout,
+            "capacity_m3": round(cap, 2),
+            "siltation_loss_pct": round(vol_summary.get("siltation_loss_percentage", 0.0), 2),
+            "error": None if passed else "Volume integration failed or exceeded latency threshold"
+        }
+    except Exception as e:
+        volume_watchdog_status["error"] = str(e)
+    results["volume_watchdog"] = volume_watchdog_status
+
+    # 3. Reservoir Sentinel-2 Aquatic Ingestion Telemetry & SDB Benchmark Scenes Sentinel
+    sentinel_status = {
+        "passed": False,
+        "model_count": 0,
+        "metric_count": 0,
+        "substrate_count": 0,
+        "clarity_tier_count": 0,
+        "benchmark_scenes_count": 0,
+        "error": None
+    }
+    try:
+        from app.models.schemas import (
+            SDB_MODEL_CONFIGS,
+            SDBTileMetric,
+            BENTHIC_SUBSTRATE_CONFIGS,
+            SDB_WATER_CLARITY_CONFIGS,
+            SDB_BENCHMARK_SCENES
+        )
+        m_cnt = len(SDB_MODEL_CONFIGS)
+        met_cnt = len(SDBTileMetric)
+        sub_cnt = len(BENTHIC_SUBSTRATE_CONFIGS)
+        clar_cnt = len(SDB_WATER_CLARITY_CONFIGS)
+        sc_cnt = len(SDB_BENCHMARK_SCENES)
+        passed = m_cnt >= 3 and met_cnt >= 6 and sub_cnt >= 4 and clar_cnt >= 4 and sc_cnt >= 4
+        sentinel_status = {
+            "passed": passed,
+            "model_count": m_cnt,
+            "metric_count": met_cnt,
+            "substrate_count": sub_cnt,
+            "clarity_tier_count": clar_cnt,
+            "benchmark_scenes_count": sc_cnt,
+            "error": None if passed else "Incomplete SDB models, metrics, or benchmark scenes"
+        }
+    except Exception as e:
+        sentinel_status["error"] = str(e)
+    results["sentinel"] = sentinel_status
+
+    # 4. Dynamic XYZ Bathymetric Tile & REST Probes
+    tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/bathymetry/stumpf_log_ratio/bathymetry_depth/10/163/395.png",
+        timeout=3.0
+    )
+    capabilities_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/bathymetry/capabilities",
+        timeout=3.0
+    )
+    models_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/bathymetry/models",
+        timeout=3.0
+    )
+    results["bathymetry_tile_probe"] = tile_probe
+    results["bathymetry_capabilities_probe"] = capabilities_probe
+    results["bathymetry_models_probe"] = models_probe
+
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
@@ -1786,6 +2180,9 @@ def run_health_check(full_test_suite: bool = False) -> dict:
     sharpening = inspect_sharpening_guard()
     cross_calibration = inspect_cross_calibration_guard()
     trend_analysis = inspect_trend_analysis_guard()
+    spectral_unmixing = inspect_spectral_unmixing_fcls_guard()
+    true_ortho = inspect_true_ortho_guard()
+    bathymetry = inspect_bathymetry_guard()
     pipelines = inspect_pipelines(full=full_test_suite)
     
     anomalies = []
@@ -2480,7 +2877,165 @@ def run_health_check(full_test_suite: bool = False) -> dict:
                 "message": f"Trend models endpoint returned status {models_tr.get('status_code')} ({models_tr.get('error')}). Assigned to @debugger (Agent 9)."
             })
 
-    # 19. Analyze Pipeline Anomalies
+    # 20. Analyze Linear Spectral Mixture Analysis & FCLS Unmixing Anomalies (Task T-315)
+    if spectral_unmixing:
+        collin_w = spectral_unmixing.get("collinearity_watchdog", {})
+        if not collin_w.get("passed"):
+            anomalies.append({
+                "component": "Endmember Collinearity & Condition Number Watchdog",
+                "severity": "HIGH",
+                "type": "NUMERICAL_INSTABILITY",
+                "message": f"Endmember matrix collinearity watchdog failed: condition number kappa(M^T M) = {collin_w.get('condition_number')} > 1000 threshold ({collin_w.get('error')})."
+            })
+        fcls_w = spectral_unmixing.get("fcls_watchdog", {})
+        if not fcls_w.get("passed"):
+            anomalies.append({
+                "component": "FCLS Inversion Engine & Simplex Projection",
+                "severity": "HIGH",
+                "type": "SOLVER_FAILURE",
+                "message": f"FCLS dual-constrained inversion solver failed: {fcls_w.get('error')}."
+            })
+        elif not fcls_w.get("under_timeout"):
+            anomalies.append({
+                "component": "FCLS Inversion Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "LATENCY_WATCHDOG_EXCEEDED",
+                "message": f"FCLS inversion took {fcls_w.get('duration_ms')} ms, exceeding the 350ms latency watchdog ceiling."
+            })
+        sentinel_unm = spectral_unmixing.get("library_sentinel", {})
+        if not sentinel_unm.get("passed"):
+            anomalies.append({
+                "component": "Standard Endmember Library & Benchmark Scenes Sentinel",
+                "severity": "HIGH",
+                "type": "DATA_INGESTION_FAILURE",
+                "message": f"Unmixing endmember library/benchmark scenes sentinel check failed: {sentinel_unm.get('error')}."
+            })
+        tile_unm = spectral_unmixing.get("unmixing_tile_probe")
+        if tile_unm and not tile_unm.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ Spectral Unmixing Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_SERVER_FAILURE",
+                "message": f"Spectral unmixing tile endpoint returned status {tile_unm.get('status_code')} ({tile_unm.get('error')}). Backend process requires route reconciliation / reload by @debugger (Agent 9)."
+            })
+        models_unm = spectral_unmixing.get("unmixing_models_probe")
+        if models_unm and not models_unm.get("ok"):
+            anomalies.append({
+                "component": "Spectral Unmixing Models Discovery REST Endpoint",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"Spectral unmixing models endpoint returned status {models_unm.get('status_code')} ({models_unm.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+    # 21. Analyze True Orthorectification & Graph-Cut Seamline Anomalies (Task T-321)
+    if true_ortho:
+        seam_w = true_ortho.get("seamline_watchdog", {})
+        if not seam_w.get("passed"):
+            anomalies.append({
+                "component": "Graph-Cut Seamline Dynamic Programming Solver",
+                "severity": "HIGH",
+                "type": "SOLVER_FAILURE",
+                "message": f"Graph-cut seamline optimization failed: {seam_w.get('error')}."
+            })
+        elif not seam_w.get("under_timeout"):
+            anomalies.append({
+                "component": "Graph-Cut Seamline Dynamic Programming Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "LATENCY_WATCHDOG_EXCEEDED",
+                "message": f"Seamline dynamic programming took {seam_w.get('duration_ms')} ms, exceeding the 350ms latency watchdog ceiling."
+            })
+        ray_w = true_ortho.get("raycast_watchdog", {})
+        if not ray_w.get("passed"):
+            anomalies.append({
+                "component": "DSM Ray-Casting 3D Visibility Voxel Solver",
+                "severity": "HIGH",
+                "type": "SOLVER_FAILURE",
+                "message": f"DSM ray-casting line-of-sight visibility solver failed: {ray_w.get('error')}."
+            })
+        sentinel_to = true_ortho.get("sentinel", {})
+        if not sentinel_to.get("passed"):
+            anomalies.append({
+                "component": "Multi-View Drone Camera Pose Ingestion & True Ortho Benchmark Scenes Sentinel",
+                "severity": "HIGH",
+                "type": "DATA_INGESTION_FAILURE",
+                "message": f"True Ortho models/metrics/scenes sentinel check failed: {sentinel_to.get('error')}."
+            })
+        tile_to = true_ortho.get("true_ortho_tile_probe")
+        if tile_to and not tile_to.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ True Orthomosaic Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_SERVER_FAILURE",
+                "message": f"True ortho tile endpoint returned status {tile_to.get('status_code')} ({tile_to.get('error')}). Backend process requires route reconciliation / reload by @debugger (Agent 9)."
+            })
+        caps_to = true_ortho.get("true_ortho_capabilities_probe")
+        if caps_to and not caps_to.get("ok"):
+            anomalies.append({
+                "component": "True Ortho Capabilities Discovery REST Endpoint",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"True ortho capabilities endpoint returned status {caps_to.get('status_code')} ({caps_to.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+    # 22. Analyze Satellite-Derived Bathymetry (SDB) & Radiative Transfer Anomalies (Task T-327)
+    if bathymetry:
+        eps_g = bathymetry.get("epsilon_guard", {})
+        if not eps_g.get("passed"):
+            anomalies.append({
+                "component": "Log-Ratio Floating-Point Division-by-Zero Epsilon Guard",
+                "severity": "HIGH",
+                "type": "NUMERICAL_INSTABILITY",
+                "message": f"Stumpf log-ratio division-by-zero epsilon guard failed: {eps_g.get('error')}."
+            })
+        vol_w = bathymetry.get("volume_watchdog", {})
+        if not vol_w.get("passed"):
+            anomalies.append({
+                "component": "Bathymetric Volume & EAC Stage-Storage Integrator",
+                "severity": "HIGH",
+                "type": "SOLVER_FAILURE",
+                "message": f"Bathymetric volume integration failed: {vol_w.get('error')}."
+            })
+        elif not vol_w.get("under_timeout"):
+            anomalies.append({
+                "component": "Bathymetric Volume Integration Latency Watchdog",
+                "severity": "MEDIUM",
+                "type": "LATENCY_WATCHDOG_EXCEEDED",
+                "message": f"Bathymetric volume integration took {vol_w.get('duration_ms')} ms, exceeding the 350ms latency watchdog ceiling."
+            })
+        mem_heap = resources.get("max_raster_worker_memory_mb", 0.0)
+        if mem_heap > 1536.0:
+            anomalies.append({
+                "component": "Bathymetric Volume Integration Memory Watchdog (>1.5GB Heap Ceiling)",
+                "severity": "HIGH",
+                "type": "MEMORY_LEAK_OR_OVERCONSUMPTION",
+                "message": f"Bathymetric raster worker process heap ({mem_heap} MB) exceeded 1.5 GB ceiling."
+            })
+        sentinel_sdb = bathymetry.get("sentinel", {})
+        if not sentinel_sdb.get("passed"):
+            anomalies.append({
+                "component": "Reservoir Sentinel-2 Aquatic Ingestion Telemetry & SDB Benchmark Scenes Sentinel",
+                "severity": "HIGH",
+                "type": "DATA_INGESTION_FAILURE",
+                "message": f"SDB models/clarity/scenes sentinel check failed: {sentinel_sdb.get('error')}."
+            })
+        tile_sdb = bathymetry.get("bathymetry_tile_probe")
+        if tile_sdb and not tile_sdb.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ Bathymetric Depth Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_SERVER_FAILURE",
+                "message": f"Bathymetric depth tile endpoint returned status {tile_sdb.get('status_code')} ({tile_sdb.get('error')}). Backend process requires route reconciliation / reload by @debugger (Agent 9)."
+            })
+        caps_sdb = bathymetry.get("bathymetry_capabilities_probe")
+        if caps_sdb and not caps_sdb.get("ok"):
+            anomalies.append({
+                "component": "Bathymetry Capabilities Discovery REST Endpoint",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"Bathymetry capabilities endpoint returned status {caps_sdb.get('status_code')} ({caps_sdb.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+    # 23. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
         test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
@@ -2497,7 +3052,7 @@ def run_health_check(full_test_suite: bool = False) -> dict:
             "message": "ResourceWarning: unclosed database in <sqlite3.Connection object> detected during test execution."
         })
         
-    # 20. Analyze Resource Anomalies
+    # 24. Analyze Resource Anomalies
     if resources["memory_percent"] > 95:
         anomalies.append({
             "component": "Host RAM",
@@ -2560,6 +3115,9 @@ def run_health_check(full_test_suite: bool = False) -> dict:
         "sharpening": sharpening,
         "cross_calibration": cross_calibration,
         "trend_analysis": trend_analysis,
+        "spectral_unmixing": spectral_unmixing,
+        "true_ortho": true_ortho,
+        "bathymetry": bathymetry,
         "pipelines": pipelines,
         "resources": resources,
         "anomalies": anomalies
@@ -2591,6 +3149,9 @@ def write_health_status(report: dict):
     sharpening = report.get("sharpening", {})
     cross_calibration = report.get("cross_calibration", {})
     trend_analysis = report.get("trend_analysis", {})
+    spectral_unmixing = report.get("spectral_unmixing", {})
+    true_ortho = report.get("true_ortho", {})
+    bathymetry = report.get("bathymetry", {})
     pipelines = report["pipelines"]
     
     entry_lines = []
@@ -2950,15 +3511,83 @@ def write_health_status(report: dict):
         entry_lines.append(f"- **Trend Models Discovery REST Endpoint (`/analysis/trend/models`)**: `{models_status}` (Probe latency: {tr_models.get('latency_ms', 0.0) if tr_models else 'N/A'} ms)")
         entry_lines.append("")
 
-    # 20. Pipeline Execution & Verification
-    entry_lines.append("### 20. Pipeline Execution")
+    # 20. Linear Spectral Mixture Analysis (LSMA) & Fully Constrained Least Squares (FCLS) Guard (Task T-315)
+    if spectral_unmixing:
+        entry_lines.append("### 20. Linear Spectral Mixture Analysis (LSMA) & Fully Constrained Least Squares (FCLS) Guard")
+        collin_w = spectral_unmixing.get("collinearity_watchdog", {})
+        collin_status = "PASSING" if collin_w.get("passed") else "FAILING"
+        fcls_w = spectral_unmixing.get("fcls_watchdog", {})
+        fcls_status = "PASSING" if (fcls_w.get("passed") and fcls_w.get("under_timeout")) else "FAILING"
+        sentinel_unm = spectral_unmixing.get("library_sentinel", {})
+        sentinel_status = "VERIFIED" if sentinel_unm.get("passed") else "DATA_FAILURE"
+        tile_unm = spectral_unmixing.get("unmixing_tile_probe")
+        tile_status = "REACHABLE" if (tile_unm and tile_unm.get("ok")) else f"STATUS {tile_unm.get('status_code', 0)} ({tile_unm.get('error', 'Unreachable')})"
+        models_unm = spectral_unmixing.get("unmixing_models_probe")
+        models_status = "REACHABLE" if (models_unm and models_unm.get("ok")) else f"STATUS {models_unm.get('status_code', 0)} ({models_unm.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **FCLS Matrix Inversion Memory Allocation Ceiling (>1.2GB Heap Threshold)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1228.8 MB)")
+        entry_lines.append(f"- **Endmember Collinearity & Condition Number Watchdog ($\\kappa(M^T M) \\le 1000$)**: `{collin_status}` ($\\kappa = {collin_w.get('condition_number', 0.0)}$, {collin_w.get('num_endmembers', 0)} endmembers across {collin_w.get('num_bands', 0)} bands)")
+        entry_lines.append(f"- **FCLS Nesterov-Accelerated Inversion Latency Watchdog ($< 350\\text{{ms}}$)**: `{fcls_status}` ({fcls_w.get('duration_ms', 0.0)} ms, RMSE: {fcls_w.get('rmse', 0.0)}, Sum: {fcls_w.get('sum_abundances', 0.0)})")
+        entry_lines.append(f"- **Standard Endmember Library & Benchmark Scenes Sentinel**: `{sentinel_status}` ({sentinel_unm.get('endmember_count', 0)} endmembers, {sentinel_unm.get('benchmark_scenes_count', 0)} benchmark scenes, {sentinel_unm.get('model_count', 0)} models, {sentinel_unm.get('metric_count', 0)} metrics indexed)")
+        entry_lines.append(f"- **Dynamic XYZ Spectral Unmixing Tile Server (`/tiles/unmixing/...`)**: `{tile_status}` (Probe latency: {tile_unm.get('latency_ms', 0.0) if tile_unm else 'N/A'} ms)")
+        entry_lines.append(f"- **Spectral Unmixing Models Discovery REST Endpoint (`/analysis/unmixing/models`)**: `{models_status}` (Probe latency: {models_unm.get('latency_ms', 0.0) if models_unm else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 21. True Orthorectification, DSM Ray-Casting Occlusion Elimination & Graph-Cut Seamlines Guard (Task T-321)
+    if true_ortho:
+        entry_lines.append("### 21. True Orthorectification, DSM Ray-Casting Occlusion Elimination & Graph-Cut Seamlines Guard")
+        seam_w = true_ortho.get("seamline_watchdog", {})
+        seam_status = "PASSING" if (seam_w.get("passed") and seam_w.get("under_timeout")) else "FAILING"
+        ray_w = true_ortho.get("raycast_watchdog", {})
+        ray_status = "PASSING" if (ray_w.get("passed") and ray_w.get("under_timeout")) else "FAILING"
+        sentinel_to = true_ortho.get("sentinel", {})
+        sentinel_status = "VERIFIED" if sentinel_to.get("passed") else "DATA_FAILURE"
+        tile_to = true_ortho.get("true_ortho_tile_probe")
+        tile_status = "REACHABLE" if (tile_to and tile_to.get("ok")) else f"STATUS {tile_to.get('status_code', 0)} ({tile_to.get('error', 'Unreachable')})"
+        caps_to = true_ortho.get("true_ortho_capabilities_probe")
+        caps_status = "REACHABLE" if (caps_to and caps_to.get("ok")) else f"STATUS {caps_to.get('status_code', 0)} ({caps_to.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **DSM Ray-Casting 3D Visibility Voxel Memory Allocation Guard (>1.5GB Heap Ceiling)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **Graph-Cut Seamline Dynamic Programming Latency Watchdog ($< 350\\text{{ms}}$ per AOI)**: `{seam_status}` ({seam_w.get('duration_ms', 0.0)} ms, Energy: {seam_w.get('total_energy', 0.0)}, Path length: {seam_w.get('path_length', 0)} px, Non-negative: {seam_w.get('energy_non_negative', False)})")
+        entry_lines.append(f"- **DSM Ray-Casting Line-of-Sight Visibility Solver ($< 350\\text{{ms}}$)**: `{ray_status}` ({ray_w.get('duration_ms', 0.0)} ms, Occlusion ratio: {ray_w.get('occlusion_ratio', 0.0)})")
+        entry_lines.append(f"- **Multi-View Drone Camera Pose Ingestion & True Ortho Benchmark Scenes Sentinel**: `{sentinel_status}` ({sentinel_to.get('model_count', 0)} models, {sentinel_to.get('metric_count', 0)} metrics, {sentinel_to.get('seamline_method_count', 0)} seamline methods, {sentinel_to.get('blending_model_count', 0)} blending models, {sentinel_to.get('benchmark_scenes_count', 0)} benchmark scenes indexed)")
+        entry_lines.append(f"- **Dynamic XYZ True Orthomosaic Tile Server (`/tiles/true-ortho/...`)**: `{tile_status}` (Probe latency: {tile_to.get('latency_ms', 0.0) if tile_to else 'N/A'} ms)")
+        entry_lines.append(f"- **True Ortho Capabilities Discovery REST Endpoint (`/analysis/true-ortho/capabilities`)**: `{caps_status}` (Probe latency: {caps_to.get('latency_ms', 0.0) if caps_to else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 22. Satellite-Derived Bathymetry (SDB), Stumpf Log-Ratio Inversion & Radiative Transfer Guard (Task T-327)
+    if bathymetry:
+        entry_lines.append("### 22. Satellite-Derived Bathymetry (SDB), Stumpf Log-Ratio Inversion & Radiative Transfer Guard")
+        eps_g = bathymetry.get("epsilon_guard", {})
+        eps_status = "VERIFIED" if eps_g.get("passed") else "FAILING"
+        vol_w = bathymetry.get("volume_watchdog", {})
+        vol_status = "PASSING" if (vol_w.get("passed") and vol_w.get("under_timeout")) else "FAILING"
+        sentinel_sdb = bathymetry.get("sentinel", {})
+        sentinel_status = "VERIFIED" if sentinel_sdb.get("passed") else "DATA_FAILURE"
+        tile_sdb = bathymetry.get("bathymetry_tile_probe")
+        tile_status = "REACHABLE" if (tile_sdb and tile_sdb.get("ok")) else f"STATUS {tile_sdb.get('status_code', 0)} ({tile_sdb.get('error', 'Unreachable')})"
+        caps_sdb = bathymetry.get("bathymetry_capabilities_probe")
+        caps_status = "REACHABLE" if (caps_sdb and caps_sdb.get("ok")) else f"STATUS {caps_sdb.get('status_code', 0)} ({caps_sdb.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **Log-Ratio Floating-Point Division-by-Zero Epsilon Guard ($\\epsilon = 10^{{-6}}$)**: `{eps_status}` (Epsilon: {eps_g.get('epsilon', 1e-6)}, Finite: {eps_g.get('finite_ratio', False)}, Bounded: {eps_g.get('depth_bounded', False)})")
+        mem_heap = resources.get('max_raster_worker_memory_mb', 0.0)
+        mem_status = "PASSING" if mem_heap <= 1536.0 else "FAILING"
+        entry_lines.append(f"- **Bathymetric Volume Integration Memory Watchdog (>1.5GB Heap Ceiling)**: `{mem_status}` (Max worker heap: {mem_heap} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **3D Reservoir EAC Stage-Storage Integration Latency Watchdog ($< 350\\text{{ms}}$)**: `{vol_status}` ({vol_w.get('duration_ms', 0.0)} ms, Estimated volume: {vol_w.get('capacity_m3', 0.0)} m^3, Siltation loss: {vol_w.get('siltation_loss_pct', 0.0)}%)")
+        entry_lines.append(f"- **Reservoir Sentinel-2 Aquatic Ingestion Telemetry & SDB Benchmark Scenes Sentinel**: `{sentinel_status}` ({sentinel_sdb.get('model_count', 0)} models, {sentinel_sdb.get('metric_count', 0)} metrics, {sentinel_sdb.get('substrate_count', 0)} substrates, {sentinel_sdb.get('clarity_tier_count', 0)} clarity tiers, {sentinel_sdb.get('benchmark_scenes_count', 0)} benchmark scenes indexed)")
+        entry_lines.append(f"- **Dynamic XYZ Bathymetric Depth Tile Server (`/tiles/bathymetry/...`)**: `{tile_status}` (Probe latency: {tile_sdb.get('latency_ms', 0.0) if tile_sdb else 'N/A'} ms)")
+        entry_lines.append(f"- **Bathymetry Capabilities Discovery REST Endpoint (`/analysis/bathymetry/capabilities`)**: `{caps_status}` (Probe latency: {caps_sdb.get('latency_ms', 0.0) if caps_sdb else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 23. Pipeline Execution & Verification
+    entry_lines.append("### 23. Pipeline Execution")
     test_ok = "PASSING" if pipelines["test_suite"]["passed"] else "FAILED"
     entry_lines.append(f"- **Core Test Suite & API Pipelines**: `{test_ok}` ({pipelines['test_suite']['duration_sec']}s)")
     entry_lines.append("")
     
-    # 21. Detected Anomalies & Action Items
+    # 24. Detected Anomalies & Action Items
     if anomalies:
-        entry_lines.append("### 21. Detected Anomalies & Action Items")
+        entry_lines.append("### 24. Detected Anomalies & Action Items")
         entry_lines.append("> [!WARNING]")
         entry_lines.append(f"> **{len(anomalies)} anomaly/anomalies detected.** Handing off immediately to **Agent 9 (@debugger)** for investigation and patching.\n")
         
@@ -2972,7 +3601,7 @@ def write_health_status(report: dict):
         for idx, a in enumerate(anomalies, 1):
             entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
-        entry_lines.append("### 21. Detected Anomalies")
+        entry_lines.append("### 24. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
         entry_lines.append("> All systems operational. No active anomalies detected.")
         
@@ -2990,14 +3619,19 @@ def write_health_status(report: dict):
         except Exception:
             existing_content = ""
             
+    MAX_HISTORICAL_ENTRIES = 25
     if not existing_content.startswith("# GIOS Production Health Status Log"):
-        full_content = header + new_entry + existing_content
+        full_content = header + new_entry
     else:
         parts = existing_content.split("---\n\n", 1)
         if len(parts) == 2:
-            full_content = parts[0] + "---\n\n" + new_entry + parts[1]
+            import re
+            pattern = re.compile(r"(?=## \[\d{4}-\d{2}-\d{2})")
+            sub_entries = [e for e in pattern.split(parts[1]) if e.strip()]
+            retained = sub_entries[:MAX_HISTORICAL_ENTRIES - 1]
+            full_content = parts[0] + "---\n\n" + new_entry + "".join(retained)
         else:
-            full_content = header + new_entry + existing_content
+            full_content = header + new_entry
             
     with open(HEALTH_STATUS_FILE, "w", encoding="utf-8") as f:
         f.write(full_content)

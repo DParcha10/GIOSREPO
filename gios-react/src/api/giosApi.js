@@ -2389,24 +2389,124 @@ const demoAdapter = async (config) => {
         tile_url_template: '/api/v1/tiles/geotechnical/soil-moisture/sentinel-1-rtc/S1A_IW_GRDH_1SDV_20260915/{z}/{x}/{y}.png',
         analyzed_at: new Date().toISOString()
       };
-      else if (url.includes('/api/v1/analysis/water/satellite-bathymetry') || url.includes('/water/satellite-bathymetry')) data = {
-        asset_id: 'SAN_LUIS_RES_01',
-        collection: 'sentinel-2-l2a',
-        item_id: 'S2A_MSIL2A_20260815',
-        model_type: 'stumpf_log_ratio',
-        mean_depth_m: 18.42,
-        max_depth_m: 35.42,
-        estimated_volume_m3: 21500000.0,
-        estimated_volume_acre_feet: 17430.3,
-        design_capacity_m3: 25000000.0,
-        siltation_volume_loss_m3: 3500000.0,
-        siltation_loss_percentage: 14.0,
-        estimated_remaining_years: 71.7,
-        severity_tier: 'minor_siltation',
-        critical_siltation_warning: false,
-        tile_url_template: '/api/v1/tiles/water/bathymetry/sentinel-2-l2a/S2A_MSIL2A_20260815/{z}/{x}/{y}.png',
-        analyzed_at: new Date().toISOString()
-      };
+      else if (url.includes('/api/v1/analysis/water/satellite-bathymetry') || url.includes('/water/satellite-bathymetry') || url.includes('/analysis/bathymetry/invert') || url.includes('/bathymetry/invert')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const assetId = parsed.asset_id || 'SAN_LUIS_RES_CA';
+        const model = parsed.model_type || 'stumpf_log_ratio';
+        const m1 = Number(parsed.calibration_m1 || 28.5);
+        const m0 = Number(parsed.calibration_m0 || 18.2);
+        const blueR = Number(parsed.blue_reflectance || 0.065);
+        const greenR = Number(parsed.green_reflectance || 0.042);
+        const nConst = 1000.0;
+        const lnB = Math.log(Math.max(1.001, nConst * blueR));
+        const lnG = Math.log(Math.max(1.001, nConst * greenR));
+        const ratio = lnG !== 0 ? lnB / lnG : 1.0;
+        const calcDepth = Math.max(0.5, Math.min(48.0, m1 * ratio - m0));
+        const kd = Math.max(0.05, 0.12 * (greenR / (blueR + 1e-5)));
+        const desCap = Number(parsed.design_capacity_m3 || 2.51e9);
+        const estVol = desCap * 0.78;
+        const siltLoss = Math.max(0, desCap - estVol);
+        const lossPct = (siltLoss / desCap) * 100.0;
+        data = {
+          request_id: `SDB_INV_${Date.now()}`,
+          asset_id: assetId,
+          collection: parsed.collection || 'sentinel-2-l2a',
+          item_id: parsed.item_id || 'S2A_MSIL2A_20260815',
+          model_type: model,
+          mean_depth_m: Number((calcDepth * 0.54).toFixed(2)),
+          max_depth_m: Number(calcDepth.toFixed(2)),
+          estimated_volume_m3: estVol,
+          estimated_volume_acre_feet: Number((estVol * 0.000810714).toFixed(1)),
+          design_capacity_m3: desCap,
+          siltation_volume_loss_m3: siltLoss,
+          siltation_loss_percentage: Number(lossPct.toFixed(2)),
+          estimated_remaining_years: Number(((100 - lossPct) / 1.1).toFixed(1)),
+          severity_tier: lossPct < 10 ? 'nominal_capacity' : lossPct < 25 ? 'minor_siltation' : lossPct < 50 ? 'moderate_siltation' : 'critical_storage_exhaustion',
+          critical_siltation_warning: lossPct >= 50.0,
+          quality_summary: {
+            mean_depth_m: Number((calcDepth * 0.54).toFixed(2)),
+            max_depth_m: Number(calcDepth.toFixed(2)),
+            estimated_volume_m3: estVol,
+            estimated_volume_acre_feet: Number((estVol * 0.000810714).toFixed(1)),
+            design_capacity_m3: desCap,
+            siltation_volume_loss_m3: siltLoss,
+            siltation_loss_percentage: Number(lossPct.toFixed(2)),
+            estimated_remaining_years: Number(((100 - lossPct) / 1.1).toFixed(1)),
+            severity_tier: lossPct < 10 ? 'nominal_capacity' : lossPct < 25 ? 'minor_siltation' : lossPct < 50 ? 'moderate_siltation' : 'critical_storage_exhaustion',
+            clarity_tier: kd < 0.1 ? 'ultra_clear_oligotrophic' : kd < 0.3 ? 'moderate_mesotrophic' : kd < 0.8 ? 'turbid_eutrophic' : 'high_attenuation',
+            critical_siltation_warning: lossPct >= 50.0,
+            optical_depth_limit_m: Number((1.2 / (kd + 1e-5)).toFixed(1)),
+            mean_attenuation_kd: Number(kd.toFixed(4)),
+            dominant_benthic_substrate: 'sand',
+            quality_checklist: {
+              snr_adequacy: true,
+              sunglint_masked: true,
+              atmospheric_corrected: true,
+              turbidity_clamped: true,
+              datum_aligned: true
+            },
+            narrative: `Optical bathymetry successfully inverted via ${model}. Estimated peak water depth is ${calcDepth.toFixed(1)}m with active storage volume at ${(estVol / 1e6).toFixed(1)}M m3 (${(100 - lossPct).toFixed(1)}% design capacity).`
+          },
+          eac_curve: [
+            { elevation_m: 120.0, depth_m: 0.0, area_m2: 0, area_ha: 0, cumulative_volume_m3: 0, cumulative_volume_acre_feet: 0 },
+            { elevation_m: 130.0, depth_m: 10.0, area_m2: 12000000, area_ha: 1200, cumulative_volume_m3: 60000000, cumulative_volume_acre_feet: 48642.8 },
+            { elevation_m: 140.0, depth_m: 20.0, area_m2: 26000000, area_ha: 2600, cumulative_volume_m3: 250000000, cumulative_volume_acre_feet: 202678.5 },
+            { elevation_m: 150.0, depth_m: 30.0, area_m2: 39000000, area_ha: 3900, cumulative_volume_m3: 575000000, cumulative_volume_acre_feet: 466160.5 },
+            { elevation_m: 160.0, depth_m: 40.0, area_m2: 48000000, area_ha: 4800, cumulative_volume_m3: 1010000000, cumulative_volume_acre_feet: 818821.1 },
+            { elevation_m: 165.0, depth_m: 45.0, area_m2: 51400000, area_ha: 5140, cumulative_volume_m3: 1258500000, cumulative_volume_acre_feet: 1020283.5 }
+          ],
+          tile_url_template: `/api/v1/tiles/bathymetry/${model}/bathymetry_depth/{z}/{x}/{y}.png`,
+          analyzed_at: new Date().toISOString(),
+          processed_at: new Date().toISOString(),
+          status: 'success'
+        };
+      }
+      else if (url.includes('/analysis/bathymetry/calibrate') || url.includes('/bathymetry/calibrate')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        data = {
+          asset_id: parsed.asset_id || 'SAN_LUIS_RES_CA',
+          model_type: parsed.model_type || 'stumpf_log_ratio',
+          m1: 28.74,
+          m0: 18.15,
+          r_squared: 0.942,
+          rmse_m: 1.18,
+          point_count: parsed.in_situ_points ? parsed.in_situ_points.length : 8,
+          calibrated_at: new Date().toISOString(),
+          status: 'calibrated'
+        };
+      }
+      else if (url.includes('/analysis/bathymetry/models') || url.includes('/bathymetry/models')) {
+        data = {
+          models: {
+            stumpf_log_ratio: { name: 'Stumpf Log-Ratio Model', default_m1: 28.5, default_m0: 18.2 },
+            lyzenga_multispectral: { name: 'Lyzenga Multi-Band Radiative Transfer', default_m1: 25.0, default_m0: 15.0 },
+            radiative_transfer: { name: 'Forward Bio-Optical Radiative Transfer', default_m1: 30.0, default_m0: 20.0 }
+          },
+          metrics: ['bathymetry_depth', 'stumpf_ratio', 'attenuation_kd', 'benthic_reflectance', 'siltation_risk', 'depth_contours'],
+          substrates: {
+            sand: { name: 'Sand & Carbonate', albedo: 0.35 },
+            coral_hardbottom: { name: 'Hardbottom / Coral', albedo: 0.18 },
+            mud_silt: { name: 'Lacustrine Silt / Mud', albedo: 0.12 },
+            seagrass_macrophyte: { name: 'Submerged Macrophytes', albedo: 0.08 },
+            deep_unclassified: { name: 'Optically Deep', albedo: 0.02 }
+          },
+          clarity_tiers: {
+            ultra_clear_oligotrophic: { name: 'Ultra-Clear (Oligotrophic)', kd_max: 0.10 },
+            moderate_mesotrophic: { name: 'Moderate Clarity (Mesotrophic)', kd_max: 0.30 },
+            turbid_eutrophic: { name: 'Turbid Water (Eutrophic)', kd_max: 0.80 },
+            high_attenuation: { name: 'High Attenuation', kd_max: 2.50 }
+          },
+          benchmark_scenes: {
+            SAN_LUIS_RES_CA: { name: 'San Luis Reservoir', center: [37.058, -121.072] },
+            LAKE_MEAD_NV: { name: 'Lake Mead / Hoover Dam', center: [36.015, -114.738] },
+            OROVILLE_DAM_CA: { name: 'Oroville Dam / Lake Oroville', center: [39.538, -121.486] },
+            LAKE_POWELL_UT: { name: 'Lake Powell / Glen Canyon', center: [36.936, -111.484] },
+            CORREGO_TAILINGS_MG: { name: 'Córrego do Feijão Tailings Pond', center: [-20.120, -44.120] }
+          }
+        };
+      }
       else if (url.includes('/api/v1/analysis/geotechnical/gpr-profile') || url.includes('/geotechnical/gpr-profile')) data = {
         profile_id: 'GPR_CREST_TRANSECT_01',
         medium_type: 'embankment_fill',
@@ -6657,6 +6757,77 @@ export const invertSarSoilMoisture = async (params) => {
 export const analyzeSatelliteBathymetry = async (params) => {
   const response = await giosApi.post('/api/v1/analysis/water/satellite-bathymetry', params);
   return response.data;
+};
+
+/**
+ * Requests full satellite-derived bathymetry depth inversion, volume calculation, and EAC curve generation.
+ * 
+ * @param {Object} [params={}] - SDB inversion request
+ * @returns {Promise<Object>} Inversion response with quality summary, EAC curve slices, and dynamic tile URL
+ */
+export const requestBathymetryInversion = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/bathymetry/invert', params);
+  return response.data;
+};
+
+/**
+ * Calibrates empirical Stumpf scaling (m1) and offset (m0) parameters using in-situ acoustic survey soundings.
+ * 
+ * @param {Object} [params={}] - In-situ calibration sounding points
+ * @returns {Promise<Object>} Calibration result with m1, m0, R^2, and RMSE
+ */
+export const calibrateBathymetrySoundings = async (params = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/bathymetry/calibrate', params);
+  return response.data;
+};
+
+/**
+ * Retrieves supported optical bathymetry models, metrics, substrates, clarity tiers, and benchmark test sites.
+ * 
+ * @returns {Promise<Object>} Supported SDB capabilities
+ */
+export const fetchBathymetryCapabilities = async () => {
+  const response = await giosApi.get('/api/v1/analysis/bathymetry/models');
+  return response.data;
+};
+
+/**
+ * Constructs dynamic XYZ tile URL for satellite-derived bathymetry raster tiles.
+ * Conforms to Cycle v2.5.44 / Task T-326 specification:
+ * /api/v1/tiles/bathymetry/{model}/{metric}/{z}/{x}/{y}.png
+ * 
+ * @param {Object} [options={}] - Tile configuration options
+ * @returns {string} Tile URL
+ */
+export const buildDynamicBathymetryTileUrl = ({
+  model = 'stumpf_log_ratio',
+  metric = 'bathymetry_depth',
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  colormap = 'blues',
+  rescale = null,
+  asset_id = null
+} = {}) => {
+  let url = `/api/v1/tiles/bathymetry/${model}/${metric}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (colormap) params.push(`colormap=${encodeURIComponent(colormap)}`);
+  if (rescale) params.push(`rescale=${encodeURIComponent(rescale)}`);
+  if (asset_id) params.push(`asset_id=${encodeURIComponent(asset_id)}`);
+  if (params.length > 0) {
+    url += `?${params.join('&')}`;
+  }
+  return url;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for bathymetry raster layers.
+ * 
+ * @param {Object} [options={}] - Tile configuration options
+ * @returns {string} Leaflet tile template
+ */
+export const buildDynamicBathymetryTileUrlTemplate = (options = {}) => {
+  return buildDynamicBathymetryTileUrl({ ...options, z: '{z}', x: '{x}', y: '{y}' });
 };
 
 /**

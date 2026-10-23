@@ -90,6 +90,15 @@ class BathymetryService:
             benchmark_scenes=SDB_BENCHMARK_SCENES
         )
 
+    def search_datasets(
+        self,
+        bbox: Optional[Tuple[float, float, float, float]] = None,
+        query: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Discovers canonical bathymetry research benchmark scenes and aquatic satellite datasets."""
+        from app.services.data_acquisition import data_acquisition_service
+        return data_acquisition_service.search_bathymetry_datasets(bbox=bbox, query=query)
+
     # =========================================================================
     # 1. VECTORIZED STUMPF LOG-RATIO INVERSION ENGINE
     # =========================================================================
@@ -163,16 +172,22 @@ class BathymetryService:
         
         Subtracts deep-water asymptote R_inf to isolate benthic reflectance contribution.
         """
-        b_safe = np.maximum(r_inf_blue + eps, np.asarray(r_blue, dtype=np.float32))
-        g_safe = np.maximum(r_inf_green + eps, np.asarray(r_green, dtype=np.float32))
+        eps_safe = max(1e-6, float(eps))
+        # Strictly enforce non-negative deep-water reflectance asymptote (R_inf > 0)
+        r_inf_b = max(eps_safe, float(r_inf_blue))
+        r_inf_g = max(eps_safe, float(r_inf_green))
+        r_inf_r = max(eps_safe, float(r_inf_red))
 
-        x_blue = np.log(np.maximum(eps, b_safe - r_inf_blue))
-        x_green = np.log(np.maximum(eps, g_safe - r_inf_green))
+        b_safe = np.maximum(r_inf_b + eps_safe, np.asarray(r_blue, dtype=np.float32))
+        g_safe = np.maximum(r_inf_g + eps_safe, np.asarray(r_green, dtype=np.float32))
+
+        x_blue = np.log(np.maximum(eps_safe, b_safe - r_inf_b))
+        x_green = np.log(np.maximum(eps_safe, g_safe - r_inf_g))
 
         depth = float(a0) + (float(a_blue) * x_blue) + (float(a_green) * x_green)
         if r_red is not None:
-            r_safe = np.maximum(r_inf_red + eps, np.asarray(r_red, dtype=np.float32))
-            x_red = np.log(np.maximum(eps, r_safe - r_inf_red))
+            r_safe = np.maximum(r_inf_r + eps_safe, np.asarray(r_red, dtype=np.float32))
+            x_red = np.log(np.maximum(eps_safe, r_safe - r_inf_r))
             depth += (float(a_red) * x_red)
 
         depth_grid = np.clip(depth, 0.0, float(max_depth_m))
@@ -208,13 +223,14 @@ class BathymetryService:
         
         R_b = (R_obs - R_inf) * exp(2 * Kd * z) + R_inf
         """
-        b_safe = np.asarray(r_blue, dtype=np.float32)
+        r_inf_safe = max(0.0, float(r_inf))
+        b_safe = np.maximum(0.0, np.asarray(r_blue, dtype=np.float32))
         z_eff = np.clip(np.asarray(depth_m, dtype=np.float32), 0.0, 18.0)
-        kd_eff = np.asarray(kd, dtype=np.float32)
+        kd_eff = np.maximum(float(eps), np.asarray(kd, dtype=np.float32))
 
         # Attenuation expansion factor
         atten_factor = np.exp(np.clip(2.0 * kd_eff * z_eff, 0.0, 5.0))
-        benthic_r = np.clip((b_safe - r_inf) * atten_factor + r_inf, 0.0, 0.60)
+        benthic_r = np.clip((b_safe - r_inf_safe) * atten_factor + r_inf_safe, 0.0, 0.60)
         return np.asarray(benthic_r, dtype=np.float32)
 
     # =========================================================================
@@ -367,7 +383,7 @@ class BathymetryService:
                 else:
                     water_mask = (b_chunk > 0.005) & (g_chunk > 0.005)
 
-                if model == SDBModelType.LYZENGA_MULTISPECTRAL and r_chunk is not None:
+                if model == SDBModelType.LYZENGA_MULTISPECTRAL:
                     chunk_depth = cls.solve_lyzenga_depth_array(
                         b_chunk, g_chunk, r_red=r_chunk, max_depth_m=max_depth_m
                     )
@@ -397,6 +413,186 @@ class BathymetryService:
             "benthic_reflectance": benthic_out
         }
 
+    @classmethod
+    def invert_raster_cube(
+        cls,
+        dataset: Any,
+        chunk_size: int = 128,
+        model: Union[str, SDBModelType] = SDBModelType.STUMPF_LOG_RATIO,
+        m1: float = 28.5,
+        m0: float = 18.2,
+        n_const: float = 1000.0,
+        max_depth_m: float = 50.0
+    ) -> Dict[str, np.ndarray]:
+        """Inverts 2D water depth and water column attenuation from an xarray.Dataset or dict of arrays.
+        
+        Extracts multi-spectral bands with flexible native alias support (Sentinel-2 B02/B03/B04/B08,
+        Landsat-8/9 B2/B3/B4/B5, or canonical blue/green/red/nir).
+        Applies chunked processing maintaining peak heap strictly <50MB.
+        """
+        model_norm = normalize_sdb_model(model)
+
+        # Resolve Blue band
+        b_arr = None
+        for k in ["blue", "B02", "B2", "coastal"]:
+            if k in dataset:
+                b_arr = np.asarray(dataset[k].values if hasattr(dataset[k], "values") else dataset[k], dtype=np.float32)
+                break
+        if b_arr is None:
+            raise ValueError("Input dataset missing blue band (blue/B02/B2)")
+
+        # Resolve Green band
+        g_arr = None
+        for k in ["green", "B03", "B3"]:
+            if k in dataset:
+                g_arr = np.asarray(dataset[k].values if hasattr(dataset[k], "values") else dataset[k], dtype=np.float32)
+                break
+        if g_arr is None:
+            raise ValueError("Input dataset missing green band (green/B03/B3)")
+
+        # Resolve Red band (optional for Lyzenga)
+        r_arr = None
+        for k in ["red", "B04", "B4"]:
+            if k in dataset:
+                r_arr = np.asarray(dataset[k].values if hasattr(dataset[k], "values") else dataset[k], dtype=np.float32)
+                break
+
+        # Resolve NIR band (optional for NDWI water mask)
+        nir_arr = None
+        for k in ["nir", "B08", "B8A", "B5", "nir08"]:
+            if k in dataset:
+                nir_arr = np.asarray(dataset[k].values if hasattr(dataset[k], "values") else dataset[k], dtype=np.float32)
+                break
+
+        # Radiometric check: if values are uncalibrated sensor DNs (> 2.0)
+        max_b = float(np.nanmax(b_arr)) if b_arr.size > 0 else 0.0
+        if max_b > 2.0:
+            if max_b > 10000.0:
+                # Likely Landsat C2 L2 scaled integer (1..65455): rho = DN * 0.0000275 - 0.2
+                b_arr = np.clip(b_arr * 0.0000275 - 0.2, 0.001, 1.0).astype(np.float32)
+                g_arr = np.clip(g_arr * 0.0000275 - 0.2, 0.001, 1.0).astype(np.float32)
+                if r_arr is not None:
+                    r_arr = np.clip(r_arr * 0.0000275 - 0.2, 0.001, 1.0).astype(np.float32)
+                if nir_arr is not None:
+                    nir_arr = np.clip(nir_arr * 0.0000275 - 0.2, 0.001, 1.0).astype(np.float32)
+            else:
+                # Likely Sentinel-2 L2A scaled integer (0..10000): rho = (DN - 1000) * 0.0001
+                b_offset = 1000.0 if max_b > 1000.0 else 0.0
+                b_arr = np.clip((b_arr - b_offset) * 0.0001, 0.001, 1.0).astype(np.float32)
+                g_arr = np.clip((g_arr - b_offset) * 0.0001, 0.001, 1.0).astype(np.float32)
+                if r_arr is not None:
+                    r_arr = np.clip((r_arr - b_offset) * 0.0001, 0.001, 1.0).astype(np.float32)
+                if nir_arr is not None:
+                    nir_arr = np.clip((nir_arr - b_offset) * 0.0001, 0.001, 1.0).astype(np.float32)
+
+        return cls.process_aquatic_raster_cube(
+            blue_band=b_arr,
+            green_band=g_arr,
+            red_band=r_arr,
+            nir_band=nir_arr,
+            chunk_size=chunk_size,
+            model=model_norm,
+            m1=m1,
+            m0=m0,
+            n_const=n_const,
+            max_depth_m=max_depth_m
+        )
+
+    def ingest_and_invert_scene(
+        self,
+        asset_id: str = "SAN_LUIS_RES_CA",
+        collection: str = "sentinel-2-l2a",
+        bbox: Optional[Any] = None,
+        grid_size: int = 128,
+        model: Union[str, SDBModelType] = SDBModelType.STUMPF_LOG_RATIO,
+        m1: float = 28.5,
+        m0: float = 18.2
+    ) -> Dict[str, Any]:
+        """Ingests multi-spectral satellite scene and performs chunked bathymetric depth inversion.
+        
+        Handles large raster arrays with memory-conscious chunking (<50MB) and proactive gc.collect().
+        """
+        from app.services.data_acquisition import data_acquisition_service
+
+        model_norm = normalize_sdb_model(model)
+        ds, meta = data_acquisition_service.load_bathymetry_data_cube(
+            asset_id=asset_id,
+            grid_size=grid_size,
+            collection=collection,
+            bbox=bbox
+        )
+
+        inversion_results = self.invert_raster_cube(
+            dataset=ds,
+            chunk_size=128,
+            model=model_norm,
+            m1=m1,
+            m0=m0
+        )
+
+        volume_summary, eac_slices = self.integrate_bathymetric_volume_and_eac(
+            depth_grid=inversion_results["depth"],
+            pixel_res_m=10.0 if "sentinel" in str(collection).lower() else 30.0,
+            design_capacity_m3=float(meta.get("design_capacity_m3", 2.5e7))
+        )
+
+        grids_summary = {
+            k: {
+                "min": round(float(np.nanmin(v)), 4),
+                "max": round(float(np.nanmax(v)), 4),
+                "mean": round(float(np.nanmean(v)), 4),
+                "shape": list(v.shape),
+                "dtype": str(v.dtype)
+            }
+            for k, v in inversion_results.items()
+        }
+
+        return {
+            "metadata": meta,
+            "model": model_norm.value,
+            "volume_summary": volume_summary,
+            "eac_curve": [s.model_dump() for s in eac_slices],
+            "grids_summary": grids_summary,
+            "grids": inversion_results
+        }
+
+    def ingest_scene(
+        self,
+        asset_id: str = "SAN_LUIS_RES_CA",
+        collection: str = "sentinel-2-l2a",
+        bbox: Optional[Any] = None,
+        grid_size: int = 128,
+        model: Union[str, SDBModelType] = SDBModelType.STUMPF_LOG_RATIO,
+        m1: float = 28.5,
+        m0: float = 18.2
+    ) -> Dict[str, Any]:
+        """High-level JSON-serializable scene ingestion and bathymetric inversion service."""
+        raw_res = self.ingest_and_invert_scene(
+            asset_id=asset_id,
+            collection=collection,
+            bbox=bbox,
+            grid_size=grid_size,
+            model=model,
+            m1=m1,
+            m0=m0
+        )
+        norm_model = normalize_sdb_model(model)
+        tile_url = build_sdb_tile_url_template(
+            model=norm_model,
+            metric=SDBTileMetric.BATHYMETRY_DEPTH
+        )
+        return {
+            "asset_id": asset_id,
+            "collection": str(collection),
+            "model": norm_model.value,
+            "metadata": raw_res["metadata"],
+            "volume_summary": raw_res["volume_summary"],
+            "eac_curve": raw_res["eac_curve"],
+            "grids_summary": raw_res["grids_summary"],
+            "tile_url_template": tile_url,
+            "status": "success"
+        }
+
     # =========================================================================
     # 7. HIGH-LEVEL PIPELINE EXECUTION METHODS
     # =========================================================================
@@ -419,52 +615,118 @@ class BathymetryService:
                 matched_sc = sc_data
                 break
 
-        r_blue = float(req.blue_reflectance if not matched_sc else matched_sc["typical_blue_r"])
-        r_green = float(req.green_reflectance if not matched_sc else matched_sc["typical_green_r"])
-        des_cap = float(req.design_capacity_m3 if not matched_sc else matched_sc["design_capacity_m3"])
-        des_max_d = float(req.design_max_depth_m if not matched_sc else matched_sc["nominal_sdb_max_depth_m"])
-        surf_area_ha = float(req.surface_area_ha if not matched_sc else matched_sc["surface_area_ha"])
+        if matched_sc:
+            r_blue = float(req.blue_reflectance if req.blue_reflectance != 0.065 else matched_sc["typical_blue_r"])
+            r_green = float(req.green_reflectance if req.green_reflectance != 0.042 else matched_sc["typical_green_r"])
+            des_cap = float(req.design_capacity_m3 if req.design_capacity_m3 != 2.5e7 else matched_sc["design_capacity_m3"])
+            des_max_d = float(req.design_max_depth_m if req.design_max_depth_m != 42.0 else matched_sc["nominal_sdb_max_depth_m"])
+            surf_area_ha = float(req.surface_area_ha if req.surface_area_ha != 180.0 else matched_sc["surface_area_ha"])
+        else:
+            r_blue = float(req.blue_reflectance)
+            r_green = float(req.green_reflectance)
+            des_cap = float(req.design_capacity_m3)
+            des_max_d = float(req.design_max_depth_m)
+            surf_area_ha = float(req.surface_area_ha)
 
-        # 3. Deterministic calculation
-        stumpf_calc = calculate_stumpf_log_ratio(
-            r_blue=r_blue,
-            r_green=r_green,
-            m1=m1,
-            m0=m0,
-            max_depth_m=des_max_d
-        )
-        max_d = stumpf_calc["depth_m"]
-        mean_d = max(0.2, max_d * 0.52)
-        kd_val = stumpf_calc["attenuation_kd"]
-        benthic_r = stumpf_calc["benthic_reflectance"]
-        clarity_tier = classify_water_clarity_tier(kd_val)
-        dominant_substrate = classify_benthic_substrate(benthic_r, depth_m=mean_d)
+        # 3. Deterministic calculation or full raster cube inversion if bbox provided
+        if req.bbox is not None:
+            from app.services.data_acquisition import data_acquisition_service
+            col_name = req.collection.value if hasattr(req.collection, "value") else str(req.collection)
+            ds, meta = data_acquisition_service.load_bathymetry_data_cube(
+                asset_id=req.asset_id,
+                grid_size=128,
+                collection=col_name,
+                bbox=req.bbox
+            )
+            inv_res = self.invert_raster_cube(
+                dataset=ds,
+                chunk_size=128,
+                model=req.model_type,
+                m1=m1,
+                m0=m0,
+                max_depth_m=des_max_d
+            )
+            vol_sum, eac_slices = self.integrate_bathymetric_volume_and_eac(
+                depth_grid=inv_res["depth"],
+                pixel_res_m=10.0 if "sentinel" in col_name.lower() else 30.0,
+                design_capacity_m3=des_cap
+            )
+            mean_d = vol_sum["mean_depth_m"]
+            max_d = vol_sum["max_depth_m"]
+            calc_vol = vol_sum["estimated_volume_m3"]
+            acre_feet = vol_sum["estimated_volume_acre_feet"]
+            silt_loss = vol_sum["siltation_volume_loss_m3"]
+            loss_pct = vol_sum["siltation_loss_percentage"]
+            tier = vol_sum["severity_tier"]
+            remain_years = vol_sum["estimated_remaining_years"]
 
-        area_m2 = max(100.0, surf_area_ha * 10000.0)
-        calc_vol = min(des_cap * 1.15, area_m2 * mean_d)
-        silt_loss = max(0.0, des_cap - calc_vol)
-        loss_pct = round((silt_loss / des_cap) * 100.0, 2)
-        tier = classify_siltation_severity_tier(loss_pct)
-        remain_years = max(0.5, (100.0 - loss_pct) / 1.2)
-        acre_feet = calc_vol * 0.000810714
+            stumpf_calc = calculate_stumpf_log_ratio(
+                r_blue=r_blue,
+                r_green=r_green,
+                m1=m1,
+                m0=m0,
+                max_depth_m=des_max_d
+            )
+            kd_val = float(np.nanmean(inv_res["attenuation_kd"])) if np.any(inv_res["attenuation_kd"] > 0) else stumpf_calc["attenuation_kd"]
+            benthic_r = float(np.nanmean(inv_res["benthic_reflectance"])) if np.any(inv_res["benthic_reflectance"] > 0) else stumpf_calc["benthic_reflectance"]
+            clarity_tier = classify_water_clarity_tier(kd_val)
+            dominant_substrate = classify_benthic_substrate(benthic_r, depth_m=mean_d)
+        else:
+            if req.model_type == SDBModelType.LYZENGA_MULTISPECTRAL:
+                lyz_calc = calculate_lyzenga_multispectral(
+                    r_blue=r_blue,
+                    r_green=r_green,
+                    r_red=req.red_reflectance,
+                    max_depth_m=des_max_d
+                )
+                max_d = lyz_calc["depth_m"]
+                stumpf_calc = calculate_stumpf_log_ratio(
+                    r_blue=r_blue,
+                    r_green=r_green,
+                    m1=m1,
+                    m0=m0,
+                    max_depth_m=des_max_d
+                )
+            else:
+                stumpf_calc = calculate_stumpf_log_ratio(
+                    r_blue=r_blue,
+                    r_green=r_green,
+                    m1=m1,
+                    m0=m0,
+                    max_depth_m=des_max_d
+                )
+                max_d = stumpf_calc["depth_m"]
+            mean_d = max(0.2, max_d * 0.52)
+            kd_val = stumpf_calc["attenuation_kd"]
+            benthic_r = stumpf_calc["benthic_reflectance"]
+            clarity_tier = classify_water_clarity_tier(kd_val)
+            dominant_substrate = classify_benthic_substrate(benthic_r, depth_m=mean_d)
 
-        # 4. Synthesize EAC stage-storage curve
-        eac_slices: List[SDBEACSlice] = []
-        num_slices = 12
-        step = max_d / max(1, num_slices)
-        for i in range(num_slices + 1):
-            h_slice = i * step
-            frac = (i / num_slices)**1.4
-            slice_vol = calc_vol * frac
-            slice_area = area_m2 * (i / num_slices)**0.7
-            eac_slices.append(SDBEACSlice(
-                elevation_m=round(h_slice, 2),
-                depth_m=round(h_slice, 2),
-                area_m2=round(slice_area, 1),
-                area_ha=round(slice_area / 10000.0, 2),
-                cumulative_volume_m3=round(slice_vol, 1),
-                cumulative_volume_acre_feet=round(slice_vol * 0.000810714, 1)
-            ))
+            area_m2 = max(100.0, surf_area_ha * 10000.0)
+            calc_vol = min(des_cap * 1.15, area_m2 * mean_d)
+            silt_loss = max(0.0, des_cap - calc_vol)
+            loss_pct = round((silt_loss / des_cap) * 100.0, 2)
+            tier = classify_siltation_severity_tier(loss_pct)
+            remain_years = max(0.5, (100.0 - loss_pct) / 1.2)
+            acre_feet = calc_vol * 0.000810714
+
+            # 4. Synthesize EAC stage-storage curve
+            eac_slices: List[SDBEACSlice] = []
+            num_slices = 12
+            step = max_d / max(1, num_slices)
+            for i in range(num_slices + 1):
+                h_slice = i * step
+                frac = (i / num_slices)**1.4
+                slice_vol = calc_vol * frac
+                slice_area = area_m2 * (i / num_slices)**0.7
+                eac_slices.append(SDBEACSlice(
+                    elevation_m=round(h_slice, 2),
+                    depth_m=round(h_slice, 2),
+                    area_m2=round(slice_area, 1),
+                    area_ha=round(slice_area / 10000.0, 2),
+                    cumulative_volume_m3=round(slice_vol, 1),
+                    cumulative_volume_acre_feet=round(slice_vol * 0.000810714, 1)
+                ))
 
         # 5. Build Quality Summary
         checklist = {

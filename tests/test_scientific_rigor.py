@@ -5493,6 +5493,366 @@ class TestScientificRigor(unittest.TestCase):
             )
 
 
+    def test_task_t328_bathymetric_stumpf_lyzenga_and_benthic_scientific_qa(self):
+        """Task T-328 (Cycle v2.5.44 Continuous Scientific QA):
+        Verify Satellite-Derived Bathymetry (SDB), Stumpf log-ratio inversion, Lyzenga multi-band
+        radiative transfer, diffuse attenuation (Kd), and benthic bottom albedo invariants:
+        1. Stumpf log-ratio depth monotonicity: deeper soundings correspond monotonically to decreasing ln(n*R_blue) / ln(n*R_green).
+        2. In-situ OLS empirical regression robustness: proper slope sign recovery (m1 < 0 in Case 2 waters, m1 > 0 in Case 1 waters).
+        3. Lyzenga water column deep-water reflectance asymptote non-negativity (R_inf > 0) and epsilon guarding against log singularity.
+        4. Strictly positive water column diffuse attenuation coefficients (Kd > 0, bounded within [0.03, 1.80] m^-1).
+        5. Benthic bottom albedo non-negativity (R_b >= 0.0) across optical regimes and depth attenuation separation.
+        6. Substrate classification and water column clarity tier biophysical sanity.
+        7. Memory-conscious chunked aquatic raster cube inversion (<50MB heap, gc.collect() cleanup for 96.7% RAM pressure).
+        8. Elevation-Area-Capacity (EAC) stage-storage curve monotonicity (dV/dz >= 0).
+        9. Benchmark research test sites catalog integrity and biophysical consistency.
+        10. Dynamic XYZ bathymetry tile URL generation across canonical models and visualization metrics.
+        """
+        import gc
+        from app.models.schemas import (
+            SDBModelType,
+            SDBTileMetric,
+            BenthicSubstrateType,
+            SDBWaterClarityTier,
+            SiltationSeverityTier,
+            normalize_sdb_model,
+            normalize_sdb_metric,
+            normalize_benthic_substrate,
+            normalize_sdb_water_clarity,
+            classify_siltation_severity_tier,
+            SDB_MODEL_CONFIGS,
+            SDB_TILE_METRIC_CONFIGS,
+            BENTHIC_SUBSTRATE_CONFIGS,
+            SDB_WATER_CLARITY_CONFIGS,
+            SDB_BENCHMARK_SCENES,
+            calculate_stumpf_log_ratio,
+            calculate_lyzenga_multispectral,
+            calibrate_stumpf_coefficients,
+            classify_benthic_substrate,
+            classify_water_clarity_tier,
+            build_sdb_tile_url,
+            build_sdb_tile_url_template,
+            SDBInSituPoint,
+            SDBInSituCalibrationRequest,
+            SDBInvertRequest,
+        )
+        from app.services.bathymetry_service import BathymetryService
+
+        # -------------------------------------------------------------
+        # 1. Stumpf Log-Ratio Depth Monotonicity Invariance (Case 2 Inland Waters)
+        # -------------------------------------------------------------
+        # In turbid / inland waters (Case 2, e.g. reservoirs, tailings ponds), blue light
+        # attenuates faster than green (Kd_blue > Kd_green). Deeper soundings correspond
+        # monotonically to decreasing ratio p = ln(n*R_blue) / ln(n*R_green).
+        soundings_case2_z = [2.0, 5.0, 10.0, 15.0, 20.0]
+        soundings_case2_blue = [0.080, 0.060, 0.040, 0.025, 0.015]
+        soundings_case2_green = [0.060, 0.050, 0.045, 0.040, 0.035]
+        n_const = 1000.0
+
+        p_ratios = [
+            math.log(n_const * b) / math.log(n_const * g)
+            for b, g in zip(soundings_case2_blue, soundings_case2_green)
+        ]
+        # Verify ratio monotonically decreases as depth increases
+        for k in range(len(p_ratios) - 1):
+            self.assertGreater(
+                p_ratios[k], p_ratios[k + 1],
+                f"Stumpf ratio must monotonically decrease with depth in Case 2 waters: {p_ratios}"
+            )
+
+        # Calibrate Stumpf model via OLS
+        cal_case2 = calibrate_stumpf_coefficients(
+            observed_depths=soundings_case2_z,
+            blue_reflectance=soundings_case2_blue,
+            green_reflectance=soundings_case2_green,
+            n_const=n_const
+        )
+        self.assertLess(
+            cal_case2["m1"], 0.0,
+            f"Calibrated m1 must be negative for Case 2 waters, got {cal_case2['m1']}"
+        )
+        self.assertGreaterEqual(
+            cal_case2["r_squared"], 0.95,
+            f"R^2 must be >= 0.95, got {cal_case2['r_squared']}"
+        )
+        self.assertLess(
+            cal_case2["rmse_m"], 1.5,
+            f"RMSE must be < 1.5m, got {cal_case2['rmse_m']}"
+        )
+        self.assertEqual(cal_case2["point_count"], 5)
+
+        # Invert depths using calibrated coefficients and verify monotonicity & non-negativity
+        pred_depths = [
+            calculate_stumpf_log_ratio(b, g, n_const=n_const, m1=cal_case2["m1"], m0=cal_case2["m0"])["depth_m"]
+            for b, g in zip(soundings_case2_blue, soundings_case2_green)
+        ]
+        for k in range(len(pred_depths) - 1):
+            self.assertLess(
+                pred_depths[k], pred_depths[k + 1],
+                f"Predicted depth must increase monotonically as Stumpf ratio decreases: {pred_depths}"
+            )
+            self.assertGreaterEqual(pred_depths[k], 0.0, "Depth must be non-negative")
+
+        # Also test vectorized array solver with calibrated coefficients
+        z_grid = BathymetryService.solve_stumpf_depth_array(
+            r_blue=np.array(soundings_case2_blue),
+            r_green=np.array(soundings_case2_green),
+            m1=cal_case2["m1"],
+            m0=cal_case2["m0"],
+            n_const=n_const
+        )
+        self.assertTrue(np.all(z_grid >= 0.0), "Vectorized depth grid must satisfy absolute non-negativity")
+        self.assertTrue(np.all(np.diff(z_grid) > 0.0), "Vectorized depth grid must be monotonically increasing")
+
+        # -------------------------------------------------------------
+        # 2. Stumpf Monotonicity in Clear Ocean (Case 1 Marine Waters)
+        # -------------------------------------------------------------
+        soundings_case1_z = [1.0, 4.0, 8.0, 14.0, 22.0]
+        soundings_case1_blue = [0.065, 0.055, 0.045, 0.035, 0.025]
+        soundings_case1_green = [0.050, 0.035, 0.020, 0.010, 0.005]
+        cal_case1 = calibrate_stumpf_coefficients(
+            observed_depths=soundings_case1_z,
+            blue_reflectance=soundings_case1_blue,
+            green_reflectance=soundings_case1_green,
+            n_const=n_const
+        )
+        self.assertGreater(
+            cal_case1["m1"], 0.0,
+            f"Calibrated m1 must be positive for Case 1 clear waters, got {cal_case1['m1']}"
+        )
+        self.assertGreaterEqual(
+            cal_case1["r_squared"], 0.90,
+            f"Case 1 R^2 must be >= 0.90, got {cal_case1['r_squared']}"
+        )
+
+        # Edge cases: single sounding or mismatched lengths fallback safely
+        fallback = calibrate_stumpf_coefficients([5.0], [0.05], [0.03])
+        self.assertEqual(fallback["m1"], 28.5)
+        self.assertEqual(fallback["m0"], 18.2)
+
+        # -------------------------------------------------------------
+        # 3. Lyzenga Water Column Deep-Water Reflectance Asymptote Verification (R_inf > 0)
+        # -------------------------------------------------------------
+        # Test nominal Lyzenga depth inversion
+        lyz_nominal = calculate_lyzenga_multispectral(
+            r_blue=0.065,
+            r_green=0.042,
+            r_red=0.018,
+            r_inf_blue=0.015,
+            r_inf_green=0.012,
+            r_inf_red=0.005
+        )
+        self.assertGreaterEqual(lyz_nominal["depth_m"], 0.0)
+        self.assertIn("x_blue", lyz_nominal)
+        self.assertIn("x_green", lyz_nominal)
+
+        # Test non-positive / negative / zero R_inf values (must be clamped to strictly positive)
+        for bad_r_inf in [-0.05, 0.0, -1e-6]:
+            lyz_guarded = calculate_lyzenga_multispectral(
+                r_blue=0.050,
+                r_green=0.030,
+                r_red=0.010,
+                r_inf_blue=bad_r_inf,
+                r_inf_green=bad_r_inf,
+                r_inf_red=bad_r_inf
+            )
+            self.assertGreaterEqual(lyz_guarded["depth_m"], 0.0)
+            self.assertFalse(math.isnan(lyz_guarded["depth_m"]))
+            self.assertFalse(math.isinf(lyz_guarded["depth_m"]))
+
+        # Vectorized Lyzenga array solver with negative / zero R_inf
+        b_test = np.array([[0.08, 0.06], [0.04, 0.02]], dtype=np.float32)
+        g_test = np.array([[0.06, 0.04], [0.03, 0.015]], dtype=np.float32)
+        r_test = np.array([[0.02, 0.015], [0.01, 0.005]], dtype=np.float32)
+        lyz_arr = BathymetryService.solve_lyzenga_depth_array(
+            r_blue=b_test,
+            r_green=g_test,
+            r_red=r_test,
+            r_inf_blue=-0.01,  # negative asymptote test
+            r_inf_green=0.0,   # zero asymptote test
+            r_inf_red=-0.005   # negative asymptote test
+        )
+        self.assertTrue(np.all(lyz_arr >= 0.0), "Lyzenga depth array must satisfy non-negativity")
+        self.assertFalse(np.any(np.isnan(lyz_arr)), "Lyzenga depth array must contain no NaNs")
+
+        # -------------------------------------------------------------
+        # 4. Strictly Positive Diffuse Attenuation Coefficients (Kd > 0)
+        # -------------------------------------------------------------
+        for b in [0.001, 0.02, 0.065, 0.15, 0.50]:
+            for g in [0.001, 0.015, 0.042, 0.10, 0.40]:
+                stumpf_res = calculate_stumpf_log_ratio(r_blue=b, r_green=g)
+                kd = stumpf_res["attenuation_kd"]
+                self.assertGreater(kd, 0.0, f"Attenuation Kd must be strictly positive, got {kd}")
+                self.assertTrue(
+                    0.03 <= kd <= 2.50,
+                    f"Kd must be within physical optical bounds [0.03, 2.50], got {kd}"
+                )
+
+        # Vectorized Kd array estimation
+        kd_grid = BathymetryService.estimate_attenuation_kd_array(b_test, g_test)
+        self.assertTrue(np.all(kd_grid > 0.0), "Vectorized Kd grid must be strictly positive")
+        self.assertTrue(
+            np.all(kd_grid >= 0.03) and np.all(kd_grid <= 1.80),
+            "Kd grid must be within [0.03, 1.80]"
+        )
+
+        # Water clarity tiers
+        self.assertEqual(classify_water_clarity_tier(0.05), SDBWaterClarityTier.ULTRA_CLEAR_OLIGOTROPHIC)
+        self.assertEqual(classify_water_clarity_tier(0.18), SDBWaterClarityTier.MODERATE_MESOTROPHIC)
+        self.assertEqual(classify_water_clarity_tier(0.55), SDBWaterClarityTier.TURBID_EUTROPHIC)
+        self.assertEqual(classify_water_clarity_tier(1.20), SDBWaterClarityTier.HIGH_ATTENUATION)
+
+        # -------------------------------------------------------------
+        # 5. Benthic Bottom Albedo Non-Negativity (Rb >= 0.0)
+        # -------------------------------------------------------------
+        # Test across deep / extinguishing water column conditions
+        for depth in [0.0, 2.0, 10.0, 25.0, 50.0]:
+            for b in [0.005, 0.015, 0.065, 0.20]:
+                stumpf_res = calculate_stumpf_log_ratio(r_blue=b, r_green=0.04, max_depth_m=50.0)
+                rb = stumpf_res["benthic_reflectance"]
+                self.assertGreaterEqual(rb, 0.0, f"Benthic albedo must be non-negative, got {rb}")
+                self.assertLessEqual(rb, 0.60, f"Benthic albedo must not exceed physical ceiling 0.60, got {rb}")
+
+        # Vectorized benthic reflectance inversion with R_obs < R_inf
+        dark_blue = np.array([[0.005, 0.008], [0.012, 0.015]], dtype=np.float32)
+        deep_z = np.array([[15.0, 18.0], [20.0, 25.0]], dtype=np.float32)
+        kd_sample = np.array([[0.25, 0.30], [0.35, 0.40]], dtype=np.float32)
+        benthic_arr = BathymetryService.invert_benthic_reflectance_array(
+            r_blue=dark_blue,
+            depth_m=deep_z,
+            kd=kd_sample,
+            r_inf=0.015
+        )
+        self.assertTrue(np.all(benthic_arr >= 0.0), "Vectorized benthic reflectance must satisfy non-negativity (Rb >= 0)")
+        self.assertTrue(np.all(benthic_arr <= 0.60), "Vectorized benthic reflectance must not exceed ceiling 0.60")
+
+        # Substrate classification
+        self.assertEqual(classify_benthic_substrate(0.35, depth_m=5.0), BenthicSubstrateType.SAND)
+        self.assertEqual(classify_benthic_substrate(0.20, depth_m=5.0), BenthicSubstrateType.CORAL_HARDBOTTOM)
+        self.assertEqual(classify_benthic_substrate(0.13, depth_m=5.0), BenthicSubstrateType.MUD_SILT)
+        self.assertEqual(classify_benthic_substrate(0.06, depth_m=5.0), BenthicSubstrateType.SEAGRASS_MACROPHYTE)
+        self.assertEqual(classify_benthic_substrate(0.35, depth_m=40.0), BenthicSubstrateType.DEEP_UNCLASSIFIED)
+
+        # -------------------------------------------------------------
+        # 6. Chunked Raster Processing & Memory Conservation (Host RAM Pressure Guard)
+        # -------------------------------------------------------------
+        # Maintain <50MB heap and proactively call gc.collect() as instructed by Agent 8 notice
+        ny, nx = 32, 32
+        rng = np.random.RandomState(42)
+        b_cube = np.clip(rng.normal(0.065, 0.01, (ny, nx)), 0.01, 0.20).astype(np.float32)
+        g_cube = np.clip(rng.normal(0.042, 0.008, (ny, nx)), 0.01, 0.18).astype(np.float32)
+        r_cube = np.clip(rng.normal(0.018, 0.005, (ny, nx)), 0.005, 0.10).astype(np.float32)
+
+        res_stumpf = BathymetryService.process_aquatic_raster_cube(
+            blue_band=b_cube,
+            green_band=g_cube,
+            red_band=r_cube,
+            chunk_size=16,
+            model=SDBModelType.STUMPF_LOG_RATIO
+        )
+        self.assertIn("depth", res_stumpf)
+        self.assertIn("stumpf_ratio", res_stumpf)
+        self.assertTrue(np.all(res_stumpf["depth"] >= 0.0))
+        self.assertTrue(np.all(res_stumpf["attenuation_kd"] >= 0.0))
+        self.assertTrue(np.all(res_stumpf["benthic_reflectance"] >= 0.0))
+
+        res_lyz = BathymetryService.process_aquatic_raster_cube(
+            blue_band=b_cube,
+            green_band=g_cube,
+            red_band=r_cube,
+            chunk_size=16,
+            model=SDBModelType.LYZENGA_MULTISPECTRAL
+        )
+        self.assertTrue(np.all(res_lyz["depth"] >= 0.0))
+
+        # -------------------------------------------------------------
+        # 7. Volume Integration & EAC Stage-Storage Monotonicity (dV/dz >= 0)
+        # -------------------------------------------------------------
+        vol_sum, eac_slices = BathymetryService.integrate_bathymetric_volume_and_eac(
+            depth_grid=res_stumpf["depth"],
+            pixel_res_m=10.0,
+            design_capacity_m3=1.0e6,
+            num_slices=10
+        )
+        self.assertGreater(vol_sum["estimated_volume_m3"], 0.0)
+        self.assertTrue(0.0 <= vol_sum["siltation_loss_percentage"] <= 100.0)
+        self.assertEqual(len(eac_slices), 11)
+        # Verify cumulative storage volume increases monotonically with stage depth
+        for k in range(len(eac_slices) - 1):
+            self.assertLessEqual(eac_slices[k].depth_m, eac_slices[k + 1].depth_m)
+            self.assertLessEqual(
+                eac_slices[k].cumulative_volume_m3, eac_slices[k + 1].cumulative_volume_m3,
+                "EAC cumulative storage volume must increase monotonically with stage depth"
+            )
+
+        # Clean up arrays proactively to respect RAM pressure notice
+        del b_cube, g_cube, r_cube, res_stumpf, res_lyz, vol_sum, eac_slices
+        gc.collect()
+
+        # -------------------------------------------------------------
+        # 8. SDB Benchmark Scenes Catalog Integrity
+        # -------------------------------------------------------------
+        for sc_id in ["LAKE_MEAD_NV", "SAN_LUIS_RES_CA", "LAKE_POWELL_UT", "CORREGO_TAILINGS_MG"]:
+            self.assertIn(sc_id, SDB_BENCHMARK_SCENES)
+            scene = SDB_BENCHMARK_SCENES[sc_id]
+            self.assertGreater(scene["design_capacity_m3"], 0.0)
+            self.assertGreater(scene["nominal_sdb_max_depth_m"], 0.0)
+            self.assertGreater(scene["typical_blue_r"], 0.0)
+            self.assertGreater(scene["typical_green_r"], 0.0)
+
+        # -------------------------------------------------------------
+        # 9. Dynamic XYZ Bathymetry Tile URL Building Invariants
+        # -------------------------------------------------------------
+        for metric in SDBTileMetric:
+            tile_url = build_sdb_tile_url(
+                model=SDBModelType.STUMPF_LOG_RATIO,
+                metric=metric,
+                z=12,
+                x=1200,
+                y=2400
+            )
+            self.assertEqual(
+                tile_url,
+                f"/api/v1/tiles/bathymetry/stumpf_log_ratio/{metric.value}/12/1200/2400.png"
+            )
+
+            tpl_url = build_sdb_tile_url_template(
+                model=SDBModelType.LYZENGA_MULTISPECTRAL,
+                metric=metric
+            )
+            self.assertEqual(
+                tpl_url,
+                f"/api/v1/tiles/bathymetry/lyzenga_multispectral/{metric.value}/{{z}}/{{x}}/{{y}}.png"
+            )
+
+        # -------------------------------------------------------------
+        # 10. Pipeline Execution with In-Situ Calibration Request
+        # -------------------------------------------------------------
+        svc = BathymetryService()
+        in_situ_soundings = [
+            SDBInSituPoint(point_id=f"pt_{i}", x=-121.0 + i*0.01, y=37.0 + i*0.01, depth_m=d, blue_reflectance=b, green_reflectance=g)
+            for i, (d, b, g) in enumerate(zip(soundings_case2_z, soundings_case2_blue, soundings_case2_green))
+        ]
+        req_pipeline = SDBInvertRequest(
+            asset_id="SAN_LUIS_RES_CA",
+            model_type=SDBModelType.STUMPF_LOG_RATIO,
+            in_situ_points=in_situ_soundings,
+            blue_reflectance=0.065,
+            green_reflectance=0.042
+        )
+        resp = svc.execute_bathymetry_pipeline(req_pipeline)
+        self.assertEqual(resp.status, "success")
+        self.assertGreaterEqual(resp.quality_summary.max_depth_m, 0.0)
+        self.assertGreater(resp.quality_summary.mean_attenuation_kd, 0.0)
+        self.assertIn(resp.quality_summary.dominant_benthic_substrate, BenthicSubstrateType)
+        self.assertTrue(resp.quality_summary.quality_checklist["stumpf_log_ratio_converged"])
+        self.assertTrue(resp.quality_summary.quality_checklist["non_negative_depth_enforced"])
+        self.assertTrue(resp.quality_summary.quality_checklist["attenuation_kd_bounded"])
+        self.assertTrue(resp.quality_summary.quality_checklist["benthic_albedo_separated"])
+        gc.collect()
+
+
+
 if __name__ == "__main__":
     unittest.main()
 

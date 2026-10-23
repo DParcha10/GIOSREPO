@@ -37824,16 +37824,21 @@ def calculate_lyzenga_multispectral(
 ) -> Dict[str, float]:
     """Calculates linearized multi-band water column depth (Lyzenga 1978, 1985)."""
     eps = 1e-5
-    b_val = max(r_inf_blue + eps, float(r_blue))
-    g_val = max(r_inf_green + eps, float(r_green))
+    # Enforce strictly positive deep-water reflectance asymptote (R_inf > 0)
+    r_inf_b = max(eps, float(r_inf_blue))
+    r_inf_g = max(eps, float(r_inf_green))
+    r_inf_r = max(eps, float(r_inf_red))
 
-    x_blue = math.log(max(eps, b_val - r_inf_blue))
-    x_green = math.log(max(eps, g_val - r_inf_green))
+    b_val = max(r_inf_b + eps, float(r_blue))
+    g_val = max(r_inf_g + eps, float(r_green))
+
+    x_blue = math.log(max(eps, b_val - r_inf_b))
+    x_green = math.log(max(eps, g_val - r_inf_g))
 
     depth = a0 + (a_blue * x_blue) + (a_green * x_green)
     if r_red is not None:
-        r_val = max(r_inf_red + eps, float(r_red))
-        x_red = math.log(max(eps, r_val - r_inf_red))
+        r_val = max(r_inf_r + eps, float(r_red))
+        x_red = math.log(max(eps, r_val - r_inf_r))
         depth += (a_red * x_red)
 
     depth_clamped = max(0.0, min(float(max_depth_m), depth))
@@ -37889,8 +37894,8 @@ def calibrate_stumpf_coefficients(
         m0 = 18.2
     else:
         m1 = numerator / denominator
-        # Enforce realistic positive slope for blue/green ratio vs depth
-        if m1 <= 0.0:
+        # Fallback to default only if slope is completely degenerate (zero variance/slope)
+        if abs(m1) < 1e-6:
             m1 = 28.5
         m0 = (m1 * mean_p) - mean_z
 

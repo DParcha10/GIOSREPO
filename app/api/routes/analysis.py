@@ -12284,6 +12284,50 @@ def get_bathymetry_capabilities_endpoint():
     return bathymetry_service.get_capabilities()
 
 
+@router.get("/bathymetry/datasets")
+@router.get("/bathymetry/datasets/", include_in_schema=False)
+@bathymetry_router.get("/datasets", include_in_schema=False)
+@bathymetry_router.get("/datasets/", include_in_schema=False)
+def get_bathymetry_datasets_endpoint(
+    query: Optional[str] = Query(None, description="Search query string"),
+    bbox: Optional[str] = Query(None, description="Spatial bounding box min_lon,min_lat,max_lon,max_lat")
+):
+    """Searches canonical bathymetry benchmark scenes and aquatic satellite datasets."""
+    parsed_bbox = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) == 4:
+                parsed_bbox = (parts[0], parts[1], parts[2], parts[3])
+        except Exception:
+            parsed_bbox = None
+    return bathymetry_service.search_datasets(bbox=parsed_bbox, query=query)
+
+
+@router.post("/bathymetry/ingest")
+@router.post("/bathymetry/ingest/", include_in_schema=False)
+@router.post("/bathymetry/scene", include_in_schema=False)
+@router.post("/bathymetry/scene/", include_in_schema=False)
+@router.post("/bathymetry/scenes", include_in_schema=False)
+@router.post("/bathymetry/scenes/", include_in_schema=False)
+@bathymetry_router.post("/ingest", include_in_schema=False)
+@bathymetry_router.post("/ingest/", include_in_schema=False)
+@bathymetry_router.post("/scene", include_in_schema=False)
+@bathymetry_router.post("/scene/", include_in_schema=False)
+@bathymetry_router.post("/scenes", include_in_schema=False)
+@bathymetry_router.post("/scenes/", include_in_schema=False)
+def ingest_bathymetry_scene_endpoint(req: SDBInvertRequest):
+    """Ingests multi-spectral satellite scene and performs chunked bathymetric depth inversion with EAC curves."""
+    return bathymetry_service.ingest_scene(
+        asset_id=req.asset_id,
+        collection=req.collection.value if hasattr(req.collection, "value") else str(req.collection),
+        bbox=req.bbox,
+        model=req.model_type,
+        m1=float(req.calibration_m1),
+        m0=float(req.calibration_m0)
+    )
+
+
 @router.post("/bathymetry/invert", response_model=SDBInvertResponse)
 @router.post("/bathymetry/invert/", response_model=SDBInvertResponse, include_in_schema=False)
 @bathymetry_router.post("/invert", response_model=SDBInvertResponse, include_in_schema=False)
@@ -12322,7 +12366,8 @@ def get_sdb_tile_endpoint(
     y: int,
     colormap: Optional[str] = Query(None, description="Colormap palette"),
     rescale: Optional[str] = Query(None, description="Rescale range min,max"),
-    asset_id: Optional[str] = Query(None, description="Target asset identifier or benchmark scene")
+    asset_id: Optional[str] = Query(None, description="Target asset identifier or benchmark scene"),
+    collection: Optional[str] = Query(None, description="Satellite collection (sentinel-2-l2a, landsat-c2-l2)")
 ):
     """Dynamic XYZ tile streaming for satellite-derived bathymetry across canonical models and visualization metrics."""
     png_bytes = tile_service.render_bathymetry_tile(
@@ -12333,7 +12378,8 @@ def get_sdb_tile_endpoint(
         y=y,
         colormap=colormap,
         rescale=rescale,
-        asset_id=asset_id or "SAN_LUIS_RES_CA"
+        asset_id=asset_id or "SAN_LUIS_RES_CA",
+        collection=collection or "sentinel-2-l2a"
     )
     return Response(
         content=png_bytes,
@@ -12356,7 +12402,8 @@ def get_sdb_tile_xyz_endpoint(
     metric: str = Query("bathymetry_depth", description="Visualization metric"),
     colormap: Optional[str] = Query(None, description="Colormap palette"),
     rescale: Optional[str] = Query(None, description="Rescale range min,max"),
-    asset_id: Optional[str] = Query(None, description="Target asset identifier or benchmark scene")
+    asset_id: Optional[str] = Query(None, description="Target asset identifier or benchmark scene"),
+    collection: Optional[str] = Query(None, description="Satellite collection (sentinel-2-l2a, landsat-c2-l2)")
 ):
     """Dynamic XYZ tile streaming for satellite-derived bathymetry with query parameter configuration."""
     png_bytes = tile_service.render_bathymetry_tile(
@@ -12367,7 +12414,8 @@ def get_sdb_tile_xyz_endpoint(
         y=y,
         colormap=colormap,
         rescale=rescale,
-        asset_id=asset_id or "SAN_LUIS_RES_CA"
+        asset_id=asset_id or "SAN_LUIS_RES_CA",
+        collection=collection or "sentinel-2-l2a"
     )
     return Response(
         content=png_bytes,
