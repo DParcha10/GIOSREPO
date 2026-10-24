@@ -15619,6 +15619,322 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         )
 
 
+    def test_cycle_v2_5_46_topographic_solar_normalization_contracts(self):
+        """Comprehensive verification of Cycle v2.5.46 Topographic Solar Illumination Normalization & Mountain Shadow Correction models, enums, boundaries, and routes."""
+        from pydantic import ValidationError
+        from app.models.schemas import (
+            TopographicCorrectionMethod,
+            TopographicTileMetric,
+            SolarGeometry,
+            DEMTerrainParameters,
+            CCorrectionParameters,
+            MinnaertParameters,
+            TopographicCorrectionEvaluation,
+            TopographicCorrectionRequest,
+            TopographicCapabilities,
+            get_topographic_tile_url,
+            API_ROUTES,
+            API_ROUTE_CONTRACTS,
+            format_api_route,
+        )
+
+        # 1. TopographicCorrectionMethod Enum
+        self.assertEqual(TopographicCorrectionMethod.C_CORRECTION.value, "c_correction")
+        self.assertEqual(TopographicCorrectionMethod.MINNAERT.value, "minnaert")
+        self.assertEqual(TopographicCorrectionMethod.SUN_CANOPY_SENSOR.value, "sun_canopy_sensor")
+        self.assertEqual(TopographicCorrectionMethod.COSINE.value, "cosine")
+        # Preserved aliases for backwards compatibility
+        self.assertEqual(TopographicCorrectionMethod.NONE.value, "none")
+        self.assertEqual(TopographicCorrectionMethod.COSINE_LAMBERTIAN.value, "cosine_lambertian")
+        self.assertEqual(TopographicCorrectionMethod.SCS_C.value, "scs_c")
+        self.assertEqual(TopographicCorrectionMethod.SCS_PLUS_C.value, "scs_plus_c")
+        self.assertEqual(TopographicCorrectionMethod.SCS.value, "scs")
+
+        with self.assertRaises(ValueError):
+            TopographicCorrectionMethod("invalid_method")
+
+        # 2. TopographicTileMetric Enum
+        self.assertEqual(TopographicTileMetric.CORRECTED_REFLECTANCE.value, "corrected_reflectance")
+        self.assertEqual(TopographicTileMetric.ILLUMINATION_ANGLE.value, "illumination_angle")
+        self.assertEqual(TopographicTileMetric.DEM_SLOPE.value, "dem_slope")
+        self.assertEqual(TopographicTileMetric.DEM_ASPECT.value, "dem_aspect")
+        self.assertEqual(TopographicTileMetric.SHADOW_MASK.value, "shadow_mask")
+        self.assertEqual(TopographicTileMetric.RELATIVE_IRRADIANCE.value, "relative_irradiance")
+
+        with self.assertRaises(ValueError):
+            TopographicTileMetric("invalid_tile_metric")
+
+        # 3. SolarGeometry Pydantic Model
+        # Valid inputs with derived sun_elevation (90.0 - 34.2 = 55.8)
+        sg1 = SolarGeometry(sun_zenith=34.2, sun_azimuth=148.5)
+        self.assertEqual(sg1.sun_zenith, 34.2)
+        self.assertEqual(sg1.sun_azimuth, 148.5)
+        self.assertEqual(sg1.sun_elevation, 55.8)
+
+        # Explicit sun_elevation within bounds
+        sg2 = SolarGeometry(sun_zenith=30.0, sun_azimuth=180.0, sun_elevation=60.0)
+        self.assertEqual(sg2.sun_elevation, 60.0)
+
+        # Boundary checks: [0, 90] for zenith/elevation, [0, 360] for azimuth
+        sg_bounds = SolarGeometry(sun_zenith=0.0, sun_azimuth=0.0, sun_elevation=90.0)
+        self.assertEqual(sg_bounds.sun_zenith, 0.0)
+        self.assertEqual(sg_bounds.sun_azimuth, 0.0)
+        self.assertEqual(sg_bounds.sun_elevation, 90.0)
+
+        sg_bounds2 = SolarGeometry(sun_zenith=90.0, sun_azimuth=360.0, sun_elevation=0.0)
+        self.assertEqual(sg_bounds2.sun_zenith, 90.0)
+        self.assertEqual(sg_bounds2.sun_azimuth, 360.0)
+
+        with self.assertRaises(ValidationError):
+            SolarGeometry(sun_zenith=-0.1, sun_azimuth=180.0)
+        with self.assertRaises(ValidationError):
+            SolarGeometry(sun_zenith=90.1, sun_azimuth=180.0)
+        with self.assertRaises(ValidationError):
+            SolarGeometry(sun_zenith=45.0, sun_azimuth=-0.1)
+        with self.assertRaises(ValidationError):
+            SolarGeometry(sun_zenith=45.0, sun_azimuth=360.1)
+        with self.assertRaises(ValidationError):
+            SolarGeometry(sun_zenith=45.0, sun_azimuth=180.0, sun_elevation=-1.0)
+        with self.assertRaises(ValidationError):
+            SolarGeometry(sun_zenith=45.0, sun_azimuth=180.0, sun_elevation=91.0)
+
+        # 4. DEMTerrainParameters Pydantic Model
+        dem1 = DEMTerrainParameters(slope=28.5, aspect=142.0, elevation_m=2450.0)
+        self.assertEqual(dem1.slope, 28.5)
+        self.assertEqual(dem1.aspect, 142.0)
+        self.assertEqual(dem1.elevation_m, 2450.0)
+
+        # Boundary checks: slope [0, 90], aspect [0, 360], elevation can be negative or positive
+        dem_bounds = DEMTerrainParameters(slope=0.0, aspect=0.0, elevation_m=-86.0)
+        self.assertEqual(dem_bounds.slope, 0.0)
+        self.assertEqual(dem_bounds.aspect, 0.0)
+        self.assertEqual(dem_bounds.elevation_m, -86.0)
+
+        dem_bounds2 = DEMTerrainParameters(slope=90.0, aspect=360.0, elevation_m=8848.86)
+        self.assertEqual(dem_bounds2.slope, 90.0)
+        self.assertEqual(dem_bounds2.aspect, 360.0)
+        self.assertEqual(dem_bounds2.elevation_m, 8848.86)
+
+        with self.assertRaises(ValidationError):
+            DEMTerrainParameters(slope=-0.1, aspect=180.0, elevation_m=100.0)
+        with self.assertRaises(ValidationError):
+            DEMTerrainParameters(slope=90.1, aspect=180.0, elevation_m=100.0)
+        with self.assertRaises(ValidationError):
+            DEMTerrainParameters(slope=30.0, aspect=-0.1, elevation_m=100.0)
+        with self.assertRaises(ValidationError):
+            DEMTerrainParameters(slope=30.0, aspect=360.1, elevation_m=100.0)
+
+        # 5. CCorrectionParameters Pydantic Model
+        c_params = CCorrectionParameters(
+            c_factor=0.082,
+            regression_slope_a=0.35,
+            regression_intercept_b=0.0287,
+            r_squared=0.88
+        )
+        self.assertEqual(c_params.c_factor, 0.082)
+        self.assertEqual(c_params.regression_slope_a, 0.35)
+        self.assertEqual(c_params.regression_intercept_b, 0.0287)
+        self.assertEqual(c_params.r_squared, 0.88)
+
+        # Boundary checks: r_squared in [0, 1]
+        c_p_min = CCorrectionParameters(c_factor=0.0, regression_slope_a=0.1, regression_intercept_b=0.0, r_squared=0.0)
+        self.assertEqual(c_p_min.r_squared, 0.0)
+        c_p_max = CCorrectionParameters(c_factor=0.5, regression_slope_a=0.2, regression_intercept_b=0.1, r_squared=1.0)
+        self.assertEqual(c_p_max.r_squared, 1.0)
+
+        with self.assertRaises(ValidationError):
+            CCorrectionParameters(c_factor=0.08, regression_slope_a=0.3, regression_intercept_b=0.02, r_squared=-0.01)
+        with self.assertRaises(ValidationError):
+            CCorrectionParameters(c_factor=0.08, regression_slope_a=0.3, regression_intercept_b=0.02, r_squared=1.01)
+
+        # 6. MinnaertParameters Pydantic Model
+        minnaert = MinnaertParameters(k_exponent=0.68, r_squared=0.82)
+        self.assertEqual(minnaert.k_exponent, 0.68)
+        self.assertEqual(minnaert.r_squared, 0.82)
+
+        # Boundary checks: k_exponent in [0.0, 1.0], r_squared in [0.0, 1.0]
+        minn_b1 = MinnaertParameters(k_exponent=0.0, r_squared=0.0)
+        self.assertEqual(minn_b1.k_exponent, 0.0)
+        minn_b2 = MinnaertParameters(k_exponent=1.0, r_squared=1.0)
+        self.assertEqual(minn_b2.k_exponent, 1.0)
+
+        with self.assertRaises(ValidationError):
+            MinnaertParameters(k_exponent=-0.01, r_squared=0.5)
+        with self.assertRaises(ValidationError):
+            MinnaertParameters(k_exponent=1.01, r_squared=0.5)
+        with self.assertRaises(ValidationError):
+            MinnaertParameters(k_exponent=0.5, r_squared=-0.01)
+        with self.assertRaises(ValidationError):
+            MinnaertParameters(k_exponent=0.5, r_squared=1.01)
+
+        # 7. TopographicCorrectionEvaluation Pydantic Model
+        eval_result = TopographicCorrectionEvaluation(
+            scene_id="S2A_MSIL2A_20260815T185921_T10TEK",
+            method=TopographicCorrectionMethod.C_CORRECTION,
+            solar_geometry=sg1,
+            dem_parameters=dem1,
+            average_relative_irradiance_improvement=38.6,
+            shaded_slope_compensation_ratio=0.84,
+            execution_time=142.5,
+            c_parameters=c_params,
+            minnaert_parameters=minnaert
+        )
+        self.assertEqual(eval_result.scene_id, "S2A_MSIL2A_20260815T185921_T10TEK")
+        self.assertEqual(eval_result.method, TopographicCorrectionMethod.C_CORRECTION)
+        self.assertEqual(eval_result.solar_geometry.sun_zenith, 34.2)
+        self.assertEqual(eval_result.dem_parameters.slope, 28.5)
+        self.assertEqual(eval_result.average_relative_irradiance_improvement, 38.6)
+        self.assertEqual(eval_result.shaded_slope_compensation_ratio, 0.84)
+        self.assertEqual(eval_result.execution_time, 142.5)
+        self.assertEqual(eval_result.status, "success")
+
+        # Field aliases / harmonization: avg_relative_irradiance_improvement and execution_time_ms
+        eval_harmonized = TopographicCorrectionEvaluation(
+            scene_id="S2A_TEST_HARMONIZED",
+            correction_method="minnaert",
+            solar_geometry=sg1,
+            dem_parameters=dem1,
+            avg_relative_irradiance_improvement=42.1,
+            shaded_slope_compensation_ratio=0.79,
+            execution_time_ms=98.4
+        )
+        self.assertEqual(eval_harmonized.method, TopographicCorrectionMethod.MINNAERT)
+        self.assertEqual(eval_harmonized.average_relative_irradiance_improvement, 42.1)
+        self.assertEqual(eval_harmonized.execution_time, 98.4)
+
+        with self.assertRaises(ValidationError):
+            TopographicCorrectionEvaluation(
+                scene_id="S2A_INVALID",
+                method=TopographicCorrectionMethod.C_CORRECTION,
+                solar_geometry=sg1,
+                dem_parameters=dem1,
+                average_relative_irradiance_improvement=38.6,
+                shaded_slope_compensation_ratio=0.84,
+                execution_time=-10.0
+            )
+
+        # 8. TopographicCorrectionRequest Pydantic Model
+        req_default = TopographicCorrectionRequest(scene_id="S2A_MSIL2A_20260815_MT_SHASTA")
+        self.assertEqual(req_default.scene_id, "S2A_MSIL2A_20260815_MT_SHASTA")
+        self.assertEqual(req_default.item_id, "S2A_MSIL2A_20260815_MT_SHASTA")
+        self.assertEqual(req_default.method, TopographicCorrectionMethod.C_CORRECTION)
+        self.assertEqual(req_default.dem_collection, "cop-dem-glo-30")
+        self.assertEqual(req_default.c_factor, 0.08)
+        self.assertEqual(req_default.minnaert_k, 0.65)
+        self.assertEqual(req_default.cos_i_min, 0.05)
+        self.assertTrue(req_default.mask_self_shadow)
+        self.assertTrue(req_default.mask_water)
+        self.assertIn("B02", req_default.bands)
+
+        # Legacy harmonization test
+        req_legacy = TopographicCorrectionRequest(
+            collection="sentinel-2-l2a",
+            item_id="S2B_MSIL2A_20260902",
+            model="minnaert",
+            c_parameter=0.15,
+            minnaert_k=0.72
+        )
+        self.assertEqual(req_legacy.scene_id, "S2B_MSIL2A_20260902")
+        self.assertEqual(req_legacy.item_id, "S2B_MSIL2A_20260902")
+        self.assertEqual(req_legacy.method, "minnaert")
+        self.assertEqual(req_legacy.c_factor, 0.15)
+        self.assertEqual(req_legacy.c_parameter, 0.15)
+
+        with self.assertRaises(ValidationError):
+            TopographicCorrectionRequest(scene_id="S2A_TEST", minnaert_k=-0.1)
+        with self.assertRaises(ValidationError):
+            TopographicCorrectionRequest(scene_id="S2A_TEST", minnaert_k=1.2)
+
+        # 9. TopographicCapabilities Pydantic Model
+        caps = TopographicCapabilities()
+        self.assertIn(TopographicCorrectionMethod.C_CORRECTION, caps.supported_methods)
+        self.assertIn(TopographicCorrectionMethod.MINNAERT, caps.supported_methods)
+        self.assertIn(TopographicCorrectionMethod.SUN_CANOPY_SENSOR, caps.supported_methods)
+        self.assertIn(TopographicCorrectionMethod.COSINE, caps.supported_methods)
+        self.assertIn("Sentinel-2", caps.supported_sensors)
+        self.assertIn("Landsat-8", caps.supported_sensors)
+        self.assertIn("Landsat-9", caps.supported_sensors)
+        self.assertIn(TopographicTileMetric.CORRECTED_REFLECTANCE, caps.tile_metrics)
+        self.assertIn(TopographicTileMetric.ILLUMINATION_ANGLE, caps.tile_metrics)
+        self.assertIn(TopographicTileMetric.DEM_SLOPE, caps.tile_metrics)
+        self.assertIn(TopographicTileMetric.DEM_ASPECT, caps.tile_metrics)
+        self.assertIn(TopographicTileMetric.SHADOW_MASK, caps.tile_metrics)
+        self.assertIn(TopographicTileMetric.RELATIVE_IRRADIANCE, caps.tile_metrics)
+        self.assertEqual(caps.default_parameters["c_factor"], 0.08)
+        self.assertEqual(caps.default_parameters["minnaert_k"], 0.65)
+
+        # 10. Dynamic Tile URL Builder get_topographic_tile_url
+        url_default = get_topographic_tile_url()
+        self.assertEqual(url_default, "/api/v1/tiles/topographic/c_correction/corrected_reflectance/{z}/{x}/{y}.png")
+
+        url_params = get_topographic_tile_url(
+            method=TopographicCorrectionMethod.MINNAERT,
+            metric=TopographicTileMetric.DEM_SLOPE,
+            z=12,
+            x=1024,
+            y=2048,
+            scene_id="S2A_MSIL2A_20260815_MT_SHASTA"
+        )
+        self.assertEqual(
+            url_params,
+            "/api/v1/tiles/topographic/minnaert/dem_slope/12/1024/2048.png?scene_id=S2A_MSIL2A_20260815_MT_SHASTA"
+        )
+
+        url_str = get_topographic_tile_url("sun_canopy_sensor", "shadow_mask", 14, 2048, 4096)
+        self.assertEqual(url_str, "/api/v1/tiles/topographic/sun_canopy_sensor/shadow_mask/14/2048/4096.png")
+
+        # 11. API Route Contracts Parity
+        required_routes = {
+            "analysis_topographic_capabilities": "/api/v1/analysis/topographic/capabilities",
+            "analysis_topographic_capabilities_short": "/analysis/topographic/capabilities",
+            "analysis_topographic_normalize": "/api/v1/analysis/topographic/normalize",
+            "analysis_topographic_normalize_short": "/analysis/topographic/normalize",
+            "analysis_topographic_evaluate": "/api/v1/analysis/topographic/evaluate",
+            "analysis_topographic_evaluate_short": "/analysis/topographic/evaluate",
+            "tiles_topographic_xyz": "/api/v1/tiles/topographic/{method}/{metric}/{z}/{x}/{y}.png",
+            "tiles_topographic_xyz_short": "/tiles/topographic/{method}/{metric}/{z}/{x}/{y}.png",
+        }
+        for r_name, r_path in required_routes.items():
+            self.assertIn(r_name, API_ROUTES, f"Route {r_name} missing from API_ROUTES")
+            self.assertEqual(API_ROUTES[r_name], r_path)
+            self.assertIn(r_name, API_ROUTE_CONTRACTS, f"Route {r_name} missing from API_ROUTE_CONTRACTS")
+            self.assertEqual(API_ROUTE_CONTRACTS[r_name], r_path)
+
+        # format_api_route tests
+        self.assertEqual(
+            format_api_route("tiles_topographic_xyz", method="c_correction", metric="corrected_reflectance", z=12, x=100, y=200),
+            "/api/v1/tiles/topographic/c_correction/corrected_reflectance/12/100/200.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_topographic_xyz_short", method=TopographicCorrectionMethod.MINNAERT, metric=TopographicTileMetric.DEM_SLOPE, z=14, x=500, y=600),
+            "/tiles/topographic/minnaert/dem_slope/14/500/600.png"
+        )
+        self.assertEqual(
+            format_api_route("analysis_topographic_capabilities"),
+            "/api/v1/analysis/topographic/capabilities"
+        )
+        self.assertEqual(
+            format_api_route("analysis_topographic_capabilities_short"),
+            "/analysis/topographic/capabilities"
+        )
+        self.assertEqual(
+            format_api_route("analysis_topographic_normalize"),
+            "/api/v1/analysis/topographic/normalize"
+        )
+        self.assertEqual(
+            format_api_route("analysis_topographic_normalize_short"),
+            "/analysis/topographic/normalize"
+        )
+        self.assertEqual(
+            format_api_route("analysis_topographic_evaluate"),
+            "/api/v1/analysis/topographic/evaluate"
+        )
+        self.assertEqual(
+            format_api_route("analysis_topographic_evaluate_short"),
+            "/analysis/topographic/evaluate"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 

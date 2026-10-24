@@ -90,6 +90,12 @@ import {
   buildAquaticHabTileUrlTemplate,
   buildTopographicTileUrlTemplate,
   buildTopographicIlluminationTileUrlTemplate,
+  TOPOGRAPHIC_METHODS,
+  TopographicTileMetric,
+  TOPOGRAPHIC_TILE_METRICS,
+  TOPOGRAPHIC_COLORMAPS,
+  DEFAULT_SOLAR_ANGLES,
+  TOPOGRAPHIC_DEFAULT_SOLAR_ANGLES,
   HLS_BANDPASS_COEFFICIENTS,
   buildHlsTileUrlTemplate,
   buildHlsNbarTileUrlTemplate,
@@ -3564,6 +3570,64 @@ const demoAdapter = async (config) => {
           advisory: 'Acute hazard from toxic surface scums; restrict livestock access and drinking water intake; post public warnings.',
           tile_url_template: `/api/v1/tiles/aquatic/hab/${parsed.collection || 'sentinel-2-l2a'}/{z}/{x}/{y}.png`,
           created_at: new Date().toISOString()
+        };
+      }
+      else if (url.includes('/api/v1/analysis/topographic/capabilities') || url.includes('/analysis/topographic/capabilities')) {
+        data = {
+          supported_methods: ['c_correction', 'minnaert', 'sun_canopy_sensor', 'cosine'],
+          supported_sensors: ['Sentinel-2', 'Landsat-8', 'Landsat-9'],
+          default_parameters: {
+            c_factor: 0.08,
+            minnaert_k: 0.65,
+            cos_i_min: 0.05,
+            mask_self_shadow: true,
+            mask_water: true,
+            dem_collection: 'cop-dem-glo-30',
+            solar_zenith_deg: 38.5,
+            solar_azimuth_deg: 142.0
+          },
+          tile_metrics: [
+            'corrected_reflectance',
+            'illumination_angle',
+            'dem_slope',
+            'dem_aspect',
+            'shadow_mask',
+            'relative_irradiance'
+          ]
+        };
+      }
+      else if (url.includes('/api/v1/analysis/topographic/normalize') || url.includes('/analysis/topographic/normalize')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const sceneId = parsed.scene_id || parsed.item_id || 'S2A_MSIL2A_20260815_MT_SHASTA';
+        const method = parsed.method || parsed.model || 'c_correction';
+        data = {
+          scene_id: sceneId,
+          method: method,
+          solar_geometry: {
+            sun_zenith: parsed.solar_geometry?.sun_zenith ?? parsed.solar_zenith_deg ?? 34.2,
+            sun_azimuth: parsed.solar_geometry?.sun_azimuth ?? parsed.solar_azimuth_deg ?? 148.5,
+            sun_elevation: parsed.solar_geometry?.sun_elevation ?? 55.8
+          },
+          dem_parameters: {
+            slope: 28.5,
+            aspect: 142.0,
+            elevation_m: 2450.0
+          },
+          average_relative_irradiance_improvement: 38.6,
+          shaded_slope_compensation_ratio: 0.84,
+          execution_time: 142.5,
+          c_parameters: {
+            c_factor: 0.08,
+            regression_slope_a: 0.35,
+            regression_intercept_b: 0.028,
+            r_squared: 0.88
+          },
+          minnaert_parameters: {
+            k_exponent: 0.65,
+            r_squared: 0.85
+          },
+          status: 'success'
         };
       }
       else if (url.includes('/api/v1/analysis/topographic/correction') || url.includes('/analysis/topographic/correction')) {
@@ -10278,6 +10342,102 @@ export const getETTileUrl = (
   }
   return url;
 };
+
+// ============================================================================
+// CYCLE v2.5.46: TOPOGRAPHIC SOLAR ILLUMINATION NORMALIZATION & MOUNTAIN SHADOW CORRECTION
+// ============================================================================
+
+/**
+ * Retrieves supported topographic solar illumination normalization capabilities.
+ * 
+ * @returns {Promise<Object>} Supported methods, sensors, parameters, and tile metrics
+ */
+export const getTopographicCapabilities = async () => {
+  try {
+    const response = await giosApi.get('/api/v1/analysis/topographic/capabilities');
+    return response.data;
+  } catch {
+    return {
+      supported_methods: ['c_correction', 'minnaert', 'sun_canopy_sensor', 'cosine'],
+      supported_sensors: ['Sentinel-2', 'Landsat-8', 'Landsat-9'],
+      default_parameters: {
+        c_factor: 0.08,
+        minnaert_k: 0.65,
+        cos_i_min: 0.05,
+        mask_self_shadow: true,
+        mask_water: true,
+        dem_collection: 'cop-dem-glo-30',
+        solar_zenith_deg: 38.5,
+        solar_azimuth_deg: 142.0
+      },
+      tile_metrics: [
+        'corrected_reflectance',
+        'illumination_angle',
+        'dem_slope',
+        'dem_aspect',
+        'shadow_mask',
+        'relative_irradiance'
+      ]
+    };
+  }
+};
+
+/**
+ * Dispatches a scene topographic solar illumination normalization and shadow correction request.
+ * 
+ * @param {Object} [payload={}] - Topographic correction request parameters
+ * @returns {Promise<Object>} Topographic correction evaluation response
+ */
+export const processTopographicCorrection = async (payload = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/topographic/normalize', payload);
+  return response.data;
+};
+
+/**
+ * Constructs dynamic XYZ tile URL for topographically corrected raster tiles.
+ * 
+ * @param {string} [method='c_correction'] - Topographic correction method
+ * @param {string} [metric='corrected_reflectance'] - Tile metric
+ * @param {number|string} [z='{z}'] - Zoom level
+ * @param {number|string} [x='{x}'] - Tile X coordinate
+ * @param {number|string} [y='{y}'] - Tile Y coordinate
+ * @param {string} [sceneId=null] - Scene identifier
+ * @param {Object} [options={}] - Additional query options
+ * @returns {string} Fully formatted XYZ tile URL
+ */
+export const getTopographicTileUrl = (
+  method = 'c_correction',
+  metric = 'corrected_reflectance',
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  sceneId = null,
+  options = {}
+) => {
+  const m = (typeof method === 'string' ? method : (method?.id || method?.value || 'c_correction')).toLowerCase();
+  const met = (typeof metric === 'string' ? metric : (metric?.id || metric?.value || 'corrected_reflectance')).toLowerCase();
+  let url = `/api/v1/tiles/topographic/${m}/${met}/${z}/${x}/${y}.png`;
+  const queryParts = [];
+  if (sceneId) {
+    queryParts.push(`scene_id=${encodeURIComponent(sceneId)}`);
+  }
+  if (options && typeof options === 'object') {
+    Object.entries(options).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        queryParts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+      }
+    });
+  }
+  if (queryParts.length > 0) {
+    url += `?${queryParts.join('&')}`;
+  }
+  return url;
+};
+
+// Bind to default giosApi export instance
+giosApi.getTopographicCapabilities = getTopographicCapabilities;
+giosApi.processTopographicCorrection = processTopographicCorrection;
+giosApi.getTopographicTileUrl = getTopographicTileUrl;
 
 
 export {

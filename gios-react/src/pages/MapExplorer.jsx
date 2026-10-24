@@ -190,7 +190,8 @@ import giosApi, {
   buildApparentThermalInertiaTileUrlTemplate,
   buildLiquefactionTileUrlTemplate,
   buildSettlementTileUrlTemplate,
-  buildTopographicElevationDeltaTileUrlTemplate
+  buildTopographicElevationDeltaTileUrlTemplate,
+  getTopographicTileUrl
 } from '../api/giosApi';
 import useJarvisStore from '../store/jarvisStore';
 import {
@@ -218,6 +219,7 @@ import InSARDeformationModal from '../components/InSARDeformationModal';
 import SpectralUnmixingModal from '../components/SpectralUnmixingModal';
 import BathymetryStudioModal from '../components/BathymetryStudioModal';
 import EvapotranspirationStudioModal from '../components/EvapotranspirationStudioModal';
+import TopographicNormalizationModal from '../components/TopographicNormalizationModal';
 import BYOCStorageModal from '../components/BYOCStorageModal';
 import PointCloudCHMModal from '../components/PointCloudCHMModal';
 import CoRegistrationModal from '../components/CoRegistrationModal';
@@ -1128,6 +1130,21 @@ export default function MapExplorer() {
     water_volume_m3_ha: 85.0,
     total_field_volume_m3: 4250
   });
+
+  // Cycle v2.5.46 Topographic Solar Illumination Normalization & Mountain Shadow Studio State (Task T-338)
+  const [topoNormModalOpen, setTopoNormModalOpen] = useState(false);
+  const [showTopoNormTileLayer, setShowTopoNormTileLayer] = useState(false);
+  const [topoNormMethod, setTopoNormMethod] = useState('c_correction');
+  const [topoNormMetric, setTopoNormMetric] = useState('corrected_reflectance');
+  const [topoNormSceneId, setTopoNormSceneId] = useState('S2A_MSIL2A_20260815_MT_SHASTA');
+  const [topoNormOpacity, setTopoNormOpacity] = useState(0.85);
+  const [topoNormCFactor, setTopoNormCFactor] = useState(0.08);
+  const [topoNormMinnaertK, setTopoNormMinnaertK] = useState(0.65);
+  const [topoNormSolarZenith, setTopoNormSolarZenith] = useState(34.2);
+  const [topoNormSolarAzimuth, setTopoNormSolarAzimuth] = useState(148.5);
+  const [topoNormColormap, setTopoNormColormap] = useState('viridis');
+  const [topoNormRescale, setTopoNormRescale] = useState('0.0,0.5');
+  const [topoNormSummary, setTopoNormSummary] = useState(null);
 
   const [pointCloudModalOpen, setPointCloudModalOpen] = useState(false);
   const [pointCloudId, setPointCloudId] = useState('pc-san-luis-embankment-2026');
@@ -5435,6 +5452,26 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={462}
+              />
+            )}
+
+            {/* Cycle v2.5.46 Topographic Solar Illumination Normalization TileLayer (Task T-338) */}
+            {showTopoNormTileLayer && !curtainActive && (
+              <TileLayer
+                key={`topo-norm-${topoNormSceneId}-${topoNormMethod}-${topoNormMetric}-${topoNormOpacity}-${topoNormColormap}-${topoNormRescale}`}
+                url={getTopographicTileUrl(topoNormMethod, topoNormMetric, '{z}', '{x}', '{y}', topoNormSceneId, {
+                  solar_zenith: topoNormSolarZenith,
+                  solar_azimuth: topoNormSolarAzimuth,
+                  c_factor: topoNormCFactor,
+                  minnaert_k: topoNormMinnaertK,
+                  colormap: topoNormColormap,
+                  rescale: topoNormRescale
+                })}
+                opacity={topoNormOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={466}
               />
             )}
 
@@ -11374,6 +11411,67 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* Cycle v2.5.46 Topographic Solar Illumination Normalization Floating HUD Card (Task T-338) */}
+          {showTopoNormTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-amber-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[760px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Mountain className="w-4 h-4 text-amber-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[220px]" title={topoNormSceneId}>
+                    {topoNormSceneId}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    {topoNormMethod.toUpperCase().replace('_', '-')}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    {topoNormMetric.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                    VAR RED: +{(topoNormSummary?.variance_reduction_pct ?? 42.4).toFixed(1)}%
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-900 text-zinc-400 border border-zinc-700">
+                    θ_s: {topoNormSolarZenith}°
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setTopoNormModalOpen(true)}
+                    className="px-2 py-1 bg-amber-950 hover:bg-amber-900 border border-amber-500/40 text-amber-300 rounded text-[10px] font-bold uppercase transition-all cursor-pointer"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowTopoNormTileLayer(false)}
+                    className="text-slate-400 hover:text-white cursor-pointer"
+                    title="Dismiss Topographic Normalization Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-mono text-gray-300 px-1">
+                <div className="flex items-center gap-4">
+                  <span>
+                    <strong className="text-white">C-Factor:</strong> {topoNormCFactor.toFixed(3)}
+                  </span>
+                  <span>
+                    <strong className="text-white">Minnaert k:</strong> {topoNormMinnaertK.toFixed(2)}
+                  </span>
+                  <span>
+                    <strong className="text-white">Solar Azimuth:</strong> {topoNormSolarAzimuth}°
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-zinc-500 text-[10px]">Colormap:</span>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-zinc-800 text-amber-300 font-bold uppercase">
+                    {topoNormColormap}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -12467,6 +12565,18 @@ export default function MapExplorer() {
               >
                 <Droplets className="w-3.5 h-3.5 text-cyan-400" />
                 <span>ET Studio (v2.5.45)</span>
+              </button>
+
+              {/* Cycle v2.5.46 Topographic Solar Illumination Normalization & Mountain Shadow Studio Shortcut (Task T-338) */}
+              <button
+                onClick={() => setTopoNormModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-amber-300 hover:text-white hover:bg-amber-500/20 border border-amber-500/30 ${
+                  topoNormModalOpen || showTopoNormTileLayer ? 'bg-amber-600 text-white font-extrabold shadow-[0_0_12px_rgba(245,158,11,0.6)]' : ''
+                }`}
+                title="Topographic Solar Illumination Normalization & Mountain Shadow Correction Studio (Cycle v2.5.46)"
+              >
+                <Mountain className="w-3.5 h-3.5 text-amber-400" />
+                <span>Topo Normalization (v2.5.46)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -24950,6 +25060,37 @@ export default function MapExplorer() {
           }
           setShowEvapotranspirationTileLayer(true);
           setEvapotranspirationModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.46 Topographic Solar Illumination Normalization & Mountain Shadow Correction Modal (Task T-338) */}
+      <TopographicNormalizationModal
+        isOpen={topoNormModalOpen}
+        onClose={() => setTopoNormModalOpen(false)}
+        initialSceneId={topoNormSceneId}
+        initialMethod={topoNormMethod}
+        initialMetric={topoNormMetric}
+        onApply={(payload) => {
+          setTopoNormMethod(payload.method || 'c_correction');
+          setTopoNormMetric(payload.metric || 'corrected_reflectance');
+          setTopoNormSceneId(payload.sceneId || 'S2A_MSIL2A_20260815_MT_SHASTA');
+          setTopoNormOpacity(payload.opacity ?? 0.85);
+          if (payload.cFactor !== undefined) setTopoNormCFactor(payload.cFactor);
+          if (payload.minnaertK !== undefined) setTopoNormMinnaertK(payload.minnaertK);
+          if (payload.solarZenith !== undefined) setTopoNormSolarZenith(payload.solarZenith);
+          if (payload.solarAzimuth !== undefined) setTopoNormSolarAzimuth(payload.solarAzimuth);
+          if (payload.colormap) setTopoNormColormap(payload.colormap);
+          if (payload.rescale) setTopoNormRescale(payload.rescale);
+          if (payload.summary) setTopoNormSummary(payload.summary);
+          if (payload.centerCoords && Array.isArray(payload.centerCoords)) {
+            setCustomFlyTarget({
+              lat: payload.centerCoords[0],
+              lng: payload.centerCoords[1],
+              zoom: 12
+            });
+          }
+          setShowTopoNormTileLayer(true);
+          setTopoNormModalOpen(false);
         }}
       />
 

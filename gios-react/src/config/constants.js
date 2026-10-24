@@ -22198,22 +22198,29 @@ export const buildAquaticHabTileUrlTemplate = (options = {}) => {
  * Topographic solar illumination correction algorithms enum.
  */
 export const TopographicCorrectionMethod = {
-  NONE: 'none',
-  COSINE: 'cosine',
   C_CORRECTION: 'c_correction',
   MINNAERT: 'minnaert',
+  SUN_CANOPY_SENSOR: 'sun_canopy_sensor',
+  COSINE: 'cosine',
+  NONE: 'none',
+  COSINE_LAMBERTIAN: 'cosine_lambertian',
   SCS_C: 'scs_c',
+  SCS_PLUS_C: 'scs_plus_c',
   SCS: 'scs'
 };
 
 export const TOPOGRAPHIC_CORRECTION_METHOD_TYPES = TopographicCorrectionMethod;
+export const TOPOGRAPHIC_METHODS = TopographicCorrectionMethod;
 
 // Augment existing TOPOGRAPHIC_CORRECTION_METHODS array with enum properties for dual object/array access
 TOPOGRAPHIC_CORRECTION_METHODS.NONE = 'none';
 TOPOGRAPHIC_CORRECTION_METHODS.COSINE = 'cosine';
 TOPOGRAPHIC_CORRECTION_METHODS.C_CORRECTION = 'c_correction';
 TOPOGRAPHIC_CORRECTION_METHODS.MINNAERT = 'minnaert';
+TOPOGRAPHIC_CORRECTION_METHODS.SUN_CANOPY_SENSOR = 'sun_canopy_sensor';
+TOPOGRAPHIC_CORRECTION_METHODS.COSINE_LAMBERTIAN = 'cosine_lambertian';
 TOPOGRAPHIC_CORRECTION_METHODS.SCS_C = 'scs_c';
+TOPOGRAPHIC_CORRECTION_METHODS.SCS_PLUS_C = 'scs_plus_c';
 TOPOGRAPHIC_CORRECTION_METHODS.SCS = 'scs';
 
 /**
@@ -22241,6 +22248,57 @@ export const TOPOGRAPHIC_METRICS = {
 };
 
 export const TopographicMetric = TOPOGRAPHIC_METRICS;
+
+/**
+ * Topographic raster tile metrics enum for dynamic map rendering.
+ */
+export const TopographicTileMetric = {
+  CORRECTED_REFLECTANCE: 'corrected_reflectance',
+  ILLUMINATION_ANGLE: 'illumination_angle',
+  DEM_SLOPE: 'dem_slope',
+  DEM_ASPECT: 'dem_aspect',
+  SHADOW_MASK: 'shadow_mask',
+  RELATIVE_IRRADIANCE: 'relative_irradiance',
+  COS_INCIDENCE: 'cos_incidence',
+  ILLUMINATION: 'illumination'
+};
+
+export const TOPOGRAPHIC_TILE_METRICS = TopographicTileMetric;
+
+/**
+ * Recommended colormaps for topographic correction and terrain metrics.
+ */
+export const TOPOGRAPHIC_COLORMAPS = {
+  corrected_reflectance: 'viridis',
+  illumination_angle: 'plasma',
+  dem_slope: 'terrain',
+  dem_aspect: 'twilight',
+  shadow_mask: 'gray',
+  relative_irradiance: 'inferno',
+  cos_incidence: 'spectral',
+  illumination: 'bone',
+  CORRECTED_REFLECTANCE: 'viridis',
+  ILLUMINATION_ANGLE: 'plasma',
+  DEM_SLOPE: 'terrain',
+  DEM_ASPECT: 'twilight',
+  SHADOW_MASK: 'gray',
+  RELATIVE_IRRADIANCE: 'inferno',
+  DEFAULT: 'viridis'
+};
+
+/**
+ * Default solar illumination ephemeris and angles.
+ */
+export const DEFAULT_SOLAR_ANGLES = {
+  sun_zenith: 38.5,
+  sun_azimuth: 142.0,
+  sun_elevation: 51.5,
+  solar_zenith_deg: 38.5,
+  solar_azimuth_deg: 142.0,
+  solar_elevation_deg: 51.5
+};
+
+export const TOPOGRAPHIC_DEFAULT_SOLAR_ANGLES = DEFAULT_SOLAR_ANGLES;
 
 /**
  * Topographic correction algorithm metadata and documentation configs.
@@ -22303,6 +22361,17 @@ export const TOPOGRAPHIC_METHOD_CONFIGS = {
   },
   scs: {
     id: 'scs',
+    name: 'Sun-Canopy-Sensor (SCS)',
+    description: 'Canopy sunlit geometry projection model for sloped forested terrain without diffuse skylight parameter.',
+    formula: 'L_{corr} = L \\cdot \\frac{\\cos \\theta_s \\cos \\alpha}{\\cos i}',
+    canopy_aware: true,
+    requires_c_factor: false,
+    requires_minnaert_k: false,
+    overcorrection_risk: 'moderate',
+    citation: 'Gu, D., & Gillespie, A. (1998). Topographic normalization of Landsat TM images of forest based on subpixel sun-canopy-sensor geometry.'
+  },
+  sun_canopy_sensor: {
+    id: 'sun_canopy_sensor',
     name: 'Sun-Canopy-Sensor (SCS)',
     description: 'Canopy sunlit geometry projection model for sloped forested terrain without diffuse skylight parameter.',
     formula: 'L_{corr} = L \\cdot \\frac{\\cos \\theta_s \\cos \\alpha}{\\cos i}',
@@ -22543,7 +22612,7 @@ export const applyTopographicCorrection = (
     factor = calculateCCorrectionFactor(cosI, solarZenithDeg, 0.0, cosIMin);
   } else if (m === 'minnaert') {
     factor = calculateMinnaertCorrection(cosI, solarZenithDeg, minnaertK, cosIMin);
-  } else if (m === 'scs_c' || m === 'scs') {
+  } else if (m === 'scs_c' || m === 'scs' || m === 'sun_canopy_sensor') {
     const c = m === 'scs_c' ? cFactor : 0.0;
     factor = calculateScsCCorrection(cosI, slopeDeg, solarZenithDeg, c, cosIMin);
   } else {

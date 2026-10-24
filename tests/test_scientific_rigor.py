@@ -6199,6 +6199,511 @@ class TestScientificRigor(unittest.TestCase):
 
 
 
+    def test_task_t337_topographic_service_and_mountain_cast_shadow_scientific_rigor(self):
+        """Cycle v2.5.46 (Task T-337): TopographicService Remote Sensing Pipeline Verification:
+        1. COP-DEM 30m Slope & Aspect Derivation via Horn 3x3 finite-difference kernels.
+        2. Local Solar Incidence Cosine Invariant (cos(i) in [-1.0, 1.0]).
+        3. Vectorized Mountain Cast-Shadow Ray Tracing.
+        4. OLS Empirical Linear Regressor along Sun-Facing vs. Shaded Slopes (L = m*cos(i) + b, c = b/m).
+        5. Minnaert Anisotropic Exponent (k in (0, 1]).
+        6. Flat Terrain Identity Preservation (L_corr == L when slope == 0).
+        7. Non-Negative Surface Reflectance Invariant (L_corr >= 0).
+        8. End-to-End Scene Inversion & Dynamic Tile Streaming.
+        9. Topographic Capabilities & Dataset Discovery.
+        """
+        from app.services.topographic_service import topographic_service, TopographicService
+        import numpy as np
+        import math
+        import gc
+
+        service = topographic_service
+        self.assertIsInstance(service, TopographicService)
+
+        # 1. Slope & Aspect derivation from synthetic DEM
+        # Plane sloping east at 30 degrees: dz/dx = tan(30 deg), dz/dy = 0
+        elev = np.zeros((64, 64), dtype=np.float32)
+        dx = 30.0
+        tan30 = math.tan(math.radians(30.0))
+        for j in range(64):
+            elev[:, j] = j * dx * tan30
+
+        slope, aspect, normal = service.derive_slope_aspect(elev, cell_size_x=dx, cell_size_y=dx)
+        # Interior points should have slope ~ 30 deg
+        self.assertAlmostEqual(float(slope[32, 32]), 30.0, delta=1.5)
+        self.assertTrue(0.0 <= aspect[32, 32] <= 360.0)
+        norm_len = np.sqrt(np.sum(normal[:, 32, 32] ** 2))
+        self.assertAlmostEqual(float(norm_len), 1.0, places=4)
+
+        # 2. Local Solar Incidence Cosine cos(i) in [-1.0, 1.0]
+        cos_i_overhead = service.compute_local_incidence_cosine(
+            np.zeros((10, 10), dtype=np.float32),
+            np.zeros((10, 10), dtype=np.float32),
+            solar_zenith_deg=0.0,
+            solar_azimuth_deg=180.0
+        )
+        self.assertAlmostEqual(float(cos_i_overhead[5, 5]), 1.0, places=4)
+
+        cos_i_shadow = service.compute_local_incidence_cosine(
+            np.full((10, 10), 60.0, dtype=np.float32),
+            np.full((10, 10), 0.0, dtype=np.float32),
+            solar_zenith_deg=45.0,
+            solar_azimuth_deg=180.0
+        )
+        self.assertLess(float(cos_i_shadow[5, 5]), 0.0)
+
+        # 3. Mountain Cast-Shadow Ray Tracing
+        mountain_dem = np.full((32, 32), 500.0, dtype=np.float32)
+        mountain_dem[10, 10] = 2000.0
+        cast_shadow = service.trace_mountain_cast_shadows(mountain_dem, solar_zenith_deg=45.0, solar_azimuth_deg=180.0, cell_size_m=30.0)
+        self.assertTrue(np.any(cast_shadow[11:20, 10]))
+
+        # 4. OLS Empirical Linear Regressor (c = b / m)
+        cos_i_vals = np.linspace(0.1, 0.9, 100, dtype=np.float32)
+        true_m = 0.25
+        true_b = 0.025
+        rad_vals = true_m * cos_i_vals + true_b
+        est_c, est_m, est_b = service.regress_band_c_factor(rad_vals, cos_i_vals)
+        self.assertAlmostEqual(est_c, 0.10, delta=0.02)
+        self.assertGreater(est_m, 0.0)
+
+        # 5. Minnaert exponent regression
+        est_k = service.regress_minnaert_k(rad_vals, cos_i_vals, solar_zenith_deg=35.0)
+        self.assertGreaterEqual(est_k, 0.10)
+        self.assertLessEqual(est_k, 1.0)
+
+        # 6. Flat terrain identity preservation
+        flat_refl = np.full((10, 10), 0.18, dtype=np.float32)
+        corr_flat = service.apply_topographic_correction(
+            flat_refl,
+            cos_i=np.full((10, 10), math.cos(math.radians(35.0)), dtype=np.float32),
+            slope_deg=np.zeros((10, 10), dtype=np.float32),
+            solar_zenith_deg=35.0,
+            method="c_correction",
+            c_factor=0.08
+        )
+        np.testing.assert_allclose(corr_flat, flat_refl, rtol=1e-4)
+
+        # 7. Non-negative reflectance preservation
+        corr_non_neg = service.apply_topographic_correction(
+            flat_refl,
+            cos_i=np.full((10, 10), -0.5, dtype=np.float32),
+            slope_deg=np.full((10, 10), 45.0, dtype=np.float32),
+            solar_zenith_deg=35.0,
+            method="c_correction",
+            c_factor=0.08
+        )
+        self.assertTrue(np.all(corr_non_neg >= 0.0))
+
+        # 8. End-to-end scene processing
+        scene_res = service.process_topographic_scene("MT_SHASTA_VOLCANO_2026", method="c_correction")
+        self.assertEqual(scene_res["status"], "completed")
+        self.assertIn("summary", scene_res)
+        self.assertGreater(scene_res["summary"]["radiance_std_reduction_pct"], 0.0)
+        self.assertIn("tile_url_template", scene_res)
+
+        # 9. Discovery capabilities
+        caps = service.get_capabilities()
+        self.assertIn("methods", caps)
+        self.assertIn("c_correction", caps["methods"])
+        self.assertIn("benchmark_scenes", caps)
+
+        del elev, slope, aspect, normal, mountain_dem, cast_shadow, scene_res
+        gc.collect()
+
+
+
+
+    def test_task_t340_topographic_irradiance_invariance(self):
+        """Cycle v2.5.46 (Task T-340): Topographic Irradiance Invariance Invariant.
+        
+        Verifies:
+        1. Local solar incidence angle cos(i) in [-1.0, 1.0] identically across all solar geometries
+           and terrain slopes (zenith in [0, 90], azimuth in [0, 360], slope in [0, 90], aspect in [0, 360]).
+        2. Flat terrain condition: slope == 0 or aspect == -1 yields cos(i) == cos(theta_s).
+        3. Solar overhead condition: theta_s == 0 yields cos(i) == cos(alpha) regardless of azimuth.
+        4. Sunward slope alignment: phi_s == beta yields cos(i) == cos(theta_s - alpha).
+        5. Anti-sunward slope alignment: |phi_s - beta| == 180 deg yields cos(i) == cos(theta_s + alpha).
+           When theta_s + alpha > 90 deg, guarantees negative cos(i) < 0 (self-shadowing).
+        6. Vectorized grid invariant: 2D raster under synthetic rugged terrain with slopes up to 90 deg
+           keeps cos(i) strictly in [-1.0, 1.0] without NaNs or Infs.
+        """
+        import math
+        import numpy as np
+        from app.models.schemas import calculate_local_incidence_cosine
+        from app.services.topographic_service import topographic_service
+
+        # 1. Exhaustive parameter sweep across all solar geometries and terrain slopes
+        zeniths = [0.0, 15.0, 30.0, 45.0, 60.0, 75.0, 85.0, 89.9]
+        sun_azimuths = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+        slopes = [0.0, 5.0, 15.0, 30.0, 45.0, 60.0, 75.0, 89.9]
+        aspects = [-1.0, 0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+
+        for sz in zeniths:
+            for sa in sun_azimuths:
+                for sl in slopes:
+                    for asp in aspects:
+                        cos_i = calculate_local_incidence_cosine(sz, sa, sl, asp)
+                        self.assertFalse(math.isnan(cos_i), f"NaN cos(i) for sz={sz}, sa={sa}, sl={sl}, asp={asp}")
+                        self.assertFalse(math.isinf(cos_i), f"Inf cos(i) for sz={sz}, sa={sa}, sl={sl}, asp={asp}")
+                        self.assertGreaterEqual(cos_i, -1.0, f"cos(i) < -1.0 for sz={sz}, sa={sa}, sl={sl}, asp={asp}")
+                        self.assertLessEqual(cos_i, 1.0, f"cos(i) > 1.0 for sz={sz}, sa={sa}, sl={sl}, asp={asp}")
+
+        # 2. Flat terrain invariance: cos(i) == cos(theta_s) identically
+        for sz in zeniths:
+            cos_sz = round(math.cos(math.radians(sz)), 6)
+            cos_i_flat_slope = calculate_local_incidence_cosine(sz, 180.0, 0.0, 90.0)
+            cos_i_flat_asp = calculate_local_incidence_cosine(sz, 180.0, 25.0, -1.0)
+            self.assertEqual(cos_i_flat_slope, cos_sz)
+            self.assertEqual(cos_i_flat_asp, cos_sz)
+
+        # 3. Solar overhead invariance: theta_s = 0 => cos(i) == cos(alpha)
+        for sl in slopes:
+            cos_sl = round(math.cos(math.radians(sl)), 6)
+            for sa in [0.0, 90.0, 180.0, 270.0]:
+                for asp in [0.0, 45.0, 180.0]:
+                    cos_i = calculate_local_incidence_cosine(0.0, sa, sl, asp)
+                    self.assertEqual(cos_i, cos_sl)
+
+        # 4. Sunward alignment: aspect == solar azimuth => cos(i) == cos(theta_s - alpha)
+        for sz, sl in [(45.0, 30.0), (60.0, 20.0), (30.0, 50.0)]:
+            expected = round(math.cos(math.radians(sz - sl)), 6)
+            for sa in [45.0, 135.0, 220.0]:
+                cos_i = calculate_local_incidence_cosine(sz, sa, sl, sa)
+                self.assertAlmostEqual(cos_i, expected, places=5)
+
+        # 5. Anti-sunward alignment: aspect == (solar azimuth + 180) % 360 => cos(i) == cos(theta_s + alpha)
+        for sz, sl in [(50.0, 55.0), (40.0, 60.0), (30.0, 70.0)]:
+            # Here sz + sl > 90, so slope faces away into self-shadow
+            expected = round(math.cos(math.radians(sz + sl)), 6)
+            sa = 120.0
+            anti_sa = (sa + 180.0) % 360.0
+            cos_i = calculate_local_incidence_cosine(sz, sa, sl, anti_sa)
+            self.assertAlmostEqual(cos_i, expected, places=5)
+            self.assertLess(cos_i, 0.0, "Steep anti-sunward slope must exhibit self-shadow (cos_i < 0)")
+
+        # 6. Vectorized 2D grid invariant across synthetic rugged relief
+        np.random.seed(42)
+        grid_slope = np.random.uniform(0.0, 89.9, size=(64, 64)).astype(np.float32)
+        grid_aspect = np.random.uniform(0.0, 360.0, size=(64, 64)).astype(np.float32)
+        vec_cos_i = topographic_service.compute_local_incidence_cosine(
+            grid_slope, grid_aspect, solar_zenith_deg=48.2, solar_azimuth_deg=165.4
+        )
+        self.assertTrue(np.all(vec_cos_i >= -1.0))
+        self.assertTrue(np.all(vec_cos_i <= 1.0))
+        self.assertFalse(np.any(np.isnan(vec_cos_i)))
+        self.assertFalse(np.any(np.isinf(vec_cos_i)))
+
+    def test_task_t340_flat_terrain_identity_invariant(self):
+        """Cycle v2.5.46 (Task T-340): Flat Terrain Identity Invariant.
+        
+        Verifies:
+        1. For flat horizontal terrain (slope alpha = 0), corrected radiance equals uncorrected radiance:
+           L_corr == L identically across all correction algorithms (C-Correction, Minnaert, SCS+C, Cosine, none).
+        2. Normalization factor equals exactly 1.000000 across varied solar zeniths (15 to 75 deg)
+           and reflectance levels (0.01 to 0.95).
+        3. Vectorized raster application over flat terrain raster preserves raw spectral band values
+           with zero radiometric distortion (|L_corr - L| < 1e-4).
+        """
+        import math
+        import numpy as np
+        from app.models.schemas import (
+            apply_topographic_correction,
+            calculate_c_correction_factor,
+            calculate_minnaert_correction,
+            calculate_scs_c_correction,
+            TopographicCorrectionMethod,
+        )
+        from app.services.topographic_service import topographic_service
+
+        methods = [
+            TopographicCorrectionMethod.C_CORRECTION,
+            TopographicCorrectionMethod.MINNAERT,
+            TopographicCorrectionMethod.SUN_CANOPY_SENSOR,
+            TopographicCorrectionMethod.COSINE,
+            "none"
+        ]
+        solar_zeniths = [15.0, 30.0, 45.0, 60.0, 75.0]
+        reflectances = [0.02, 0.08, 0.18, 0.35, 0.55, 0.85]
+
+        # 1. Scalar flat terrain identity across methods and solar zeniths
+        for sz in solar_zeniths:
+            cos_sz = math.cos(math.radians(sz))
+            # On flat terrain (slope = 0), cos(i) = cos(theta_s)
+            cos_i_flat = cos_sz
+
+            # Check individual formulation factors on flat terrain
+            # C-Correction: (cos_sz + c) / (cos_sz + c) = 1.0
+            c_factor_ratio = calculate_c_correction_factor(cos_i_flat, sz, c_factor=0.08)
+            self.assertAlmostEqual(c_factor_ratio, 1.0, places=5)
+
+            # Minnaert: (cos_sz / cos_sz)^k = 1.0^k = 1.0
+            minn_factor_ratio = calculate_minnaert_correction(cos_i_flat, sz, k=0.65)
+            self.assertAlmostEqual(minn_factor_ratio, 1.0, places=5)
+
+            # SCS+C on flat terrain (alpha = 0, cos(alpha) = 1.0):
+            # (cos_sz * 1.0 + c) / (cos_sz + c) = 1.0
+            scs_factor_ratio = calculate_scs_c_correction(cos_i_flat, slope_deg=0.0, solar_zenith_deg=sz, c_factor=0.08)
+            self.assertAlmostEqual(scs_factor_ratio, 1.0, places=5)
+
+            # Cosine: cos_sz / cos_sz = 1.0
+            cosine_factor_ratio = calculate_c_correction_factor(cos_i_flat, sz, c_factor=0.0)
+            self.assertAlmostEqual(cosine_factor_ratio, 1.0, places=5)
+
+            for refl in reflectances:
+                for m in methods:
+                    m_val = m.value if hasattr(m, "value") else str(m)
+                    corrected = apply_topographic_correction(
+                        radiance=refl,
+                        cos_i=cos_i_flat,
+                        slope_deg=0.0,
+                        solar_zenith_deg=sz,
+                        method=m_val,
+                        c_factor=0.08,
+                        minnaert_k=0.65
+                    )
+                    self.assertAlmostEqual(corrected, refl, places=4,
+                        msg=f"Flat terrain identity violated for method={m_val}, sz={sz}, refl={refl}")
+
+        # 2. Vectorized 2D raster flat terrain identity
+        for m_str in ["c_correction", "minnaert", "scs_c", "cosine"]:
+            flat_slope_grid = np.zeros((32, 32), dtype=np.float32)
+            flat_cos_i_grid = np.full((32, 32), math.cos(math.radians(40.0)), dtype=np.float32)
+            raw_refl_grid = np.linspace(0.05, 0.80, 1024, dtype=np.float32).reshape(32, 32)
+
+            corr_grid = topographic_service.apply_topographic_correction(
+                reflectance=raw_refl_grid,
+                cos_i=flat_cos_i_grid,
+                slope_deg=flat_slope_grid,
+                solar_zenith_deg=40.0,
+                method=m_str,
+                c_factor=0.08,
+                minnaert_k=0.65
+            )
+            np.testing.assert_allclose(corr_grid, raw_refl_grid, atol=1e-5,
+                err_msg=f"Vectorized flat terrain identity failed for {m_str}")
+
+    def test_task_t340_non_negative_surface_reflectance_invariant(self):
+        """Cycle v2.5.46 (Task T-340): Non-Negative Surface Reflectance Invariant.
+        
+        Verifies:
+        1. Normalization guarantees strictly non-negative reflectance (L_corr >= 0.0)
+           under extreme relief, avoiding negative radiance artifacts across all correction methods.
+        2. Boundedness under near-vertical cliffs (slope -> 90 deg), extreme grazing incidence (cos_i -> 0+),
+           and negative incidence angles (cos_i in [-1.0, 0.0]).
+        3. Validates non-negative behavior with both mask_self_shadow=True (masked to 0.0)
+           and mask_self_shadow=False (diffuse-bounded non-negative scaling).
+        4. Dynamic range preservation: 0.0 <= L_corr <= 1.0 under all valid reflectance inputs.
+        """
+        import math
+        import numpy as np
+        from app.models.schemas import apply_topographic_correction, TopographicCorrectionMethod
+        from app.services.topographic_service import topographic_service
+
+        methods = [
+            TopographicCorrectionMethod.C_CORRECTION,
+            TopographicCorrectionMethod.MINNAERT,
+            TopographicCorrectionMethod.SUN_CANOPY_SENSOR,
+            TopographicCorrectionMethod.COSINE
+        ]
+
+        # 1. Scalar sweep under extreme relief and self-shadow conditions
+        extreme_cos_i_values = [-0.99, -0.60, -0.25, -0.01, 0.0, 0.0001, 0.01, 0.049, 0.1, 0.5, 0.9]
+        extreme_slopes = [0.0, 30.0, 60.0, 75.0, 85.0, 89.9]
+        refl_inputs = [0.001, 0.05, 0.20, 0.60, 0.95]
+
+        for m in methods:
+            m_val = m.value if hasattr(m, "value") else str(m)
+            for cos_val in extreme_cos_i_values:
+                for sl_val in extreme_slopes:
+                    for refl in refl_inputs:
+                        for mask_ss in [True, False]:
+                            corr = apply_topographic_correction(
+                                radiance=refl,
+                                cos_i=cos_val,
+                                slope_deg=sl_val,
+                                solar_zenith_deg=50.0,
+                                method=m_val,
+                                c_factor=0.08,
+                                minnaert_k=0.65,
+                                mask_self_shadow=mask_ss
+                            )
+                            self.assertFalse(math.isnan(corr), f"NaN produced for method={m_val}, cos_i={cos_val}")
+                            self.assertFalse(math.isinf(corr), f"Inf produced for method={m_val}, cos_i={cos_val}")
+                            self.assertGreaterEqual(corr, 0.0,
+                                f"Negative reflectance {corr} for method={m_val}, cos_i={cos_val}, slope={sl_val}")
+                            self.assertLessEqual(corr, 1.0,
+                                f"Reflectance overshot 1.0 ({corr}) for method={m_val}, cos_i={cos_val}")
+                            if mask_ss and cos_val <= 0.0:
+                                self.assertEqual(corr, 0.0)
+
+        # 2. Vectorized 2D array under extreme rugged mountain relief with cast shadow mask
+        np.random.seed(123)
+        refl_arr = np.random.uniform(0.005, 0.85, size=(48, 48)).astype(np.float32)
+        slope_arr = np.random.uniform(0.0, 89.5, size=(48, 48)).astype(np.float32)
+        cos_i_arr = np.linspace(-1.0, 1.0, 48 * 48, dtype=np.float32).reshape(48, 48)
+        cast_shadow_mask = np.random.choice([True, False], size=(48, 48), p=[0.2, 0.8])
+
+        for m_str in ["c_correction", "minnaert", "scs_c", "cosine"]:
+            corr_arr = topographic_service.apply_topographic_correction(
+                reflectance=refl_arr,
+                cos_i=cos_i_arr,
+                slope_deg=slope_arr,
+                solar_zenith_deg=55.0,
+                method=m_str,
+                c_factor=0.08,
+                minnaert_k=0.65,
+                mask_self_shadow=True,
+                cast_shadow_mask=cast_shadow_mask
+            )
+            self.assertTrue(np.all(corr_arr >= 0.0), f"Negative reflectance found in raster for {m_str}")
+            self.assertTrue(np.all(corr_arr <= 1.0), f"Reflectance > 1.0 found in raster for {m_str}")
+            self.assertFalse(np.any(np.isnan(corr_arr)), f"NaN found in raster for {m_str}")
+
+    def test_task_t340_c_correction_irradiance_regressor(self):
+        """Cycle v2.5.46 (Task T-340): C-Correction Irradiance Regressor Invariant.
+        
+        Verifies:
+        1. Empirical linear regression L = a * cos(i) + b produces non-negative diffuse skylight
+           parameter c = b / a >= 0 for illuminated slopes.
+        2. Direct solar irradiance slope a > 0 and atmospheric diffuse intercept b >= 0.
+        3. High fidelity recovery of ground-truth c parameter in synthetic terrain scenes.
+        4. Singular and degenerate terrain guard handling: on completely flat terrain (constant cos(i))
+           or near-zero variance, regressor returns valid non-negative default fallback c >= 0.
+        5. Filter bounds: pixels with cos(i) outside [min_cos_i, max_cos_i] or non-positive radiances
+           are robustly excluded without crashing or returning negative c.
+        """
+        import math
+        import numpy as np
+        from app.models.schemas import estimate_c_factor_from_linear_regression
+        from app.services.topographic_service import topographic_service
+
+        # 1. Ground truth recovery on synthetic sloped terrain
+        # Model: L = a * cos(i) + b
+        test_cases = [
+            {"true_a": 0.25, "true_b": 0.025, "expected_c": 0.10},  # c = 0.025 / 0.25 = 0.10
+            {"true_a": 0.35, "true_b": 0.042, "expected_c": 0.12},  # c = 0.042 / 0.35 = 0.12
+            {"true_a": 0.40, "true_b": 0.020, "expected_c": 0.05},  # c = 0.020 / 0.40 = 0.05
+            {"true_a": 0.18, "true_b": 0.018, "expected_c": 0.10},  # c = 0.018 / 0.18 = 0.10
+        ]
+
+        for tc in test_cases:
+            cos_i = np.linspace(0.10, 0.90, 200, dtype=np.float32)
+            np.random.seed(99)
+            noise = np.random.normal(0.0, 0.001, size=len(cos_i)).astype(np.float32)
+            radiance = np.clip(tc["true_a"] * cos_i + tc["true_b"] + noise, 0.005, 1.0)
+
+            # Service OLS regression
+            c_est, slope_a, intercept_b = topographic_service.regress_band_c_factor(radiance, cos_i)
+            self.assertGreaterEqual(c_est, 0.0, "C-factor must be non-negative")
+            self.assertGreater(slope_a, 0.0, "Regression slope a must be positive for illuminated terrain")
+            self.assertGreaterEqual(intercept_b, 0.0, "Diffuse intercept b must be non-negative")
+            self.assertAlmostEqual(c_est, tc["expected_c"], delta=0.02,
+                msg=f"Expected c ~ {tc['expected_c']}, got {c_est}")
+
+            # Schema helper regression
+            c_helper = estimate_c_factor_from_linear_regression(radiance.tolist(), cos_i.tolist())
+            self.assertGreaterEqual(c_helper, 0.0, "Helper c-factor must be non-negative")
+            self.assertAlmostEqual(c_helper, tc["expected_c"], delta=0.03)
+
+        # 2. Singular terrain: completely flat landscape (constant cos_i)
+        # Denominator in OLS: n * sum(x^2) - (sum(x))^2 = 0
+        flat_cos_i = np.full(100, 0.7071, dtype=np.float32)
+        flat_radiance = np.full(100, 0.22, dtype=np.float32)
+        c_flat, m_flat, b_flat = topographic_service.regress_band_c_factor(flat_radiance, flat_cos_i, default_c=0.08)
+        self.assertFalse(math.isnan(c_flat))
+        self.assertGreaterEqual(c_flat, 0.0)
+        self.assertEqual(c_flat, 0.08)
+
+        # 3. Small sample size fallback (< 10 points)
+        c_sparse, m_sparse, b_sparse = topographic_service.regress_band_c_factor(
+            np.array([0.1, 0.15], dtype=np.float32),
+            np.array([0.4, 0.5], dtype=np.float32),
+            default_c=0.09
+        )
+        self.assertGreaterEqual(c_sparse, 0.0)
+        self.assertEqual(c_sparse, 0.09)
+
+        # 4. Out-of-bounds / self-shadow filtering: pixels with cos_i < 0.05 or > 0.95
+        shadow_cos_i = np.array([-0.5, -0.2, 0.01, 0.02, 0.98, 0.99], dtype=np.float32)
+        shadow_rad = np.array([0.01, 0.02, 0.03, 0.04, 0.40, 0.45], dtype=np.float32)
+        c_filtered, _, _ = topographic_service.regress_band_c_factor(shadow_rad, shadow_cos_i, default_c=0.08)
+        self.assertEqual(c_filtered, 0.08)
+
+    def test_task_t340_minnaert_limb_darkening_monotonicity(self):
+        """Cycle v2.5.46 (Task T-340): Minnaert Limb Darkening Monotonicity Invariant.
+        
+        Verifies:
+        1. Minnaert power law (cos(theta_s) / cos(i))^k behaves monotonically with k in (0, 1].
+        2. Shaded / steep slopes (cos(i) < cos(theta_s)): ratio > 1.0, so correction factor
+           increases strictly monotonically as k increases from 0.01 to 1.0.
+        3. Directly illuminated sunward slopes (cos(i) > cos(theta_s)): ratio < 1.0, so correction factor
+           decreases strictly monotonically as k increases from 0.01 to 1.0.
+        4. Neutral slopes (cos(i) == cos(theta_s)): correction factor is identically 1.0 for all k in (0, 1].
+        5. Empirical k regression via log-linearization ln(L*cos(alpha)) = ln(L_n) + k*ln(cos(i)*cos(alpha))
+           yields valid k in [0.01, 1.0].
+        """
+        import math
+        import numpy as np
+        from app.models.schemas import calculate_minnaert_correction, calculate_c_correction_factor
+        from app.services.topographic_service import topographic_service
+
+        k_sweep = [0.05, 0.20, 0.40, 0.60, 0.80, 1.00]
+        solar_zenith_deg = 45.0
+        cos_sz = math.cos(math.radians(solar_zenith_deg))  # ~0.7071
+
+        # 1. Shaded / steep slopes: cos(i) < cos(theta_s) => ratio R = cos_sz / cos_i > 1.0
+        # Correction multiplier M(k) = R^k must strictly increase with k
+        cos_i_shaded = 0.35  # R = ~2.02
+        shaded_factors = [
+            calculate_minnaert_correction(cos_i=cos_i_shaded, solar_zenith_deg=solar_zenith_deg, k=k_val)
+            for k_val in k_sweep
+        ]
+        for idx in range(len(shaded_factors) - 1):
+            self.assertLess(shaded_factors[idx], shaded_factors[idx + 1],
+                f"Minnaert factor must strictly increase with k on shaded slopes: {shaded_factors[idx]} >= {shaded_factors[idx + 1]}")
+
+        # At k = 1.0, Minnaert reduces to Lambertian cosine factor
+        lambertian_factor = calculate_c_correction_factor(cos_i=cos_i_shaded, solar_zenith_deg=solar_zenith_deg, c_factor=0.0)
+        self.assertAlmostEqual(shaded_factors[-1], lambertian_factor, places=4)
+
+        # 2. Directly illuminated sunward slopes: cos(i) > cos(theta_s) => ratio R = cos_sz / cos_i < 1.0
+        # Correction multiplier M(k) = R^k must strictly decrease with k
+        cos_i_sunward = 0.92  # R = ~0.768
+        sunward_factors = [
+            calculate_minnaert_correction(cos_i=cos_i_sunward, solar_zenith_deg=solar_zenith_deg, k=k_val)
+            for k_val in k_sweep
+        ]
+        for idx in range(len(sunward_factors) - 1):
+            self.assertGreater(sunward_factors[idx], sunward_factors[idx + 1],
+                f"Minnaert factor must strictly decrease with k on sunward slopes: {sunward_factors[idx]} <= {sunward_factors[idx + 1]}")
+
+        # At k = 1.0, sunward Minnaert reduces to Lambertian
+        lambertian_sunward = calculate_c_correction_factor(cos_i=cos_i_sunward, solar_zenith_deg=solar_zenith_deg, c_factor=0.0)
+        self.assertAlmostEqual(sunward_factors[-1], lambertian_sunward, places=4)
+
+        # 3. Neutral slopes: cos(i) == cos(theta_s) => ratio R = 1.0
+        # M(k) = 1.0^k == 1.0 identically for all k
+        for k_val in k_sweep:
+            factor_neutral = calculate_minnaert_correction(cos_i=cos_sz, solar_zenith_deg=solar_zenith_deg, k=k_val)
+            self.assertAlmostEqual(factor_neutral, 1.0, places=5)
+
+        # 4. Empirical k regressor verification
+        cos_i_synth = np.linspace(0.2, 0.9, 100, dtype=np.float32)
+        true_k = 0.68
+        # Synthetic L roughly follows L = L_n * (cos(i)/cos(theta_s))^k
+        rad_synth = 0.30 * np.power(np.clip(cos_i_synth / cos_sz, 0.1, 2.0), true_k).astype(np.float32)
+
+        k_est = topographic_service.regress_minnaert_k(
+            radiance=rad_synth,
+            cos_i=cos_i_synth,
+            solar_zenith_deg=solar_zenith_deg,
+            default_k=0.65
+        )
+        self.assertGreater(k_est, 0.0, "Minnaert k must be strictly positive")
+        self.assertLessEqual(k_est, 1.0, "Minnaert k must not exceed 1.0")
+        self.assertAlmostEqual(k_est, true_k, delta=0.15)
+
+
 if __name__ == "__main__":
     unittest.main()
 

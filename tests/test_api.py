@@ -3920,6 +3920,14 @@ class TestGIOSApi(unittest.TestCase):
         benchmark_keys = [s.get("benchmark_key") for s in scenes_data["scenes"]]
         self.assertIn("MT_SHASTA_VOLCANO_2026", benchmark_keys)
 
+        # 3b. Topographic Capabilities Endpoint
+        res_caps = self.client.get("/api/v1/analysis/topographic/capabilities")
+        self.assertEqual(res_caps.status_code, 200)
+        caps_data = res_caps.json()
+        self.assertIn("methods", caps_data)
+        self.assertIn("c_correction", caps_data["methods"])
+        self.assertIn("benchmark_scenes", caps_data)
+
         # 4. Dynamic XYZ Topographic Tile Streaming Endpoints
         tile_urls = [
             "/api/v1/tiles/topographic/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png?method=scs_c&metric=corrected_reflectance",

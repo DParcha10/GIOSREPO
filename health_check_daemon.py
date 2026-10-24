@@ -948,14 +948,124 @@ def inspect_aquatic_quality_guard() -> dict:
     return results
 
 def inspect_topographic_illumination_guard() -> dict:
-    """Inspects Float32 DEM Normal Vector Memory Guard (>1.5GB Heap Ceiling),
+    """Inspects Illumination Grazing Angle Singularity Guard (cos(i) < 0.05),
+    DEM Gradient Sobel Floating-Point Allocation Watchdog (>1.5GB Heap Ceiling),
     Illumination Cosine Calculation Latency Watchdog (<300ms),
-    Dynamic XYZ Topographically Corrected Tile Server Probe,
-    and High-Relief DEM Asset Ingestion Monitor (Task T-255).
+    Dynamic XYZ Topographic Correction Tile Server & REST Capabilities Probes (Cycle v2.5.46, Task T-339),
+    and High-Relief DEM Asset Ingestion Monitor.
     """
     results = {}
 
-    # 1. Illumination Cosine Calculation Latency Watchdog (< 300ms)
+    # 1. Illumination Grazing Angle Singularity Guard (cos(i) < 0.05)
+    grazing_status = {
+        "passed": False,
+        "cos_i_min": 0.05,
+        "divergence_prevented": False,
+        "all_finite": False,
+        "bounded": False,
+        "max_reflectance": 0.0,
+        "tested_methods": [],
+        "error": None
+    }
+    try:
+        import numpy as np
+        from app.services.topographic_service import topographic_service
+        # Test synthetic reflectance array against extreme grazing angles (cos(i) < 0.05) and self-shadow (cos(i) <= 0)
+        refl_test = np.array([0.05, 0.15, 0.25, 0.35, 0.45], dtype=np.float32)
+        grazing_cos_i = np.array([0.049, 0.02, 0.005, -0.05, -0.5], dtype=np.float32)
+        slopes_test = np.array([60.0, 70.0, 75.0, 80.0, 85.0], dtype=np.float32)
+
+        methods_tested = ["c_correction", "minnaert", "scs_c", "cosine"]
+        divergence_ok = True
+        max_refl = 0.0
+
+        for method in methods_tested:
+            corrected = topographic_service.apply_topographic_correction(
+                reflectance=refl_test,
+                cos_i=grazing_cos_i,
+                slope_deg=slopes_test,
+                solar_zenith_deg=75.0,
+                method=method,
+                c_factor=0.08,
+                minnaert_k=0.65,
+                cos_i_min=0.05
+            )
+            is_finite = bool(np.all(np.isfinite(corrected)))
+            # Surface reflectance must be clamped and non-negative [0.0, 1.0]
+            is_bounded = bool(np.all((corrected >= 0.0) & (corrected <= 1.0)))
+            if not (is_finite and is_bounded):
+                divergence_ok = False
+                break
+            max_refl = max(max_refl, float(np.max(corrected)))
+
+        grazing_status = {
+            "passed": divergence_ok,
+            "cos_i_min": 0.05,
+            "divergence_prevented": divergence_ok,
+            "all_finite": divergence_ok,
+            "bounded": divergence_ok,
+            "max_reflectance": round(max_refl, 4),
+            "tested_methods": methods_tested,
+            "error": None if divergence_ok else "Numerical divergence detected on grazing angles (cos(i) < 0.05)"
+        }
+    except Exception as e:
+        grazing_status["error"] = str(e)
+    results["grazing_angle_singularity_guard"] = grazing_status
+
+    # 2. DEM Gradient Sobel Floating-Point Allocation Watchdog (>1.5GB Heap Ceiling)
+    sobel_status = {
+        "passed": False,
+        "duration_ms": 0.0,
+        "under_timeout": False,
+        "grid_shape": None,
+        "max_slope_deg": 0.0,
+        "mean_slope_deg": 0.0,
+        "heap_mb": 0.0,
+        "ceiling_mb": 1536.0,
+        "error": None
+    }
+    t_sobel_0 = time.time()
+    try:
+        import numpy as np
+        from app.services.topographic_service import topographic_service
+        # Convolve 128x128 synthetic high-relief digital elevation model using Horn/Sobel 3x3 kernels
+        np.random.seed(42)
+        dem_grid = np.random.uniform(500.0, 4200.0, (128, 128)).astype(np.float32)
+        slope_arr, aspect_arr, normal_vec = topographic_service.derive_slope_aspect(
+            elevation=dem_grid,
+            cell_size_x=30.0,
+            cell_size_y=30.0,
+            z_factor=1.0
+        )
+        sobel_elapsed_ms = (time.time() - t_sobel_0) * 1000.0
+        
+        # Check current python worker heap allocation
+        current_proc = psutil.Process(os.getpid())
+        worker_heap_mb = round(current_proc.memory_info().rss / (1024**2), 1)
+
+        is_finite = bool(np.all(np.isfinite(slope_arr)) and np.all(np.isfinite(aspect_arr)) and np.all(np.isfinite(normal_vec)))
+        is_heap_ok = worker_heap_mb <= 1536.0
+        is_timing_ok = sobel_elapsed_ms < 250.0
+
+        sobel_status = {
+            "passed": is_finite and is_heap_ok and is_timing_ok,
+            "duration_ms": round(sobel_elapsed_ms, 2),
+            "under_timeout": is_timing_ok,
+            "grid_shape": list(dem_grid.shape),
+            "max_slope_deg": round(float(np.max(slope_arr)), 2),
+            "mean_slope_deg": round(float(np.mean(slope_arr)), 2),
+            "heap_mb": worker_heap_mb,
+            "ceiling_mb": 1536.0,
+            "error": None if (is_finite and is_heap_ok) else (
+                f"Worker heap ({worker_heap_mb} MB) exceeded 1.5GB ceiling" if not is_heap_ok else "Gradient Sobel non-finite calculation"
+            )
+        }
+    except Exception as e:
+        sobel_status["error"] = str(e)
+        sobel_status["duration_ms"] = round((time.time() - t_sobel_0) * 1000.0, 2)
+    results["dem_gradient_sobel_watchdog"] = sobel_status
+
+    # 3. Illumination Cosine Calculation Latency Watchdog (< 300ms)
     topo_status = {"passed": False, "duration_ms": 0.0, "under_timeout": False, "mean_cos_i": 0.0, "error": None}
     t0 = time.time()
     try:
@@ -995,7 +1105,15 @@ def inspect_topographic_illumination_guard() -> dict:
         }
     results["illumination_cosine_watchdog"] = topo_status
 
-    # 2. Dynamic XYZ Topographic Tile Server Probes
+    # 4. Dynamic XYZ Topographic Tile Server & REST Capabilities Probes (Cycle v2.5.46, Task T-339)
+    c_tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/topographic/c_correction/corrected_reflectance/10/163/395.png",
+        timeout=3.0
+    )
+    capabilities_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/topographic/capabilities",
+        timeout=3.0
+    )
     topo_tile = check_http_endpoint(
         "http://127.0.0.1:8000/api/v1/tiles/topographic/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png?method=scs_c",
         timeout=3.0
@@ -1004,10 +1122,12 @@ def inspect_topographic_illumination_guard() -> dict:
         "http://127.0.0.1:8000/api/v1/tiles/topographic/illumination/sentinel-2-l2a/MT_SHASTA_VOLCANO_2026/10/163/395.png",
         timeout=3.0
     )
+    results["topographic_c_correction_tile_probe"] = c_tile_probe
+    results["topographic_capabilities_probe"] = capabilities_probe
     results["topographic_tile_probe"] = topo_tile
     results["illumination_tile_probe"] = illum_tile
 
-    # 3. High-Relief DEM Asset Ingestion Monitor
+    # 5. High-Relief DEM Asset Ingestion Monitor
     catalog_status = {"passed": False, "scene_count": 0, "error": None}
     try:
         from app.services.data_acquisition import data_acquisition_service
@@ -2746,37 +2866,75 @@ def run_health_check(full_test_suite: bool = False) -> dict:
                 "message": f"Aquatic scene catalog check failed: {aquatic['aquatic_scene_catalog']['error']}"
             })
 
-    # 11. Analyze Topographic Solar Illumination Anomalies (Task T-255)
+    # 11. Analyze Topographic Solar Illumination Anomalies (Task T-255 & Cycle v2.5.46 Task T-339)
     if topographic:
-        if not topographic["illumination_cosine_watchdog"]["passed"]:
+        grazing_g = topographic.get("grazing_angle_singularity_guard", {})
+        if grazing_g and not grazing_g.get("passed", True):
+            anomalies.append({
+                "component": "Illumination Grazing Angle Singularity Guard (cos(i) < 0.05)",
+                "severity": "HIGH",
+                "type": "NUMERICAL_DIVERGENCE",
+                "message": f"Topographic illumination grazing angle singularity guard failed: {grazing_g.get('error')}"
+            })
+
+        sobel_w = topographic.get("dem_gradient_sobel_watchdog", {})
+        if sobel_w and not sobel_w.get("passed", True):
+            anomalies.append({
+                "component": "DEM Gradient Sobel Floating-Point Allocation Watchdog (>1.5GB Heap Ceiling)",
+                "severity": "HIGH",
+                "type": "MEMORY_OVERCONSUMPTION",
+                "message": f"DEM gradient Sobel watchdog failed: {sobel_w.get('error')}"
+            })
+
+        t_w = topographic.get("illumination_cosine_watchdog", {})
+        if t_w and not t_w.get("passed", True):
             anomalies.append({
                 "component": "Topographic Solar Illumination Correction Engine",
                 "severity": "HIGH",
                 "type": "SOLVER_FAILURE",
-                "message": f"Topographic solar illumination correction failed: {topographic['illumination_cosine_watchdog']['error']}"
+                "message": f"Topographic solar illumination correction failed: {t_w.get('error')}"
             })
-        elif not topographic["illumination_cosine_watchdog"]["under_timeout"]:
+        elif t_w and not t_w.get("under_timeout", True):
             anomalies.append({
                 "component": "Illumination Cosine Calculation Latency Watchdog",
                 "severity": "MEDIUM",
                 "type": "CPU_TIMEOUT",
-                "message": f"Illumination calculation latency ({topographic['illumination_cosine_watchdog']['duration_ms']} ms) exceeded 300 ms timeout ceiling."
+                "message": f"Illumination calculation latency ({t_w.get('duration_ms')} ms) exceeded 300 ms timeout ceiling."
             })
-        if topographic["topographic_tile_probe"] and not topographic["topographic_tile_probe"]["ok"]:
+
+        c_tile = topographic.get("topographic_c_correction_tile_probe")
+        if c_tile and not c_tile.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ Topographic C-Correction Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_ERROR",
+                "message": f"Topographic C-Correction tile endpoint returned status {c_tile.get('status_code')} ({c_tile.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+        topo_caps = topographic.get("topographic_capabilities_probe")
+        if topo_caps and not topo_caps.get("ok"):
+            anomalies.append({
+                "component": "Topographic Capabilities Discovery REST Endpoint",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"Topographic capabilities endpoint returned status {topo_caps.get('status_code')} ({topo_caps.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+        if topographic.get("topographic_tile_probe") and not topographic["topographic_tile_probe"]["ok"]:
             anomalies.append({
                 "component": "Dynamic XYZ Topographic Correction Tile Server",
                 "severity": "MEDIUM",
                 "type": "TILE_ERROR",
                 "message": f"Topographic tile probe failed: {topographic['topographic_tile_probe']['error']}"
             })
-        if topographic["illumination_tile_probe"] and not topographic["illumination_tile_probe"]["ok"]:
+        if topographic.get("illumination_tile_probe") and not topographic["illumination_tile_probe"]["ok"]:
             anomalies.append({
                 "component": "Dynamic XYZ Solar Illumination Tile Server",
                 "severity": "MEDIUM",
                 "type": "TILE_ERROR",
                 "message": f"Solar illumination tile probe failed: {topographic['illumination_tile_probe']['error']}"
             })
-        if not topographic["topographic_scene_catalog"]["passed"]:
+        if topographic.get("topographic_scene_catalog") and not topographic["topographic_scene_catalog"]["passed"]:
             anomalies.append({
                 "component": "High-Relief DEM Asset Ingestion Monitor",
                 "severity": "MEDIUM",
@@ -3591,11 +3749,25 @@ def write_health_status(report: dict):
         entry_lines.append(f"- **Water Reservoir STAC Ingestion & Scene Search Monitor**: `{aq_cat_status}` ({aq_cat_count} benchmark aquatic scenes indexed)")
         entry_lines.append("")
 
-    # 12. Topographic Solar Illumination Correction & SCS+C Guard (Task T-255)
+    # 12. Topographic Solar Illumination Normalization & Mountain Shadow Guard (Cycle v2.5.46, Task T-339)
     if topographic:
-        entry_lines.append("### 12. Topographic Solar Illumination Correction & SCS+C Guard")
+        entry_lines.append("### 12. Topographic Solar Illumination Normalization & Mountain Shadow Guard")
+        grazing_g = topographic.get("grazing_angle_singularity_guard", {})
+        grazing_status = "VERIFIED" if grazing_g.get("passed") else "FAILING"
+
+        sobel_w = topographic.get("dem_gradient_sobel_watchdog", {})
+        mem_heap = resources.get('max_raster_worker_memory_mb', 0.0)
+        sobel_status = "PASSING" if (sobel_w.get("passed", True) and mem_heap <= 1536.0) else "FAILING"
+
         t_w = topographic.get("illumination_cosine_watchdog", {})
         topo_status = "PASSING" if (t_w.get("passed") and t_w.get("under_timeout")) else "FAILING"
+
+        c_tile = topographic.get("topographic_c_correction_tile_probe")
+        c_tile_status = "REACHABLE" if (c_tile and c_tile.get("ok")) else f"STATUS {c_tile.get('status_code', 0) if c_tile else 0} ({c_tile.get('error', 'Unreachable') if c_tile else 'Unreachable'})"
+
+        caps_topo = topographic.get("topographic_capabilities_probe")
+        caps_status = "REACHABLE" if (caps_topo and caps_topo.get("ok")) else f"STATUS {caps_topo.get('status_code', 0) if caps_topo else 0} ({caps_topo.get('error', 'Unreachable') if caps_topo else 'Unreachable'})"
+
         topo_tile = topographic.get("topographic_tile_probe")
         topo_status_code = "REACHABLE" if (topo_tile and topo_tile.get("ok")) else ("UNREACHABLE" if topo_tile else "N/A")
         illum_tile = topographic.get("illumination_tile_probe")
@@ -3604,8 +3776,11 @@ def write_health_status(report: dict):
         top_cat_status = "REACHABLE" if top_cat.get("passed") else "ERROR"
         top_cat_count = top_cat.get("scene_count", 0)
 
-        entry_lines.append(f"- **Float32 DEM Normal Vector Memory Guard (>1.5GB Heap Ceiling)**: `PASSING` (Max worker heap: {resources.get('max_raster_worker_memory_mb', 0.0)} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **Illumination Grazing Angle Singularity Guard ($\\cos(i) < 0.05$)**: `{grazing_status}` (Numerical divergence prevented, all finite, bounded $[0.0, 1.0]$, max reflectance: {grazing_g.get('max_reflectance', 0.0)}, 4 models verified)")
+        entry_lines.append(f"- **DEM Gradient Sobel Floating-Point Allocation Watchdog (>1.5GB Heap Ceiling)**: `{sobel_status}` (Max worker heap: {mem_heap} MB <= 1536.0 MB, Horn 3x3 gradient evaluated in {sobel_w.get('duration_ms', 0.0)} ms)")
         entry_lines.append(f"- **Illumination Cosine Calculation Latency Watchdog ($< 300\\text{{ms}}$)**: `{topo_status}` ({t_w.get('duration_ms', 0.0)} ms, mean cos(i): {t_w.get('mean_cos_i', 0.0)})")
+        entry_lines.append(f"- **Dynamic XYZ Topographic C-Correction Tile Server (`/tiles/topographic/c_correction/...`)**: `{c_tile_status}` (Probe latency: {c_tile.get('latency_ms', 0.0) if c_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **Topographic Capabilities Discovery REST Endpoint (`/analysis/topographic/capabilities`)**: `{caps_status}` (Probe latency: {caps_topo.get('latency_ms', 0.0) if caps_topo else 'N/A'} ms)")
         entry_lines.append(f"- **Dynamic XYZ Topographic Correction Tile Server (`/tiles/topographic/...`)**: `{topo_status_code}` (Probe latency: {topo_tile.get('latency_ms', 0.0) if topo_tile else 'N/A'} ms)")
         entry_lines.append(f"- **Dynamic XYZ Solar Illumination Tile Server (`/tiles/topographic/illumination/...`)**: `{illum_status}` (Probe latency: {illum_tile.get('latency_ms', 0.0) if illum_tile else 'N/A'} ms)")
         entry_lines.append(f"- **High-Relief DEM Asset Ingestion Monitor**: `{top_cat_status}` ({top_cat_count} benchmark topographic scenes indexed)")

@@ -1117,6 +1117,15 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_evapotranspiration_short": "/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png",
     "tiles_evapotranspiration_xyz": "/api/v1/tiles/evapotranspiration/{z}/{x}/{y}.png",
     "tiles_evapotranspiration_xyz_short": "/tiles/evapotranspiration/{z}/{x}/{y}.png",
+    # Cycle v2.5.46: Topographic Solar Illumination Normalization & Mountain Shadow Correction Contracts
+    "analysis_topographic_capabilities": "/api/v1/analysis/topographic/capabilities",
+    "analysis_topographic_capabilities_short": "/analysis/topographic/capabilities",
+    "analysis_topographic_normalize": "/api/v1/analysis/topographic/normalize",
+    "analysis_topographic_normalize_short": "/analysis/topographic/normalize",
+    "analysis_topographic_evaluate": "/api/v1/analysis/topographic/evaluate",
+    "analysis_topographic_evaluate_short": "/analysis/topographic/evaluate",
+    "tiles_topographic_xyz": "/api/v1/tiles/topographic/{method}/{metric}/{z}/{x}/{y}.png",
+    "tiles_topographic_xyz_short": "/tiles/topographic/{method}/{metric}/{z}/{x}/{y}.png",
 }
 
 API_ROUTES: Dict[str, str] = API_ROUTE_CONTRACTS
@@ -1553,6 +1562,17 @@ def format_api_route(route_name: str, **kwargs) -> str:
                 kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
         else:
             kwargs["metric"] = "daily_et_mm"
+    elif route_name in ("tiles_topographic_xyz", "tiles_topographic_xyz_short"):
+        if "method" in kwargs:
+            val = kwargs["method"]
+            kwargs["method"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            kwargs["method"] = "c_correction"
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            kwargs["metric"] = "corrected_reflectance"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -11339,10 +11359,15 @@ def build_sbas_tile_url(
 
 class TopographicCorrectionMethod(str, Enum):
     """Topographic illumination slope/aspect radiometric correction models."""
-    MINNAERT = "minnaert"
     C_CORRECTION = "c_correction"
-    SCS_PLUS_C = "scs_plus_c"
+    MINNAERT = "minnaert"
+    SUN_CANOPY_SENSOR = "sun_canopy_sensor"
+    COSINE = "cosine"
+    NONE = "none"
     COSINE_LAMBERTIAN = "cosine_lambertian"
+    SCS_C = "scs_c"
+    SCS_PLUS_C = "scs_plus_c"
+    SCS = "scs"
 
 
 class IlluminationConditionTier(str, Enum):
@@ -31068,11 +31093,12 @@ def build_aquatic_hab_tile_url_template(
 
 class TopographicCorrectionMethod(str, Enum):
     """Algorithms for solar illumination and topographic relief normalization in complex terrain."""
-    NONE = "none"                              # Unmodified surface reflectance with raw terrain illumination
-    COSINE = "cosine"                          # Teillet et al. (1982) Lambertian cosine correction: cos(theta_s) / cos(i)
-    COSINE_LAMBERTIAN = "cosine_lambertian"    # Standard Lambertian cosine normalization alias
     C_CORRECTION = "c_correction"              # Teillet et al. (1982) semi-empirical non-Lambertian: (cos(theta_s) + c) / (cos(i) + c)
     MINNAERT = "minnaert"                      # Minnaert (1941) / Smith et al. (1980) empirical power law: (cos(theta_s) / cos(i))^k
+    SUN_CANOPY_SENSOR = "sun_canopy_sensor"    # Gu & Gillespie (1998) / Soenen et al. (2005) Sun-Canopy-Sensor
+    COSINE = "cosine"                          # Teillet et al. (1982) Lambertian cosine correction: cos(theta_s) / cos(i)
+    NONE = "none"                              # Unmodified surface reflectance with raw terrain illumination
+    COSINE_LAMBERTIAN = "cosine_lambertian"    # Standard Lambertian cosine normalization alias
     SCS_C = "scs_c"                            # Soenen, Peddle, & Coburn (2005) Sun-Canopy-Sensor with C-correction
     SCS_PLUS_C = "scs_plus_c"                  # Sun-Canopy-Sensor with empirical C-correction alias
     SCS = "scs"                                # Gu & Gillespie (1998) Sun-Canopy-Sensor canopy sunlit projection
@@ -31387,7 +31413,7 @@ def apply_topographic_correction(
         factor = calculate_c_correction_factor(cos_i, solar_zenith_deg, c_factor=0.0, cos_i_min=cos_i_min)
     elif m == "minnaert":
         factor = calculate_minnaert_correction(cos_i, solar_zenith_deg, k=minnaert_k, cos_i_min=cos_i_min)
-    elif m in ("scs_c", "scs", "scs_plus_c"):
+    elif m in ("scs_c", "scs", "scs_plus_c", "sun_canopy_sensor"):
         c = c_factor if m in ("scs_c", "scs_plus_c") else 0.0
         factor = calculate_scs_c_correction(cos_i, slope_deg, solar_zenith_deg, c_factor=c, cos_i_min=cos_i_min)
     else:  # default to c_correction
@@ -39079,4 +39105,237 @@ class ETCapabilities(BaseModel):
     models: Dict[str, Any] = Field(..., description="Supported energy balance evapotranspiration models")
     metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")
     benchmarks: Dict[str, Any] = Field(default_factory=dict, description="Benchmark research test sites")
+
+# ==============================================================================
+# Cycle v2.5.46: Topographic Solar Illumination Normalization & Mountain Shadow Correction
+# ==============================================================================
+
+class TopographicTileMetric(str, Enum):
+    """Dynamic raster tile visualization metrics for topographic illumination & mountain shadow workflows."""
+    CORRECTED_REFLECTANCE = "corrected_reflectance"
+    ILLUMINATION_ANGLE = "illumination_angle"
+    DEM_SLOPE = "dem_slope"
+    DEM_ASPECT = "dem_aspect"
+    SHADOW_MASK = "shadow_mask"
+    RELATIVE_IRRADIANCE = "relative_irradiance"
+    COS_INCIDENCE = "cos_incidence"
+    ILLUMINATION = "illumination"
+
+
+class SolarGeometry(BaseModel):
+    """Solar illumination geometry parameters at satellite acquisition time."""
+    sun_zenith: float = Field(..., ge=0.0, le=90.0, description="Solar zenith angle in degrees [0, 90]")
+    sun_azimuth: float = Field(..., ge=0.0, le=360.0, description="Solar azimuth angle in degrees [0, 360] clockwise from North")
+    sun_elevation: Optional[float] = Field(default=None, ge=0.0, le=90.0, description="Solar elevation angle in degrees [0, 90] (derived from sun_zenith if omitted)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_or_validate_elevation(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            zenith = data.get("sun_zenith")
+            elevation = data.get("sun_elevation")
+            if zenith is not None and elevation is None:
+                try:
+                    z = float(zenith)
+                    data["sun_elevation"] = max(0.0, min(90.0, round(90.0 - z, 4)))
+                except (ValueError, TypeError):
+                    pass
+        return data
+
+
+class DEMTerrainParameters(BaseModel):
+    """Digital Elevation Model (DEM) topographic terrain derivatives and elevation."""
+    slope: float = Field(..., ge=0.0, le=90.0, description="Terrain surface slope angle in degrees [0, 90]")
+    aspect: float = Field(..., ge=0.0, le=360.0, description="Terrain surface aspect angle in degrees [0, 360] clockwise from North")
+    elevation_m: float = Field(..., description="Terrain surface elevation in meters above sea level")
+
+
+class CCorrectionParameters(BaseModel):
+    """C-Correction empirical regression coefficients and goodness-of-fit."""
+    c_factor: float = Field(..., description="Empirical C parameter (c = b / a) balancing direct and diffuse irradiance")
+    regression_slope_a: float = Field(..., description="Slope coefficient (a) from linear regression L = a * cos(i) + b")
+    regression_intercept_b: float = Field(..., description="Intercept coefficient (b) representing diffuse skylight irradiance")
+    r_squared: float = Field(..., ge=0.0, le=1.0, description="Coefficient of determination (R^2) in [0, 1]")
+
+
+class MinnaertParameters(BaseModel):
+    """Minnaert non-Lambertian empirical power law parameters."""
+    k_exponent: float = Field(..., ge=0.0, le=1.0, description="Minnaert limb-darkening exponent k in [0.0, 1.0] (1.0 = Lambertian)")
+    r_squared: float = Field(..., ge=0.0, le=1.0, description="Coefficient of determination (R^2) in [0, 1]")
+
+
+class TopographicCorrectionEvaluation(BaseModel):
+    """Quantitative performance and quality evaluation of applied topographic correction."""
+    scene_id: str = Field(..., description="Satellite scene or granule identifier")
+    method: TopographicCorrectionMethod = Field(..., description="Topographic correction method applied")
+    solar_geometry: SolarGeometry = Field(..., description="Solar illumination geometry ephemeris")
+    dem_parameters: DEMTerrainParameters = Field(..., description="DEM topographic slope, aspect, and elevation parameters")
+    average_relative_irradiance_improvement: float = Field(..., description="Average relative irradiance improvement across shaded slopes")
+    shaded_slope_compensation_ratio: float = Field(..., description="Ratio of radiance compensation achieved across deep shaded aspects")
+    execution_time: float = Field(..., ge=0.0, description="Algorithm execution processing time in milliseconds")
+    c_parameters: Optional[CCorrectionParameters] = Field(None, description="Calibrated C-correction regression parameters")
+    minnaert_parameters: Optional[MinnaertParameters] = Field(None, description="Calibrated Minnaert empirical parameters")
+    status: str = Field("success", description="Status of correction evaluation")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_evaluation_fields(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if "correction_method" in values and "method" not in values:
+                values["method"] = values["correction_method"]
+            if "avg_relative_irradiance_improvement" in values and "average_relative_irradiance_improvement" not in values:
+                values["average_relative_irradiance_improvement"] = values["avg_relative_irradiance_improvement"]
+            elif "average_relative_irradiance_improvement" in values and "avg_relative_irradiance_improvement" not in values:
+                values["avg_relative_irradiance_improvement"] = values["average_relative_irradiance_improvement"]
+            if "execution_time_ms" in values and "execution_time" not in values:
+                values["execution_time"] = values["execution_time_ms"]
+            elif "execution_time" in values and "execution_time_ms" not in values:
+                values["execution_time_ms"] = values["execution_time"]
+        return values
+
+
+class TopographicCorrectionRequest(BaseModel):
+    """Parameters for requesting scene topographic solar illumination normalization and shadow correction."""
+    scene_id: Optional[str] = Field(default=None, description="Optical satellite scene or granule identifier")
+    item_id: Optional[str] = Field(default=None, description="Granule or scene identifier")
+    collection: Optional[Union[SatelliteCollection, str]] = Field(default="sentinel-2-l2a", description="Satellite collection identifier")
+    dem_collection: Optional[str] = Field(default="cop-dem-glo-30", description="Digital Elevation Model collection identifier")
+    method: Optional[Union[TopographicCorrectionMethod, str]] = Field(default=TopographicCorrectionMethod.C_CORRECTION, description="Correction algorithm")
+    model: Optional[Union[TopographicCorrectionModel, str]] = Field(default=TopographicCorrectionModel.C_CORRECTION, description="Correction formulation")
+    bands: List[str] = Field(default_factory=lambda: ["B02", "B03", "B04", "B08", "B11", "B12"], description="Spectral bands to normalize")
+    solar_geometry: Optional[SolarGeometry] = Field(None, description="Custom solar illumination geometry override")
+    solar_zenith_deg: Optional[float] = Field(default=38.5, ge=0.0, le=90.0, description="Solar zenith angle in degrees")
+    solar_azimuth_deg: Optional[float] = Field(default=142.0, ge=0.0, le=360.0, description="Solar azimuth angle in degrees")
+    c_factor: Optional[float] = Field(default=0.08, ge=0.0, description="Empirical C parameter for diffuse irradiance")
+    c_parameter: Optional[float] = Field(default=0.18, ge=0.0, le=5.0, description="Semi-empirical C parameter (b/m)")
+    minnaert_k: Optional[float] = Field(default=0.65, ge=0.0, le=1.0, description="Minnaert empirical limb-darkening constant k")
+    cos_i_min: float = Field(default=0.05, ge=0.001, le=0.5, description="Minimum cos(i) threshold to prevent division-by-zero")
+    mask_self_shadow: bool = Field(True, description="Whether self-shadow slopes (cos(i) <= 0) are masked")
+    mask_water: bool = Field(True, description="Whether water bodies are excluded from terrain adjustment")
+    bbox: Optional[Any] = Field(default=None, description="Spatial bounding box [min_lon, min_lat, max_lon, max_lat]")
+
+    @model_validator(mode="before")
+    @classmethod
+    def harmonize(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "scene_id" in data and ("item_id" not in data or data["item_id"] is None):
+                data["item_id"] = data["scene_id"]
+            elif "item_id" in data and ("scene_id" not in data or data["scene_id"] is None):
+                data["scene_id"] = data["item_id"]
+            if "method" in data and ("model" not in data or data["model"] is None):
+                data["model"] = data["method"]
+            elif "model" in data and ("method" not in data or data["method"] is None):
+                data["method"] = data["model"]
+            if "c_factor" in data and ("c_parameter" not in data or data["c_parameter"] is None):
+                data["c_parameter"] = data["c_factor"]
+            elif "c_parameter" in data and ("c_factor" not in data or data["c_factor"] is None):
+                data["c_factor"] = data["c_parameter"]
+            if "solar_geometry" in data and data["solar_geometry"] is not None:
+                sg = data["solar_geometry"]
+                if hasattr(sg, "sun_zenith"):
+                    data["solar_zenith_deg"] = sg.sun_zenith
+                    data["solar_azimuth_deg"] = sg.sun_azimuth
+                elif isinstance(sg, dict):
+                    data["solar_zenith_deg"] = sg.get("sun_zenith", 38.5)
+                    data["solar_azimuth_deg"] = sg.get("sun_azimuth", 142.0)
+            if "bbox" in data and data["bbox"] is not None:
+                data["bbox"] = parse_bbox(data["bbox"])
+        return data
+
+
+class TopographicCapabilities(BaseModel):
+    """System capabilities for topographic solar illumination normalization and shadow correction."""
+    supported_methods: List[TopographicCorrectionMethod] = Field(
+        default_factory=lambda: [
+            TopographicCorrectionMethod.C_CORRECTION,
+            TopographicCorrectionMethod.MINNAERT,
+            TopographicCorrectionMethod.SUN_CANOPY_SENSOR,
+            TopographicCorrectionMethod.COSINE
+        ],
+        description="Supported topographic solar illumination correction algorithms"
+    )
+    supported_sensors: List[str] = Field(
+        default_factory=lambda: ["Sentinel-2", "Landsat-8", "Landsat-9"],
+        description="Supported optical satellite sensor platforms"
+    )
+    default_parameters: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "c_factor": 0.08,
+            "minnaert_k": 0.65,
+            "cos_i_min": 0.05,
+            "mask_self_shadow": True,
+            "mask_water": True,
+            "dem_collection": "cop-dem-glo-30",
+            "solar_zenith_deg": 38.5,
+            "solar_azimuth_deg": 142.0
+        },
+        description="Default algorithmic hyperparameters and ephemeris"
+    )
+    tile_metrics: List[TopographicTileMetric] = Field(
+        default_factory=lambda: [
+            TopographicTileMetric.CORRECTED_REFLECTANCE,
+            TopographicTileMetric.ILLUMINATION_ANGLE,
+            TopographicTileMetric.DEM_SLOPE,
+            TopographicTileMetric.DEM_ASPECT,
+            TopographicTileMetric.SHADOW_MASK,
+            TopographicTileMetric.RELATIVE_IRRADIANCE
+        ],
+        description="Available dynamic XYZ raster tile rendering metrics"
+    )
+    methods: Optional[Dict[str, Any]] = Field(
+        default_factory=lambda: TOPOGRAPHIC_METHOD_CONFIGS,
+        description="Supported topographic solar illumination correction algorithm configurations"
+    )
+    metrics: Optional[List[str]] = Field(
+        default_factory=lambda: [m.value for m in TopographicTileMetric],
+        description="Available dynamic raster tile metric strings"
+    )
+    benchmark_scenes: Optional[Dict[str, Any]] = Field(
+        default_factory=lambda: TOPOGRAPHIC_BENCHMARK_SCENES,
+        description="Canonical high-relief mountain benchmark test sites"
+    )
+    default_method: str = Field(
+        default="c_correction",
+        description="Default topographic correction method"
+    )
+    illumination_conditions: Optional[List[str]] = Field(
+        default_factory=lambda: [c.value for c in IlluminationCondition],
+        description="Terrain illumination tier classifications"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_capabilities_fields(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if "methods" in values and isinstance(values["methods"], list) and "supported_methods" not in values:
+                values["supported_methods"] = values["methods"]
+            if "sensors" in values and "supported_sensors" not in values:
+                values["supported_sensors"] = values["sensors"]
+        return values
+
+    def __contains__(self, key: str) -> bool:
+        return hasattr(self, key)
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key)
+
+
+def get_topographic_tile_url(
+    method: Union[str, TopographicCorrectionMethod] = TopographicCorrectionMethod.C_CORRECTION,
+    metric: Union[str, TopographicTileMetric] = TopographicTileMetric.CORRECTED_REFLECTANCE,
+    z: Union[int, str] = "{z}",
+    x: Union[int, str] = "{x}",
+    y: Union[int, str] = "{y}",
+    scene_id: Optional[str] = None
+) -> str:
+    """Builds a dynamic XYZ tile streaming URL for topographically corrected raster tiles."""
+    m_str = method.value if isinstance(method, TopographicCorrectionMethod) else str(method).lower()
+    met_str = metric.value if isinstance(metric, TopographicTileMetric) else str(metric).lower()
+    url = f"/api/v1/tiles/topographic/{m_str}/{met_str}/{z}/{x}/{y}.png"
+    if scene_id:
+        url += f"?scene_id={urllib.parse.quote(str(scene_id))}"
+    return url
 

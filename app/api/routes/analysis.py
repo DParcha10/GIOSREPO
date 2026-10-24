@@ -102,6 +102,8 @@ from app.models.schemas import (
     TopographicCorrectionSummary,
     TopographicCorrectionAnalysisResponse,
     TopographicTileRequestParams,
+    TopographicCapabilities,
+    TopographicCorrectionEvaluation,
     TOPOGRAPHIC_BENCHMARK_SCENES,
     build_topographic_tile_url,
     build_topographic_tile_url_template,
@@ -10751,32 +10753,152 @@ def list_topographic_scenes_endpoint(
     return {"status": "success", "total": len(scenes), "scenes": scenes}
 
 
-@tiles_router.get("/topographic/{collection}/{item_id}/{z}/{x}/{y}.png")
-@router.get("/tiles/topographic/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/topographic/capabilities", response_model=TopographicCapabilities)
+@router.get("/topographic/capabilities/", response_model=TopographicCapabilities, include_in_schema=False)
+@router.get("/analysis/topographic/capabilities", response_model=TopographicCapabilities, include_in_schema=False)
+@router.get("/analysis/topographic/capabilities/", response_model=TopographicCapabilities, include_in_schema=False)
+def get_topographic_capabilities_endpoint() -> TopographicCapabilities:
+    """Returns supported topographic correction methods, metrics, illumination condition tiers, and benchmark scenes."""
+    from app.services.topographic_service import topographic_service
+    return topographic_service.get_capabilities()
+
+
+@router.post("/topographic/normalize", response_model=TopographicCorrectionAnalysisResponse, response_model_by_alias=False)
+@router.post("/topographic/normalize/", response_model=TopographicCorrectionAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/topographic/normalize", response_model=TopographicCorrectionAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/topographic/normalize/", response_model=TopographicCorrectionAnalysisResponse, response_model_by_alias=False, include_in_schema=False)
+def normalize_topographic_solar_illumination_endpoint(
+    payload: Optional[Union[TopographicCorrectionRequest, Dict[str, Any]]] = Body(None)
+):
+    """Executes multi-spectral topographic solar illumination normalization and mountain shadow correction."""
+    from app.services.topographic_service import topographic_service
+    if payload is None:
+        req = TopographicCorrectionRequest()
+    elif isinstance(payload, dict):
+        req = TopographicCorrectionRequest(**payload)
+    else:
+        req = payload
+
+    scene_id = str(req.scene_id or req.item_id or "MT_SHASTA_VOLCANO_2026").strip()
+    raw_col = req.collection
+    collection = raw_col if isinstance(raw_col, str) else getattr(raw_col, "value", "sentinel-2-l2a")
+    dem_collection = str(req.dem_collection or "cop-dem-glo-30")
+    raw_method = req.method or req.model or "c_correction"
+    method_str = raw_method.value if hasattr(raw_method, "value") else str(raw_method).lower().strip()
+    c_factor = req.c_factor if req.c_factor is not None else req.c_parameter
+    minnaert_k = req.minnaert_k
+    sz_override = req.solar_zenith_deg
+    sa_override = req.solar_azimuth_deg
+    cos_i_min = float(req.cos_i_min) if req.cos_i_min is not None else 0.05
+    mask_self_shadow = bool(req.mask_self_shadow)
+    mask_water = bool(req.mask_water)
+    bbox = req.bbox
+
+    res = topographic_service.process_topographic_scene(
+        scene_id=scene_id,
+        bbox=bbox,
+        collection=collection,
+        dem_collection=dem_collection,
+        method=method_str,
+        solar_zenith_override=sz_override,
+        solar_azimuth_override=sa_override,
+        c_factor=c_factor,
+        minnaert_k=minnaert_k,
+        cos_i_min=cos_i_min,
+        mask_self_shadow=mask_self_shadow,
+        mask_water=mask_water
+    )
+
+    summary_model = TopographicCorrectionSummary(**res["summary"])
+    solar_geometry_model = TopographicSolarGeometry(
+        solar_zenith_deg=float(res["solar_geometry"]["solar_zenith_deg"]),
+        solar_azimuth_deg=float(res["solar_geometry"]["solar_azimuth_deg"]),
+        solar_elevation_deg=float(res["solar_geometry"]["solar_elevation_deg"]),
+        earth_sun_distance_au=1.013
+    )
+
+    return TopographicCorrectionAnalysisResponse(
+        analysis_id=res["analysis_id"],
+        scene_id=res["scene_id"],
+        collection=res["collection"],
+        dem_collection=res["dem_collection"],
+        method=res["method"],
+        solar_geometry=solar_geometry_model,
+        summary=summary_model,
+        tile_url_template=res["tile_url_template"],
+        illumination_tile_url_template=res["illumination_tile_url_template"],
+        created_at=res["created_at"],
+        status=res["status"]
+    )
+
+
+@router.post("/topographic/evaluate", response_model=TopographicCorrectionEvaluation, response_model_by_alias=False)
+@router.post("/topographic/evaluate/", response_model=TopographicCorrectionEvaluation, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/topographic/evaluate", response_model=TopographicCorrectionEvaluation, response_model_by_alias=False, include_in_schema=False)
+@router.post("/analysis/topographic/evaluate/", response_model=TopographicCorrectionEvaluation, response_model_by_alias=False, include_in_schema=False)
+def evaluate_topographic_correction_endpoint(
+    payload: Optional[Union[TopographicCorrectionRequest, Dict[str, Any]]] = Body(None)
+) -> TopographicCorrectionEvaluation:
+    """Quantitative performance and quality evaluation of applied topographic correction."""
+    from app.services.topographic_service import topographic_service
+    if payload is None:
+        req = TopographicCorrectionRequest()
+    elif isinstance(payload, dict):
+        req = TopographicCorrectionRequest(**payload)
+    else:
+        req = payload
+    return topographic_service.evaluate_topographic_correction(request=req)
+
+
+@tiles_router.get("/topographic/{method}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/topographic/{method}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
 def get_topographic_correction_tile_endpoint(
-    collection: str,
-    item_id: str,
+    method: str,
+    metric: str,
     z: int,
     x: int,
     y: int,
-    method: str = Query("c_correction", description="Topographic correction algorithm ('none', 'c_correction', 'scs_c', 'minnaert', 'cosine')"),
-    metric: str = Query("corrected_reflectance", description="Raster metric to render ('corrected_reflectance', 'cos_incidence', 'illumination', 'illumination_condition', 'difference', 'ratio')"),
+    scene_id: Optional[str] = Query(None, description="Satellite scene or granule identifier"),
+    item_id: Optional[str] = Query(None, description="Alternative scene identifier"),
+    collection: Optional[str] = Query(None, description="Satellite collection identifier"),
+    dem_collection: Optional[str] = Query(None, description="DEM collection identifier"),
     solar_zenith: Optional[float] = Query(None, description="Solar zenith angle override in degrees"),
     solar_azimuth: Optional[float] = Query(None, description="Solar azimuth angle override in degrees"),
     c_factor: Optional[float] = Query(None, description="Empirical C parameter (c = b/m)"),
     minnaert_k: Optional[float] = Query(None, description="Minnaert k parameter in (0, 1]"),
     colormap: Optional[str] = Query(None, description="Colormap for metric visualization"),
-    rescale: Optional[str] = Query(None, description="Contrast stretch range min,max")
+    rescale: Optional[str] = Query(None, description="Contrast stretch range min,max"),
+    method_param: Optional[str] = Query(None, alias="method", description="Optional method override"),
+    metric_param: Optional[str] = Query(None, alias="metric", description="Optional metric override")
 ):
     """Dynamic XYZ tile streaming for topographically normalized imagery and solar illumination metrics."""
-    png_bytes = tile_service.render_topographic_correction_tile(
-        collection=collection,
-        item_id=item_id,
+    known_methods = {"c_correction", "minnaert", "sun_canopy_sensor", "cosine", "scs_c", "scs_plus_c", "scs", "none", "cosine_lambertian"}
+    known_metrics = {"corrected_reflectance", "illumination_angle", "dem_slope", "dem_aspect", "shadow_mask", "relative_irradiance", "cos_incidence", "cos_i", "illumination", "hillshade", "illumination_condition", "condition", "difference", "diff", "ratio", "b02", "b03", "b04", "b08", "b11", "b12"}
+
+    m_clean = method.lower().strip()
+    met_clean = metric.lower().strip()
+
+    if m_clean not in known_methods and met_clean not in known_metrics:
+        # Dispatched via /{collection}/{item_id}/{z}/{x}/{y}.png
+        resolved_col = collection or method
+        resolved_scene = scene_id or item_id or metric
+        resolved_m = method_param or "c_correction"
+        resolved_met = metric_param or "corrected_reflectance"
+    else:
+        resolved_col = collection or "sentinel-2-l2a"
+        resolved_scene = scene_id or item_id or "MT_SHASTA_VOLCANO_2026"
+        resolved_m = method_param or method
+        resolved_met = metric_param or metric
+
+    png_bytes = tile_service.render_topographic_tile(
+        method=resolved_m,
+        metric=resolved_met,
         z=z,
         x=x,
         y=y,
-        method=method,
-        metric=metric,
+        scene_id=resolved_scene,
+        collection=resolved_col,
+        dem_collection=dem_collection or "cop-dem-glo-30",
         solar_zenith=solar_zenith,
         solar_azimuth=solar_azimuth,
         c_factor=c_factor,
@@ -10787,7 +10909,7 @@ def get_topographic_correction_tile_endpoint(
     return Response(
         content=png_bytes,
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-TopographicCorrection-{method}"}
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": f"GIOS-TopographicCorrection-{resolved_m}"}
     )
 
 

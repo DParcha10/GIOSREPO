@@ -5877,15 +5877,16 @@ class TileService:
 
         return png_bytes
 
-    def render_topographic_correction_tile(
+    def render_topographic_tile(
         self,
-        collection: str = "sentinel-2-l2a",
-        item_id: str = "S2A_MSIL2A_20260815_MT_SHASTA",
+        method: str = "c_correction",
+        metric: str = "corrected_reflectance",
         z: Union[int, str] = 0,
         x: int = 0,
         y: int = 0,
-        method: str = "c_correction",
-        metric: str = "corrected_reflectance",
+        scene_id: Optional[str] = "MT_SHASTA_VOLCANO_2026",
+        collection: Optional[str] = "sentinel-2-l2a",
+        dem_collection: Optional[str] = "cop-dem-glo-30",
         solar_zenith: Optional[float] = None,
         solar_azimuth: Optional[float] = None,
         c_factor: Optional[float] = None,
@@ -5896,27 +5897,50 @@ class TileService:
     ) -> bytes:
         """Renders 256x256 RGBA PNG tile for topographically normalized imagery and solar illumination metrics.
 
-        Metrics supported:
-            - corrected_reflectance / reflectance / rgb / true_color: Topographically normalized RGB composite
+        Cycle v2.5.46 (Task T-337):
+        Supported Methods:
+            - c_correction: Teillet / Meyer empirical diffuse skylight C-correction
+            - minnaert: Minnaert empirical power-law limb-darkening
+            - sun_canopy_sensor (scs_c): Gu & Gillespie / Soenen canopy projection model
+            - cosine: Lambertian cosine incidence angle normalization
+
+        Supported Metrics:
+            - corrected_reflectance / reflectance / rgb / true_color: Topographically normalized multi-spectral composite
+            - illumination_angle: Local solar incidence angle i in degrees [0, 90+]
+            - dem_slope: Terrain surface slope angle in degrees [0, 90]
+            - dem_aspect: Downhill aspect azimuth in degrees [0, 360]
+            - shadow_mask: Binary/categorical terrain self-shadow and ray-traced mountain cast-shadow mask
+            - relative_irradiance: Relative terrain irradiance gamma = cos(i) / cos(theta_s)
             - cos_incidence / cos_i: Local incidence cosine cos(i) in [-1.0, 1.0]
             - illumination / hillshade: Analytical Lambertian hillshade in [0, 255]
-            - illumination_condition / condition: Categorical terrain illumination mask (sunlit, shaded, self_shadow)
+            - illumination_condition / condition: Categorical illumination condition tiers
             - difference / diff: Mean absolute difference |L_corrected - L_raw|
             - ratio: Mean correction ratio L_corrected / L_raw
-            - Individual band names ('B02', 'B03', 'B04', 'B08', 'B11', 'B12')
         """
         import os
         import io
+        import math
         import hashlib
+        import gc
+        import numpy as np
         from PIL import Image
         from app.services.data_acquisition import data_acquisition_service
         from app.services.indices import index_service
 
         z_i, x_i, y_i = int(z), int(x), int(y)
-        col_clean = str(collection or "sentinel-2-l2a").lower().strip()
-        item_clean = str(item_id or "MT_SHASTA_VOLCANO_2026").strip()
         m_clean = str(method or "c_correction").lower().strip()
         met_clean = str(metric or "corrected_reflectance").lower().strip()
+        item_clean = str(scene_id or kwargs.get("item_id") or "MT_SHASTA_VOLCANO_2026").strip()
+        col_clean = str(collection or "sentinel-2-l2a").lower().strip()
+        dem_clean = str(dem_collection or "cop-dem-glo-30").lower().strip()
+
+        # Harmonize method aliases
+        if m_clean in ("sun_canopy_sensor", "sun-canopy-sensor", "scs_plus_c"):
+            m_internal = "scs_c"
+        elif m_clean in ("cosine_lambertian",):
+            m_internal = "cosine"
+        else:
+            m_internal = m_clean
 
         sz_str = str(round(float(solar_zenith), 2)) if solar_zenith is not None else "meta"
         sa_str = str(round(float(solar_azimuth), 2)) if solar_azimuth is not None else "meta"
@@ -5925,7 +5949,7 @@ class TileService:
         cmap_str = str(colormap or "default").lower().strip()
         rescale_str = str(rescale or "default").strip()
 
-        cache_key = f"topo_{col_clean}_{item_clean}_{m_clean}_{met_clean}_{sz_str}_{sa_str}_{c_str}_{k_str}_{cmap_str}_{rescale_str}_{z_i}_{x_i}_{y_i}"
+        cache_key = f"topov2_{m_clean}_{met_clean}_{item_clean}_{col_clean}_{sz_str}_{sa_str}_{c_str}_{k_str}_{cmap_str}_{rescale_str}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
         topo_cache_dir = os.path.join(TILE_CACHE_DIR, "topographic")
         os.makedirs(topo_cache_dir, exist_ok=True)
@@ -5943,16 +5967,20 @@ class TileService:
             scene_id=item_clean,
             bbox=bbox,
             collection=col_clean,
+            dem_collection=dem_clean,
             grid_size=256,
             solar_zenith_override=float(solar_zenith) if solar_zenith is not None else None,
             solar_azimuth_override=float(solar_azimuth) if solar_azimuth is not None else None
         )
 
+        sz_deg = float(meta["solar_zenith_deg"])
+        sa_deg = float(meta["solar_azimuth_deg"])
+
         inversion = index_service.compute_topographic_correction_inversion(
             bands=ds,
-            solar_zenith_deg=float(meta["solar_zenith_deg"]),
-            solar_azimuth_deg=float(meta["solar_azimuth_deg"]),
-            method=m_clean,
+            solar_zenith_deg=sz_deg,
+            solar_azimuth_deg=sa_deg,
+            method=m_internal,
             c_factor=float(c_factor) if c_factor is not None else None,
             minnaert_k=float(minnaert_k) if minnaert_k is not None else None
         )
@@ -5966,7 +5994,7 @@ class TileService:
             b_band = inversion["corrected_bands"].get("B02", inversion["corrected_bands"].get("blue"))
 
             if r_band is not None and g_band is not None and b_band is not None:
-                # Contrast stretch [0.0, 0.32] to [0, 255]
+                # Contrast stretch [0.0, 0.30] to [0, 255]
                 r_byte = np.clip(r_band * (255.0 / 0.30), 0.0, 255.0).astype(np.uint8)
                 g_byte = np.clip(g_band * (255.0 / 0.30), 0.0, 255.0).astype(np.uint8)
                 b_byte = np.clip(b_band * (255.0 / 0.30), 0.0, 255.0).astype(np.uint8)
@@ -5975,12 +6003,106 @@ class TileService:
                 rgba[:, :, 2] = b_byte
                 rgba[:, :, 3] = 255
             else:
-                # Fallback to analytical hillshade if bands missing
                 v = np.clip(inversion["illumination"], 0.0, 255.0).astype(np.uint8)
                 rgba[:, :, 0] = v
                 rgba[:, :, 1] = v
                 rgba[:, :, 2] = v
                 rgba[:, :, 3] = 255
+
+        elif met_clean in ("illumination_angle", "angle", "incidence_angle"):
+            # Solar local incidence angle i in degrees = arccos(clip(cos(i), -1, 1))
+            cos_i = np.asarray(inversion["cos_incidence"], dtype=np.float32)
+            angle_deg = np.degrees(np.arccos(np.clip(cos_i, -1.0, 1.0)))
+            cmap_name = colormap or "plasma"
+            def_bounds = (0.0, 90.0)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+
+            norm_arr = np.clip((angle_deg - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("dem_slope", "slope"):
+            # DEM slope angle in degrees [0, 90]
+            slope_arr = np.asarray(ds["slope"].values, dtype=np.float32)
+            cmap_name = colormap or "terrain"
+            def_bounds = (0.0, 60.0)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+
+            norm_arr = np.clip((slope_arr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("dem_aspect", "aspect"):
+            # DEM aspect in degrees [0, 360]
+            aspect_arr = np.asarray(ds["aspect"].values, dtype=np.float32)
+            aspect_clean = np.where(aspect_arr < 0.0, 0.0, aspect_arr)
+            cmap_name = colormap or "twilight"
+            def_bounds = (0.0, 360.0)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+
+            norm_arr = np.clip((aspect_clean - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
+
+        elif met_clean in ("shadow_mask", "shadow", "mountain_shadow"):
+            # Multi-tier terrain self-shadow and upstream mountain cast-shadow occlusion
+            from app.services.topographic_service import topographic_service
+            cos_i = np.asarray(inversion["cos_incidence"], dtype=np.float32)
+            self_shadow = (cos_i <= 0.0)
+            elev_arr = np.asarray(ds["elevation"].values, dtype=np.float32)
+            cast_shadow = topographic_service.trace_mountain_cast_shadows(elev_arr, sz_deg, sa_deg)
+
+            if colormap:
+                combined = self_shadow | cast_shadow
+                val = np.where(combined, 0.0, 1.0).astype(np.float32)
+                cmap_func = self.get_colormap(colormap)
+                rgba = (cmap_func(val) * 255.0).astype(np.uint8)
+            else:
+                # Golden sunlit, deep indigo cast shadow, dark navy self shadow
+                rgba[:] = [240, 243, 246, 180]  # Sunlit open slopes
+                rgba[cast_shadow] = [79, 70, 229, 240]  # Upstream mountain ridge obstruction
+                rgba[self_shadow] = [30, 41, 59, 255]  # Self-shadow facing away from sun
+
+        elif met_clean in ("relative_irradiance", "irradiance"):
+            # Relative terrain solar irradiance gamma = cos(i) / cos(theta_s)
+            cos_sz = max(0.01, math.cos(math.radians(sz_deg)))
+            cos_i = np.asarray(inversion["cos_incidence"], dtype=np.float32)
+            rel_irr = np.clip(cos_i / cos_sz, 0.0, 2.5)
+            cmap_name = colormap or "turbo"
+            def_bounds = (0.0, 1.5)
+            if rescale:
+                try:
+                    parts = [float(p.strip()) for p in str(rescale).split(",")]
+                    min_v, max_v = parts[0], parts[1]
+                except Exception:
+                    min_v, max_v = def_bounds
+            else:
+                min_v, max_v = def_bounds
+
+            norm_arr = np.clip((rel_irr - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(cmap_name)
+            rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
 
         elif met_clean in ("cos_incidence", "cos_i"):
             arr = inversion["cos_incidence"]
@@ -6008,9 +6130,6 @@ class TileService:
 
         elif met_clean in ("illumination_condition", "condition"):
             cond = inversion["illumination_condition"]
-            # 0: self_shadow -> dark navy
-            # 1: shaded -> amber/slate
-            # 2: sunlit -> vibrant emerald
             rgba[cond == 0] = [30, 41, 59, 240]
             rgba[cond == 1] = [217, 119, 6, 230]
             rgba[cond == 2] = [16, 185, 129, 240]
@@ -6050,7 +6169,6 @@ class TileService:
             rgba = (cmap_func(norm_arr) * 255.0).astype(np.uint8)
 
         else:
-            # Single spectral band
             band_arr = inversion["corrected_bands"].get(met_clean.upper(), inversion["corrected_bands"].get(met_clean, inversion["cos_incidence"]))
             cmap_name = colormap or "spectral"
             norm_arr = np.clip(band_arr / 0.40, 0.0, 1.0)
@@ -6068,7 +6186,44 @@ class TileService:
         except Exception as e:
             logger.warning("Failed to write topographic tile cache: %s", e)
 
+        del ds, inversion, rgba
+        gc.collect()
+
         return png_bytes
+
+    def render_topographic_correction_tile(
+        self,
+        collection: str = "sentinel-2-l2a",
+        item_id: str = "S2A_MSIL2A_20260815_MT_SHASTA",
+        z: Union[int, str] = 0,
+        x: int = 0,
+        y: int = 0,
+        method: str = "c_correction",
+        metric: str = "corrected_reflectance",
+        solar_zenith: Optional[float] = None,
+        solar_azimuth: Optional[float] = None,
+        c_factor: Optional[float] = None,
+        minnaert_k: Optional[float] = None,
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, List[float], Tuple[float, float]]] = None,
+        **kwargs
+    ) -> bytes:
+        return self.render_topographic_tile(
+            method=method,
+            metric=metric,
+            z=z,
+            x=x,
+            y=y,
+            scene_id=item_id,
+            collection=collection,
+            solar_zenith=solar_zenith,
+            solar_azimuth=solar_azimuth,
+            c_factor=c_factor,
+            minnaert_k=minnaert_k,
+            colormap=colormap,
+            rescale=rescale,
+            **kwargs
+        )
 
     def render_topographic_illumination_tile(
         self,
