@@ -10200,6 +10200,85 @@ export const getUnmixingTileUrlTemplate = (options = {}) => {
   return buildSpectralUnmixingTileUrlTemplate(options);
 };
 
+// ============================================================================
+// CYCLE v2.5.45: SATELLITE-DERIVED EDDY COVARIANCE & EVAPOTRANSPIRATION (SEBAL/METRIC)
+// ============================================================================
+
+/**
+ * Retrieves supported satellite-derived evapotranspiration models, metrics, and benchmark test sites.
+ * 
+ * @returns {Promise<Object>} Supported ET capabilities
+ */
+export const getETCapabilities = async () => {
+  const response = await giosApi.get('/api/v1/analysis/evapotranspiration/capabilities');
+  return response.data;
+};
+
+/**
+ * Evaluates surface energy balance components (Rn, G, H, LE), evaporative fraction, and daily ET.
+ * 
+ * @param {Object} [payload={}] - Surface energy balance evaluation request parameters
+ * @returns {Promise<Object>} Quantitative SEBAL/METRIC energy balance evaluation response
+ */
+export const evaluateSurfaceEnergyBalance = async (payload = {}) => {
+  const response = await giosApi.post('/api/v1/analysis/evapotranspiration/scene', payload);
+  return response.data;
+};
+
+/**
+ * Discovers and extracts CIMEC anchor calibration pixels (cold well-watered & hot dry bare soil).
+ * 
+ * @param {string} [sceneId] - Satellite scene identifier
+ * @param {Object} [params={}] - Optional query/forcing parameters
+ * @returns {Promise<Object>} Candidate cold and hot anchor pixels
+ */
+export const getETAnchorPixels = async (sceneId, params = {}) => {
+  const queryParams = { ...params };
+  if (sceneId && !queryParams.scene_id && !queryParams.sceneId) {
+    queryParams.scene_id = sceneId;
+  }
+  const response = await giosApi.get('/api/v1/analysis/evapotranspiration/anchor-pixels', {
+    params: queryParams
+  });
+  return response.data;
+};
+
+/**
+ * Constructs dynamic XYZ tile URL for satellite-derived evapotranspiration raster tiles.
+ * 
+ * @param {string} [model='sebal'] - Energy balance model (sebal, metric, tseb, penman_monteith)
+ * @param {string} [metric='daily_et_mm'] - Tile metric (latent_heat, net_radiation, soil_heat, sensible_heat, evaporative_fraction, daily_et_mm, cwsi)
+ * @param {number|string} [z='{z}'] - Zoom level
+ * @param {number|string} [x='{x}'] - Tile X coordinate
+ * @param {number|string} [y='{y}'] - Tile Y coordinate
+ * @param {Object} [options={}] - Additional query options (colormap, rescale, asset_id, etc.)
+ * @returns {string} Fully formatted XYZ tile URL
+ */
+export const getETTileUrl = (
+  model = 'sebal',
+  metric = 'daily_et_mm',
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  options = {}
+) => {
+  const m = (typeof model === 'string' ? model : (model?.id || model?.value || 'sebal')).toLowerCase();
+  const met = (typeof metric === 'string' ? metric : (metric?.id || metric?.value || 'daily_et_mm')).toLowerCase();
+  let url = `/api/v1/tiles/evapotranspiration/${m}/${met}/${z}/${x}/${y}.png`;
+  const queryParts = [];
+  if (options && typeof options === 'object') {
+    Object.entries(options).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        queryParts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+      }
+    });
+  }
+  if (queryParts.length > 0) {
+    url += `?${queryParts.join('&')}`;
+  }
+  return url;
+};
+
 
 export {
   InSARDeformationHazardTier,
@@ -10645,16 +10724,14 @@ export {
   classifyUnmixingQualityRating,
   classifySubpixelDominance,
   buildSpectralUnmixingTileUrl,
-  buildSpectralUnmixingTileUrlTemplate
+  buildSpectralUnmixingTileUrlTemplate,
+  ET_MODELS,
+  ET_METRICS,
+  ET_COLORMAPS,
+  ET_BENCHMARK_SITES,
+  TILE_URL_TEMPLATES,
+  buildETTileUrl,
+  buildETTileUrlTemplate
 } from '../config/constants.js';
 
 export default giosApi;
-
-
-
-
-
-
-
-
-

@@ -1041,6 +1041,7 @@ insar_sbas_router = APIRouter(prefix="/insar-sbas", tags=["InSAR SBAS Time-Serie
 unmixing_router = APIRouter(prefix="/unmixing", tags=["Linear Spectral Mixture Analysis & Sub-Pixel Endmember Inversion"])
 true_ortho_router = APIRouter(prefix="/true-ortho", tags=["True Orthorectification & Graph-Cut Seamlines"])
 bathymetry_router = APIRouter(prefix="/bathymetry", tags=["Satellite-Derived Bathymetry & Water Column Radiative Transfer"])
+evapotranspiration_router = APIRouter(prefix="/evapotranspiration", tags=["Satellite-Derived Evapotranspiration SEBAL/METRIC"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -12443,3 +12444,211 @@ def get_sdb_tile_xyz_endpoint(
 
 
 
+
+
+# ============================================================================
+# SATELLITE-DERIVED EVAPOTRANSPIRATION (SEBAL / METRIC) REST & TILE ENDPOINTS
+# Cycle v2.5.45 - Task T-331 (@backend)
+# ============================================================================
+
+from app.services.evapotranspiration_service import evapotranspiration_service
+from app.models.schemas import (
+    ETModelType,
+    ETTileMetric,
+    CropWaterStressTier,
+    AnchorPixelType,
+    ETInvertRequest,
+    ETInvertResponse,
+    ETCalibrationRequest,
+    ETCalibrationResponse,
+    EnergyBalanceSummary,
+    ETCapabilitiesResponse,
+    ETCapabilities,
+    SurfaceEnergyBalanceEvaluation,
+    MeteorologicalForcing,
+)
+
+
+@router.get("/evapotranspiration/capabilities")
+@router.get("/evapotranspiration/capabilities/", include_in_schema=False)
+@evapotranspiration_router.get("/capabilities", include_in_schema=False)
+@evapotranspiration_router.get("/capabilities/", include_in_schema=False)
+def get_evapotranspiration_capabilities_endpoint():
+    """Returns supported energy balance algorithms, metrics, crop stress tiers, and benchmark sites."""
+    return evapotranspiration_service.get_capabilities_dict()
+
+
+@router.get("/evapotranspiration/datasets")
+@router.get("/evapotranspiration/datasets/")
+@evapotranspiration_router.get("/datasets", include_in_schema=False)
+@evapotranspiration_router.get("/datasets/", include_in_schema=False)
+def get_evapotranspiration_datasets_endpoint(
+    query: Optional[str] = Query(None, description="Search term for agricultural asset, region, or crop type"),
+    bbox: Optional[str] = Query(None, description="Bounding box filter (min_lon,min_lat,max_lon,max_lat)")
+):
+    """Discovers canonical agricultural ET research benchmark scenes and multi-spectral datasets."""
+    parsed_bbox = None
+    if bbox:
+        try:
+            parts = [float(p.strip()) for p in bbox.split(",")]
+            if len(parts) == 4:
+                parsed_bbox = (parts[0], parts[1], parts[2], parts[3])
+        except Exception:
+            pass
+    return evapotranspiration_service.search_datasets(bbox=parsed_bbox, query=query)
+
+
+@router.post("/evapotranspiration/invert", response_model=ETInvertResponse)
+@router.post("/evapotranspiration/invert/", response_model=ETInvertResponse, include_in_schema=False)
+@router.post("/evapotranspiration/pipeline", response_model=ETInvertResponse, include_in_schema=False)
+@router.post("/evapotranspiration/pipeline/", response_model=ETInvertResponse, include_in_schema=False)
+@evapotranspiration_router.post("/invert", response_model=ETInvertResponse, include_in_schema=False)
+@evapotranspiration_router.post("/invert/", response_model=ETInvertResponse, include_in_schema=False)
+def request_evapotranspiration_invert_endpoint(req: ETInvertRequest):
+    """Executes satellite-derived surface energy balance (SEBAL/METRIC) inversion and crop water consumption."""
+    return evapotranspiration_service.execute_evapotranspiration_pipeline(req)
+
+
+@router.post("/evapotranspiration/scene")
+@router.post("/evapotranspiration/scene/", include_in_schema=False)
+@evapotranspiration_router.post("/scene", include_in_schema=False)
+@evapotranspiration_router.post("/scene/", include_in_schema=False)
+def request_evapotranspiration_scene_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default_factory=dict)
+):
+    """Evaluates scene surface energy balance returning quantitative SurfaceEnergyBalanceEvaluation."""
+    asset_id = payload.get("asset_id", "CENTRAL_VALLEY_ALFALFA_CA")
+    model_type = payload.get("model_type", ETModelType.SEBAL)
+    forcing = payload.get("forcing")
+    if forcing is None and any(k in payload for k in ("wind_speed_2m_m_s", "air_temp_c", "solar_radiation_w_m2", "solar_irradiance_w_m2")):
+        forcing = {
+            "wind_speed_2m_m_s": float(payload.get("wind_speed_2m_m_s", 2.8)),
+            "air_temp_c": float(payload.get("air_temp_c", 32.5)),
+            "solar_irradiance_w_m2": float(payload.get("solar_irradiance_w_m2", payload.get("solar_radiation_w_m2", 820.0))),
+            "relative_humidity_pct": float(payload.get("relative_humidity_pct", 30.0)),
+            "atmospheric_pressure_kpa": float(payload.get("atmospheric_pressure_kpa", 101.3)),
+            "roughness_length_z0m": float(payload.get("roughness_length_z0m", 0.05)),
+        }
+    kwargs = dict(payload)
+    kwargs.pop("asset_id", None)
+    kwargs.pop("model_type", None)
+    kwargs.pop("forcing", None)
+    return evapotranspiration_service.evaluate_energy_balance(
+        asset_id=asset_id,
+        model_type=model_type,
+        forcing=forcing,
+        **kwargs
+    )
+
+
+@router.get("/evapotranspiration/anchor-pixels", response_model=ETCalibrationResponse)
+@router.get("/evapotranspiration/anchor-pixels/", response_model=ETCalibrationResponse, include_in_schema=False)
+@evapotranspiration_router.get("/anchor-pixels", response_model=ETCalibrationResponse, include_in_schema=False)
+@evapotranspiration_router.get("/anchor-pixels/", response_model=ETCalibrationResponse, include_in_schema=False)
+def get_evapotranspiration_anchor_pixels_endpoint(
+    asset_id: str = Query("CENTRAL_VALLEY_ALFALFA_CA", description="Target agricultural AOI or benchmark scene"),
+    model: str = Query("sebal", description="Evapotranspiration model"),
+    wind_speed_2m_m_s: float = Query(2.8, description="2m wind speed (m/s)"),
+    collection: Optional[str] = Query(None, description="Satellite collection")
+):
+    """Discovers automated or manual anchor pixels for SEBAL/METRIC calibration."""
+    req = ETCalibrationRequest(
+        asset_id=asset_id,
+        model_type=model,
+        wind_speed_2m_m_s=wind_speed_2m_m_s,
+        collection=collection or "sentinel-2-l2a"
+    )
+    return evapotranspiration_service.execute_calibration_pipeline(req)
+
+
+@router.post("/evapotranspiration/calibrate", response_model=ETCalibrationResponse)
+@router.post("/evapotranspiration/calibrate/", response_model=ETCalibrationResponse, include_in_schema=False)
+@router.post("/evapotranspiration/anchor-pixels", response_model=ETCalibrationResponse, include_in_schema=False)
+@router.post("/evapotranspiration/anchor-pixels/", response_model=ETCalibrationResponse, include_in_schema=False)
+@evapotranspiration_router.post("/calibrate", response_model=ETCalibrationResponse, include_in_schema=False)
+@evapotranspiration_router.post("/calibrate/", response_model=ETCalibrationResponse, include_in_schema=False)
+@evapotranspiration_router.post("/anchor-pixels", response_model=ETCalibrationResponse, include_in_schema=False)
+def request_evapotranspiration_calibrate_endpoint(req: ETCalibrationRequest):
+    """Calibrates cold and hot anchor pixels and derives aerodynamic temperature difference model dT = a*Ts + b."""
+    return evapotranspiration_service.execute_calibration_pipeline(req)
+
+
+@router.post("/evapotranspiration/evaluate", response_model=EnergyBalanceSummary)
+@router.post("/evapotranspiration/evaluate/", response_model=EnergyBalanceSummary, include_in_schema=False)
+@evapotranspiration_router.post("/evaluate", response_model=EnergyBalanceSummary, include_in_schema=False)
+@evapotranspiration_router.post("/evaluate/", response_model=EnergyBalanceSummary, include_in_schema=False)
+def evaluate_evapotranspiration_quality_endpoint(req: ETInvertRequest):
+    """Evaluates surface energy balance partitioning, CWSI, and agronomic stress tiers."""
+    return evapotranspiration_service.evaluate_quality_pipeline(req)
+
+
+@tiles_router.get("/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@evapotranspiration_router.get("/tiles/{model}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_evapotranspiration_tile_endpoint(
+    model: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    asset_id: Optional[str] = Query(None, description="Target asset identifier or benchmark scene"),
+    collection: Optional[str] = Query(None, description="Satellite collection (sentinel-2-l2a, landsat-c2-l2)")
+):
+    """Dynamic XYZ tile streaming for satellite-derived evapotranspiration across canonical models and metrics."""
+    png_bytes = tile_service.render_evapotranspiration_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        asset_id=asset_id or "CENTRAL_VALLEY_ALFALFA_CA",
+        collection=collection or "sentinel-2-l2a"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-ET-{model}-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/evapotranspiration/{z}/{x}/{y}.png")
+@router.get("/tiles/evapotranspiration/{z}/{x}/{y}.png", include_in_schema=False)
+@evapotranspiration_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_evapotranspiration_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    model: str = Query("sebal", description="Evapotranspiration model"),
+    metric: str = Query("latent_heat_flux", description="Visualization metric"),
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    asset_id: Optional[str] = Query(None, description="Target asset identifier or benchmark scene"),
+    collection: Optional[str] = Query(None, description="Satellite collection (sentinel-2-l2a, landsat-c2-l2)")
+):
+    """Dynamic XYZ tile streaming for satellite-derived evapotranspiration with query parameter configuration."""
+    png_bytes = tile_service.render_evapotranspiration_tile(
+        model=model,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        asset_id=asset_id or "CENTRAL_VALLEY_ALFALFA_CA",
+        collection=collection or "sentinel-2-l2a"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-ET-{model}-{metric}"
+        }
+    )

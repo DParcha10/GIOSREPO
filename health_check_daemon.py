@@ -12,6 +12,7 @@ Hands off any failures or anomalies to Agent 9 (@debugger).
 """
 
 import sys
+import math
 import os
 import time
 import json
@@ -2121,6 +2122,186 @@ def inspect_bathymetry_guard() -> dict:
 
     return results
 
+def inspect_evapotranspiration_guard() -> dict:
+    """Inspects Monin-Obukhov Iterative Stability Convergence Guard (iterations <= 15, |L| > 0.1m),
+    Surface Energy Balance Numerical Divergence Watchdog (|Rn - (G + H + LE)| <= 1e-3 W/m^2, Rn - G - H >= -50 W/m^2),
+    Landsat-8/9 TIRS & Sentinel-2 Optical Ingestion & ET Benchmark Scenes Sentinel,
+    and Dynamic XYZ ET Tile & REST Capabilities Probes (Cycle v2.5.45, Task T-333).
+    """
+    results = {}
+
+    # 1. Monin-Obukhov Iterative Stability Convergence Guard (<= 15 iterations, |L| > 0.1m)
+    stability_status = {
+        "passed": False,
+        "max_iterations": 15,
+        "iterations_converged": 0,
+        "monin_obukhov_length_l": 0.0,
+        "aerodynamic_resistance_rah": 0.0,
+        "stability_regime": None,
+        "divergence_guarded": False,
+        "error": None
+    }
+    try:
+        from app.models.schemas import calculate_monin_obukhov_stability
+        # Test unstable (daytime convective), near-neutral, and stable regimes
+        # Daytime convective alfalfa check
+        stab_unstable = calculate_monin_obukhov_stability(
+            wind_speed_200m_m_s=3.0,
+            roughness_z0m=0.08,
+            surface_temp_k=305.15,
+            sensible_heat_h=180.0,
+            max_iterations=15
+        )
+        # Stable nocturnal / inversion test case
+        stab_stable = calculate_monin_obukhov_stability(
+            wind_speed_200m_m_s=2.0,
+            roughness_z0m=0.05,
+            surface_temp_k=285.15,
+            sensible_heat_h=-25.0,
+            max_iterations=15
+        )
+        # Neutral boundary (near zero sensible heat)
+        stab_neutral = calculate_monin_obukhov_stability(
+            wind_speed_200m_m_s=4.0,
+            roughness_z0m=0.1,
+            surface_temp_k=295.0,
+            sensible_heat_h=0.0,
+            max_iterations=15
+        )
+
+        all_iter_ok = (
+            stab_unstable["iterations_converged"] <= 15 and
+            stab_stable["iterations_converged"] <= 15 and
+            stab_neutral["iterations_converged"] <= 15
+        )
+        all_l_ok = (
+            abs(stab_unstable["monin_obukhov_length_l"]) >= 0.1 and
+            abs(stab_stable["monin_obukhov_length_l"]) >= 0.1 and
+            abs(stab_neutral["monin_obukhov_length_l"]) >= 0.1
+        )
+        passed = all_iter_ok and all_l_ok and math.isfinite(stab_unstable["aerodynamic_resistance_rah"])
+
+        stability_status = {
+            "passed": passed,
+            "max_iterations": 15,
+            "iterations_converged": stab_unstable["iterations_converged"],
+            "monin_obukhov_length_l": stab_unstable["monin_obukhov_length_l"],
+            "aerodynamic_resistance_rah": stab_unstable["aerodynamic_resistance_rah"],
+            "stability_regime": stab_unstable["stability_regime"],
+            "divergence_guarded": all_l_ok,
+            "error": None if passed else "Monin-Obukhov stability convergence guard failed (exceeded 15 iters or |L| <= 0.1m)"
+        }
+    except Exception as e:
+        stability_status["error"] = str(e)
+    results["stability_guard"] = stability_status
+
+    # 2. Surface Energy Balance Numerical Divergence Watchdog (|Rn - (G + H + LE)| <= 1e-3 W/m^2, Rn - G - H >= -50 W/m^2)
+    divergence_status = {
+        "passed": False,
+        "energy_residual_w_m2": 0.0,
+        "available_energy_diff_w_m2": 0.0,
+        "latent_heat_w_m2": 0.0,
+        "evaporative_fraction": 0.0,
+        "cwsi": 0.0,
+        "daily_et_mm": 0.0,
+        "error": None
+    }
+    try:
+        from app.models.schemas import solve_sebal_energy_balance
+        # Test case 1: Standard irrigated field (San Joaquin Valley alfalfa)
+        bal_alfalfa = solve_sebal_energy_balance(
+            net_radiation_w_m2=650.0,
+            soil_heat_flux_w_m2=75.0,
+            sensible_heat_w_m2=180.0,
+            daily_net_radiation_w_m2=247.0
+        )
+        # Test case 2: Bare arid soil (high H, low LE)
+        bal_bare = solve_sebal_energy_balance(
+            net_radiation_w_m2=520.0,
+            soil_heat_flux_w_m2=130.0,
+            sensible_heat_w_m2=360.0,
+            daily_net_radiation_w_m2=190.0
+        )
+        # Test case 3: Low energy / advective edge case (Rn - G - H >= -50 W/m^2)
+        bal_edge = solve_sebal_energy_balance(
+            net_radiation_w_m2=100.0,
+            soil_heat_flux_w_m2=20.0,
+            sensible_heat_w_m2=120.0,
+            daily_net_radiation_w_m2=45.0
+        )
+
+        diff_w = bal_alfalfa["net_radiation_w_m2"] - bal_alfalfa["soil_heat_flux_w_m2"] - bal_alfalfa["sensible_heat_flux_w_m2"]
+        diff_edge = bal_edge["net_radiation_w_m2"] - bal_edge["soil_heat_flux_w_m2"] - bal_edge["sensible_heat_flux_w_m2"]
+        
+        closure_ok = (
+            bal_alfalfa["energy_balance_residual_w_m2"] <= 1e-3 and
+            bal_bare["energy_balance_residual_w_m2"] <= 1e-3 and
+            bal_edge["energy_balance_residual_w_m2"] <= 1e-3
+        )
+        diff_bound_ok = (diff_w >= -50.0 and diff_edge >= -50.0)
+        passed = closure_ok and diff_bound_ok and (0.0 <= bal_alfalfa["evaporative_fraction"] <= 1.20)
+
+        divergence_status = {
+            "passed": passed,
+            "energy_residual_w_m2": round(bal_alfalfa["energy_balance_residual_w_m2"], 6),
+            "available_energy_diff_w_m2": round(diff_w, 2),
+            "latent_heat_w_m2": round(bal_alfalfa["latent_heat_flux_w_m2"], 2),
+            "evaporative_fraction": round(bal_alfalfa["evaporative_fraction"], 4),
+            "cwsi": round(bal_alfalfa["crop_water_stress_index"], 4),
+            "daily_et_mm": round(bal_alfalfa["daily_et_mm_day"], 2),
+            "error": None if passed else f"Surface energy balance divergence watchdog failed (|Rn - (G+H+LE)|={bal_alfalfa['energy_balance_residual_w_m2']} > 1e-3 or diff < -50 W/m^2)"
+        }
+    except Exception as e:
+        divergence_status["error"] = str(e)
+    results["divergence_watchdog"] = divergence_status
+
+    # 3. Sentinel-2 & Landsat-8/9 Ingestion Telemetry & ET Benchmark Scenes Sentinel
+    sentinel_status = {
+        "passed": False,
+        "model_count": 0,
+        "metric_count": 0,
+        "stress_tier_count": 0,
+        "benchmark_scenes_count": 0,
+        "error": None
+    }
+    try:
+        from app.models.schemas import (
+            ET_MODEL_CONFIGS,
+            ET_TILE_METRIC_CONFIGS,
+            CROP_WATER_STRESS_TIER_CONFIGS,
+            ET_BENCHMARK_SCENES
+        )
+        m_cnt = len(ET_MODEL_CONFIGS)
+        met_cnt = len(ET_TILE_METRIC_CONFIGS)
+        tier_cnt = len(CROP_WATER_STRESS_TIER_CONFIGS)
+        sc_cnt = len(ET_BENCHMARK_SCENES)
+        passed = m_cnt >= 4 and met_cnt >= 7 and tier_cnt >= 5 and sc_cnt >= 5
+        sentinel_status = {
+            "passed": passed,
+            "model_count": m_cnt,
+            "metric_count": met_cnt,
+            "stress_tier_count": tier_cnt,
+            "benchmark_scenes_count": sc_cnt,
+            "error": None if passed else "Incomplete ET models, metrics, stress tiers, or benchmark scenes"
+        }
+    except Exception as e:
+        sentinel_status["error"] = str(e)
+    results["sentinel"] = sentinel_status
+
+    # 4. Dynamic XYZ ET Tile & REST Probes
+    tile_probe = check_http_endpoint(
+        "http://localhost:8000/api/v1/tiles/evapotranspiration/sebal/daily_et_mm/10/163/395.png",
+        timeout=3.0
+    )
+    capabilities_probe = check_http_endpoint(
+        "http://localhost:8000/api/v1/analysis/evapotranspiration/capabilities",
+        timeout=3.0
+    )
+    results["et_tile_probe"] = tile_probe
+    results["et_capabilities_probe"] = capabilities_probe
+
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
@@ -2183,6 +2364,7 @@ def run_health_check(full_test_suite: bool = False) -> dict:
     spectral_unmixing = inspect_spectral_unmixing_fcls_guard()
     true_ortho = inspect_true_ortho_guard()
     bathymetry = inspect_bathymetry_guard()
+    evapotranspiration = inspect_evapotranspiration_guard()
     pipelines = inspect_pipelines(full=full_test_suite)
     
     anomalies = []
@@ -3035,7 +3217,58 @@ def run_health_check(full_test_suite: bool = False) -> dict:
                 "message": f"Bathymetry capabilities endpoint returned status {caps_sdb.get('status_code')} ({caps_sdb.get('error')}). Assigned to @debugger (Agent 9)."
             })
 
-    # 23. Analyze Pipeline Anomalies
+    # 23. Analyze Satellite-Derived Evapotranspiration & SEBAL/METRIC Anomalies (Cycle v2.5.45, Task T-333)
+    if evapotranspiration:
+        stab_g = evapotranspiration.get("stability_guard", {})
+        if not stab_g.get("passed"):
+            anomalies.append({
+                "component": "Monin-Obukhov Iterative Stability Convergence Guard",
+                "severity": "HIGH",
+                "type": "NUMERICAL_INSTABILITY",
+                "message": f"Monin-Obukhov atmospheric stability iterative convergence guard failed: {stab_g.get('error')}."
+            })
+        div_w = evapotranspiration.get("divergence_watchdog", {})
+        if not div_w.get("passed"):
+            anomalies.append({
+                "component": "Surface Energy Balance Numerical Divergence Watchdog",
+                "severity": "HIGH",
+                "type": "NUMERICAL_DIVERGENCE",
+                "message": f"Surface energy balance thermodynamic closure divergence watchdog failed: {div_w.get('error')}."
+            })
+        mem_heap = resources.get("max_raster_worker_memory_mb", 0.0)
+        if mem_heap > 1536.0:
+            anomalies.append({
+                "component": "Evapotranspiration Process Memory Watchdog (>1.5GB Heap Ceiling)",
+                "severity": "HIGH",
+                "type": "MEMORY_LEAK_OR_OVERCONSUMPTION",
+                "message": f"Evapotranspiration raster worker process heap ({mem_heap} MB) exceeded 1.5 GB ceiling."
+            })
+        sentinel_et = evapotranspiration.get("sentinel", {})
+        if not sentinel_et.get("passed"):
+            anomalies.append({
+                "component": "Sentinel-2 & Landsat-8/9 Ingestion Telemetry & ET Benchmark Scenes Sentinel",
+                "severity": "HIGH",
+                "type": "DATA_INGESTION_FAILURE",
+                "message": f"ET models/metrics/stress tiers/scenes sentinel check failed: {sentinel_et.get('error')}."
+            })
+        tile_et = evapotranspiration.get("et_tile_probe")
+        if tile_et and not tile_et.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ Evapotranspiration Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_SERVER_FAILURE",
+                "message": f"Evapotranspiration tile endpoint returned status {tile_et.get('status_code')} ({tile_et.get('error')}). Backend process requires route reconciliation / reload by @debugger (Agent 9)."
+            })
+        caps_et = evapotranspiration.get("et_capabilities_probe")
+        if caps_et and not caps_et.get("ok"):
+            anomalies.append({
+                "component": "Evapotranspiration Capabilities Discovery REST Endpoint",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"Evapotranspiration capabilities endpoint returned status {caps_et.get('status_code')} ({caps_et.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+    # 24. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
         test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
@@ -3052,7 +3285,7 @@ def run_health_check(full_test_suite: bool = False) -> dict:
             "message": "ResourceWarning: unclosed database in <sqlite3.Connection object> detected during test execution."
         })
         
-    # 24. Analyze Resource Anomalies
+    # 25. Analyze Resource Anomalies
     if resources["memory_percent"] > 95:
         anomalies.append({
             "component": "Host RAM",
@@ -3118,6 +3351,7 @@ def run_health_check(full_test_suite: bool = False) -> dict:
         "spectral_unmixing": spectral_unmixing,
         "true_ortho": true_ortho,
         "bathymetry": bathymetry,
+        "evapotranspiration": evapotranspiration,
         "pipelines": pipelines,
         "resources": resources,
         "anomalies": anomalies
@@ -3152,6 +3386,7 @@ def write_health_status(report: dict):
     spectral_unmixing = report.get("spectral_unmixing", {})
     true_ortho = report.get("true_ortho", {})
     bathymetry = report.get("bathymetry", {})
+    evapotranspiration = report.get("evapotranspiration", {})
     pipelines = report["pipelines"]
     
     entry_lines = []
@@ -3579,15 +3814,39 @@ def write_health_status(report: dict):
         entry_lines.append(f"- **Bathymetry Capabilities Discovery REST Endpoint (`/analysis/bathymetry/capabilities`)**: `{caps_status}` (Probe latency: {caps_sdb.get('latency_ms', 0.0) if caps_sdb else 'N/A'} ms)")
         entry_lines.append("")
 
-    # 23. Pipeline Execution & Verification
-    entry_lines.append("### 23. Pipeline Execution")
+    # 23. Satellite-Derived Evapotranspiration & SEBAL/METRIC Energy Balance Guard (Cycle v2.5.45, Task T-333)
+    if evapotranspiration:
+        entry_lines.append("### 23. Satellite-Derived Evapotranspiration & SEBAL/METRIC Energy Balance Guard")
+        stab_g = evapotranspiration.get("stability_guard", {})
+        stab_status = "VERIFIED" if stab_g.get("passed") else "FAILING"
+        div_w = evapotranspiration.get("divergence_watchdog", {})
+        div_status = "VERIFIED" if div_w.get("passed") else "FAILING"
+        sentinel_et = evapotranspiration.get("sentinel", {})
+        sentinel_status = "VERIFIED" if sentinel_et.get("passed") else "DATA_FAILURE"
+        tile_et = evapotranspiration.get("et_tile_probe")
+        tile_status = "REACHABLE" if (tile_et and tile_et.get("ok")) else f"STATUS {tile_et.get('status_code', 0)} ({tile_et.get('error', 'Unreachable')})"
+        caps_et = evapotranspiration.get("et_capabilities_probe")
+        caps_status = "REACHABLE" if (caps_et and caps_et.get("ok")) else f"STATUS {caps_et.get('status_code', 0)} ({caps_et.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **Monin-Obukhov Iterative Stability Convergence Guard ($\\le 15$ iters, $|L| > 0.1\\text{{m}}$)**: `{stab_status}` (Converged in {stab_g.get('iterations_converged', 0)} iters, L: {stab_g.get('monin_obukhov_length_l', 0.0)}m, r_ah: {stab_g.get('aerodynamic_resistance_rah', 0.0)} s/m, regime: {stab_g.get('stability_regime', 'unknown')})")
+        entry_lines.append(f"- **Surface Energy Balance Numerical Divergence Watchdog ($|R_n - (G + H + \\lambda E)| \\le 10^{{-3}}\\text{{ W/m}}^2, R_n - G - H \\ge -50\\text{{ W/m}}^2$)**: `{div_status}` (Residual: {div_w.get('energy_residual_w_m2', 0.0)} W/m^2, Available diff: {div_w.get('available_energy_diff_w_m2', 0.0)} W/m^2, LE: {div_w.get('latent_heat_w_m2', 0.0)} W/m^2, Evaporative fraction $\\Lambda$: {div_w.get('evaporative_fraction', 0.0)}, CWSI: {div_w.get('cwsi', 0.0)}, Daily ET: {div_w.get('daily_et_mm', 0.0)} mm/day)")
+        mem_heap = resources.get('max_raster_worker_memory_mb', 0.0)
+        mem_status = "PASSING" if mem_heap <= 1536.0 else "FAILING"
+        entry_lines.append(f"- **Evapotranspiration Process Memory Watchdog (>1.5GB Heap Ceiling)**: `{mem_status}` (Max worker heap: {mem_heap} MB <= 1536.0 MB)")
+        entry_lines.append(f"- **Sentinel-2 & Landsat-8/9 Ingestion Telemetry & ET Benchmark Scenes Sentinel**: `{sentinel_status}` ({sentinel_et.get('model_count', 0)} models, {sentinel_et.get('metric_count', 0)} metrics, {sentinel_et.get('stress_tier_count', 0)} stress tiers, {sentinel_et.get('benchmark_scenes_count', 0)} benchmark scenes indexed)")
+        entry_lines.append(f"- **Dynamic XYZ Evapotranspiration Tile Server (`/tiles/evapotranspiration/...`)**: `{tile_status}` (Probe latency: {tile_et.get('latency_ms', 0.0) if tile_et else 'N/A'} ms)")
+        entry_lines.append(f"- **Evapotranspiration Capabilities Discovery REST Endpoint (`/analysis/evapotranspiration/capabilities`)**: `{caps_status}` (Probe latency: {caps_et.get('latency_ms', 0.0) if caps_et else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 24. Pipeline Execution & Verification
+    entry_lines.append("### 24. Pipeline Execution")
     test_ok = "PASSING" if pipelines["test_suite"]["passed"] else "FAILED"
     entry_lines.append(f"- **Core Test Suite & API Pipelines**: `{test_ok}` ({pipelines['test_suite']['duration_sec']}s)")
     entry_lines.append("")
     
     # 24. Detected Anomalies & Action Items
     if anomalies:
-        entry_lines.append("### 24. Detected Anomalies & Action Items")
+        entry_lines.append("### 25. Detected Anomalies & Action Items")
         entry_lines.append("> [!WARNING]")
         entry_lines.append(f"> **{len(anomalies)} anomaly/anomalies detected.** Handing off immediately to **Agent 9 (@debugger)** for investigation and patching.\n")
         
@@ -3601,7 +3860,7 @@ def write_health_status(report: dict):
         for idx, a in enumerate(anomalies, 1):
             entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
-        entry_lines.append("### 24. Detected Anomalies")
+        entry_lines.append("### 25. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
         entry_lines.append("> All systems operational. No active anomalies detected.")
         

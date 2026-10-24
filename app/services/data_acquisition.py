@@ -3171,6 +3171,173 @@ class DataAcquisitionService:
         return ds, metadata
 
 
+    def search_evapotranspiration_datasets(
+        self,
+        bbox: Optional[Tuple[float, float, float, float]] = None,
+        query: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Discovers multi-spectral and thermal agricultural datasets and canonical ET research benchmark scenes."""
+        from app.models.schemas import ET_BENCHMARK_SCENES
+        results = []
+        q = query.lower().strip() if query else ""
+        for scene_id, scene in ET_BENCHMARK_SCENES.items():
+            if q and not (q in scene_id.lower() or q in scene["name"].lower() or q in scene["location"].lower() or q in scene.get("crop_type", "").lower()):
+                continue
+            if bbox is not None:
+                sc_b = scene.get("bbox")
+                if sc_b and len(sc_b) == 4 and len(bbox) == 4:
+                    if (bbox[2] < sc_b[0] or bbox[0] > sc_b[2] or bbox[3] < sc_b[1] or bbox[1] > sc_b[3]):
+                        continue
+            results.append({
+                "id": scene_id,
+                "name": scene["name"],
+                "location": scene["location"],
+                "center": scene["center"],
+                "bbox": scene["bbox"],
+                "crop_type": scene.get("crop_type", "Agricultural field"),
+                "typical_air_temp_c": scene.get("typical_air_temp_c", 32.5),
+                "typical_surface_temp_c": scene.get("typical_surface_temp_c", 34.2),
+                "wind_speed_m_s": scene.get("wind_speed_m_s", 2.8),
+                "solar_rad_w_m2": scene.get("solar_rad_w_m2", 820.0),
+                "daily_reference_et_mm": scene.get("daily_reference_et_mm", 7.0),
+                "description": scene["description"]
+            })
+        return results
+
+    def load_evapotranspiration_data_cube(
+        self,
+        asset_id: str = "CENTRAL_VALLEY_ALFALFA_CA",
+        grid_size: int = 128,
+        collection: str = "sentinel-2-l2a",
+        bbox: Optional[Any] = None
+    ) -> Tuple[xr.Dataset, Dict[str, Any]]:
+        """Loads memory-conscious multi-spectral and thermal surface reflectance bands for SEBAL/METRIC ET inversion.
+        
+        Fused bands: blue, green, red, nir, thermal LST, albedo, ndvi.
+        Memory conscious: strictly float32 arrays, explicit array cleanup, gc.collect(), <25MB RAM.
+        """
+        from app.models.schemas import ET_BENCHMARK_SCENES
+        from app.services.evapotranspiration_service import evapotranspiration_service
+        matched = None
+        clean_id = asset_id.upper().strip() if asset_id else "CENTRAL_VALLEY_ALFALFA_CA"
+        for sc_id, sc_data in ET_BENCHMARK_SCENES.items():
+            if sc_id == clean_id or sc_data["name"].upper() in clean_id or clean_id in sc_id:
+                matched = sc_data
+                break
+
+        if matched and bbox is None:
+            c_lat, c_lon = matched["center"][0], matched["center"][1]
+            scene_name = matched["name"]
+            nx = ny = int(grid_size)
+            x_coords = np.linspace(c_lon - 0.05, c_lon + 0.05, nx, dtype=np.float32)
+            y_coords = np.linspace(c_lat - 0.05, c_lat + 0.05, ny, dtype=np.float32)
+        else:
+            if bbox is not None:
+                try:
+                    b_parsed = parse_bbox(bbox)
+                    b_min_lon, b_min_lat, b_max_lon, b_max_lat = b_parsed.to_list() if hasattr(b_parsed, "to_list") else (float(b_parsed[0]), float(b_parsed[1]), float(b_parsed[2]), float(b_parsed[3]))
+                    c_lat = (b_min_lat + b_max_lat) / 2.0
+                    c_lon = (b_min_lon + b_max_lon) / 2.0
+                    nx = ny = int(grid_size)
+                    x_coords = np.linspace(b_min_lon, b_max_lon, nx, dtype=np.float32)
+                    y_coords = np.linspace(b_min_lat, b_max_lat, ny, dtype=np.float32)
+                except Exception:
+                    c_lat, c_lon = 36.85, -120.45
+                    nx = ny = int(grid_size)
+                    x_coords = np.linspace(c_lon - 0.05, c_lon + 0.05, nx, dtype=np.float32)
+                    y_coords = np.linspace(c_lat - 0.05, c_lat + 0.05, ny, dtype=np.float32)
+            else:
+                c_lat, c_lon = 36.85, -120.45
+                nx = ny = int(grid_size)
+                x_coords = np.linspace(c_lon - 0.05, c_lon + 0.05, nx, dtype=np.float32)
+                y_coords = np.linspace(c_lat - 0.05, c_lat + 0.05, ny, dtype=np.float32)
+            scene_name = matched["name"] if matched else (asset_id or "Custom Agricultural ET AOI")
+
+        # Generate realistic fused multi-spectral & thermal scene arrays
+        scene_data = evapotranspiration_service.generate_synthetic_et_scene(
+            asset_id_or_benchmark=asset_id,
+            grid_size=nx
+        )
+
+        ndvi_arr = scene_data["ndvi"].astype(np.float32)
+        albedo_arr = scene_data["albedo"].astype(np.float32)
+        lst_c_arr = scene_data["lst_c"].astype(np.float32)
+        rn_arr = scene_data["net_radiation"].astype(np.float32)
+        g_arr = scene_data["soil_heat_flux"].astype(np.float32)
+        h_arr = scene_data["sensible_heat_flux"].astype(np.float32)
+        le_arr = scene_data["latent_heat_flux"].astype(np.float32)
+        ef_arr = scene_data["evaporative_fraction"].astype(np.float32)
+        cwsi_arr = scene_data["crop_water_stress_index"].astype(np.float32)
+        et24_arr = scene_data["daily_et"].astype(np.float32)
+
+        # Synthesize optical VNIR bands consistent with NDVI and albedo
+        red_arr = np.clip(0.12 * (1.0 - 0.7 * ndvi_arr), 0.01, 0.40).astype(np.float32)
+        nir_arr = np.clip(red_arr * (1.0 + ndvi_arr) / np.maximum(0.01, 1.0 - ndvi_arr), 0.05, 0.75).astype(np.float32)
+        green_arr = np.clip(0.5 * (red_arr + albedo_arr), 0.01, 0.40).astype(np.float32)
+        blue_arr = np.clip(0.4 * red_arr + 0.02, 0.01, 0.35).astype(np.float32)
+
+        col_clean = str(collection or "sentinel-2-l2a").lower().strip()
+        is_sentinel = "sentinel" in col_clean
+
+        data_vars = {
+            "blue": (("y", "x"), blue_arr),
+            "green": (("y", "x"), green_arr),
+            "red": (("y", "x"), red_arr),
+            "nir": (("y", "x"), nir_arr),
+            "ndvi": (("y", "x"), ndvi_arr),
+            "albedo": (("y", "x"), albedo_arr),
+            "surface_temperature": (("y", "x"), lst_c_arr),
+            "net_radiation": (("y", "x"), rn_arr),
+            "soil_heat_flux": (("y", "x"), g_arr),
+            "sensible_heat_flux": (("y", "x"), h_arr),
+            "latent_heat_flux": (("y", "x"), le_arr),
+            "evaporative_fraction": (("y", "x"), ef_arr),
+            "crop_water_stress_index": (("y", "x"), cwsi_arr),
+            "daily_et": (("y", "x"), et24_arr),
+        }
+
+        # Multi-sensor native band aliases
+        if is_sentinel:
+            data_vars["B02"] = data_vars["blue"]
+            data_vars["B03"] = data_vars["green"]
+            data_vars["B04"] = data_vars["red"]
+            data_vars["B08"] = data_vars["nir"]
+            data_vars["B10"] = data_vars["surface_temperature"]
+        else:
+            data_vars["B2"] = data_vars["blue"]
+            data_vars["B3"] = data_vars["green"]
+            data_vars["B4"] = data_vars["red"]
+            data_vars["B5"] = data_vars["nir"]
+            data_vars["B10"] = data_vars["surface_temperature"]
+            data_vars["nir08"] = data_vars["nir"]
+
+        metadata = {
+            "asset_id": asset_id or "CENTRAL_VALLEY_ALFALFA_CA",
+            "aoi_name": scene_name,
+            "collection": col_clean,
+            "optical_sensor": "Sentinel-2 MSI" if is_sentinel else "Landsat-8/9 OLI",
+            "thermal_sensor": "Landsat-8/9 TIRS (Band 10)",
+            "pixel_resolution_m": 10.0 if is_sentinel else 30.0,
+            "thermal_resolution_m": 100.0,
+            "crop_type": matched.get("crop_type", "Alfalfa / Mixed Orchards") if matched else "Alfalfa / Mixed Orchards",
+            "grid_size": (ny, nx),
+            "typical_air_temp_c": matched.get("typical_air_temp_c", 32.5) if matched else 32.5,
+            "solar_radiation_w_m2": matched.get("solar_rad_w_m2", 820.0) if matched else 820.0,
+            "memory_usage_mb": round((14 * ny * nx * 4) / (1024 * 1024), 2)
+        }
+
+        ds = xr.Dataset(
+            data_vars=data_vars,
+            coords={"y": y_coords, "x": x_coords},
+            attrs=metadata
+        )
+
+        del blue_arr, green_arr, red_arr, nir_arr, ndvi_arr, albedo_arr, lst_c_arr, rn_arr, g_arr, h_arr, le_arr, ef_arr, cwsi_arr, et24_arr, scene_data
+        gc.collect()
+
+        return ds, metadata
+
+
 data_acquisition_service = DataAcquisitionService()
 
 

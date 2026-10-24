@@ -4185,6 +4185,140 @@ class TestGIOSApi(unittest.TestCase):
             self.assertTrue(r.content.startswith(b"\x89PNG\r\n\x1a\n"))
 
 
+    def test_task_t334_evapotranspiration_endpoints(self):
+        """Task T-334: Verify Satellite-Derived Evapotranspiration (SEBAL/METRIC) REST API endpoints and dynamic XYZ tiles.
+        
+        Covers:
+        1. GET /api/v1/analysis/evapotranspiration/capabilities
+        2. POST /api/v1/analysis/evapotranspiration/scene
+        3. GET /api/v1/analysis/evapotranspiration/anchor-pixels
+        4. GET /api/v1/tiles/evapotranspiration/sebal/daily_et_mm/10/163/395.png
+        """
+        # 1. Capabilities discovery endpoint & aliases
+        for url in ["/api/v1/analysis/evapotranspiration/capabilities", "/api/v1/evapotranspiration/capabilities"]:
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertIn("models", data)
+            self.assertIn("metrics", data)
+            self.assertIn("stress_tiers", data)
+            self.assertIn("benchmark_scenes", data)
+            # Verify models
+            self.assertIn("sebal", data["models"])
+            self.assertIn("metric", data["models"])
+            self.assertIn("tseb", data["models"])
+            self.assertIn("penman_monteith", data["models"])
+            # Verify metrics
+            self.assertIn("latent_heat", data["metrics"])
+            self.assertIn("net_radiation", data["metrics"])
+            self.assertIn("soil_heat", data["metrics"])
+            self.assertIn("sensible_heat", data["metrics"])
+            self.assertIn("evaporative_fraction", data["metrics"])
+            self.assertIn("daily_et_mm", data["metrics"])
+            self.assertIn("cwsi", data["metrics"])
+            # Verify benchmark research sites
+            self.assertIn("CENTRAL_VALLEY_ALFALFA_CA", data["benchmark_scenes"])
+            self.assertIn("IMPERIAL_VALLEY_CROPS_CA", data["benchmark_scenes"])
+            self.assertIn("PALLAS_VALLEY_AG_WA", data["benchmark_scenes"])
+
+        # 2. Scene Surface Energy Balance POST endpoint & aliases
+        scene_payload = {
+            "asset_id": "CENTRAL_VALLEY_ALFALFA_CA",
+            "model_type": "sebal",
+            "wind_speed_2m_m_s": 2.8,
+            "air_temp_c": 32.5,
+            "solar_radiation_w_m2": 820.0,
+            "relative_humidity_pct": 30.0
+        }
+        for url in ["/api/v1/analysis/evapotranspiration/scene", "/api/v1/evapotranspiration/scene"]:
+            res = self.client.post(url, json=scene_payload)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertEqual(data["asset_id"], "CENTRAL_VALLEY_ALFALFA_CA")
+            self.assertEqual(data["model_type"], "sebal")
+            self.assertIn("net_radiation_w_m2", data)
+            self.assertIn("soil_heat_flux_w_m2", data)
+            self.assertIn("sensible_heat_flux_w_m2", data)
+            self.assertIn("latent_heat_flux_w_m2", data)
+            self.assertIn("evaporative_fraction", data)
+            self.assertIn("daily_et_mm_day", data)
+            self.assertIn("crop_water_stress_index", data)
+            self.assertIn("cold_pixel", data)
+            self.assertIn("hot_pixel", data)
+
+            rn = data["net_radiation_w_m2"]
+            g = data["soil_heat_flux_w_m2"]
+            h = data["sensible_heat_flux_w_m2"]
+            le = data["latent_heat_flux_w_m2"]
+            ef = data["evaporative_fraction"]
+            cwsi = data["crop_water_stress_index"]
+
+            # Invariant: Conservation of Energy Closure |Rn - (G + H + LE)| <= 0.1 W/m^2 (JSON rounded)
+            closure_err = abs(rn - (g + h + le))
+            self.assertLessEqual(closure_err, 0.1, f"Energy conservation closure violated: {closure_err} W/m^2")
+
+            # Invariant: Evaporative Fraction bounds [0.0, 1.20]
+            self.assertGreaterEqual(ef, 0.0)
+            self.assertLessEqual(ef, 1.20)
+
+            # Invariant: CWSI bounds [0.0, 1.0]
+            self.assertGreaterEqual(cwsi, 0.0)
+            self.assertLessEqual(cwsi, 1.0)
+
+            # Invariant: Cold pixel vs Hot pixel thermodynamic extrema
+            cold_p = data["cold_pixel"]
+            hot_p = data["hot_pixel"]
+            self.assertLessEqual(cold_p["sensible_heat_w_m2"], 25.0)
+            self.assertGreater(cold_p["latent_heat_w_m2"], cold_p["sensible_heat_w_m2"])
+            self.assertAlmostEqual(hot_p["latent_heat_w_m2"], 0.0, places=2)
+            self.assertGreater(hot_p["sensible_heat_w_m2"], 50.0)
+
+        # 3. Anchor Pixel Discovery GET endpoint & aliases
+        for url in [
+            "/api/v1/analysis/evapotranspiration/anchor-pixels?asset_id=CENTRAL_VALLEY_ALFALFA_CA&model=sebal",
+            "/api/v1/evapotranspiration/anchor-pixels?asset_id=CENTRAL_VALLEY_ALFALFA_CA&model=sebal"
+        ]:
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 200, f"Failed URL: {url}")
+            data = res.json()
+            self.assertEqual(data["status"], "success")
+            self.assertIn("anchor_pair", data)
+            self.assertIn("stability_summary", data)
+
+            pair = data["anchor_pair"]
+            self.assertIn("cold_pixel", pair)
+            self.assertIn("hot_pixel", pair)
+            self.assertIn("dt_slope_a", pair)
+            self.assertIn("dt_intercept_b", pair)
+            self.assertGreater(pair["dt_slope_a"], 0.0, "Thermal calibration slope a must be positive")
+
+            # Stability summary checks
+            stab = data["stability_summary"]
+            self.assertGreater(stab["friction_velocity_u_star"], 0.0)
+            self.assertGreater(stab["aerodynamic_resistance_rah"], 0.0)
+            self.assertLessEqual(stab["iterations_converged"], 15)
+
+        # 4. Dynamic XYZ Evapotranspiration Tile Streaming across models and metrics
+        tile_urls = [
+            "/api/v1/tiles/evapotranspiration/sebal/daily_et_mm/10/163/395.png",
+            "/api/v1/tiles/evapotranspiration/sebal/latent_heat/10/163/395.png",
+            "/api/v1/tiles/evapotranspiration/sebal/net_radiation/10/163/395.png",
+            "/api/v1/tiles/evapotranspiration/sebal/soil_heat/10/163/395.png",
+            "/api/v1/tiles/evapotranspiration/sebal/sensible_heat/10/163/395.png",
+            "/api/v1/tiles/evapotranspiration/sebal/evaporative_fraction/10/163/395.png",
+            "/api/v1/tiles/evapotranspiration/sebal/cwsi/10/163/395.png",
+            "/api/v1/tiles/evapotranspiration/metric/daily_et_mm/10/163/395.png",
+            "/api/v1/tiles/evapotranspiration/10/163/395.png?model=sebal&metric=daily_et_mm",
+            "/tiles/evapotranspiration/sebal/daily_et_mm/10/163/395.png"
+        ]
+        for t_url in tile_urls:
+            r = self.client.get(t_url)
+            self.assertEqual(r.status_code, 200, f"Failed tile endpoint: {t_url}")
+            self.assertEqual(r.headers.get("content-type"), "image/png")
+            self.assertTrue(r.content.startswith(b"\x89PNG\r\n\x1a\n"))
+
+
+
 if __name__ == "__main__":
     unittest.main()
 

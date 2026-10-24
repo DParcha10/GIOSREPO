@@ -1165,7 +1165,19 @@ from app.models.schemas import (
     ThermalLstTileRequestParams,
     build_thermal_lst_tile_url,
     build_thermal_lst_tile_url_template,
-    build_thermal_anomaly_tile_url_template
+    build_thermal_anomaly_tile_url_template,
+    # Cycle v2.5.45: SEBAL/METRIC Contracts
+    ETModelType,
+    ETTileMetric,
+    AnchorPixelType,
+    AnchorPixelCandidate,
+    MeteorologicalForcing,
+    SurfaceEnergyBalanceEvaluation,
+    ETCapabilities,
+    calculate_evaporative_fraction,
+    build_et_tile_url,
+    get_et_tile_template,
+    API_ROUTES
 )
 from app.config import settings
 
@@ -15395,6 +15407,217 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             format_api_route("tiles_unmixing_xyz_short", z=10, x=100, y=200),
             "/tiles/unmixing/10/100/200.png"
         )
+
+    def test_cycle_v2_5_45_sebal_metric_contracts(self):
+        """Comprehensive verification of Cycle v2.5.45 SEBAL/METRIC evapotranspiration data models, helpers, and routes."""
+        # 1. ETModelType Enum
+        self.assertEqual(ETModelType.SEBAL.value, "sebal")
+        self.assertEqual(ETModelType.METRIC.value, "metric")
+        self.assertEqual(ETModelType.TWO_SOURCE_ENERGY_BALANCE.value, "tseb")
+        self.assertEqual(ETModelType.PENMAN_MONTEITH.value, "penman_monteith")
+
+        # 2. ETTileMetric Enum
+        self.assertEqual(ETTileMetric.LATENT_HEAT_FLUX.value, "latent_heat")
+        self.assertEqual(ETTileMetric.NET_RADIATION.value, "net_radiation")
+        self.assertEqual(ETTileMetric.SOIL_HEAT_FLUX.value, "soil_heat")
+        self.assertEqual(ETTileMetric.SENSIBLE_HEAT_FLUX.value, "sensible_heat")
+        self.assertEqual(ETTileMetric.EVAPORATIVE_FRACTION.value, "evaporative_fraction")
+        self.assertEqual(ETTileMetric.DAILY_ET_MM.value, "daily_et_mm")
+        self.assertEqual(ETTileMetric.CWSI.value, "cwsi")
+
+        # 3. AnchorPixelType Enum
+        self.assertEqual(AnchorPixelType.COLD_PIXEL.value, "cold_pixel")
+        self.assertEqual(AnchorPixelType.HOT_PIXEL.value, "hot_pixel")
+
+        # 4. AnchorPixelCandidate Pydantic Model
+        cand_cold = AnchorPixelCandidate(
+            pixel_id="cold_pixel_01",
+            pixel_type=AnchorPixelType.COLD_PIXEL,
+            x=-115.55,
+            y=32.85,
+            ndvi=0.86,
+            surface_temp_k=295.15,
+            albedo=0.18,
+            sensible_heat_w_m2=45.0,
+            latent_heat_w_m2=520.0
+        )
+        self.assertEqual(cand_cold.pixel_id, "cold_pixel_01")
+        self.assertEqual(cand_cold.pixel_type, AnchorPixelType.COLD_PIXEL)
+        self.assertEqual(cand_cold.ndvi, 0.86)
+        self.assertEqual(cand_cold.surface_temp_k, 295.15)
+        self.assertEqual(cand_cold.sensible_heat_w_m2, 45.0)
+        self.assertEqual(cand_cold.latent_heat_w_m2, 520.0)
+
+        # Optional pixel_id
+        cand_hot = AnchorPixelCandidate(
+            pixel_type=AnchorPixelType.HOT_PIXEL,
+            x=-115.45,
+            y=32.75,
+            ndvi=0.12,
+            surface_temp_k=325.15,
+            albedo=0.28,
+            sensible_heat_w_m2=480.0,
+            latent_heat_w_m2=15.0
+        )
+        self.assertIsNone(cand_hot.pixel_id)
+        self.assertEqual(cand_hot.pixel_type, AnchorPixelType.HOT_PIXEL)
+
+        # 5. MeteorologicalForcing Pydantic Model
+        forcing = MeteorologicalForcing(
+            wind_speed_2m_m_s=3.2,
+            air_temp_c=35.0,
+            solar_irradiance_w_m2=880.0,
+            relative_humidity_pct=28.0
+        )
+        self.assertEqual(forcing.wind_speed_2m_m_s, 3.2)
+        self.assertEqual(forcing.air_temp_c, 35.0)
+        self.assertEqual(forcing.solar_irradiance_w_m2, 880.0)
+        self.assertEqual(forcing.relative_humidity_pct, 28.0)
+        self.assertEqual(forcing.atmospheric_pressure_kpa, 101.3)
+        self.assertEqual(forcing.roughness_length_z0m, 0.05)
+
+        forcing_custom = MeteorologicalForcing(
+            wind_speed_2m_m_s=2.0,
+            air_temp_c=25.0,
+            solar_irradiance_w_m2=750.0,
+            relative_humidity_pct=50.0,
+            atmospheric_pressure_kpa=95.0,
+            roughness_length_z0m=0.12
+        )
+        self.assertEqual(forcing_custom.atmospheric_pressure_kpa, 95.0)
+        self.assertEqual(forcing_custom.roughness_length_z0m, 0.12)
+
+        # 6. SurfaceEnergyBalanceEvaluation Pydantic Model
+        eval_model = SurfaceEnergyBalanceEvaluation(
+            request_id="REQ-ET-TEST-001",
+            asset_id="IMPERIAL_VALLEY_CROPS_CA",
+            model_type=ETModelType.SEBAL,
+            net_radiation_w_m2=650.0,
+            soil_heat_flux_w_m2=65.0,
+            sensible_heat_flux_w_m2=120.0,
+            latent_heat_flux_w_m2=465.0,
+            evaporative_fraction=0.7949,
+            daily_et_mm_day=8.2,
+            crop_water_stress_index=0.2051,
+            cold_pixel=cand_cold,
+            hot_pixel=cand_hot
+        )
+        self.assertEqual(eval_model.request_id, "REQ-ET-TEST-001")
+        self.assertEqual(eval_model.asset_id, "IMPERIAL_VALLEY_CROPS_CA")
+        self.assertEqual(eval_model.model_type, ETModelType.SEBAL)
+        self.assertEqual(eval_model.net_radiation_w_m2, 650.0)
+        self.assertEqual(eval_model.soil_heat_flux_w_m2, 65.0)
+        self.assertEqual(eval_model.sensible_heat_flux_w_m2, 120.0)
+        self.assertEqual(eval_model.latent_heat_flux_w_m2, 465.0)
+        self.assertEqual(eval_model.evaporative_fraction, 0.7949)
+        self.assertEqual(eval_model.daily_et_mm_day, 8.2)
+        self.assertEqual(eval_model.crop_water_stress_index, 0.2051)
+        self.assertIsNotNone(eval_model.cold_pixel)
+        self.assertIsNotNone(eval_model.hot_pixel)
+
+        # 7. ETCapabilities Pydantic Model
+        capabilities = ETCapabilities(
+            models={
+                "sebal": {"name": "SEBAL", "reference": "Bastiaanssen (1998)"},
+                "metric": {"name": "METRIC", "reference": "Allen (2007)"}
+            },
+            metrics=["latent_heat", "net_radiation", "soil_heat", "sensible_heat", "evaporative_fraction", "daily_et_mm", "cwsi"],
+            benchmarks={"imperial_valley": {"name": "Imperial Valley", "lat": 32.85, "lon": -115.55}}
+        )
+        self.assertIn("sebal", capabilities.models)
+        self.assertEqual(len(capabilities.metrics), 7)
+        self.assertIn("imperial_valley", capabilities.benchmarks)
+
+        # 8. calculate_evaporative_fraction
+        # Standard daytime calculation: Rn=600, G=60, H=180 -> avail=540, lambda_e=360 -> ef=360/540 = 2/3
+        ef_val = calculate_evaporative_fraction(600.0, 60.0, 180.0)
+        self.assertAlmostEqual(ef_val, 2.0 / 3.0, places=4)
+        # Zero / near-zero available energy singularity guard: abs(Rn - G) < 1e-6 -> 0.0
+        self.assertEqual(calculate_evaporative_fraction(100.0, 100.0, 20.0), 0.0)
+        self.assertEqual(calculate_evaporative_fraction(100.0, 100.0000001, 20.0), 0.0)
+        # Clamped upper bound [0.0, 1.2]: negative sensible heat (intense oasis effect)
+        self.assertEqual(calculate_evaporative_fraction(600.0, 60.0, -300.0), 1.2)
+        # Clamped lower bound [0.0, 1.2]: negative latent heat
+        self.assertEqual(calculate_evaporative_fraction(600.0, 60.0, 750.0), 0.0)
+
+        # 9. calculate_crop_water_stress_index
+        # No water stress: H=0.0 -> CWSI=0.0
+        self.assertEqual(calculate_crop_water_stress_index(0.0, 600.0, 60.0), 0.0)
+        # Moderate stress: H=270.0, avail=540.0 -> CWSI=0.5
+        self.assertEqual(calculate_crop_water_stress_index(270.0, 600.0, 60.0), 0.5)
+        # Maximum dry stress: H=540.0, avail=540.0 -> CWSI=1.0
+        self.assertEqual(calculate_crop_water_stress_index(540.0, 600.0, 60.0), 1.0)
+        # Over-dry clamp to 1.0
+        self.assertEqual(calculate_crop_water_stress_index(700.0, 600.0, 60.0), 1.0)
+        # Negative sensible heat clamp to 0.0
+        self.assertEqual(calculate_crop_water_stress_index(-100.0, 600.0, 60.0), 0.0)
+        # Small denominator guard
+        self.assertEqual(calculate_crop_water_stress_index(50.0, 50.0, 50.0), 1.0)
+
+        # 10. build_et_tile_url & get_et_tile_template
+        url_enum = build_et_tile_url(ETModelType.SEBAL, ETTileMetric.DAILY_ET_MM, 12, 1024, 2048)
+        self.assertEqual(url_enum, "/api/v1/tiles/evapotranspiration/sebal/daily_et_mm/12/1024/2048.png")
+
+        url_str = build_et_tile_url("metric", "latent_heat", "14", "2048", "4096")
+        self.assertEqual(url_str, "/api/v1/tiles/evapotranspiration/metric/latent_heat/14/2048/4096.png")
+
+        tmpl_default = get_et_tile_template()
+        self.assertEqual(tmpl_default, "/api/v1/tiles/evapotranspiration/sebal/daily_et_mm/{z}/{x}/{y}.png")
+
+        tmpl_custom = get_et_tile_template(model=ETModelType.METRIC, metric=ETTileMetric.CWSI)
+        self.assertEqual(tmpl_custom, "/api/v1/tiles/evapotranspiration/metric/cwsi/{z}/{x}/{y}.png")
+
+        # 11. API Routes & Canonical Format Parity
+        required_routes = {
+            "tiles_et": "/api/v1/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png",
+            "tiles_et_short": "/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png",
+            "analysis_et_capabilities": "/api/v1/analysis/evapotranspiration/capabilities",
+            "analysis_et_capabilities_short": "/analysis/evapotranspiration/capabilities",
+            "analysis_et_scene": "/api/v1/analysis/evapotranspiration/scene",
+            "analysis_et_scene_short": "/analysis/evapotranspiration/scene",
+            "analysis_et_anchor_pixels": "/api/v1/analysis/evapotranspiration/anchor-pixels",
+            "analysis_et_anchor_pixels_short": "/analysis/evapotranspiration/anchor-pixels",
+        }
+        for r_name, r_path in required_routes.items():
+            self.assertIn(r_name, API_ROUTES, f"Route {r_name} missing from API_ROUTES")
+            self.assertEqual(API_ROUTES[r_name], r_path)
+            self.assertIn(r_name, API_ROUTE_CONTRACTS, f"Route {r_name} missing from API_ROUTE_CONTRACTS")
+            self.assertEqual(API_ROUTE_CONTRACTS[r_name], r_path)
+
+        # format_api_route tests
+        self.assertEqual(
+            format_api_route("tiles_et", model="sebal", metric="daily_et_mm", z=12, x=100, y=200),
+            "/api/v1/tiles/evapotranspiration/sebal/daily_et_mm/12/100/200.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_et_short", model=ETModelType.METRIC, metric=ETTileMetric.CWSI, z=14, x=500, y=600),
+            "/tiles/evapotranspiration/metric/cwsi/14/500/600.png"
+        )
+        self.assertEqual(
+            format_api_route("analysis_et_capabilities"),
+            "/api/v1/analysis/evapotranspiration/capabilities"
+        )
+        self.assertEqual(
+            format_api_route("analysis_et_capabilities_short"),
+            "/analysis/evapotranspiration/capabilities"
+        )
+        self.assertEqual(
+            format_api_route("analysis_et_scene"),
+            "/api/v1/analysis/evapotranspiration/scene"
+        )
+        self.assertEqual(
+            format_api_route("analysis_et_scene_short"),
+            "/analysis/evapotranspiration/scene"
+        )
+        self.assertEqual(
+            format_api_route("analysis_et_anchor_pixels"),
+            "/api/v1/analysis/evapotranspiration/anchor-pixels"
+        )
+        self.assertEqual(
+            format_api_route("analysis_et_anchor_pixels_short"),
+            "/analysis/evapotranspiration/anchor-pixels"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

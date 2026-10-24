@@ -217,6 +217,7 @@ import MultimodalFusionModal from '../components/MultimodalFusionModal';
 import InSARDeformationModal from '../components/InSARDeformationModal';
 import SpectralUnmixingModal from '../components/SpectralUnmixingModal';
 import BathymetryStudioModal from '../components/BathymetryStudioModal';
+import EvapotranspirationStudioModal from '../components/EvapotranspirationStudioModal';
 import BYOCStorageModal from '../components/BYOCStorageModal';
 import PointCloudCHMModal from '../components/PointCloudCHMModal';
 import CoRegistrationModal from '../components/CoRegistrationModal';
@@ -398,7 +399,8 @@ import {
   buildSpectralUnmixingTileUrlTemplate,
   SpectralUnmixingModel,
   SpectralUnmixingTileMetric,
-  SubPixelDominanceClass
+  SubPixelDominanceClass,
+  buildETTileUrlTemplate
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -1104,6 +1106,29 @@ export default function MapExplorer() {
   });
 
   // T-79 & T-81 Dense Point Cloud Filtering & Canopy Height Model (CHM) State
+  // Cycle v2.5.45 Evapotranspiration & Water Consumption Studio State (Task T-332)
+  const [evapotranspirationModalOpen, setEvapotranspirationModalOpen] = useState(false);
+  const [showEvapotranspirationTileLayer, setShowEvapotranspirationTileLayer] = useState(false);
+  const [etSiteId, setEtSiteId] = useState('imperial_valley');
+  const [etSiteName, setEtSiteName] = useState('Imperial Valley');
+  const [etModel, setEtModel] = useState('sebal');
+  const [etMetric, setEtMetric] = useState('daily_et_mm');
+  const [etColormap, setEtColormap] = useState('turbo');
+  const [etRescale, setEtRescale] = useState('0.0,12.0');
+  const [etOpacity, setEtOpacity] = useState(0.85);
+  const [etTileUrl, setEtTileUrl] = useState('');
+  const [etSummary, setEtSummary] = useState({
+    daily_et_mm: 8.5,
+    latent_heat_wm2: 480.0,
+    sensible_heat_wm2: 85.0,
+    net_radiation_wm2: 640.0,
+    soil_heat_wm2: 75.0,
+    evaporative_fraction: 0.85,
+    cwsi: 0.18,
+    water_volume_m3_ha: 85.0,
+    total_field_volume_m3: 4250
+  });
+
   const [pointCloudModalOpen, setPointCloudModalOpen] = useState(false);
   const [pointCloudId, setPointCloudId] = useState('pc-san-luis-embankment-2026');
   const [pointCloudFormat, setPointCloudFormat] = useState(POINT_CLOUD_FORMATS?.COPC || 'copc');
@@ -5391,6 +5416,25 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={460}
+              />
+            )}
+
+            {/* Cycle v2.5.45 Satellite-Derived Evapotranspiration & Energy Balance TileLayer (Task T-332) */}
+            {showEvapotranspirationTileLayer && !curtainActive && (
+              <TileLayer
+                key={`et-tile-${etSiteId}-${etModel}-${etMetric}-${etColormap}-${etRescale}-${etOpacity}`}
+                url={etTileUrl || buildETTileUrlTemplate({
+                  model: etModel,
+                  metric: etMetric,
+                  colormap: etColormap,
+                  rescale: etRescale,
+                  asset_id: etSiteId
+                })}
+                opacity={etOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={462}
               />
             )}
 
@@ -11251,6 +11295,85 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* Cycle v2.5.45 Floating Evapotranspiration & Surface Energy Balance HUD Card (Task T-332) */}
+          {showEvapotranspirationTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-cyan-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[760px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Droplets className="w-4 h-4 text-cyan-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[220px]" title={etSiteName}>
+                    {etSiteName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    {etModel.toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    {etMetric.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                    ET₂₄: {(etSummary?.daily_et_mm || 8.5).toFixed(1)} MM/DAY
+                  </span>
+                  <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
+                    (etSummary?.cwsi ?? 0.18) < 0.2
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-600'
+                      : (etSummary?.cwsi ?? 0.18) < 0.4
+                      ? 'bg-yellow-950 text-yellow-300 border border-yellow-600'
+                      : 'bg-rose-950 text-rose-300 border border-rose-600'
+                  }`}>
+                    CWSI: {(etSummary?.cwsi ?? 0.18).toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setEvapotranspirationModalOpen(true)}
+                    className="px-2 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 rounded text-[10px] font-bold uppercase transition-all cursor-pointer"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowEvapotranspirationTileLayer(false)}
+                    className="text-slate-400 hover:text-white cursor-pointer"
+                    title="Dismiss Evapotranspiration Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-mono text-gray-300 px-1">
+                <div className="flex items-center gap-4">
+                  <span>
+                    <strong className="text-white">λE:</strong> {Math.round(etSummary?.latent_heat_wm2 || 480)} W/m²
+                  </span>
+                  <span>
+                    <strong className="text-white">Rn:</strong> {Math.round(etSummary?.net_radiation_wm2 || 640)} W/m²
+                  </span>
+                  <span>
+                    <strong className="text-white">Evap Fraction (Λ):</strong> {(etSummary?.evaporative_fraction || 0.85).toFixed(2)}
+                  </span>
+                  <span>
+                    <strong className="text-white">Volume:</strong> {(etSummary?.water_volume_m3_ha || 85.0).toFixed(1)} m³/ha/d
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-400">Ramp:</span>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-zinc-800 text-cyan-300 font-bold uppercase">
+                    {etColormap}
+                  </span>
+                  <div className={`w-12 h-2.5 rounded bg-gradient-to-r ${
+                    etColormap === 'turbo'
+                      ? 'from-blue-600 via-teal-400 via-yellow-300 to-red-600'
+                      : etColormap === 'inferno'
+                      ? 'from-black via-purple-900 via-amber-500 to-yellow-200'
+                      : etColormap === 'coolwarm'
+                      ? 'from-blue-600 via-slate-200 to-red-600'
+                      : 'from-yellow-200 via-emerald-400 to-blue-700'
+                  }`} />
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* T-53: Floating Time-Lapse Keyframe Animation Controller */}
           {animationActive && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-2.5 rounded-xl border-rose-500/40 shadow-2xl bg-black/85 backdrop-blur-md flex flex-col gap-2 w-[480px]">
@@ -12332,6 +12455,18 @@ export default function MapExplorer() {
               >
                 <Waves className="w-3.5 h-3.5 text-sky-400" />
                 <span>Bathymetry Studio (v2.5.44)</span>
+              </button>
+
+              {/* Cycle v2.5.45 Evapotranspiration & Water Consumption Studio Shortcut (Task T-332) */}
+              <button
+                onClick={() => setEvapotranspirationModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  evapotranspirationModalOpen || showEvapotranspirationTileLayer ? 'bg-cyan-600 text-white font-extrabold shadow-[0_0_12px_rgba(6,182,212,0.6)]' : ''
+                }`}
+                title="Satellite-Derived Evapotranspiration & Energy Balance Studio, SEBAL/METRIC Inversion, CIMEC Anchor Pixels, CWSI Stress & Dynamic ET Tiles (Cycle v2.5.45)"
+              >
+                <Droplets className="w-3.5 h-3.5 text-cyan-400" />
+                <span>ET Studio (v2.5.45)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -24765,6 +24900,56 @@ export default function MapExplorer() {
           }
           setShowBathymetryTileLayer(true);
           setBathymetryModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.45 Evapotranspiration & Water Consumption Studio Modal (Task T-332) */}
+      <EvapotranspirationStudioModal
+        isOpen={evapotranspirationModalOpen}
+        onClose={() => setEvapotranspirationModalOpen(false)}
+        initialSiteId={etSiteId}
+        initialModel={etModel}
+        initialMetric={etMetric}
+        onApply={(payload) => {
+          setEtSiteId(payload.siteId || 'imperial_valley');
+          setEtSiteName(payload.siteName || 'Imperial Valley');
+          setEtModel(payload.model || 'sebal');
+          setEtMetric(payload.metric || 'daily_et_mm');
+          setEtColormap(payload.colormap || 'turbo');
+          setEtRescale(payload.rescale || '0.0,12.0');
+          setEtOpacity(payload.opacity ?? 0.85);
+          setEtTileUrl(payload.urlTemplate || payload.tileUrl || '');
+          if (payload.summary) {
+            setEtSummary(payload.summary);
+          }
+          if (payload.centerCoords && Array.isArray(payload.centerCoords)) {
+            setCustomFlyTarget({
+              lat: payload.centerCoords[0],
+              lng: payload.centerCoords[1],
+              zoom: 12
+            });
+          }
+          setShowEvapotranspirationTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setEtTileUrl(url);
+          if (extra.siteId) setEtSiteId(extra.siteId);
+          if (extra.siteName) setEtSiteName(extra.siteName);
+          if (extra.model) setEtModel(extra.model);
+          if (extra.metric) setEtMetric(extra.metric);
+          if (extra.colormap) setEtColormap(extra.colormap);
+          if (extra.rescale) setEtRescale(extra.rescale);
+          if (extra.opacity !== undefined) setEtOpacity(extra.opacity);
+          if (extra.summary) setEtSummary(extra.summary);
+          if (extra.centerCoords && Array.isArray(extra.centerCoords)) {
+            setCustomFlyTarget({
+              lat: extra.centerCoords[0],
+              lng: extra.centerCoords[1],
+              zoom: 12
+            });
+          }
+          setShowEvapotranspirationTileLayer(true);
+          setEvapotranspirationModalOpen(false);
         }}
       />
 

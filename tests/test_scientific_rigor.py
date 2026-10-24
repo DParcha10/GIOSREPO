@@ -5853,6 +5853,352 @@ class TestScientificRigor(unittest.TestCase):
 
 
 
+    def test_task_t334_evapotranspiration_sebal_metric_scientific_qa_and_invariants(self):
+        """Task T-334: Continuous Scientific QA for Satellite-Derived Evapotranspiration (SEBAL/METRIC).
+        
+        Validates:
+        1. Surface Energy Balance Closure Invariant: |Rn - (G + H + LE)| < 1e-4 W/m^2 across diverse meteorological forcing inputs.
+        2. Evaporative Fraction (Lambda = LE / (Rn - G)) bounds validation: strictly Lambda in [0.0, 1.20].
+        3. Hot/Cold Anchor Pixel Extremum Invariance:
+           - Cold pixel: well-watered canopy yields H ~ 0, LE ~ Rn - G.
+           - Hot pixel: dry bare soil yields LE ~ 0, H ~ Rn - G.
+        4. Monin-Obukhov Atmospheric Stability Iterative Convergence:
+           - Stability corrections psi_m, psi_h converge within <= 15 iterations with bounded |L| > 0.05m.
+        5. Crop Water Stress Index (CWSI): verify bounds CWSI in [0.0, 1.0] across all agronomic tiers.
+        6. Floating-Point Singularity Protection: verify Rn - G ~ 0, calm wind, and extreme thermal gradients do not produce ZeroDivisionError, NaN, or Inf.
+        7. SEBAL 2D Raster Spatial Invariance: validates chunked 2D energy balance grids preserve closure at every pixel.
+        8. Benchmark scenes catalog integrity and dynamic XYZ tile templates.
+        9. Full End-to-End Pipeline and Scene Evaluation: validates ETInvertResponse and SurfaceEnergyBalanceEvaluation.
+        """
+        import gc
+        from app.services.evapotranspiration_service import evapotranspiration_service, EvapotranspirationService
+        from app.models.schemas import (
+            ETModelType,
+            ETTileMetric,
+            CropWaterStressTier,
+            AnchorPixelType,
+            ET_MODEL_CONFIGS,
+            ET_TILE_METRIC_CONFIGS,
+            CROP_WATER_STRESS_TIER_CONFIGS,
+            ET_BENCHMARK_SCENES,
+            calculate_broadband_albedo,
+            calculate_net_radiation,
+            calculate_soil_heat_flux,
+            calculate_monin_obukhov_stability,
+            solve_sebal_energy_balance,
+            build_et_tile_url,
+            build_et_tile_url_template,
+            classify_crop_water_stress_tier,
+            AnchorPixelCandidate,
+            AnchorPixelPair,
+            MoninObukhovStabilitySummary,
+            EnergyBalanceSummary,
+            ETCalibrationRequest,
+            ETInvertRequest,
+            SurfaceEnergyBalanceEvaluation,
+            MeteorologicalForcing,
+        )
+
+        # -------------------------------------------------------------
+        # 1. Surface Energy Balance Closure Invariant |Rn - (G + H + LE)| < 1e-4 W/m^2
+        # -------------------------------------------------------------
+        # Sweep across diverse solar irradiances (150 to 1020 W/m^2), soil heat flux ratios (0.05 to 0.40),
+        # and sensible heat partitions (0.0 to 1.0 of available energy)
+        test_net_radiations = [150.0, 350.0, 550.0, 720.0, 880.0, 1020.0]
+        test_g_ratios = [0.05, 0.12, 0.20, 0.32, 0.40]
+        test_h_fractions = [0.0, 0.05, 0.20, 0.45, 0.70, 0.95, 1.0]
+
+        for rn_val in test_net_radiations:
+            for g_rat in test_g_ratios:
+                g_val = round(rn_val * g_rat, 2)
+                avail_energy = round(rn_val - g_val, 2)
+                for h_frac in test_h_fractions:
+                    h_val = round(avail_energy * h_frac, 2)
+                    res = solve_sebal_energy_balance(
+                        net_radiation_w_m2=rn_val,
+                        soil_heat_flux_w_m2=g_val,
+                        sensible_heat_w_m2=h_val,
+                        daily_net_radiation_w_m2=rn_val * 0.38
+                    )
+                    le_val = res["latent_heat_flux_w_m2"]
+                    # Exact thermodynamic energy conservation closure: |Rn - (G + H + LE)| < 1e-4 W/m^2
+                    closure_residual = abs(rn_val - (g_val + h_val + le_val))
+                    self.assertLess(
+                        closure_residual, 1e-4,
+                        f"Surface Energy Balance closure failed: Rn={rn_val}, G={g_val}, H={h_val}, LE={le_val}, residual={closure_residual}"
+                    )
+                    self.assertLess(res["energy_balance_residual_w_m2"], 1e-4)
+
+        # -------------------------------------------------------------
+        # 2. Evaporative Fraction Bounds: strictly Lambda in [0.0, 1.20]
+        # -------------------------------------------------------------
+        # a) Fully wet canopy / potential evapotranspiration (H ~ 0 => Lambda ~ 1.0)
+        wet_res = solve_sebal_energy_balance(net_radiation_w_m2=750.0, soil_heat_flux_w_m2=75.0, sensible_heat_w_m2=0.0)
+        self.assertAlmostEqual(wet_res["evaporative_fraction"], 1.0, places=3)
+        self.assertGreaterEqual(wet_res["evaporative_fraction"], 0.0)
+        self.assertLessEqual(wet_res["evaporative_fraction"], 1.20)
+
+        # b) Bone dry soil (LE = 0, H = Rn - G => Lambda = 0.0)
+        dry_res = solve_sebal_energy_balance(net_radiation_w_m2=750.0, soil_heat_flux_w_m2=150.0, sensible_heat_w_m2=600.0)
+        self.assertAlmostEqual(dry_res["evaporative_fraction"], 0.0, places=3)
+
+        # c) Intermediate agronomic moisture conditions
+        for h_ratio in np.linspace(0.0, 1.0, 21):
+            avail = 500.0
+            mid_res = solve_sebal_energy_balance(net_radiation_w_m2=600.0, soil_heat_flux_w_m2=100.0, sensible_heat_w_m2=avail * h_ratio)
+            self.assertGreaterEqual(mid_res["evaporative_fraction"], 0.0)
+            self.assertLessEqual(mid_res["evaporative_fraction"], 1.20)
+
+        # d) Advective oasis effect ceiling clamp (Lambda strictly <= 1.20)
+        advective_res = solve_sebal_energy_balance(net_radiation_w_m2=600.0, soil_heat_flux_w_m2=60.0, sensible_heat_w_m2=-100.0)
+        self.assertLessEqual(advective_res["evaporative_fraction"], 1.20)
+        self.assertGreaterEqual(advective_res["evaporative_fraction"], 0.0)
+
+        # -------------------------------------------------------------
+        # 3. Hot/Cold Anchor Pixel Extremum Invariance
+        # -------------------------------------------------------------
+        # Create a synthetic benchmark scene with distinct wet irrigated alfalfa vs dry fallow parcels
+        scene = evapotranspiration_service.generate_synthetic_et_scene("CENTRAL_VALLEY_ALFALFA_CA", grid_size=64)
+        pair = evapotranspiration_service.find_anchor_pixels(
+            ndvi_arr=scene["ndvi"],
+            lst_c_arr=scene["lst_c"],
+            albedo_arr=scene["albedo"],
+            rn_arr=scene["net_radiation"],
+            g_arr=scene["soil_heat_flux"],
+            u200=2.8
+        )
+        cold_p = pair.cold_pixel
+        hot_p = pair.hot_pixel
+
+        # Cold pixel verification:
+        # Well-watered canopy yields high NDVI, lower Ts, H ~ 0, LE ~ Rn - G
+        self.assertEqual(cold_p.pixel_type, AnchorPixelType.COLD_PIXEL)
+        self.assertGreater(cold_p.ndvi, 0.60, "Cold anchor pixel must represent dense green vegetative canopy")
+        self.assertLessEqual(cold_p.sensible_heat_w_m2, 20.0, "Cold anchor sensible heat H must be near zero (H ~ 0)")
+        self.assertGreater(cold_p.latent_heat_w_m2, 0.90 * (cold_p.rn_w_m2 - cold_p.g_w_m2), "Cold pixel LE must approximate available energy (Rn - G)")
+        self.assertLess(cold_p.surface_temp_k, hot_p.surface_temp_k, "Cold pixel skin temperature must be significantly lower than hot pixel")
+        self.assertLessEqual(cold_p.dt_k, 1.5, "Cold pixel aerodynamic temperature differential dT must be near zero")
+
+        # Hot pixel verification:
+        # Dry bare soil yields low NDVI, higher Ts, LE ~ 0, H ~ Rn - G
+        self.assertEqual(hot_p.pixel_type, AnchorPixelType.HOT_PIXEL)
+        self.assertLess(hot_p.ndvi, 0.25, "Hot anchor pixel must represent sparse/fallow soil")
+        self.assertAlmostEqual(hot_p.latent_heat_w_m2, 0.0, places=2, msg="Hot pixel latent heat LE must be zero")
+        self.assertGreater(hot_p.sensible_heat_w_m2, 0.90 * (hot_p.rn_w_m2 - hot_p.g_w_m2), "Hot pixel H must consume available energy (Rn - G)")
+        self.assertGreater(hot_p.dt_k, 3.0, "Hot pixel aerodynamic temperature differential dT must be substantial")
+
+        # Linear calibration invariants: dT = a * Ts + b
+        self.assertGreater(pair.dt_slope_a, 0.0, "SEBAL linear dT slope a must be strictly positive")
+        self.assertLess(pair.dt_intercept_b, 0.0, "SEBAL linear dT intercept b must be negative for Kelvin extrapolation")
+        self.assertGreaterEqual(pair.r_squared, 0.90)
+
+        # -------------------------------------------------------------
+        # 4. Monin-Obukhov Atmospheric Stability Iterative Convergence
+        # -------------------------------------------------------------
+        # Convergence within <= 15 iterations with bounded |L| > 0.05m across diverse regimes
+        regimes = [
+            (2.8, 0.08, 305.15, 180.0, "unstable"),     # Convective daytime
+            (1.5, 0.02, 315.15, 350.0, "unstable"),     # Strong convection / hot bare ground
+            (5.0, 0.12, 295.15, -20.0, "stable"),       # Temperature inversion / night
+            (8.0, 0.05, 293.15, 5.0, "neutral"),        # High wind near-neutral boundary
+        ]
+        for u_wind, z0, ts_k, h_flux, exp_reg in regimes:
+            stab = calculate_monin_obukhov_stability(
+                wind_speed_200m_m_s=u_wind,
+                roughness_z0m=z0,
+                surface_temp_k=ts_k,
+                sensible_heat_h=h_flux,
+                max_iterations=15
+            )
+            # Iteration bounds
+            self.assertLessEqual(
+                stab["iterations_converged"], 15,
+                f"Monin-Obukhov solver failed to converge in <= 15 iterations: {stab}"
+            )
+            # Monin-Obukhov length singularity guard: |L| >= 0.05m
+            self.assertGreaterEqual(
+                abs(stab["monin_obukhov_length_l"]), 0.05,
+                f"Monin-Obukhov length L singularity bound violated: {stab['monin_obukhov_length_l']}"
+            )
+            # Physical bounds on friction velocity u_* and aerodynamic resistance r_ah
+            self.assertGreater(stab["friction_velocity_u_star"], 0.0)
+            self.assertGreaterEqual(stab["aerodynamic_resistance_rah"], 5.0)
+            self.assertLessEqual(stab["aerodynamic_resistance_rah"], 500.0)
+            self.assertIn(stab["stability_regime"], ["unstable", "stable", "neutral"])
+
+        # -------------------------------------------------------------
+        # 5. Crop Water Stress Index (CWSI): verify bounds CWSI in [0.0, 1.0]
+        # -------------------------------------------------------------
+        # Test mapping from evaporative fraction to CWSI and stress tiers
+        test_efs = [1.20, 1.00, 0.85, 0.65, 0.45, 0.25, 0.10, 0.00]
+        for ef in test_efs:
+            sebal_case = solve_sebal_energy_balance(
+                net_radiation_w_m2=600.0,
+                soil_heat_flux_w_m2=60.0,
+                sensible_heat_w_m2=(1.0 - min(1.0, ef)) * 540.0
+            )
+            cwsi = sebal_case["crop_water_stress_index"]
+            self.assertGreaterEqual(cwsi, 0.0)
+            self.assertLessEqual(cwsi, 1.0)
+            tier = classify_crop_water_stress_tier(cwsi)
+            self.assertIn(tier, CropWaterStressTier)
+
+        # Verify stress tier thresholds:
+        self.assertEqual(classify_crop_water_stress_tier(0.0), CropWaterStressTier.NONE)
+        self.assertEqual(classify_crop_water_stress_tier(0.15), CropWaterStressTier.NONE)
+        self.assertEqual(classify_crop_water_stress_tier(0.28), CropWaterStressTier.MILD)
+        self.assertEqual(classify_crop_water_stress_tier(0.50), CropWaterStressTier.MODERATE)
+        self.assertEqual(classify_crop_water_stress_tier(0.72), CropWaterStressTier.SEVERE)
+        self.assertEqual(classify_crop_water_stress_tier(0.95), CropWaterStressTier.EXTREME_DESICCATION)
+        self.assertEqual(classify_crop_water_stress_tier(1.00), CropWaterStressTier.EXTREME_DESICCATION)
+
+        # -------------------------------------------------------------
+        # 6. Floating-Point Singularity Protection: Rn - G ~ 0, Calm Wind, Zero Radiation
+        # -------------------------------------------------------------
+        # a) Rn - G = 0 exactly (twilight or heavy overcast)
+        sing_zero = solve_sebal_energy_balance(net_radiation_w_m2=50.0, soil_heat_flux_w_m2=50.0, sensible_heat_w_m2=0.0)
+        self.assertTrue(math.isfinite(sing_zero["latent_heat_flux_w_m2"]))
+        self.assertTrue(math.isfinite(sing_zero["evaporative_fraction"]))
+        self.assertEqual(sing_zero["evaporative_fraction"], 0.0)
+        self.assertEqual(sing_zero["crop_water_stress_index"], 1.0)
+        self.assertEqual(sing_zero["daily_et_mm_day"], 0.0)
+
+        # b) Rn - G extremely tiny epsilon (1e-12 W/m^2)
+        sing_eps = solve_sebal_energy_balance(net_radiation_w_m2=100.0, soil_heat_flux_w_m2=100.0 - 1e-12, sensible_heat_w_m2=0.0)
+        self.assertTrue(math.isfinite(sing_eps["evaporative_fraction"]))
+        self.assertTrue(math.isfinite(sing_eps["daily_et_mm_day"]))
+
+        # c) Rn - G negative (nocturnal surface cooling, G > Rn)
+        sing_neg = solve_sebal_energy_balance(net_radiation_w_m2=40.0, soil_heat_flux_w_m2=80.0, sensible_heat_w_m2=0.0)
+        self.assertEqual(sing_neg["latent_heat_flux_w_m2"], 0.0)
+        self.assertEqual(sing_neg["evaporative_fraction"], 0.0)
+        self.assertTrue(math.isfinite(sing_neg["crop_water_stress_index"]))
+
+        # d) Dead calm wind speed (u200 = 0 m/s) in stability solver
+        stab_calm = calculate_monin_obukhov_stability(wind_speed_200m_m_s=0.0, roughness_z0m=0.05, surface_temp_k=300.0, sensible_heat_h=50.0)
+        self.assertTrue(math.isfinite(stab_calm["friction_velocity_u_star"]))
+        self.assertTrue(math.isfinite(stab_calm["aerodynamic_resistance_rah"]))
+        self.assertTrue(math.isfinite(stab_calm["monin_obukhov_length_l"]))
+
+        # e) Zero sensible heat (H = 0 W/m^2) in stability solver
+        stab_zero_h = calculate_monin_obukhov_stability(wind_speed_200m_m_s=3.0, roughness_z0m=0.05, surface_temp_k=300.0, sensible_heat_h=0.0)
+        self.assertTrue(math.isfinite(stab_zero_h["monin_obukhov_length_l"]))
+        self.assertTrue(math.isfinite(stab_zero_h["aerodynamic_resistance_rah"]))
+
+        # -------------------------------------------------------------
+        # 7. SEBAL 2D Raster Spatial Invariance: Per-Pixel Energy Closure
+        # -------------------------------------------------------------
+        n_dim = 48
+        x_lin = np.linspace(0.05, 0.85, n_dim, dtype=np.float32)
+        y_lin = np.linspace(0.05, 0.85, n_dim, dtype=np.float32)
+        xx, yy = np.meshgrid(x_lin, y_lin)
+        ndvi_2d = xx.astype(np.float32)
+        lst_2d = (45.0 - 20.0 * ndvi_2d).astype(np.float32)
+        alb_2d = (0.22 - 0.08 * ndvi_2d).astype(np.float32)
+
+        grids = evapotranspiration_service.calculate_sebal_energy_balance_arrays(
+            ndvi_arr=ndvi_2d,
+            lst_c_arr=lst_2d,
+            albedo_arr=alb_2d,
+            solar_rad_w_m2=840.0,
+            air_temp_c=31.0,
+            u200=2.6
+        )
+
+        # Verify all grids are non-empty and strictly finite
+        for g_name in ["net_radiation", "soil_heat_flux", "sensible_heat_flux", "latent_heat_flux", "evaporative_fraction", "crop_water_stress_index", "daily_et"]:
+            self.assertIn(g_name, grids)
+            self.assertEqual(grids[g_name].shape, (n_dim, n_dim))
+            self.assertTrue(np.all(np.isfinite(grids[g_name])), f"Grid {g_name} contains non-finite values")
+
+        # Verify pixel-wise energy closure |Rn - (G + H + LE)| < 1e-4 W/m^2
+        rn_grid = grids["net_radiation"]
+        g_grid = grids["soil_heat_flux"]
+        h_grid = grids["sensible_heat_flux"]
+        le_grid = grids["latent_heat_flux"]
+        residual_grid = np.abs(rn_grid - (g_grid + h_grid + le_grid))
+        max_residual = float(np.max(residual_grid))
+        self.assertLess(max_residual, 1e-4, f"Spatial 2D energy closure violated, max residual: {max_residual} W/m^2")
+
+        # Verify bounds on 2D derived products
+        self.assertTrue(np.all(grids["evaporative_fraction"] >= 0.0))
+        self.assertTrue(np.all(grids["evaporative_fraction"] <= 1.20))
+        self.assertTrue(np.all(grids["crop_water_stress_index"] >= 0.0))
+        self.assertTrue(np.all(grids["crop_water_stress_index"] <= 1.0))
+        self.assertTrue(np.all(grids["daily_et"] >= 0.0))
+
+        # -------------------------------------------------------------
+        # 8. Benchmark Scenes Catalog Integrity and Tile URL Builder
+        # -------------------------------------------------------------
+        for b_id, b_meta in ET_BENCHMARK_SCENES.items():
+            self.assertIn("name", b_meta)
+            self.assertIn("crop_type", b_meta)
+            self.assertIn("center", b_meta)
+            self.assertEqual(len(b_meta["center"]), 2)
+            self.assertIn("typical_surface_temp_c", b_meta)
+            self.assertIn("solar_rad_w_m2", b_meta)
+
+        # Dynamic XYZ tile URL builders
+        for m in ETModelType:
+            for met in ETTileMetric:
+                u_str = build_et_tile_url(model=m, metric=met, z=10, x=163, y=395)
+                self.assertEqual(u_str, f"/api/v1/tiles/evapotranspiration/{m.value}/{met.value}/10/163/395.png")
+
+                tpl_str = build_et_tile_url_template(model=m, metric=met)
+                self.assertEqual(tpl_str, f"/api/v1/tiles/evapotranspiration/{m.value}/{met.value}/{{z}}/{{x}}/{{y}}.png")
+
+        # -------------------------------------------------------------
+        # 9. Full Service Pipeline and Scene Evaluation Execution
+        # -------------------------------------------------------------
+        # a) execute_calibration_pipeline
+        cal_req = ETCalibrationRequest(asset_id="CENTRAL_VALLEY_ALFALFA_CA", model_type=ETModelType.SEBAL, wind_speed_2m_m_s=2.8)
+        cal_resp = evapotranspiration_service.execute_calibration_pipeline(cal_req)
+        self.assertEqual(cal_resp.status, "success")
+        self.assertEqual(cal_resp.asset_id, "CENTRAL_VALLEY_ALFALFA_CA")
+        self.assertIsNotNone(cal_resp.anchor_pair)
+        self.assertGreater(cal_resp.anchor_pair.dt_slope_a, 0.0)
+
+        # b) evaluate_energy_balance
+        eval_resp = evapotranspiration_service.evaluate_energy_balance(
+            asset_id="CENTRAL_VALLEY_ALFALFA_CA",
+            model_type=ETModelType.SEBAL,
+            forcing=MeteorologicalForcing(
+                air_temp_c=32.5,
+                wind_speed_2m_m_s=2.8,
+                solar_irradiance_w_m2=820.0,
+                relative_humidity_pct=30.0
+            )
+        )
+        self.assertIsInstance(eval_resp, SurfaceEnergyBalanceEvaluation)
+        self.assertGreater(eval_resp.net_radiation_w_m2, 0.0)
+        self.assertGreaterEqual(eval_resp.evaporative_fraction, 0.0)
+        self.assertLessEqual(eval_resp.evaporative_fraction, 1.20)
+        self.assertGreaterEqual(eval_resp.crop_water_stress_index, 0.0)
+        self.assertLessEqual(eval_resp.crop_water_stress_index, 1.0)
+        # Energy closure on summary: |Rn - (G + H + LE)| <= 0.05 W/m^2 due to 2-decimal rounding
+        summary_closure = abs(eval_resp.net_radiation_w_m2 - (eval_resp.soil_heat_flux_w_m2 + eval_resp.sensible_heat_flux_w_m2 + eval_resp.latent_heat_flux_w_m2))
+        self.assertLessEqual(summary_closure, 0.05)
+
+        # c) execute_evapotranspiration_pipeline
+        inv_req = ETInvertRequest(
+            asset_id="CENTRAL_VALLEY_ALFALFA_CA",
+            model_type=ETModelType.SEBAL,
+            solar_radiation_w_m2=820.0,
+            air_temp_c=32.5,
+            wind_speed_2m_m_s=2.8
+        )
+        inv_resp = evapotranspiration_service.execute_evapotranspiration_pipeline(inv_req)
+        self.assertEqual(inv_resp.status, "success")
+        self.assertGreater(len(inv_resp.slices), 0)
+        self.assertTrue(inv_resp.quality_summary.quality_checklist["energy_conservation_closed"])
+        self.assertTrue(inv_resp.quality_summary.quality_checklist["evaporative_fraction_bounded"])
+
+        # Garbage collection
+        del scene, pair, grids, rn_grid, g_grid, h_grid, le_grid, residual_grid
+        gc.collect()
+
+
+
 if __name__ == "__main__":
     unittest.main()
 

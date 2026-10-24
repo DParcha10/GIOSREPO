@@ -1094,7 +1094,32 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "tiles_sdb_short": "/tiles/bathymetry/{model}/{metric}/{z}/{x}/{y}.png",
     "tiles_sdb_xyz": "/api/v1/tiles/bathymetry/{z}/{x}/{y}.png",
     "tiles_sdb_xyz_short": "/tiles/bathymetry/{z}/{x}/{y}.png",
+    # Cycle v2.5.45: Satellite-Derived Eddy Covariance & Latent Heat Evapotranspiration SEBAL/METRIC Contracts
+    "tiles_et": "/api/v1/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_et_short": "/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png",
+    "analysis_et_capabilities": "/api/v1/analysis/evapotranspiration/capabilities",
+    "analysis_et_capabilities_short": "/analysis/evapotranspiration/capabilities",
+    "analysis_et_scene": "/api/v1/analysis/evapotranspiration/scene",
+    "analysis_et_scene_short": "/analysis/evapotranspiration/scene",
+    "analysis_et_anchor_pixels": "/api/v1/analysis/evapotranspiration/anchor-pixels",
+    "analysis_et_anchor_pixels_short": "/analysis/evapotranspiration/anchor-pixels",
+    "analysis_evapotranspiration_invert": "/api/v1/analysis/evapotranspiration/invert",
+    "analysis_evapotranspiration_invert_short": "/analysis/evapotranspiration/invert",
+    "analysis_evapotranspiration_calibrate": "/api/v1/analysis/evapotranspiration/calibrate",
+    "analysis_evapotranspiration_calibrate_short": "/analysis/evapotranspiration/calibrate",
+    "analysis_evapotranspiration_capabilities": "/api/v1/analysis/evapotranspiration/capabilities",
+    "analysis_evapotranspiration_capabilities_short": "/analysis/evapotranspiration/capabilities",
+    "analysis_evapotranspiration_datasets": "/api/v1/analysis/evapotranspiration/datasets",
+    "analysis_evapotranspiration_datasets_short": "/analysis/evapotranspiration/datasets",
+    "analysis_evapotranspiration_evaluate": "/api/v1/analysis/evapotranspiration/evaluate",
+    "analysis_evapotranspiration_evaluate_short": "/analysis/evapotranspiration/evaluate",
+    "tiles_evapotranspiration": "/api/v1/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_evapotranspiration_short": "/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png",
+    "tiles_evapotranspiration_xyz": "/api/v1/tiles/evapotranspiration/{z}/{x}/{y}.png",
+    "tiles_evapotranspiration_xyz_short": "/tiles/evapotranspiration/{z}/{x}/{y}.png",
 }
+
+API_ROUTES: Dict[str, str] = API_ROUTE_CONTRACTS
 
 def format_api_route(route_name: str, **kwargs) -> str:
     """Format a canonical API route contract path with dynamic parameter substitutions.
@@ -1511,6 +1536,23 @@ def format_api_route(route_name: str, **kwargs) -> str:
                 kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
         else:
             kwargs["metric"] = "bathymetry_depth"
+    elif route_name in ("tiles_et", "tiles_et_short", "tiles_evapotranspiration", "tiles_evapotranspiration_short"):
+        if "model" in kwargs:
+            val = kwargs["model"]
+            try:
+                kwargs["model"] = normalize_et_model(val).value
+            except Exception:
+                kwargs["model"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            kwargs["model"] = "sebal"
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            try:
+                kwargs["metric"] = normalize_et_metric(val).value
+            except Exception:
+                kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            kwargs["metric"] = "daily_et_mm"
     return template.format(**kwargs)
 
 class BoundingBox(BaseModel):
@@ -38092,4 +38134,949 @@ class SDBTileRequestParams(BaseModel):
     rescale: Optional[str] = Field(default=None, description="Rescale range min,max")
     asset_id: Optional[str] = Field(default=None, description="Target asset or benchmark site identifier")
 
+
+
+
+# ============================================================================
+# CYCLE v2.5.45: SATELLITE-DERIVED EDDY COVARIANCE & LATENT HEAT
+# EVAPOTRANSPIRATION (SEBAL / METRIC) CONTRACTS (Tasks T-330 & T-331)
+# ============================================================================
+
+class ETModelType(str, Enum):
+    """Satellite-derived surface energy balance and evapotranspiration inversion algorithms."""
+    SEBAL = "sebal"                                     # Surface Energy Balance Algorithm for Land (Bastiaanssen et al., 1998)
+    METRIC = "metric"                                   # Mapping EvapoTranspiration with High Resolution and Internalized Calibration (Allen et al., 2007)
+    TWO_SOURCE_ENERGY_BALANCE = "tseb"                  # Two-Source Energy Balance Model (Norman, Kustas, & Humes, 1995)
+    PENMAN_MONTEITH = "penman_monteith"                 # FAO-56 Penman-Monteith Reference Evapotranspiration Inversion
+
+
+class ETTileMetric(str, Enum):
+    """Dynamic raster rendering metrics for SEBAL/METRIC energy balance and water consumption."""
+    LATENT_HEAT_FLUX = "latent_heat"                    # Latent heat flux LE (W/m^2) consumed in water evaporation
+    NET_RADIATION = "net_radiation"                     # Net radiative surface energy flux Rn (W/m^2)
+    SOIL_HEAT_FLUX = "soil_heat"                        # Conductive soil ground heat flux G (W/m^2)
+    SENSIBLE_HEAT_FLUX = "sensible_heat"                # Convective sensible heat flux H (W/m^2) warming the boundary layer
+    EVAPORATIVE_FRACTION = "evaporative_fraction"       # Dimensionless evaporative fraction Lambda = LE / (Rn - G) [0.0 - 1.2]
+    DAILY_ET_MM = "daily_et_mm"                         # 24-hour integrated daily actual evapotranspiration ET_24 (mm/day)
+    CWSI = "cwsi"                                       # Crop Water Stress Index CWSI = 1 - (LE / LE_pot) [0.0 - 1.0]
+    # Backwards compatibility aliases
+    CROP_WATER_STRESS_INDEX = "crop_water_stress_index"
+    DAILY_ET = "daily_et"
+    SURFACE_TEMPERATURE = "surface_temperature"
+
+
+class CropWaterStressTier(str, Enum):
+    """Agronomic crop water stress and desiccation severity tier."""
+    NONE = "none"                                       # CWSI < 0.20: Fully transpiring, optimal soil moisture
+    MILD = "mild"                                       # 0.20 <= CWSI < 0.40: Incipient canopy stress, monitoring advisory
+    MODERATE = "moderate"                               # 0.40 <= CWSI < 0.60: Evaporative deficit, scheduled irrigation recommended
+    SEVERE = "severe"                                   # 0.60 <= CWSI < 0.80: Stomatal closure, yield reduction threshold
+    EXTREME_DESICCATION = "extreme_desiccation"         # CWSI >= 0.80: Complete wilting point / severe arid fallow
+
+
+class AnchorPixelType(str, Enum):
+    """Anchor extreme calibration pixel candidates for CIMEC (SEBAL / METRIC)."""
+    COLD_PIXEL = "cold_pixel"
+    HOT_PIXEL = "hot_pixel"
+    # Backwards compatibility aliases
+    COLD_WELL_WATERED_ALFALFA = "cold_well_watered_alfalfa"
+    HOT_DRY_BARE_SOIL = "hot_dry_bare_soil"
+
+
+def normalize_et_model(val: Any) -> ETModelType:
+    """Robustly normalizes evapotranspiration model identifier into canonical ETModelType enum."""
+    if isinstance(val, ETModelType):
+        return val
+    s = str(val).lower().strip().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "sebal": ETModelType.SEBAL,
+        "metric": ETModelType.METRIC,
+        "tseb": ETModelType.TWO_SOURCE_ENERGY_BALANCE,
+        "two_source": ETModelType.TWO_SOURCE_ENERGY_BALANCE,
+        "two_source_energy_balance": ETModelType.TWO_SOURCE_ENERGY_BALANCE,
+        "penman": ETModelType.PENMAN_MONTEITH,
+        "penman_monteith": ETModelType.PENMAN_MONTEITH,
+        "fao56": ETModelType.PENMAN_MONTEITH,
+    }
+    if s in mapping:
+        return mapping[s]
+    for m in ETModelType:
+        if m.value == s:
+            return m
+    return ETModelType.SEBAL
+
+
+def normalize_et_metric(val: Any) -> ETTileMetric:
+    """Robustly normalizes tile metric into canonical ETTileMetric enum."""
+    if isinstance(val, ETTileMetric):
+        return val
+    s = str(val).lower().strip().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "latent_heat": ETTileMetric.LATENT_HEAT_FLUX,
+        "latent_heat_flux": ETTileMetric.LATENT_HEAT_FLUX,
+        "le": ETTileMetric.LATENT_HEAT_FLUX,
+        "lambda_e": ETTileMetric.LATENT_HEAT_FLUX,
+        "evaporation": ETTileMetric.LATENT_HEAT_FLUX,
+        "net_radiation": ETTileMetric.NET_RADIATION,
+        "radiation": ETTileMetric.NET_RADIATION,
+        "rn": ETTileMetric.NET_RADIATION,
+        "soil_heat": ETTileMetric.SOIL_HEAT_FLUX,
+        "soil_heat_flux": ETTileMetric.SOIL_HEAT_FLUX,
+        "soil_flux": ETTileMetric.SOIL_HEAT_FLUX,
+        "g": ETTileMetric.SOIL_HEAT_FLUX,
+        "sensible_heat": ETTileMetric.SENSIBLE_HEAT_FLUX,
+        "sensible_heat_flux": ETTileMetric.SENSIBLE_HEAT_FLUX,
+        "h": ETTileMetric.SENSIBLE_HEAT_FLUX,
+        "evaporative_fraction": ETTileMetric.EVAPORATIVE_FRACTION,
+        "fraction": ETTileMetric.EVAPORATIVE_FRACTION,
+        "lambda": ETTileMetric.EVAPORATIVE_FRACTION,
+        "ef": ETTileMetric.EVAPORATIVE_FRACTION,
+        "cwsi": ETTileMetric.CWSI,
+        "crop_water_stress": ETTileMetric.CWSI,
+        "crop_water_stress_index": ETTileMetric.CWSI,
+        "water_stress": ETTileMetric.CWSI,
+        "stress": ETTileMetric.CWSI,
+        "daily_et_mm": ETTileMetric.DAILY_ET_MM,
+        "daily_et": ETTileMetric.DAILY_ET_MM,
+        "et24": ETTileMetric.DAILY_ET_MM,
+        "daily_evapotranspiration": ETTileMetric.DAILY_ET_MM,
+        "et": ETTileMetric.DAILY_ET_MM,
+        "lst": ETTileMetric.SURFACE_TEMPERATURE,
+        "surface_temperature": ETTileMetric.SURFACE_TEMPERATURE,
+        "temperature": ETTileMetric.SURFACE_TEMPERATURE,
+        "ts": ETTileMetric.SURFACE_TEMPERATURE,
+    }
+    if s in mapping:
+        return mapping[s]
+    for m in ETTileMetric:
+        if m.value == s:
+            return m
+    return ETTileMetric.LATENT_HEAT_FLUX
+
+
+def classify_crop_water_stress_tier(cwsi: float) -> CropWaterStressTier:
+    """Classifies Crop Water Stress Index into canonical agronomic severity tiers."""
+    val = float(cwsi)
+    if val < 0.20:
+        return CropWaterStressTier.NONE
+    elif val < 0.40:
+        return CropWaterStressTier.MILD
+    elif val < 0.60:
+        return CropWaterStressTier.MODERATE
+    elif val < 0.80:
+        return CropWaterStressTier.SEVERE
+    return CropWaterStressTier.EXTREME_DESICCATION
+
+
+ET_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    ETModelType.SEBAL.value: {
+        "id": ETModelType.SEBAL.value,
+        "name": "Surface Energy Balance Algorithm for Land (SEBAL)",
+        "reference": "Bastiaanssen, W. G. M., Menenti, M., Feddes, R. A., & de Bruin, H. A. R. (1998). A remote sensing surface energy balance algorithm for land (SEBAL). Journal of Hydrology, 212-213, 198-212.",
+        "equation": r"\lambda E = R_n - G - H = R_n - G - \rho_{\text{air}} C_p \frac{dT}{r_{ah}}",
+        "description": "Internalized boundary layer calibration using radiometric hot and cold anchor pixels with iterative Monin-Obukhov momentum corrections."
+    },
+    ETModelType.METRIC.value: {
+        "id": ETModelType.METRIC.value,
+        "name": "Mapping EvapoTranspiration at High Resolution with Internalized Calibration (METRIC)",
+        "reference": "Allen, R. G., Tasumi, M., & Trezza, R. (2007). Satellite-based energy balance for mapping evapotranspiration with internalized calibration (METRIC). Journal of Irrigation and Drainage Engineering, 133(4), 380-394.",
+        "equation": r"\text{ET}_r\text{F} = \frac{\text{ET}_{\text{inst}}}{\text{ET}_r}, \quad \text{ET}_{24} = \text{ET}_r\text{F} \cdot \text{ET}_{r\text{-}24}",
+        "description": "Alfalfa-referenced internalized calibration linking instantaneous satellite latent heat fluxes to hourly ASCE-EWRI standardized weather station reference ET."
+    },
+    ETModelType.TWO_SOURCE_ENERGY_BALANCE.value: {
+        "id": ETModelType.TWO_SOURCE_ENERGY_BALANCE.value,
+        "name": "Two-Source Energy Balance Model (TSEB)",
+        "reference": "Norman, J. M., Kustas, W. P., & Humes, K. S. (1995). Source approach for estimating soil and vegetation energy fluxes in observations of directional radiometric surface temperature. Agricultural and Forest Meteorology, 77(3-4), 263-293.",
+        "equation": r"R_{n,c} + R_{n,s} = H_c + H_s + \lambda E_c + \lambda E_s + G",
+        "description": "Partitioned energy balance decomposing radiometric land surface temperature into distinct canopy transpiration and bare-soil evaporation components."
+    },
+    ETModelType.PENMAN_MONTEITH.value: {
+        "id": ETModelType.PENMAN_MONTEITH.value,
+        "name": "FAO-56 Standardized Penman-Monteith Inversion",
+        "reference": "Allen, R. G., Pereira, L. S., Raes, D., & Smith, M. (1998). Crop evapotranspiration: Guidelines for computing crop water requirements. FAO Irrigation and Drainage Paper 56.",
+        "equation": r"\lambda E = \frac{\Delta (R_n - G) + \rho_a c_p \frac{e_s - e_a}{r_a}}{\Delta + \gamma (1 + \frac{r_s}{r_a})}",
+        "description": "Physically grounded aerodynamic and stomatal canopy resistance formulation driven by gridded meteorological reanalysis and vegetation density."
+    }
+}
+
+
+ET_TILE_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    ETTileMetric.LATENT_HEAT_FLUX.value: {
+        "name": "Latent Heat Flux (LE)",
+        "unit": "W/m²",
+        "colormap": "YlGnBu",
+        "default_range": "0.0,650.0",
+        "description": "Turbulent latent heat flux consumed by liquid water vaporization and plant transpiration"
+    },
+    ETTileMetric.NET_RADIATION.value: {
+        "name": "Net Radiation (Rn)",
+        "unit": "W/m²",
+        "colormap": "inferno",
+        "default_range": "100.0,750.0",
+        "description": "Total available surface radiative energy balance accounting for shortwave and longwave net radiation"
+    },
+    ETTileMetric.SOIL_HEAT_FLUX.value: {
+        "name": "Soil Heat Flux (G)",
+        "unit": "W/m²",
+        "colormap": "magma",
+        "default_range": "10.0,140.0",
+        "description": "Conductive thermal ground energy flux moving into the soil column"
+    },
+    ETTileMetric.SENSIBLE_HEAT_FLUX.value: {
+        "name": "Sensible Heat Flux (H)",
+        "unit": "W/m²",
+        "colormap": "hot",
+        "default_range": "0.0,450.0",
+        "description": "Convective sensible heat flux transferred from the surface into the planetary boundary layer"
+    },
+    ETTileMetric.EVAPORATIVE_FRACTION.value: {
+        "name": "Evaporative Fraction (Λ)",
+        "unit": "dimensionless",
+        "colormap": "viridis",
+        "default_range": "0.0,1.0",
+        "description": "Ratio of latent heat flux to available net energy Lambda = LE / (Rn - G)"
+    },
+    ETTileMetric.CWSI.value: {
+        "name": "Crop Water Stress Index (CWSI)",
+        "unit": "dimensionless",
+        "colormap": "coolwarm",
+        "default_range": "0.0,1.0",
+        "description": "Agronomic plant canopy moisture deficit index CWSI = 1 - (LE / LE_pot)"
+    },
+    ETTileMetric.DAILY_ET_MM.value: {
+        "name": "Daily Actual Evapotranspiration (ET_24)",
+        "unit": "mm/day",
+        "colormap": "turbo",
+        "default_range": "0.0,9.5",
+        "description": "24-hour time-integrated daily crop water consumption in millimeters per day"
+    },
+    "crop_water_stress_index": {
+        "name": "Crop Water Stress Index (CWSI)",
+        "unit": "dimensionless",
+        "colormap": "coolwarm",
+        "default_range": "0.0,1.0",
+        "description": "Agronomic plant canopy moisture deficit index CWSI = 1 - (LE / LE_pot)"
+    },
+    "daily_et": {
+        "name": "Daily Actual Evapotranspiration (ET_24)",
+        "unit": "mm/day",
+        "colormap": "turbo",
+        "default_range": "0.0,9.5",
+        "description": "24-hour time-integrated daily crop water consumption in millimeters per day"
+    },
+    ETTileMetric.SURFACE_TEMPERATURE.value: {
+        "name": "Land Surface Temperature (LST)",
+        "unit": "°C",
+        "colormap": "inferno",
+        "default_range": "15.0,48.0",
+        "description": "Calibrated radiometric thermal infrared surface skin temperature in degrees Celsius"
+    }
+}
+
+
+CROP_WATER_STRESS_TIER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    CropWaterStressTier.NONE.value: {
+        "tier": CropWaterStressTier.NONE.value,
+        "cwsi_range": [0.0, 0.20],
+        "label": "Optimal Moisture (No Stress)",
+        "color": "#10B981",
+        "advisory": "Full transpiration active; soil root zone moisture at or above field capacity. No irrigation intervention required."
+    },
+    CropWaterStressTier.MILD.value: {
+        "tier": CropWaterStressTier.MILD.value,
+        "cwsi_range": [0.20, 0.40],
+        "label": "Mild Incipient Stress",
+        "color": "#FBBF24",
+        "advisory": "Minor canopy temperature elevation; early stomatal throttling under midday atmospheric vapor deficit. Monitor next 48 hours."
+    },
+    CropWaterStressTier.MODERATE.value: {
+        "tier": CropWaterStressTier.MODERATE.value,
+        "cwsi_range": [0.40, 0.60],
+        "label": "Moderate Moisture Deficit",
+        "color": "#F97316",
+        "advisory": "Noticeable latent heat depression; crop transpirational cooling restricted. Schedule irrigation cycle within 2-3 days."
+    },
+    CropWaterStressTier.SEVERE.value: {
+        "tier": CropWaterStressTier.SEVERE.value,
+        "cwsi_range": [0.60, 0.80],
+        "label": "Severe Water Stress",
+        "color": "#EF4444",
+        "advisory": "Critical stomatal closure; imminent yield penalty across vegetative growth stages. Immediate high-priority irrigation required."
+    },
+    CropWaterStressTier.EXTREME_DESICCATION.value: {
+        "tier": CropWaterStressTier.EXTREME_DESICCATION.value,
+        "cwsi_range": [0.80, 1.0],
+        "label": "Extreme Desiccation / Arid Fallow",
+        "color": "#7F1D1D",
+        "advisory": "Plant wilting point reached or unplanted dry fallow ground. Crop senescence or crop failure irreversible without immediate soaking."
+    }
+}
+
+
+ET_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "CENTRAL_VALLEY_ALFALFA_CA": {
+        "id": "CENTRAL_VALLEY_ALFALFA_CA",
+        "name": "San Joaquin Valley Agricultural Grid",
+        "location": "Fresno County, California, USA",
+        "center": [36.85, -120.45],
+        "bbox": [-120.55, 36.75, -120.35, 36.95],
+        "crop_type": "Alfalfa, Almonds & Pistachio Orchards",
+        "typical_air_temp_c": 32.5,
+        "typical_surface_temp_c": 34.2,
+        "wind_speed_m_s": 2.8,
+        "solar_rad_w_m2": 820.0,
+        "daily_reference_et_mm": 7.4,
+        "cold_pixel_sample": {"ndvi": 0.84, "lst_c": 24.2, "albedo": 0.17},
+        "hot_pixel_sample": {"ndvi": 0.14, "lst_c": 46.5, "albedo": 0.26},
+        "description": "High-intensity irrigated agriculture in the California Central Valley with stark thermal contrast between flooded alfalfa checks and sun-baked fallow ground."
+    },
+    "IMPERIAL_VALLEY_CROPS_CA": {
+        "id": "IMPERIAL_VALLEY_CROPS_CA",
+        "name": "Imperial Irrigation District",
+        "location": "Imperial County, California, USA",
+        "center": [32.85, -115.55],
+        "bbox": [-115.65, 32.75, -115.45, 32.95],
+        "crop_type": "Sudangrass, Alfalfa & Winter Vegetables",
+        "typical_air_temp_c": 38.0,
+        "typical_surface_temp_c": 41.5,
+        "wind_speed_m_s": 3.2,
+        "solar_rad_w_m2": 910.0,
+        "daily_reference_et_mm": 8.9,
+        "cold_pixel_sample": {"ndvi": 0.86, "lst_c": 27.5, "albedo": 0.18},
+        "hot_pixel_sample": {"ndvi": 0.11, "lst_c": 52.0, "albedo": 0.31},
+        "description": "Low-desert agricultural basin utilizing gravity-fed Colorado River irrigation surrounded by extreme Sonoran desert bare rock and dry silt."
+    },
+    "PALLAS_VALLEY_AG_WA": {
+        "id": "PALLAS_VALLEY_AG_WA",
+        "name": "Yakima / Columbia Basin Irrigation Project",
+        "location": "Yakima County, Washington, USA",
+        "center": [46.40, -119.80],
+        "bbox": [-119.90, 46.30, -119.70, 46.50],
+        "crop_type": "Apples, Hops, Wine Grapes & Center-Pivot Corn",
+        "typical_air_temp_c": 28.0,
+        "typical_surface_temp_c": 30.5,
+        "wind_speed_m_s": 2.4,
+        "solar_rad_w_m2": 760.0,
+        "daily_reference_et_mm": 6.2,
+        "cold_pixel_sample": {"ndvi": 0.81, "lst_c": 21.0, "albedo": 0.16},
+        "hot_pixel_sample": {"ndvi": 0.16, "lst_c": 43.0, "albedo": 0.24},
+        "description": "High-latitude semi-arid irrigated valley featuring complex center-pivot geometries and microclimatic oasis cooling effects."
+    },
+    "MIDWEST_CORN_BELT_IA": {
+        "id": "MIDWEST_CORN_BELT_IA",
+        "name": "Iowa Corn-Soybean Flux Tower Grid",
+        "location": "Story County, Iowa, USA",
+        "center": [41.98, -93.65],
+        "bbox": [-93.75, 41.90, -93.55, 42.08],
+        "crop_type": "Continuous Corn & Soybean Rotation",
+        "typical_air_temp_c": 26.5,
+        "typical_surface_temp_c": 27.8,
+        "wind_speed_m_s": 3.5,
+        "solar_rad_w_m2": 740.0,
+        "daily_reference_et_mm": 5.8,
+        "cold_pixel_sample": {"ndvi": 0.88, "lst_c": 22.5, "albedo": 0.19},
+        "hot_pixel_sample": {"ndvi": 0.22, "lst_c": 36.8, "albedo": 0.22},
+        "description": "Rainfed agricultural benchmark collocated with AmeriFlux eddy covariance towers monitoring continental boundary-layer moisture flux."
+    },
+    "DOANA_WETLANDS_SPAIN": {
+        "id": "DOANA_WETLANDS_SPAIN",
+        "name": "Doñana National Park & Guadalquivir Marsh",
+        "location": "Andalusia, Spain",
+        "center": [37.05, -6.40],
+        "bbox": [-6.50, 36.95, -6.30, 37.15],
+        "crop_type": "Rice Paddies & Mediterranean Marshland Ecotone",
+        "typical_air_temp_c": 31.0,
+        "typical_surface_temp_c": 33.0,
+        "wind_speed_m_s": 2.9,
+        "solar_rad_w_m2": 800.0,
+        "daily_reference_et_mm": 6.8,
+        "cold_pixel_sample": {"ndvi": 0.79, "lst_c": 23.8, "albedo": 0.14},
+        "hot_pixel_sample": {"ndvi": 0.18, "lst_c": 45.2, "albedo": 0.28},
+        "description": "Mediterranean UNESCO wetland biosphere reserve with intensive adjacent berry and rice agriculture driving critical aquifer water competition."
+    }
+}
+
+
+# ============================================================================
+# DETERMINISTIC SEBAL / METRIC MATHEMATICAL SOLVERS & INVARIANTS
+# ============================================================================
+
+def calculate_broadband_albedo(
+    blue: float,
+    green: float,
+    red: float,
+    nir: float,
+    swir1: Optional[float] = None,
+    swir2: Optional[float] = None
+) -> float:
+    """Calculates surface broadband albedo using Tasumi et al. (2008) / Liang (2000) spectral integration.
+    
+    Weights ensure integration across 0.3 - 2.5 um solar spectrum:
+    alpha = 0.254*Blue + 0.149*Green + 0.263*Red + 0.314*NIR (+ SWIR terms if available).
+    Invariants: albedo strictly bounded within [0.02, 0.90].
+    """
+    b = max(0.001, min(1.0, float(blue)))
+    g = max(0.001, min(1.0, float(green)))
+    r = max(0.001, min(1.0, float(red)))
+    n = max(0.001, min(1.0, float(nir)))
+
+    if swir1 is not None and swir2 is not None:
+        s1 = max(0.001, min(1.0, float(swir1)))
+        s2 = max(0.001, min(1.0, float(swir2)))
+        # Full 6-band Tasumi formulation
+        albedo = (0.246 * b) + (0.146 * g) + (0.191 * r) + (0.304 * n) + (0.070 * s1) + (0.043 * s2)
+    else:
+        # 4-band VNIR approximation normalized to unity
+        albedo = (0.254 * b) + (0.149 * g) + (0.263 * r) + (0.314 * n) + 0.020
+
+    return float(max(0.02, min(0.90, round(albedo, 4))))
+
+
+def calculate_net_radiation(
+    albedo: float,
+    surface_temp_k: float,
+    solar_radiation_w_m2: float = 800.0,
+    air_temp_k: Optional[float] = None,
+    atmospheric_transmissivity: float = 0.75,
+    ndvi: float = 0.50
+) -> Dict[str, float]:
+    """Calculates net radiation Rn at the earth surface (Allen et al. 2007).
+    
+    Rn = (1 - alpha)*Rs_down + RL_down - RL_up - (1 - eps_0)*RL_down
+    Invariants:
+      - Rn > 0 under clear-sky daytime solar irradiance
+      - Stefan-Boltzmann constant sigma = 5.670374419e-8 W/(m^2 K^4)
+    """
+    sigma = 5.670374419e-8
+    eps_num = 1e-6
+    ts = max(250.0, min(360.0, float(surface_temp_k)))
+    ta = float(air_temp_k) if air_temp_k is not None else (ts - 2.0)
+    ta = max(250.0, min(360.0, ta))
+    rs_down = max(0.0, float(solar_radiation_w_m2))
+    alb = max(0.02, min(0.90, float(albedo)))
+
+    # Net shortwave radiation
+    r_ns = (1.0 - alb) * rs_down
+
+    # Surface emissivity from NDVI / fractional vegetation cover
+    fvc = max(0.0, min(1.0, ((max(0.0, float(ndvi)) - 0.15) / (0.80 - 0.15 + eps_num)) ** 2))
+    eps_0 = 0.95 + (0.04 * fvc)  # 0.95 bare soil, 0.99 dense canopy
+
+    # Atmospheric emissivity (Bastianssen 1998 / Swinbank 1963)
+    tau_sw = max(0.40, min(0.90, float(atmospheric_transmissivity)))
+    eps_a = 0.85 * ((-math.log(tau_sw)) ** 0.09)
+
+    # Incoming longwave radiation
+    rl_down = eps_a * sigma * (ta ** 4)
+
+    # Outgoing thermal longwave radiation
+    rl_up = eps_0 * sigma * (ts ** 4)
+
+    # Total net radiation
+    rn = r_ns + (eps_0 * rl_down) - rl_up
+
+    return {
+        "net_radiation_rn": round(float(rn), 2),
+        "net_shortwave": round(float(r_ns), 2),
+        "incoming_longwave": round(float(rl_down), 2),
+        "outgoing_longwave": round(float(rl_up), 2),
+        "surface_emissivity": round(float(eps_0), 4),
+        "atmospheric_emissivity": round(float(eps_a), 4)
+    }
+
+
+def calculate_soil_heat_flux(
+    rn_w_m2: float,
+    ndvi: float,
+    surface_temp_c: float,
+    albedo: float
+) -> float:
+    """Calculates ground soil heat flux G using Bastiaanssen (1998) formulation.
+    
+    G / Rn = T_s * (0.0038 + 0.0074*alpha) * (1 - 0.98*NDVI^4)
+    Invariants:
+      - High NDVI vegetation checks exhibit low G (~0.05-0.10 Rn)
+      - Dry bare soil exhibits high G (~0.20-0.35 Rn)
+      - G non-negative during active solar daytime
+    """
+    rn = float(rn_w_m2)
+    ts = max(0.0, min(65.0, float(surface_temp_c)))
+    nv = max(-0.2, min(0.95, float(ndvi)))
+    alb = max(0.02, min(0.90, float(albedo)))
+
+    if nv < 0.0:  # Open water bodies
+        g_ratio = 0.50
+    else:
+        g_ratio = ts * (0.0038 + (0.0074 * alb)) * (1.0 - (0.98 * (max(0.0, nv) ** 4)))
+
+    g_ratio = max(0.04, min(0.45, g_ratio))
+    g = rn * g_ratio
+    return round(float(g), 2)
+
+
+def calculate_monin_obukhov_stability(
+    wind_speed_200m_m_s: float,
+    roughness_z0m: float,
+    surface_temp_k: float,
+    sensible_heat_h: float,
+    height_z1: float = 0.1,
+    height_z2: float = 2.0,
+    max_iterations: int = 15
+) -> Dict[str, Any]:
+    """Iteratively solves Monin-Obukhov atmospheric stability parameters (u*, L, r_ah).
+    
+    Guards against numerical divergence:
+      - Clamps iterations <= 15
+      - Prevents zero-crossing division (|L| >= 0.1m)
+      - Paulson (1970) / Businger-Dyer flux-profile stability corrections
+    """
+    k_karman = 0.41
+    g_accel = 9.80665
+    rho_air = 1.225
+    cp_air = 1004.16
+    eps = 1e-5
+
+    u200 = max(0.5, float(wind_speed_200m_m_s))
+    z0m = max(0.001, min(2.5, float(roughness_z0m)))
+    ts = max(250.0, min(360.0, float(surface_temp_k)))
+    h = float(sensible_heat_h)
+    z1 = float(height_z1)
+    z2 = float(height_z2)
+
+    # Initial neutral friction velocity
+    u_star = (k_karman * u200) / math.log(200.0 / z0m)
+
+    l_old = -1000.0
+    converged = False
+    iters = 0
+
+    for iters in range(1, max_iterations + 1):
+        # Monin-Obukhov length L
+        denom = k_karman * g_accel * h
+        if abs(denom) < eps:
+            l_curr = -1e5  # Neutral boundary
+        else:
+            l_curr = -(rho_air * cp_air * (u_star ** 3) * ts) / denom
+
+        # Guard: |L| >= 0.1m to prevent singularity
+        if abs(l_curr) < 0.1:
+            l_curr = 0.1 if l_curr >= 0 else -0.1
+
+        # Stability functions psi_m and psi_h
+        if l_curr < 0.0:  # Unstable conditions (convective daytime)
+            # Paulson (1970)
+            x200 = (1.0 - 16.0 * (200.0 / l_curr)) ** 0.25
+            psi_m_200 = (2.0 * math.log((1.0 + x200) / 2.0)) + math.log((1.0 + (x200 ** 2)) / 2.0) - (2.0 * math.atan(x200)) + (math.pi / 2.0)
+
+            x2 = (1.0 - 16.0 * (z2 / l_curr)) ** 0.25
+            x1 = (1.0 - 16.0 * (z1 / l_curr)) ** 0.25
+            psi_h_2 = 2.0 * math.log((1.0 + (x2 ** 2)) / 2.0)
+            psi_h_1 = 2.0 * math.log((1.0 + (x1 ** 2)) / 2.0)
+        elif l_curr > 0.0:  # Stable conditions (inversion / nighttime)
+            # Webb (1970)
+            psi_m_200 = -5.0 * min(1.0, 200.0 / l_curr)
+            psi_h_2 = -5.0 * min(1.0, z2 / l_curr)
+            psi_h_1 = -5.0 * min(1.0, z1 / l_curr)
+        else:
+            psi_m_200 = psi_h_2 = psi_h_1 = 0.0
+
+        u_star_new = (k_karman * u200) / max(0.1, (math.log(200.0 / z0m) - psi_m_200))
+
+        delta = abs(l_curr - l_old) / max(1.0, abs(l_old))
+        if delta < 1e-3:
+            converged = True
+            u_star = u_star_new
+            l_old = l_curr
+            break
+
+        u_star = u_star_new
+        l_old = l_curr
+
+    # Final aerodynamic resistance r_ah (s/m) between z1 and z2
+    r_ah = (math.log(z2 / z1) - psi_h_2 + psi_h_1) / max(eps, u_star * k_karman)
+    r_ah = max(5.0, min(500.0, r_ah))
+
+    regime = "unstable" if l_old < -10.0 else ("stable" if l_old > 10.0 else "neutral")
+
+    return {
+        "friction_velocity_u_star": round(float(u_star), 4),
+        "aerodynamic_resistance_rah": round(float(r_ah), 2),
+        "monin_obukhov_length_l": round(float(l_old), 2),
+        "stability_regime": regime,
+        "iterations_converged": iters,
+        "convergence_delta": round(float(delta), 6)
+    }
+
+
+def solve_sebal_energy_balance(
+    net_radiation_w_m2: float,
+    soil_heat_flux_w_m2: float,
+    sensible_heat_w_m2: float,
+    daily_net_radiation_w_m2: Optional[float] = None
+) -> Dict[str, float]:
+    """Calculates instantaneous Latent Heat Flux LE, Evaporative Fraction Lambda, CWSI, and ET_24.
+    
+    Enforces fundamental thermodynamic energy conservation:
+    LE = Rn - G - H
+    Invariants:
+      - Closure balance: Rn == G + H + LE
+      - LE >= 0.0 W/m^2 (non-negative evaporative cooling)
+      - Evaporative fraction Lambda in [0.0, 1.20]
+    """
+    rn = float(net_radiation_w_m2)
+    g = float(soil_heat_flux_w_m2)
+    h = float(sensible_heat_w_m2)
+
+    avail_energy = rn - g
+    # Latent heat flux as the thermodynamic residual
+    raw_le = avail_energy - h
+    le = max(0.0, raw_le)
+
+    # Evaporative fraction Lambda
+    if avail_energy > 10.0:
+        lambda_ef = le / avail_energy
+    else:
+        lambda_ef = 0.0
+    lambda_ef = max(0.0, min(1.20, lambda_ef))
+
+    # Crop Water Stress Index
+    cwsi = max(0.0, min(1.0, 1.0 - min(1.0, lambda_ef)))
+
+    # Daily integrated actual evapotranspiration ET_24 (mm/day)
+    # 1 mm/day of water depth requires 2.45 MJ/m^2 (lambda_v = 2.45e6 J/kg, rho_w = 1000 kg/m^3)
+    rn24 = float(daily_net_radiation_w_m2) if daily_net_radiation_w_m2 is not None else (rn * 0.38)
+    rn24 = max(0.0, rn24)
+    # Energy per day in J/m^2 = rn24 * 86400
+    et_24 = (lambda_ef * rn24 * 86400.0) / (2.45e6)
+    et_24 = max(0.0, min(15.0, et_24))
+
+    return {
+        "net_radiation_w_m2": round(rn, 2),
+        "soil_heat_flux_w_m2": round(g, 2),
+        "sensible_heat_flux_w_m2": round(h, 2),
+        "latent_heat_flux_w_m2": round(le, 2),
+        "evaporative_fraction": round(lambda_ef, 4),
+        "crop_water_stress_index": round(cwsi, 4),
+        "daily_et_mm_day": round(et_24, 2),
+        "energy_balance_residual_w_m2": round(abs(rn - (g + h + raw_le)), 4)
+    }
+
+
+def build_et_tile_url(
+    model: Union[ETModelType, str],
+    metric: Union[ETTileMetric, str],
+    z: Union[int, str],
+    x: Union[int, str],
+    y: Union[int, str],
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds canonical XYZ tile URL for dynamic SEBAL/METRIC tile rendering."""
+    m_str = model.value if hasattr(model, "value") else str(model).lower()
+    t_str = metric.value if hasattr(metric, "value") else str(metric).lower()
+    prefix = base_prefix.rstrip("/")
+    return f"{prefix}/tiles/evapotranspiration/{m_str}/{t_str}/{z}/{x}/{y}.png"
+
+
+def get_et_tile_template(
+    model: Union[ETModelType, str] = ETModelType.SEBAL,
+    metric: Union[ETTileMetric, str] = ETTileMetric.DAILY_ET_MM,
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic URL template with {z}/{x}/{y} place-holders for Leaflet TileLayer."""
+    return build_et_tile_url(model, metric, "{z}", "{x}", "{y}", base_prefix=base_prefix)
+
+
+def build_et_tile_url_template(
+    model: Union[ETModelType, str] = ETModelType.SEBAL,
+    metric: Union[ETTileMetric, str] = ETTileMetric.DAILY_ET_MM,
+    base_prefix: str = "/api/v1"
+) -> str:
+    """Builds dynamic URL template with {z}/{x}/{y} place-holders for Leaflet TileLayer."""
+    return get_et_tile_template(model, metric, base_prefix=base_prefix)
+
+
+def calculate_evaporative_fraction(rn: float, g: float, h: float) -> float:
+    """Calculates dimensionless evaporative fraction Lambda = (Rn - G - H) / (Rn - G).
+    
+    Returns lambda_e / (rn - g). If abs(rn - g) < 1e-6, return 0.0. Clamps result between 0.0 and 1.2.
+    """
+    avail = float(rn) - float(g)
+    if abs(avail) < 1e-6:
+        return 0.0
+    lambda_e = avail - float(h)
+    ef = lambda_e / avail
+    return float(max(0.0, min(1.2, ef)))
+
+
+def calculate_crop_water_stress_index(
+    h: Optional[float] = None,
+    rn: Optional[float] = None,
+    g: Optional[float] = None,
+    *,
+    canopy_temp_c: Optional[float] = None,
+    air_temp_c: float = 25.0,
+    rh_pct: float = 40.0,
+    vpd_kpa: Optional[float] = None,
+    ndvi: float = 0.65,
+    model: Union[CWSIModelType, str] = CWSIModelType.EMPIRICAL_IDSO,
+    et0_mm_day: float = 5.0,
+    **kwargs: Any
+) -> Union[float, Dict[str, Any]]:
+    """Calculates Crop Water Stress Index (CWSI).
+    
+    Supports both:
+    1. SEBAL / METRIC energy balance formulation:
+       calculate_crop_water_stress_index(h, rn, g) -> float in [0.0, 1.0]
+       Returns max(0.0, min(1.0, h / max(1e-6, rn - g))).
+    2. Empirical Idso (1981) / Moran (1994) canopy-air temperature baseline formulation:
+       calculate_crop_water_stress_index(canopy_temp_c=..., air_temp_c=...) -> Dict[str, Any]
+    """
+    # 1. SEBAL / METRIC energy balance formulation
+    if rn is not None and g is not None:
+        val_h = float(h if h is not None else 0.0)
+        denom = max(1e-6, float(rn) - float(g))
+        cwsi = val_h / denom
+        return float(max(0.0, min(1.0, cwsi)))
+
+    # 2. Idso / Moran empirical formulation
+    tc = float(canopy_temp_c if canopy_temp_c is not None else (h if h is not None else 25.0))
+    ta = float(air_temp_c if air_temp_c is not None else (rn if rn is not None else 25.0))
+    diff = tc - ta
+
+    if vpd_kpa is None:
+        es = 0.6108 * math.exp((17.27 * ta) / (ta + 237.3))
+        ea = es * (max(0.0, min(100.0, float(rh_pct))) / 100.0)
+        vpd = max(0.1, es - ea)
+    else:
+        vpd = max(0.1, float(vpd_kpa))
+
+    m_str = model.value if isinstance(model, CWSIModelType) else str(model).lower()
+
+    if m_str == "trapezoid_optical_thermal":
+        lower_diff = -3.0
+        upper_diff = max(1.0, 8.0 * (1.0 - max(0.0, min(1.0, float(ndvi)))))
+    else:
+        lower_diff = 1.0 - 1.7 * vpd
+        upper_diff = 5.0
+
+    range_span = max(1.0, upper_diff - lower_diff)
+    raw_cwsi = (diff - lower_diff) / range_span
+    cwsi_val = max(0.0, min(1.0, raw_cwsi))
+
+    ef = 1.0 - cwsi_val
+    eta = ef * float(et0_mm_day)
+    tier = classify_water_stress_tier(cwsi_val)
+
+    priority_map = {
+        WaterStressTier.NO_STRESS: "low",
+        WaterStressTier.MILD_STRESS: "low",
+        WaterStressTier.MODERATE_STRESS: "moderate",
+        WaterStressTier.SEVERE_DEFICIT: "high",
+        WaterStressTier.EXTREME_DESICCATION: "critical"
+    }
+
+    return {
+        "cwsi": round(cwsi_val, 4),
+        "evaporative_fraction": round(ef, 4),
+        "actual_et_mm_day": round(eta, 2),
+        "water_stress_tier": tier,
+        "canopy_air_temp_diff_c": round(diff, 2),
+        "lower_baseline_temp_diff_c": round(lower_diff, 2),
+        "upper_baseline_temp_diff_c": round(upper_diff, 2),
+        "irrigation_priority": priority_map.get(tier, "moderate")
+    }
+
+
+# ============================================================================
+# PYDANTIC DATA TRANSFER CONTRACTS & API SCHEMAS
+# ============================================================================
+
+class AnchorPixelCandidate(BaseModel):
+    """Calibrated radiometric anchor candidate pixel representing an extreme transpirational boundary."""
+    pixel_id: Optional[str] = Field(default=None, description="Unique anchor pixel identifier")
+    pixel_type: AnchorPixelType = Field(..., description="Anchor boundary classification (cold pixel vs hot pixel)")
+    x: float = Field(..., description="Projected grid X coordinate or longitude")
+    y: float = Field(..., description="Projected grid Y coordinate or latitude")
+    ndvi: float = Field(..., ge=-1.0, le=1.0, description="Normalized Difference Vegetation Index")
+    surface_temp_k: float = Field(..., ge=200.0, le=380.0, description="Surface skin temperature in Kelvin")
+    albedo: float = Field(..., ge=0.0, le=1.0, description="Broadband surface albedo")
+    sensible_heat_w_m2: float = Field(..., description="Sensible heat flux at anchor location (W/m^2)")
+    latent_heat_w_m2: float = Field(..., description="Latent heat flux at anchor location (W/m^2)")
+    surface_temp_c: Optional[float] = Field(default=None, description="Surface skin temperature in Celsius")
+    rn_w_m2: Optional[float] = Field(default=None, description="Net radiation at anchor location (W/m^2)")
+    g_w_m2: Optional[float] = Field(default=None, description="Soil heat flux at anchor location (W/m^2)")
+    h_w_m2: Optional[float] = Field(default=None, description="Sensible heat flux at anchor location (W/m^2)")
+    lambda_e_w_m2: Optional[float] = Field(default=None, description="Latent heat flux at anchor location (W/m^2)")
+    dt_k: Optional[float] = Field(default=None, description="Near-surface temperature differential dT = T_a1 - T_a2 (K)")
+    score: Optional[float] = Field(default=1.0, ge=0.0, le=1.0, description="Statistical suitability score for anchor role")
+
+
+class AnchorPixelPair(BaseModel):
+    """Pair of cold and hot anchor pixels defining the aerodynamic temperature difference calibration line dT = a*Ts + b."""
+    cold_pixel: AnchorPixelCandidate = Field(..., description="Well-watered, actively transpiring vegetation anchor")
+    hot_pixel: AnchorPixelCandidate = Field(..., description="Dry bare agricultural soil anchor")
+    dt_slope_a: float = Field(..., description="Linear calibration slope dT / dTs")
+    dt_intercept_b: float = Field(..., description="Linear calibration intercept dT")
+    r_squared: float = Field(default=0.985, ge=0.0, le=1.0, description="Coefficient of determination for dT linear model")
+
+
+class MoninObukhovStabilitySummary(BaseModel):
+    """Atmospheric stability metrics derived through iterative Monin-Obukhov momentum corrections."""
+    friction_velocity_u_star: float = Field(..., ge=0.01, description="Friction velocity u* in m/s")
+    aerodynamic_resistance_rah: float = Field(..., ge=1.0, description="Aerodynamic resistance to heat transfer r_ah in s/m")
+    monin_obukhov_length_l: float = Field(..., description="Monin-Obukhov atmospheric stability length L in meters")
+    stability_regime: str = Field(..., description="Boundary layer stability classification (unstable, neutral, stable)")
+    iterations_converged: int = Field(..., ge=1, le=25, description="Number of stability iterations required to converge")
+    convergence_delta: float = Field(..., description="Final fractional change in Monin-Obukhov length")
+
+
+class EnergyBalanceSummary(BaseModel):
+    """Scientific quality certification and energy balance partitioning summary."""
+    net_radiation_rn_w_m2: float = Field(..., description="Mean net radiation flux Rn (W/m^2)")
+    soil_heat_flux_g_w_m2: float = Field(..., description="Mean soil conductive heat flux G (W/m^2)")
+    sensible_heat_flux_h_w_m2: float = Field(..., description="Mean convective sensible heat flux H (W/m^2)")
+    latent_heat_flux_le_w_m2: float = Field(..., description="Mean turbulent latent heat flux LE (W/m^2)")
+    evaporative_fraction: float = Field(..., ge=0.0, le=1.20, description="Dimensionless evaporative fraction Lambda = LE / (Rn - G)")
+    crop_water_stress_index: float = Field(..., ge=0.0, le=1.0, description="Canopy water stress index CWSI = 1 - Lambda")
+    daily_et_mm_day: float = Field(..., ge=0.0, description="24-hour actual daily evapotranspiration (mm/day)")
+    stress_tier: CropWaterStressTier = Field(..., description="Agronomic moisture deficit severity classification")
+    energy_balance_closure_residual_w_m2: float = Field(default=0.0, description="Thermodynamic closure error Rn - (G + H + LE)")
+    quality_checklist: Dict[str, bool] = Field(default_factory=dict, description="Scientific compliance checks")
+    narrative: str = Field(..., description="Agronomic interpretation and irrigation advisory narrative")
+
+
+class ETSlice(BaseModel):
+    """Spatial transect or temporal timestamp slice of surface energy balance components."""
+    slice_id: str = Field(..., description="Slice or sample point identifier")
+    x: float = Field(..., description="X coordinate or longitude")
+    y: float = Field(..., description="Y coordinate or latitude")
+    rn_w_m2: float = Field(..., description="Net radiation Rn (W/m^2)")
+    g_w_m2: float = Field(..., description="Soil heat flux G (W/m^2)")
+    h_w_m2: float = Field(..., description="Sensible heat flux H (W/m^2)")
+    le_w_m2: float = Field(..., description="Latent heat flux LE (W/m^2)")
+    evaporative_fraction: float = Field(..., description="Evaporative fraction Lambda")
+    cwsi: float = Field(..., description="Crop water stress index")
+    daily_et_mm_day: float = Field(..., description="Actual evapotranspiration ET_24 (mm/day)")
+
+
+class ETCalibrationRequest(BaseModel):
+    """Payload for finding or overriding SEBAL/METRIC anchor calibration pixels."""
+    asset_id: str = Field(default="CENTRAL_VALLEY_ALFALFA_CA", description="Target agricultural site identifier")
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2_L2A, description="Multi-spectral satellite collection")
+    item_id: str = Field(default="S2A_MSIL2A_20260715", description="Multi-spectral scene identifier")
+    model_type: ETModelType = Field(default=ETModelType.SEBAL, description="Evapotranspiration model algorithm")
+    air_temp_c: Optional[float] = Field(default=32.5, description="Ambient 2m air temperature in Celsius")
+    wind_speed_2m_m_s: Optional[float] = Field(default=2.8, gt=0.1, description="2m wind speed in m/s")
+    solar_radiation_w_m2: Optional[float] = Field(default=820.0, gt=0.0, description="Incoming solar shortwave irradiance in W/m^2")
+    cold_pixel_override: Optional[Dict[str, Any]] = Field(default=None, description="Manual cold pixel coordinates or values")
+    hot_pixel_override: Optional[Dict[str, Any]] = Field(default=None, description="Manual hot pixel coordinates or values")
+    bbox: Optional[Any] = Field(default=None, description="Spatial bounding box envelope")
+
+    @field_validator("model_type", mode="before")
+    @classmethod
+    def validate_model_type(cls, v: Any) -> ETModelType:
+        return normalize_et_model(v)
+
+
+class ETCalibrationResponse(BaseModel):
+    """Response payload containing calibrated anchor pixels and dT linear model coefficients."""
+    asset_id: str = Field(..., description="Target agricultural site identifier")
+    model_type: ETModelType = Field(..., description="Applied evapotranspiration model")
+    anchor_pair: AnchorPixelPair = Field(..., description="Cold and hot anchor pixel pair")
+    stability_summary: MoninObukhovStabilitySummary = Field(..., description="Monin-Obukhov atmospheric stability parameters")
+    calibrated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    status: str = Field(default="success")
+
+
+class ETInvertRequest(BaseModel):
+    """Payload for executing Satellite-Derived Evapotranspiration (SEBAL/METRIC) energy balance inversion."""
+    asset_id: str = Field(default="CENTRAL_VALLEY_ALFALFA_CA", description="Target agricultural AOI or benchmark scene identifier")
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2_L2A, description="Multi-spectral satellite collection")
+    item_id: str = Field(default="S2A_MSIL2A_20260715", description="Multi-spectral scene identifier")
+    model_type: ETModelType = Field(default=ETModelType.SEBAL, description="Surface energy balance inversion model")
+    air_temp_c: float = Field(default=32.5, description="Ambient surface weather station air temperature in Celsius")
+    wind_speed_2m_m_s: float = Field(default=2.8, gt=0.1, description="2m wind speed from weather station in m/s")
+    solar_radiation_w_m2: float = Field(default=820.0, gt=0.0, description="Global horizontal solar irradiance in W/m^2")
+    daily_net_radiation_w_m2: Optional[float] = Field(default=310.0, description="24-hour average net radiation in W/m^2")
+    atmospheric_transmissivity: float = Field(default=0.75, ge=0.40, le=0.95, description="Atmospheric clear-sky broadband transmissivity")
+    blue_reflectance: Optional[float] = Field(default=0.045, ge=0.001, le=1.0, description="Blue surface reflectance")
+    green_reflectance: Optional[float] = Field(default=0.082, ge=0.001, le=1.0, description="Green surface reflectance")
+    red_reflectance: Optional[float] = Field(default=0.051, ge=0.001, le=1.0, description="Red surface reflectance")
+    nir_reflectance: Optional[float] = Field(default=0.480, ge=0.001, le=1.0, description="Near-infrared surface reflectance")
+    thermal_temp_c: Optional[float] = Field(default=34.2, description="Radiometric thermal surface skin temperature in Celsius")
+    bbox: Optional[Any] = Field(default=None, description="Spatial bounding box envelope")
+    geometry: Optional[Dict[str, Any]] = Field(default=None, description="Agricultural parcel polygon geometry")
+
+    @field_validator("model_type", mode="before")
+    @classmethod
+    def validate_model_type(cls, v: Any) -> ETModelType:
+        return normalize_et_model(v)
+
+
+class ETInvertResponse(BaseModel):
+    """Response payload containing inverted surface energy balance components, crop water stress, and daily ET."""
+    request_id: str = Field(..., description="Unique evaluation identifier")
+    asset_id: str = Field(..., description="Target asset identifier")
+    collection: str = Field(..., description="Applied satellite collection")
+    item_id: str = Field(..., description="Scene acquisition identifier")
+    model_type: ETModelType = Field(..., description="Applied evapotranspiration model")
+    quality_summary: EnergyBalanceSummary = Field(..., description="Energy balance and crop stress summary")
+    anchor_pair: AnchorPixelPair = Field(..., description="Calibrated cold and hot anchor pixels")
+    slices: List[ETSlice] = Field(default_factory=list, description="Transect slices for energy balance components")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile streaming URL template for Leaflet ETTileLayer")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    status: str = Field(default="success")
+
+
+class ETCapabilitiesResponse(BaseModel):
+    """Capabilities response describing supported ET models, metrics, stress tiers, and benchmark research test sites."""
+    models: Dict[str, Any] = Field(..., description="Supported energy balance evapotranspiration models")
+    metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")
+    stress_tiers: Dict[str, Any] = Field(..., description="Supported crop water stress severity classifications")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Benchmark research test sites")
+
+
+class ETTileRequestParams(BaseModel):
+    """Query parameters for dynamic XYZ satellite-derived evapotranspiration tile rendering."""
+    z: Optional[int] = Field(default=None, ge=0, le=24, description="Tile zoom level (0-24)")
+    x: Optional[int] = Field(default=None, ge=0, description="Tile column X index")
+    y: Optional[int] = Field(default=None, ge=0, description="Tile row Y index")
+    model: ETModelType = Field(default=ETModelType.SEBAL, description="Evapotranspiration model")
+    metric: ETTileMetric = Field(default=ETTileMetric.LATENT_HEAT_FLUX, description="Visualization raster metric")
+    colormap: Optional[str] = Field(default=None, description="Colormap palette")
+    rescale: Optional[str] = Field(default=None, description="Rescale range min,max")
+    asset_id: Optional[str] = Field(default=None, description="Target asset or benchmark site identifier")
+    collection: Optional[str] = Field(default=None, description="Satellite collection")
+
+class MeteorologicalForcing(BaseModel):
+    """Meteorological forcing parameters for SEBAL/METRIC energy balance inversion."""
+    wind_speed_2m_m_s: float = Field(..., description="2m wind speed in m/s")
+    air_temp_c: float = Field(..., description="Ambient air temperature in Celsius")
+    solar_irradiance_w_m2: float = Field(..., description="Incoming solar irradiance in W/m^2")
+    relative_humidity_pct: float = Field(..., description="Relative humidity percentage")
+    atmospheric_pressure_kpa: float = Field(default=101.3, description="Atmospheric pressure in kPa")
+    roughness_length_z0m: float = Field(default=0.05, description="Surface roughness length in meters")
+
+
+class SurfaceEnergyBalanceEvaluation(BaseModel):
+    """Quantitative surface energy balance evaluation and evapotranspiration metrics."""
+    request_id: str = Field(..., description="Unique evaluation request identifier")
+    asset_id: str = Field(..., description="Target asset identifier")
+    model_type: ETModelType = Field(..., description="Applied evapotranspiration model")
+    net_radiation_w_m2: float = Field(..., description="Net radiation Rn (W/m^2)")
+    soil_heat_flux_w_m2: float = Field(..., description="Soil heat flux G (W/m^2)")
+    sensible_heat_flux_w_m2: float = Field(..., description="Sensible heat flux H (W/m^2)")
+    latent_heat_flux_w_m2: float = Field(..., description="Latent heat flux LE (W/m^2)")
+    evaporative_fraction: float = Field(..., description="Dimensionless evaporative fraction Lambda")
+    daily_et_mm_day: float = Field(..., description="Daily actual evapotranspiration (mm/day)")
+    crop_water_stress_index: float = Field(..., description="Crop water stress index CWSI")
+    cold_pixel: Optional[AnchorPixelCandidate] = Field(default=None, description="Cold anchor pixel candidate")
+    hot_pixel: Optional[AnchorPixelCandidate] = Field(default=None, description="Hot anchor pixel candidate")
+
+
+class ETCapabilities(BaseModel):
+    """Supported ET models, metrics, and benchmark test sites."""
+    models: Dict[str, Any] = Field(..., description="Supported energy balance evapotranspiration models")
+    metrics: List[str] = Field(default_factory=list, description="Supported tile rendering metrics")
+    benchmarks: Dict[str, Any] = Field(default_factory=dict, description="Benchmark research test sites")
 

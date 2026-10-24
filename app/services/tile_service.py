@@ -344,7 +344,10 @@ class TileService:
                 "plasma": "plasma",
                 "bwr": "bwr",
                 "hot": "hot",
-                "blues": "Blues"
+                "blues": "Blues",
+                "ylgnbu": "YlGnBu",
+                "coolwarm": "coolwarm",
+                "seismic": "seismic"
             }
             if clean_lower in cmap_map:
                 target = cmap_map[clean_lower]
@@ -2797,6 +2800,181 @@ class TileService:
     def render_sdb_tile(self, *args, **kwargs) -> bytes:
         """Alias for render_bathymetry_tile conforming to Task T-325 specification."""
         return self.render_bathymetry_tile(*args, **kwargs)
+
+    def render_evapotranspiration_tile(
+        self,
+        *args,
+        **kwargs
+    ) -> bytes:
+        """Dynamic 256x256 RGBA XYZ Satellite-Derived Evapotranspiration (SEBAL/METRIC) Tile Streaming.
+        
+        Cycle v2.5.45 - Task T-331 (@backend)
+        Supports:
+        - Position: (model, metric, z, x, y, colormap=None, rescale=None)
+        - Keyword arguments with defaults.
+        """
+        from app.models.schemas import (
+            ETModelType,
+            ETTileMetric,
+            normalize_et_model,
+            normalize_et_metric,
+        )
+
+        model_raw = args[0] if len(args) > 0 else kwargs.get("model", ETModelType.SEBAL)
+        metric_raw = args[1] if len(args) > 1 else kwargs.get("metric", ETTileMetric.LATENT_HEAT_FLUX)
+        z = args[2] if len(args) > 2 else kwargs.get("z", 0)
+        x = args[3] if len(args) > 3 else kwargs.get("x", 0)
+        y = args[4] if len(args) > 4 else kwargs.get("y", 0)
+        colormap = args[5] if len(args) > 5 else kwargs.get("colormap", None)
+        rescale = args[6] if len(args) > 6 else kwargs.get("rescale", None)
+        asset_id = kwargs.get("asset_id", kwargs.get("item_id", "CENTRAL_VALLEY_ALFALFA_CA"))
+
+        norm_model = normalize_et_model(model_raw)
+        norm_metric = normalize_et_metric(metric_raw)
+
+        default_cmaps = {
+            ETTileMetric.LATENT_HEAT_FLUX: "YlGnBu",
+            ETTileMetric.DAILY_ET_MM: "YlGnBu",
+            ETTileMetric.DAILY_ET: "YlGnBu",
+            ETTileMetric.NET_RADIATION: "inferno",
+            ETTileMetric.SOIL_HEAT_FLUX: "inferno",
+            ETTileMetric.SENSIBLE_HEAT_FLUX: "coolwarm",
+            ETTileMetric.EVAPORATIVE_FRACTION: "YlGnBu",
+            ETTileMetric.CWSI: "coolwarm",
+            ETTileMetric.CROP_WATER_STRESS_INDEX: "coolwarm",
+            ETTileMetric.SURFACE_TEMPERATURE: "inferno",
+        }
+        default_rescales = {
+            ETTileMetric.LATENT_HEAT_FLUX: "0.0,650.0",
+            ETTileMetric.NET_RADIATION: "100.0,750.0",
+            ETTileMetric.SOIL_HEAT_FLUX: "10.0,140.0",
+            ETTileMetric.SENSIBLE_HEAT_FLUX: "0.0,450.0",
+            ETTileMetric.EVAPORATIVE_FRACTION: "0.0,1.2",
+            ETTileMetric.CWSI: "0.0,1.0",
+            ETTileMetric.CROP_WATER_STRESS_INDEX: "0.0,1.0",
+            ETTileMetric.DAILY_ET_MM: "0.0,12.0",
+            ETTileMetric.DAILY_ET: "0.0,12.0",
+            ETTileMetric.SURFACE_TEMPERATURE: "15.0,48.0",
+        }
+
+        chosen_cmap = (colormap or default_cmaps.get(norm_metric, "YlGnBu")).replace("_r", "").strip()
+        chosen_rescale = str(rescale).strip() if rescale else default_rescales.get(norm_metric, "0.0,650.0")
+
+        collection = kwargs.get("collection", "sentinel-2-l2a")
+        col_clean = str(collection or "sentinel-2-l2a").lower().strip()
+
+        # 1. Disk Caching check
+        cache_key = f"et_{norm_model.value}_{norm_metric.value}_{chosen_cmap}_{chosen_rescale}_{asset_id}_{col_clean}_{z}_{x}_{y}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        gios_cache_dir = os.path.join(".gios_cache", "tiles", "evapotranspiration", norm_model.value, norm_metric.value)
+        et_cache_dir = os.path.join(TILE_CACHE_DIR, "evapotranspiration", norm_model.value, norm_metric.value)
+        dot_cache_dir = os.path.join(".cache", "tiles", "evapotranspiration", norm_model.value, norm_metric.value)
+
+        for d in (gios_cache_dir, et_cache_dir, dot_cache_dir):
+            try:
+                os.makedirs(d, exist_ok=True)
+                cf = os.path.join(d, f"{cache_hash}.png")
+                if os.path.exists(cf) and os.path.getsize(cf) > 100:
+                    with open(cf, "rb") as f:
+                        return f.read()
+            except Exception:
+                pass
+
+        # 2. Generate or load multi-spectral & thermal energy balance data
+        from app.services.evapotranspiration_service import evapotranspiration_service
+        from app.services.data_acquisition import data_acquisition_service
+        try:
+            ds, meta = data_acquisition_service.load_evapotranspiration_data_cube(
+                asset_id=asset_id,
+                grid_size=256,
+                collection=col_clean,
+                bbox=kwargs.get("bbox")
+            )
+            metric_var_map = {
+                ETTileMetric.LATENT_HEAT_FLUX: "latent_heat_flux",
+                ETTileMetric.NET_RADIATION: "net_radiation",
+                ETTileMetric.SOIL_HEAT_FLUX: "soil_heat_flux",
+                ETTileMetric.SENSIBLE_HEAT_FLUX: "sensible_heat_flux",
+                ETTileMetric.EVAPORATIVE_FRACTION: "evaporative_fraction",
+                ETTileMetric.CROP_WATER_STRESS_INDEX: "crop_water_stress_index",
+                ETTileMetric.CWSI: "crop_water_stress_index",
+                ETTileMetric.DAILY_ET_MM: "daily_et",
+                ETTileMetric.DAILY_ET: "daily_et",
+                ETTileMetric.SURFACE_TEMPERATURE: "surface_temperature",
+            }
+            target_var = metric_var_map.get(norm_metric, "latent_heat_flux")
+            grid = np.asarray(ds[target_var].values, dtype=np.float32)
+            del ds, meta
+            gc.collect()
+        except Exception:
+            scene_data = evapotranspiration_service.generate_synthetic_et_scene(
+                asset_id_or_benchmark=asset_id,
+                grid_size=256
+            )
+            metric_var_map = {
+                ETTileMetric.LATENT_HEAT_FLUX: "latent_heat_flux",
+                ETTileMetric.NET_RADIATION: "net_radiation",
+                ETTileMetric.SOIL_HEAT_FLUX: "soil_heat_flux",
+                ETTileMetric.SENSIBLE_HEAT_FLUX: "sensible_heat_flux",
+                ETTileMetric.EVAPORATIVE_FRACTION: "evaporative_fraction",
+                ETTileMetric.CROP_WATER_STRESS_INDEX: "crop_water_stress_index",
+                ETTileMetric.CWSI: "crop_water_stress_index",
+                ETTileMetric.DAILY_ET_MM: "daily_et",
+                ETTileMetric.DAILY_ET: "daily_et",
+                ETTileMetric.SURFACE_TEMPERATURE: "surface_temperature",
+            }
+            target_var = metric_var_map.get(norm_metric, "latent_heat_flux")
+            grid = scene_data.get(target_var, scene_data["latent_heat_flux"])
+            del scene_data
+            gc.collect()
+
+        # 3. Apply Colormap
+        try:
+            parts = [float(p.strip()) for p in chosen_rescale.split(",")]
+            min_v, max_v = parts[0], parts[1]
+        except Exception:
+            min_v, max_v = 0.0, 650.0
+
+        # Ensure 256x256 grid shape
+        if grid.shape != (256, 256):
+            grid_img = Image.fromarray(grid.astype(np.float32), mode="F")
+            grid = np.array(grid_img.resize((256, 256), resample=Image.Resampling.BILINEAR), dtype=np.float32)
+
+        # Transparent nodata pixels
+        nodata_mask = ~np.isfinite(grid) | (grid <= -999.0)
+
+        denom = max_v - min_v if abs(max_v - min_v) > 1e-6 else 1.0
+        safe_grid = np.nan_to_num(grid, nan=min_v)
+        norm_grid = np.clip((safe_grid - min_v) / denom, 0.0, 1.0)
+
+        cmap_func = self.get_colormap(chosen_cmap)
+        rgba = (cmap_func(norm_grid) * 255.0).astype(np.uint8)
+        rgba[:, :, 3] = 255  # Solid alpha for valid
+        rgba[nodata_mask, :] = 0  # Fully transparent for nodata pixels
+
+        # 4. Save PNG bytes (sub-125ms compression without optimize pass)
+        img = Image.fromarray(rgba, mode="RGBA")
+        bio = io.BytesIO()
+        img.save(bio, format="PNG")
+        png_bytes = bio.getvalue()
+
+        # 5. Write to cache (.gios_cache, TILE_CACHE_DIR, .cache)
+        for d in (gios_cache_dir, et_cache_dir, dot_cache_dir):
+            try:
+                cf = os.path.join(d, f"{cache_hash}.png")
+                with open(cf, "wb") as f:
+                    f.write(png_bytes)
+            except Exception:
+                pass
+
+        del grid, norm_grid, rgba, img, bio
+        gc.collect()
+
+        return png_bytes
+
+    def render_et_tile(self, *args, **kwargs) -> bytes:
+        """Alias for render_evapotranspiration_tile conforming to Task T-331 specification."""
+        return self.render_evapotranspiration_tile(*args, **kwargs)
 
 
     def render_gpr_tile(

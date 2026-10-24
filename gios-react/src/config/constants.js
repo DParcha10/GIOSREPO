@@ -27553,3 +27553,240 @@ export const buildSpectralUnmixingTileUrlTemplate = ({
 } = {}) => {
   return buildSpectralUnmixingTileUrl({ model, metric, z: '{z}', x: '{x}', y: '{y}', colormap, rescale, minFvc, maxRmse });
 };
+
+// ============================================================================
+// CYCLE v2.5.45: SATELLITE-DERIVED EDDY COVARIANCE & EVAPOTRANSPIRATION (SEBAL/METRIC)
+// ============================================================================
+
+/**
+ * Supported satellite-derived evapotranspiration and surface energy balance models.
+ */
+export const ET_MODELS = {
+  SEBAL: {
+    id: 'sebal',
+    name: 'SEBAL',
+    label: 'Surface Energy Balance Algorithm for Land',
+    author: 'Bastiaanssen et al. (1998)',
+    description: 'Internalized calibration using extreme anchor pixels (cold/hot) to solve sensible and latent heat fluxes.'
+  },
+  METRIC: {
+    id: 'metric',
+    name: 'METRIC',
+    label: 'Mapping EvapoTranspiration with High Resolution and Internalized Calibration',
+    author: 'Allen et al. (2007)',
+    description: 'Alfalfa-referenced internalized calibration linking satellite thermal measurements with local weather station ETr.'
+  },
+  TWO_SOURCE_ENERGY_BALANCE: {
+    id: 'tseb',
+    name: 'TSEB',
+    label: 'Two-Source Energy Balance',
+    author: 'Norman, Kustas, & Humes (1995)',
+    description: 'Explicit partitioning of sensible and latent energy fluxes between canopy transpiration and soil evaporation.'
+  },
+  PENMAN_MONTEITH: {
+    id: 'penman_monteith',
+    name: 'Penman-Monteith',
+    label: 'FAO-56 Penman-Monteith Reference Evapotranspiration Inversion',
+    author: 'Allen et al. (1998)',
+    description: 'Standardized aerodynamic and canopy stomatal resistance energy balance formulation.'
+  }
+};
+ET_MODELS.sebal = ET_MODELS.SEBAL;
+ET_MODELS.metric = ET_MODELS.METRIC;
+ET_MODELS.tseb = ET_MODELS.TWO_SOURCE_ENERGY_BALANCE;
+ET_MODELS.penman_monteith = ET_MODELS.PENMAN_MONTEITH;
+
+/**
+ * Supported raster tile metrics for surface energy balance and evapotranspiration.
+ */
+export const ET_METRICS = {
+  LATENT_HEAT_FLUX: {
+    id: 'latent_heat',
+    name: 'Latent Heat Flux',
+    label: 'Latent Heat Flux (λE)',
+    unit: 'W/m²',
+    defaultRange: [0, 700],
+    description: 'Turbulent energy flux consumed by liquid water vaporization and plant transpiration.'
+  },
+  NET_RADIATION: {
+    id: 'net_radiation',
+    name: 'Net Radiation',
+    label: 'Net Radiation (Rn)',
+    unit: 'W/m²',
+    defaultRange: [100, 800],
+    description: 'Total available net solar and longwave radiative energy balance.'
+  },
+  SOIL_HEAT_FLUX: {
+    id: 'soil_heat',
+    name: 'Soil Heat Flux',
+    label: 'Soil Heat Flux (G)',
+    unit: 'W/m²',
+    defaultRange: [0, 150],
+    description: 'Thermal conduction flux transferred into the ground soil column.'
+  },
+  SENSIBLE_HEAT_FLUX: {
+    id: 'sensible_heat',
+    name: 'Sensible Heat Flux',
+    label: 'Sensible Heat Flux (H)',
+    unit: 'W/m²',
+    defaultRange: [0, 500],
+    description: 'Convective sensible heat flux transferred from the surface into the planetary boundary layer.'
+  },
+  EVAPORATIVE_FRACTION: {
+    id: 'evaporative_fraction',
+    name: 'Evaporative Fraction',
+    label: 'Evaporative Fraction (Λ)',
+    unit: 'dimensionless',
+    defaultRange: [0, 1.2],
+    description: 'Dimensionless ratio of latent heat flux to available surface energy λE / (Rn - G).'
+  },
+  DAILY_ET_MM: {
+    id: 'daily_et_mm',
+    name: 'Daily Actual ET',
+    label: 'Daily Actual Evapotranspiration',
+    unit: 'mm/day',
+    defaultRange: [0, 12],
+    description: '24-hour time-integrated daily crop water consumption in millimeters per day.'
+  },
+  CWSI: {
+    id: 'cwsi',
+    name: 'Crop Water Stress Index',
+    label: 'Crop Water Stress Index (CWSI)',
+    unit: 'dimensionless',
+    defaultRange: [0, 1.0],
+    description: 'Agronomic plant canopy moisture deficit index ranging from 0 (no stress) to 1 (full desiccation).'
+  }
+};
+ET_METRICS.latent_heat = ET_METRICS.LATENT_HEAT_FLUX;
+ET_METRICS.net_radiation = ET_METRICS.NET_RADIATION;
+ET_METRICS.soil_heat = ET_METRICS.SOIL_HEAT_FLUX;
+ET_METRICS.sensible_heat = ET_METRICS.SENSIBLE_HEAT_FLUX;
+ET_METRICS.evaporative_fraction = ET_METRICS.EVAPORATIVE_FRACTION;
+ET_METRICS.daily_et_mm = ET_METRICS.DAILY_ET_MM;
+ET_METRICS.cwsi = ET_METRICS.CWSI;
+
+/**
+ * Default color ramps for evapotranspiration raster visualization.
+ */
+export const ET_COLORMAPS = {
+  latent_heat: 'YlGnBu',
+  net_radiation: 'inferno',
+  soil_heat: 'magma',
+  sensible_heat: 'hot',
+  evaporative_fraction: 'viridis',
+  daily_et_mm: 'turbo',
+  cwsi: 'coolwarm',
+  LATENT_HEAT_FLUX: 'YlGnBu',
+  NET_RADIATION: 'inferno',
+  SOIL_HEAT_FLUX: 'magma',
+  SENSIBLE_HEAT_FLUX: 'hot',
+  EVAPORATIVE_FRACTION: 'viridis',
+  DAILY_ET_MM: 'turbo',
+  CWSI: 'coolwarm'
+};
+
+/**
+ * Research benchmark sites for satellite evapotranspiration validation.
+ */
+export const ET_BENCHMARK_SITES = [
+  {
+    id: 'imperial_valley',
+    name: 'Imperial Valley',
+    region: 'California, USA',
+    lat: 32.85,
+    lon: -115.55,
+    bbox: [-115.70, 32.70, -115.40, 33.00],
+    cropType: 'Alfalfa, Sudangrass & Winter Vegetables',
+    typicalET_mm: 8.5,
+    description: 'Hyper-arid agricultural basin using Colorado River irrigation with stark contrast between irrigated alfalfa and bare desert.'
+  },
+  {
+    id: 'palo_verde',
+    name: 'Palo Verde',
+    region: 'California / Arizona, USA',
+    lat: 33.62,
+    lon: -114.60,
+    bbox: [-114.75, 33.50, -114.45, 33.75],
+    cropType: 'Forage Crops & Cotton',
+    typicalET_mm: 7.8,
+    description: 'Low-elevation desert floodplain irrigation valley experiencing intense advective oasis effects.'
+  },
+  {
+    id: 'columbia_basin',
+    name: 'Columbia Basin',
+    region: 'Washington, USA',
+    lat: 46.85,
+    lon: -119.25,
+    bbox: [-119.45, 46.70, -119.05, 47.00],
+    cropType: 'Potatoes, Center-Pivot Corn, Apples & Alfalfa',
+    typicalET_mm: 6.4,
+    description: 'High-latitude semi-arid project with extensive center-pivot circles and distinctive circular thermal footprints.'
+  },
+  {
+    id: 'nile_delta',
+    name: 'Nile Delta',
+    region: 'Lower Egypt',
+    lat: 30.85,
+    lon: 31.00,
+    bbox: [30.50, 30.50, 31.50, 31.50],
+    cropType: 'Rice Paddies, Wheat, Citrus & Maize',
+    typicalET_mm: 6.9,
+    description: 'Intensively cultivated alluvial fan under Mediterranean arid transition with high vapor pressure deficit.'
+  },
+  {
+    id: 'al_jawf',
+    name: 'Al-Jawf',
+    region: 'Northern Borders, Saudi Arabia',
+    lat: 29.80,
+    lon: 38.30,
+    bbox: [38.10, 29.60, 38.50, 30.00],
+    cropType: 'Desert Center-Pivot Wheat, Olives & Forage',
+    typicalET_mm: 9.2,
+    description: 'Deep fossil aquifer pivot irrigation in deep hyper-arid desert sands with extreme sensible heat advection.'
+  }
+];
+
+ET_BENCHMARK_SITES.IMPERIAL_VALLEY = ET_BENCHMARK_SITES[0];
+ET_BENCHMARK_SITES.PALO_VERDE = ET_BENCHMARK_SITES[1];
+ET_BENCHMARK_SITES.COLUMBIA_BASIN = ET_BENCHMARK_SITES[2];
+ET_BENCHMARK_SITES.NILE_DELTA = ET_BENCHMARK_SITES[3];
+ET_BENCHMARK_SITES.AL_JAWF = ET_BENCHMARK_SITES[4];
+
+/**
+ * Canonical XYZ dynamic tile URL templates for Leaflet/MapLibre layers.
+ */
+export const TILE_URL_TEMPLATES = {
+  EVAPOTRANSPIRATION: '/api/v1/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png'
+};
+
+/**
+ * Constructs dynamic XYZ tile URL for evapotranspiration raster tiles.
+ */
+export const buildETTileUrl = ({
+  model = 'sebal',
+  metric = 'daily_et_mm',
+  z = '{z}',
+  x = '{x}',
+  y = '{y}',
+  colormap = null,
+  rescale = null,
+  asset_id = null
+} = {}) => {
+  let url = `/api/v1/tiles/evapotranspiration/${model}/${metric}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (colormap) params.push(`colormap=${encodeURIComponent(colormap)}`);
+  if (rescale) params.push(`rescale=${encodeURIComponent(rescale)}`);
+  if (asset_id) params.push(`asset_id=${encodeURIComponent(asset_id)}`);
+  if (params.length > 0) {
+    url += `?${params.join('&')}`;
+  }
+  return url;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for evapotranspiration layers.
+ */
+export const buildETTileUrlTemplate = (options = {}) => {
+  return buildETTileUrl({ ...options, z: '{z}', x: '{x}', y: '{y}' });
+};
+
