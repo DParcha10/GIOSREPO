@@ -2418,11 +2418,11 @@ def inspect_evapotranspiration_guard() -> dict:
 
     # 4. Dynamic XYZ ET Tile & REST Probes
     tile_probe = check_http_endpoint(
-        "http://localhost:8000/api/v1/tiles/evapotranspiration/sebal/daily_et_mm/10/163/395.png",
+        "http://127.0.0.1:8000/api/v1/tiles/evapotranspiration/sebal/daily_et_mm/10/163/395.png",
         timeout=3.0
     )
     capabilities_probe = check_http_endpoint(
-        "http://localhost:8000/api/v1/analysis/evapotranspiration/capabilities",
+        "http://127.0.0.1:8000/api/v1/analysis/evapotranspiration/capabilities",
         timeout=3.0
     )
     results["et_tile_probe"] = tile_probe

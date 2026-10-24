@@ -212,6 +212,7 @@ import ThermalLstModal from '../components/ThermalLstModal';
 import ExportDatasetModal from '../components/ExportDatasetModal';
 import PhenologySeasonalityModal from '../components/PhenologySeasonalityModal';
 import SpectralSharpeningModal from '../components/SpectralSharpeningModal';
+import PanSharpeningModal from '../components/PanSharpeningModal';
 import CrossSensorCalibrationModal from '../components/CrossSensorCalibrationModal';
 import TrendAnalysisModal from '../components/TrendAnalysisModal';
 import MultimodalFusionModal from '../components/MultimodalFusionModal';
@@ -977,6 +978,28 @@ export default function MapExplorer() {
     rmse: 0.012,
     quality_rating: SharpeningQualityRating?.EXCELLENT || 'EXCELLENT',
     preserves_radiometry: true
+  });
+
+  // Cycle v2.5.52 High-Resolution Pan-Sharpening & Wavelet Fusion State (Task T-374)
+  const [panSharpeningModalOpen, setPanSharpeningModalOpen] = useState(false);
+  const [showPanSharpenedTileLayer, setShowPanSharpenedTileLayer] = useState(false);
+  const [panSharpenedSceneKey, setPanSharpenedSceneKey] = useState('SAN_JOAQUIN_AGRICULTURE_2026');
+  const [panSharpenedSceneName, setPanSharpenedSceneName] = useState('San Joaquin Valley Agricultural Corridor, CA');
+  const [panSharpenedMethod, setPanSharpenedMethod] = useState(SharpeningMethod?.GRAM_SCHMIDT || 'gram_schmidt');
+  const [panSharpenedTarget, setPanSharpenedTarget] = useState('ndci');
+  const [panSharpenedDetailGain, setPanSharpenedDetailGain] = useState(1.45);
+  const [panSharpenedColormap, setPanSharpenedColormap] = useState('turbo');
+  const [panSharpenedOpacity, setPanSharpenedOpacity] = useState(0.85);
+  const [panSharpenedTileUrl, setPanSharpenedTileUrl] = useState('');
+  const [panSharpenedSummary, setPanSharpenedSummary] = useState({
+    method: 'gram_schmidt',
+    sam_deg: 1.375,
+    sam_rad: 0.024,
+    ergas: 1.85,
+    uiqi_q4: 0.942,
+    mtf_high_freq_gain: 1.45,
+    radiometric_energy_conservation_ratio: 1.002,
+    quality_rating: SharpeningQualityRating?.EXCELLENT || 'EXCELLENT'
   });
 
   // Cycle v2.5.38 Multi-Sensor Cross-Calibration & Harmonized Surface Reflectance State (Task T-290)
@@ -5331,6 +5354,23 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={449}
+              />
+            )}
+
+            {/* Cycle v2.5.52 High-Resolution Pan-Sharpened Dynamic TileLayer (Task T-374) */}
+            {showPanSharpenedTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`pan-sharpened-tile-${panSharpenedSceneKey}-${panSharpenedMethod}-${panSharpenedTarget}-${panSharpenedColormap}-${panSharpenedOpacity}`}
+                url={panSharpenedTileUrl || buildSharpenedTileUrlTemplate({
+                  method: panSharpenedMethod,
+                  target: panSharpenedTarget,
+                  colormap: panSharpenedTarget !== 'true_color_sharp' ? panSharpenedColormap : null
+                })}
+                opacity={panSharpenedOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={450}
               />
             )}
 
@@ -10736,6 +10776,99 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* Cycle v2.5.52 Floating High-Resolution Pan-Sharpening HUD Card (Task T-374) */}
+          {showPanSharpenedTileLayer && (
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-indigo-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[760px]">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                  <span className="font-bold text-white tracking-wide truncate max-w-[220px]" title={panSharpenedSceneName}>
+                    {panSharpenedSceneName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    {panSharpenedTarget.toUpperCase()} (10m)
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    {panSharpenedMethod.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    Q4 = {panSharpenedSummary?.uiqi_q4 ?? '0.942'}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {panSharpenedSummary?.quality_rating ?? 'EXCELLENT'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setPanSharpeningModalOpen(true)}
+                    className="px-2 py-1 bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowPanSharpenedTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss Pan-Sharpened Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">SAM:</span>
+                  <span className="text-indigo-400 font-bold">{Number(panSharpenedSummary?.sam_deg ?? 1.375).toFixed(2)}° ({Number(panSharpenedSummary?.sam_rad ?? 0.024).toFixed(3)} rad)</span>
+                  <span className="text-zinc-500 uppercase ml-1">ERGAS:</span>
+                  <span className="text-purple-400 font-bold">{Number(panSharpenedSummary?.ergas ?? 1.85).toFixed(2)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">MTF Gain:</span>
+                  <span className="text-emerald-400 font-bold">+{Math.round(((panSharpenedSummary?.mtf_high_freq_gain ?? 1.45) - 1.0) * 100)}%</span>
+                  <span className="text-zinc-500 uppercase ml-1">Energy:</span>
+                  <span className="text-pink-400 font-bold">{Number(panSharpenedSummary?.radiometric_energy_conservation_ratio ?? 1.002).toFixed(3)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Injection Gain:</span>
+                  <span className="text-indigo-300 font-bold">{panSharpenedDetailGain}x</span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Target:</span>
+                  {['true_color_sharp', 'ndmi', 'ndci', 'ndre', 'mndwi', 'nbr'].map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setPanSharpenedTarget(t)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        panSharpenedTarget === t
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+                      }`}
+                    >
+                      {t.replace(/_sharp$/, '').toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={panSharpenedOpacity}
+                      onChange={(e) => setPanSharpenedOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-indigo-400 cursor-pointer"
+                    />
+                    <span className="text-indigo-400 font-bold">{Math.round(panSharpenedOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Cycle v2.5.38 Floating Multi-Sensor Cross-Calibration HUD Card (Task T-290) */}
           {showCrossCalibratedTileLayer && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-amber-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[700px]">
@@ -12577,6 +12710,18 @@ export default function MapExplorer() {
               >
                 <Mountain className="w-3.5 h-3.5 text-amber-400" />
                 <span>Topo Normalization (v2.5.46)</span>
+              </button>
+
+              {/* Cycle v2.5.52 High-Resolution Pan-Sharpening & Wavelet Fusion Studio Shortcut (Task T-374) */}
+              <button
+                onClick={() => setPanSharpeningModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-indigo-300 hover:text-white hover:bg-indigo-500/20 border border-indigo-500/30 ${
+                  panSharpeningModalOpen || showPanSharpenedTileLayer ? 'bg-indigo-600 text-white font-extrabold shadow-[0_0_12px_rgba(99,102,241,0.6)]' : ''
+                }`}
+                title="High-Resolution Pan-Sharpening Studio, Gram-Schmidt vs Wavelet Fusion, MTF Inspector & Dynamic Sub-Meter Orthomosaic Tiles (Cycle v2.5.52)"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Pan-Sharpening (v2.5.52)</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -25091,6 +25236,39 @@ export default function MapExplorer() {
           }
           setShowTopoNormTileLayer(true);
           setTopoNormModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.52 High-Resolution Pan-Sharpening & Wavelet Fusion Studio Modal (Task T-374) */}
+      <PanSharpeningModal
+        isOpen={panSharpeningModalOpen}
+        onClose={() => setPanSharpeningModalOpen(false)}
+        initialSceneKey={panSharpenedSceneKey}
+        onApply={(payload) => {
+          setPanSharpenedSceneKey(payload.sceneKey || 'SAN_JOAQUIN_AGRICULTURE_2026');
+          setPanSharpenedSceneName(payload.sceneName || 'San Joaquin Valley Agricultural Corridor, CA');
+          setPanSharpenedMethod(payload.method || 'gram_schmidt');
+          setPanSharpenedTarget(payload.target || 'ndci');
+          setPanSharpenedColormap(payload.colormap || 'turbo');
+          setPanSharpenedOpacity(payload.opacity ?? 0.85);
+          setPanSharpenedDetailGain(payload.detailGain ?? 1.45);
+          setPanSharpenedTileUrl(payload.tileUrl || payload.tileUrlTemplate || '');
+          if (payload.summary) {
+            setPanSharpenedSummary(payload.summary);
+          }
+          setShowPanSharpenedTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setPanSharpenedTileUrl(url);
+          if (extra.method) setPanSharpenedMethod(extra.method);
+          if (extra.target) setPanSharpenedTarget(extra.target);
+          if (extra.colormap) setPanSharpenedColormap(extra.colormap);
+          if (extra.opacity !== undefined) setPanSharpenedOpacity(extra.opacity);
+          if (extra.detailGain !== undefined) setPanSharpenedDetailGain(extra.detailGain);
+          if (extra.summary) setPanSharpenedSummary(extra.summary);
+          if (extra.sceneName) setPanSharpenedSceneName(extra.sceneName);
+          setShowPanSharpenedTileLayer(true);
+          setPanSharpeningModalOpen(false);
         }}
       />
 

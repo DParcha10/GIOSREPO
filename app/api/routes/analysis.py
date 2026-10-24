@@ -22,6 +22,11 @@ from PIL import Image
 from rasterio.io import MemoryFile
 
 from app.models.schemas import (
+    PanSharpenRequest,
+    PanSharpenResponse,
+    PanSharpenBandDetail,
+    PanSharpenMethod,
+    calculate_pansharpen_fusion,
     IndexRequest,
     IndexResultSummary,
     PixelProbeResponse,
@@ -13376,3 +13381,86 @@ def get_mineralogy_tile_xyz_endpoint(
         aoi_name=aoi_name
     )
 
+
+
+# ==============================================================================
+# CYCLE v2.5.52: HIGH-RESOLUTION PAN-SHARPENING, GRAM-SCHMIDT & WAVELET MULTI-BAND FUSION (TASK T-373)
+# ==============================================================================
+
+@router.post("/imagery/pan-sharpen", response_model=PanSharpenResponse)
+@router.post("/imagery/pan-sharpen/", response_model=PanSharpenResponse, include_in_schema=False)
+@router.post("/analysis/imagery/pan-sharpen", response_model=PanSharpenResponse, include_in_schema=False)
+@sharpening_router.post("/imagery/pan-sharpen", response_model=PanSharpenResponse, include_in_schema=False)
+def post_imagery_pan_sharpen_endpoint(req: PanSharpenRequest):
+    """Executes high-resolution panchromatic spectral sharpening (Gram-Schmidt, Brovey, HPF, IHS, Wavelet)."""
+    fusion_dict = calculate_pansharpen_fusion(
+        collection=req.collection.value if hasattr(req.collection, "value") else str(req.collection),
+        item_id=req.item_id,
+        pan_band=req.pan_band,
+        ms_bands=req.ms_bands,
+        method=req.method,
+        sensor_pan_gsd_m=req.sensor_pan_gsd_m,
+        sensor_ms_gsd_m=req.sensor_ms_gsd_m,
+        high_pass_kernel_size=req.high_pass_kernel_size,
+        observed_pan_reflectance=req.observed_pan_reflectance,
+        observed_ms_reflectances=req.observed_ms_reflectances
+    )
+    col_str = req.collection.value if hasattr(req.collection, "value") else str(req.collection)
+    tile_template = f"/api/v1/tiles/imagery/pan-sharpen/{col_str}/{req.item_id}/{{z}}/{{x}}/{{y}}.png"
+    return PanSharpenResponse(
+        collection=fusion_dict["collection"],
+        item_id=fusion_dict["item_id"],
+        pan_band=fusion_dict["pan_band"],
+        method=fusion_dict["method"],
+        spatial_resolution_boost=fusion_dict["spatial_resolution_boost"],
+        pan_gsd_m=fusion_dict["pan_gsd_m"],
+        ms_gsd_m=fusion_dict["ms_gsd_m"],
+        simulated_pan_reflectance=fusion_dict["simulated_pan_reflectance"],
+        spectral_angle_mapper_deg=fusion_dict["spectral_angle_mapper_deg"],
+        ergas_index=fusion_dict["ergas_index"],
+        fidelity_tier=fusion_dict["fidelity_tier"],
+        tier_metadata=fusion_dict["tier_metadata"],
+        bands={k: PanSharpenBandDetail(**v) for k, v in fusion_dict["bands"].items()},
+        tile_url_template=tile_template,
+        sharpened_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@tiles_router.get("/imagery/pan-sharpen/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/imagery/pan-sharpen/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+@sharpening_router.get("/imagery/pan-sharpen/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_pan_sharpen_imagery_tile_endpoint(
+    collection: str,
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    method: str = Query("gram_schmidt"),
+    target: str = Query("true_color_sharp"),
+    colormap: Optional[str] = Query(None),
+    rescale: Optional[str] = Query(None)
+):
+    """Dynamic XYZ tile streaming for pan-sharpened satellite and drone orthomosaics."""
+    try:
+        png_bytes = tile_service.render_sharpened_tile(
+            method=method,
+            target=target,
+            z=z,
+            x=x,
+            y=y,
+            colormap=colormap,
+            rescale=rescale,
+            collection=collection,
+            item_id=item_id
+        )
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=86400, stale-while-revalidate=3600",
+                "X-Tile-Engine": f"GIOS-PanSharpen-{method}-{collection}"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Pan-sharpen tile rendering error ({collection}/{item_id}/{z}/{x}/{y}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to render pan-sharpened tile: {str(e)}")

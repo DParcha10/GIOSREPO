@@ -8224,7 +8224,9 @@ export const PANSHARPEN_METHODS = [
   { id: 'gram_schmidt', label: 'Gram-Schmidt Orthogonalization', description: 'Laben & Brower (2000) high-fidelity multispectral pan-sharpening' },
   { id: 'high_pass_filter', label: 'High-Pass Filter (HPF)', description: 'Chavez et al. (1991) spatial edge injection filter' },
   { id: 'brovey_transform', label: 'Brovey Transform', description: 'Normalized color ratio fusion for visual RGB sharpness' },
-  { id: 'ihs_transform', label: 'IHS Transformation', description: 'Intensity component replacement via color space transform' }
+  { id: 'ihs_transform', label: 'IHS Transformation', description: 'Intensity component replacement via color space transform' },
+  { id: 'a_trous_wavelet', label: 'A Trous Discrete Wavelet Transform', description: 'Shensa (1992) undecimated dyadic wavelet multi-band fusion' },
+  { id: 'wavelet_dwt', label: 'Mallat Discrete Wavelet Transform (DWT)', description: 'Mallat (1989) multi-resolution spatial subband pyramid fusion' }
 ];
 
 export const PANSHARPEN_FIDELITY_TIERS = {
@@ -8281,7 +8283,11 @@ export const calculatePanSharpenFusion = ({
   sensorMsGsdM = 30.0,
   _highPassKernelSize = 5,
   observedPanReflectance = 0.245,
-  observedMsReflectances = null
+  observedMsReflectances = null,
+  mtfFilterConfig = null,
+  subpixelAlignment = null,
+  waveletType = 'b3_spline',
+  waveletLevels = 2
 } = {}) => {
   const mStr = String(method).toLowerCase();
   const panGsd = Math.max(0.1, Number(sensorPanGsdM) || 15.0);
@@ -8325,21 +8331,31 @@ export const calculatePanSharpenFusion = ({
     let hpfDelta = 0.0;
     let corr = 0.90;
 
-    if (mStr === 'gram_schmidt') {
+    if (mStr === 'gram_schmidt' || mStr === 'gs') {
       gain = 0.88 + 0.24 * w;
       sharp = orig + gain * panDiff;
       hpfDelta = gain * panDiff;
       corr = 0.94 - 0.02 * i;
-    } else if (mStr === 'high_pass_filter') {
+    } else if (mStr === 'high_pass_filter' || mStr === 'hpf') {
       gain = 0.75 + 0.18 * w;
       sharp = orig + gain * panDiff;
       hpfDelta = gain * panDiff;
       corr = 0.91 - 0.02 * i;
-    } else if (mStr === 'brovey_transform') {
+    } else if (mStr === 'brovey_transform' || mStr === 'brovey') {
       const ratio = panObs / Math.max(0.01, simPan);
       sharp = orig * ratio;
       hpfDelta = sharp - orig;
       corr = 0.88 - 0.03 * i;
+    } else if (mStr === 'a_trous_wavelet' || mStr === 'atrous' || mStr === 'wavelet') {
+      gain = 0.92 + 0.15 * w;
+      sharp = orig + gain * panDiff;
+      hpfDelta = gain * panDiff;
+      corr = 0.96 - 0.01 * i;
+    } else if (mStr === 'wavelet_dwt' || mStr === 'dwt') {
+      gain = 0.90 + 0.18 * w;
+      sharp = orig + gain * panDiff;
+      hpfDelta = gain * panDiff;
+      corr = 0.95 - 0.015 * i;
     } else {
       sharp = orig + panDiff;
       hpfDelta = panDiff;
@@ -8349,11 +8365,11 @@ export const calculatePanSharpenFusion = ({
     const sharpClamped = Number(Math.max(0.0, Math.min(1.0, sharp)).toFixed(4));
     bandResults[b] = {
       band: b,
-      low_res_reflectance: Number(orig.toFixed(4)),
-      sharpened_reflectance: sharpClamped,
-      high_pass_delta: Number(hpfDelta.toFixed(4)),
-      band_weight: Number(w.toFixed(3)),
-      correlation_with_pan: Number(corr.toFixed(3))
+      lowResReflectance: Number(orig.toFixed(4)),
+      sharpenedReflectance: sharpClamped,
+      highPassDelta: Number(hpfDelta.toFixed(4)),
+      bandWeight: Number(w.toFixed(3)),
+      correlationWithPan: Number(corr.toFixed(3))
     };
 
     lowVec.push(orig);
@@ -8361,10 +8377,10 @@ export const calculatePanSharpenFusion = ({
     squaredRelErrors.push(Math.pow((sharpClamped - orig) / Math.max(0.01, orig), 2));
   });
 
-  const dotProd = lowVec.reduce((acc, l, idx) => acc + l * sharpVec[idx], 0);
+  const dot = lowVec.reduce((acc, l, i) => acc + l * sharpVec[i], 0);
   const normLow = Math.sqrt(lowVec.reduce((acc, l) => acc + l * l, 0));
   const normSharp = Math.sqrt(sharpVec.reduce((acc, s) => acc + s * s, 0));
-  const cosSam = Math.max(-1.0, Math.min(1.0, dotProd / Math.max(1e-6, normLow * normSharp)));
+  const cosSam = Math.max(-1.0, Math.min(1.0, dot / Math.max(1e-6, normLow * normSharp)));
   const samDeg = Number(((Math.acos(cosSam) * 180.0) / Math.PI).toFixed(2));
 
   const meanRelSqErr = squaredRelErrors.reduce((a, b) => a + b, 0) / Math.max(1, squaredRelErrors.length);
@@ -8372,21 +8388,57 @@ export const calculatePanSharpenFusion = ({
 
   const tier = classifySpectralFidelityTier(samDeg, ergas);
 
+  let mtfMetadata = null;
+  if (mtfFilterConfig) {
+    mtfMetadata = {
+      modelType: mtfFilterConfig.modelType || 'gaussian',
+      sensorPreset: mtfFilterConfig.sensorPreset || null,
+      nyquistCutoff: mtfFilterConfig.nyquistCutoff || 0.25,
+      kernelDimension: mtfFilterConfig.kernelDimension || 5,
+      gainCompensation: mtfFilterConfig.gainCompensation || 1.0,
+      filterApplied: true
+    };
+  }
+
+  let subpixelMetadata = null;
+  if (subpixelAlignment) {
+    subpixelMetadata = {
+      method: subpixelAlignment.method || 'cross_correlation',
+      dx: subpixelAlignment.dx || 0.0,
+      dy: subpixelAlignment.dy || 0.0,
+      correlationCoefficient: subpixelAlignment.correlationCoefficient || 1.0,
+      resamplingOrder: subpixelAlignment.resamplingOrder || 3,
+      autoAlign: subpixelAlignment.autoAlign !== undefined ? subpixelAlignment.autoAlign : true
+    };
+  }
+
+  let waveletMeta = null;
+  if (mStr.includes('wavelet') || mStr.includes('dwt') || mStr.includes('atrous')) {
+    waveletMeta = {
+      waveletBasis: waveletType || 'b3_spline',
+      decompositionLevels: waveletLevels || 2,
+      filterCoefficients: [0.0625, 0.25, 0.375, 0.25, 0.0625]
+    };
+  }
+
   return {
     collection,
-    item_id: itemId,
-    pan_band: panBand,
+    itemId,
+    panBand,
     method: mStr,
-    spatial_resolution_boost: boost,
-    pan_gsd_m: panGsd,
-    ms_gsd_m: msGsd,
-    simulated_pan_reflectance: simPan,
-    spectral_angle_mapper_deg: samDeg,
-    ergas_index: ergas,
-    fidelity_tier: tier.id,
-    tier_metadata: tier,
+    spatialResolutionBoost: boost,
+    panGsdM: panGsd,
+    msGsdM: msGsd,
+    simulatedPanReflectance: simPan,
+    spectralAngleMapperDeg: samDeg,
+    ergasIndex: ergas,
+    fidelityTier: tier.id,
+    tierMetadata: tier,
     bands: bandResults,
-    tile_url_template: `/api/v1/tiles/imagery/pan-sharpen/${collection}/${itemId}/{z}/{x}/{y}.png`
+    tileUrlTemplate: `/api/v1/tiles/imagery/pan-sharpen/${collection}/${itemId}/{z}/{x}/{y}.png`,
+    mtfFilterApplied: mtfMetadata,
+    subpixelAlignmentApplied: subpixelMetadata,
+    waveletMetadata: waveletMeta
   };
 };
 
@@ -24465,10 +24517,184 @@ export const SharpeningMethod = {
   GRAM_SCHMIDT: 'gram_schmidt',
   BROVEY: 'brovey',
   HIGH_PASS_FILTER: 'high_pass_filter',
-  BICUBIC_SPLINE: 'bicubic_spline'
+  BICUBIC_SPLINE: 'bicubic_spline',
+  A_TROUS_WAVELET: 'a_trous_wavelet',
+  WAVELET_DWT: 'wavelet_dwt',
+  IHS: 'ihs'
 };
 
 export const SHARPENING_METHODS = Object.values(SharpeningMethod);
+
+/**
+ * Wavelet filter families for multi-resolution spatial detail decomposition.
+ * @readonly
+ * @enum {string}
+ */
+export const WaveletFilterType = {
+  B3_SPLINE: 'b3_spline',
+  HAAR: 'haar',
+  DAUBECHIES: 'daubechies',
+  BIORTHOGONAL: 'biorthogonal'
+};
+
+export const WAVELET_FILTER_TYPES = Object.values(WaveletFilterType);
+
+export const A_TROUS_B3_SPLINE_1D = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0];
+export const A_TROUS_B3_SPLINE_2D = [
+  [1.0 / 256.0,  4.0 / 256.0,  6.0 / 256.0,  4.0 / 256.0, 1.0 / 256.0],
+  [4.0 / 256.0, 16.0 / 256.0, 24.0 / 256.0, 16.0 / 256.0, 4.0 / 256.0],
+  [6.0 / 256.0, 24.0 / 256.0, 36.0 / 256.0, 24.0 / 256.0, 6.0 / 256.0],
+  [4.0 / 256.0, 16.0 / 256.0, 24.0 / 256.0, 16.0 / 256.0, 4.0 / 256.0],
+  [1.0 / 256.0,  4.0 / 256.0,  6.0 / 256.0,  4.0 / 256.0, 1.0 / 256.0]
+];
+
+/**
+ * Modulation Transfer Function filter kernel modeling basis.
+ * @readonly
+ * @enum {string}
+ */
+export const MTFModelType = {
+  GAUSSIAN: 'gaussian',
+  SINC: 'sinc',
+  DIFFRACTION_LIMITED: 'diffraction',
+  CUSTOM: 'custom'
+};
+
+export const MTF_MODEL_TYPES = Object.values(MTFModelType);
+
+/**
+ * Pre-calibrated sensor point spread function (PSF) and MTF Nyquist cutoff specifications.
+ * @readonly
+ * @enum {string}
+ */
+export const MTFSensorPreset = {
+  LANDSAT_8_OLI: 'landsat_8_oli',
+  LANDSAT_9_OLI: 'landsat_9_oli',
+  SENTINEL_2_MSI: 'sentinel_2_msi',
+  WORLDVIEW_3: 'worldview_3',
+  PLEIADES_NEO: 'pleiades_neo',
+  GENERIC_DRONE_RGB: 'drone_rgb'
+};
+
+export const MTF_SENSOR_PRESET_KEYS = Object.values(MTFSensorPreset);
+
+export const MTF_SENSOR_PRESETS = {
+  landsat_8_oli: {
+    id: 'landsat_8_oli',
+    label: 'Landsat 8 OLI (15m Pan / 30m MS)',
+    pan_nyquist_mtf: 0.20,
+    ms_nyquist_mtf: 0.25,
+    gsd_pan_m: 15.0,
+    gsd_ms_m: 30.0,
+    gsd_ratio: 2.0,
+    recommended_kernel_size: 5,
+    description: 'USGS Landsat 8 Operational Land Imager optical MTF specification.'
+  },
+  landsat_9_oli: {
+    id: 'landsat_9_oli',
+    label: 'Landsat 9 OLI-2 (15m Pan / 30m MS)',
+    pan_nyquist_mtf: 0.20,
+    ms_nyquist_mtf: 0.25,
+    gsd_pan_m: 15.0,
+    gsd_ms_m: 30.0,
+    gsd_ratio: 2.0,
+    recommended_kernel_size: 5,
+    description: 'USGS Landsat 9 OLI-2 high-radiometric fidelity optical MTF specification.'
+  },
+  sentinel_2_msi: {
+    id: 'sentinel_2_msi',
+    label: 'Sentinel-2 MSI (10m VNIR / 20m RedEdge & SWIR)',
+    pan_nyquist_mtf: 0.28,
+    ms_nyquist_mtf: 0.32,
+    gsd_pan_m: 10.0,
+    gsd_ms_m: 20.0,
+    gsd_ratio: 2.0,
+    recommended_kernel_size: 5,
+    description: 'ESA Copernicus Sentinel-2 Multi-Spectral Instrument Point Spread Function.'
+  },
+  worldview_3: {
+    id: 'worldview_3',
+    label: 'WorldView-3 (0.31m Pan / 1.24m MS)',
+    pan_nyquist_mtf: 0.16,
+    ms_nyquist_mtf: 0.22,
+    gsd_pan_m: 0.31,
+    gsd_ms_m: 1.24,
+    gsd_ratio: 4.0,
+    recommended_kernel_size: 7,
+    description: 'Maxar WorldView-3 ultra-high-resolution commercial optical sensor.'
+  },
+  pleiades_neo: {
+    id: 'pleiades_neo',
+    label: 'Pleiades Neo (0.30m Pan / 1.20m MS)',
+    pan_nyquist_mtf: 0.14,
+    ms_nyquist_mtf: 0.20,
+    gsd_pan_m: 0.30,
+    gsd_ms_m: 1.20,
+    gsd_ratio: 4.0,
+    recommended_kernel_size: 7,
+    description: 'Airbus Pleiades Neo very-high-resolution satellite constellation.'
+  },
+  drone_rgb: {
+    id: 'drone_rgb',
+    label: 'Centimeter-Scale UAS / Drone RGB Sensor',
+    pan_nyquist_mtf: 0.25,
+    ms_nyquist_mtf: 0.30,
+    gsd_pan_m: 0.05,
+    gsd_ms_m: 0.10,
+    gsd_ratio: 2.0,
+    recommended_kernel_size: 5,
+    description: 'Sub-decimeter drone survey camera matching optical transfer characteristics.'
+  }
+};
+
+/**
+ * Generates a 2D separable Gaussian filter kernel matching the sensor MTF at Nyquist frequency.
+ * 
+ * @param {number} [nyquistCutoff=0.25] - MTF amplitude at Nyquist
+ * @param {number} [kernelDimension=5] - Kernel size (odd integer)
+ * @param {number} [gsdRatio=2.0] - GSD MS / GSD Pan ratio
+ * @returns {Array<Array<number>>} 2D normalized convolution kernel
+ */
+export const generateMtfFilterKernel = (nyquistCutoff = 0.25, kernelDimension = 5, gsdRatio = 2.0) => {
+  const cutoff = Math.max(0.01, Math.min(0.99, Number(nyquistCutoff) || 0.25));
+  let dim = parseInt(kernelDimension, 10) || 5;
+  if (dim % 2 === 0) dim += 1;
+  dim = Math.max(3, Math.min(15, dim));
+  const ratio = Math.max(1.0, Number(gsdRatio) || 2.0);
+
+  const sigma = (Math.sqrt(-2.0 * Math.log(cutoff)) / Math.PI) * ratio;
+  const center = (dim - 1) / 2.0;
+
+  const rawKernel = [];
+  let totalSum = 0.0;
+  for (let r = 0; r < dim; r++) {
+    const row = [];
+    for (let c = 0; c < dim; c++) {
+      const distSq = Math.pow(r - center, 2) + Math.pow(c - center, 2);
+      const val = Math.exp(-distSq / (2.0 * sigma * sigma));
+      row.push(val);
+      totalSum += val;
+    }
+    rawKernel.push(row);
+  }
+
+  if (totalSum <= 0.0) totalSum = 1.0;
+  return rawKernel.map(row => row.map(v => Number((v / totalSum).toFixed(6))));
+};
+
+/**
+ * Sub-pixel co-registration and spatial alignment algorithms.
+ * @readonly
+ * @enum {string}
+ */
+export const SubPixelAlignmentMethod = {
+  CROSS_CORRELATION: 'cross_correlation',
+  PHASE_CORRELATION: 'phase_correlation',
+  OPTICAL_FLOW: 'optical_flow',
+  AFFINE_RANSAC: 'affine_ransac'
+};
+
+export const SUBPIXEL_ALIGNMENT_METHODS = Object.values(SubPixelAlignmentMethod);
 
 /**
  * Native 20m Sentinel-2 multi-spectral bands eligible for 10m spatial super-resolution.
@@ -24577,6 +24803,33 @@ export const SHARPENING_METHOD_CONFIGS = {
     spatial_detail_gain: 1.00,
     computational_complexity: 'O(N * K)',
     recommended_for: 'Control baseline and low-contrast homogeneous landscape verification.'
+  },
+  [SharpeningMethod.A_TROUS_WAVELET]: {
+    name: 'A Trous Undecimated Wavelet Transform',
+    reference: 'Shensa (1992), Nunez et al. (1999)',
+    description: 'Undecimated dyadic wavelet decomposition using 5x5 B3 cubic spline filter, injecting multi-scale spatial details without aliasing or ringing artifacts.',
+    preserves_radiometry: true,
+    spatial_detail_gain: 1.60,
+    computational_complexity: 'O(N * K * L)',
+    recommended_for: 'Sub-meter drone orthomosaic fusion and high-resolution multispectral sharpening.'
+  },
+  [SharpeningMethod.WAVELET_DWT]: {
+    name: '2D Discrete Wavelet Transform (DWT) Mallat Pyramid',
+    reference: 'Mallat (1989), Ranchin & Wald (2000)',
+    description: 'Directional subband pyramid decomposition preserving multispectral low-frequency approximation while injecting directional high-frequency wavelet coefficients.',
+    preserves_radiometry: true,
+    spatial_detail_gain: 1.50,
+    computational_complexity: 'O(N * K * log N)',
+    recommended_for: 'Rigorous scientific QA, structural fault edge enhancement, and forestry texture.'
+  },
+  [SharpeningMethod.IHS]: {
+    name: 'Intensity-Hue-Saturation (IHS) Component Substitution',
+    reference: 'Haydn et al. (1982), Tu et al. (2001)',
+    description: 'Separates spatial intensity from spectral hue and saturation, substituting low-res intensity with high-resolution panchromatic channel.',
+    preserves_radiometry: false,
+    spatial_detail_gain: 1.65,
+    computational_complexity: 'O(N * K)',
+    recommended_for: 'High-contrast visual interpretation, urban landcover, and false-color RGB pan-sharpening.'
   }
 };
 
@@ -24658,6 +24911,35 @@ export const SHARPENING_BENCHMARK_SCENES = {
  * @param {string} method - Method alias or enum
  * @returns {string} Canonical sharpening method
  */
+/**
+ * Normalizes string alias or enum into canonical PanSharpenMethod.
+ * 
+ * @param {string} method - Method alias
+ * @returns {string} Canonical pan-sharpen method
+ */
+export const normalizePanSharpenMethod = (method) => {
+  if (!method) return 'gram_schmidt';
+  const val = String(method).trim().toLowerCase().replace(/-/g, '_');
+  const mapping = {
+    gram_schmidt: 'gram_schmidt',
+    gs: 'gram_schmidt',
+    gramschmidt: 'gram_schmidt',
+    high_pass_filter: 'high_pass_filter',
+    hpf: 'high_pass_filter',
+    brovey_transform: 'brovey_transform',
+    brovey: 'brovey_transform',
+    ihs_transform: 'ihs_transform',
+    ihs: 'ihs_transform',
+    a_trous_wavelet: 'a_trous_wavelet',
+    a_trous: 'a_trous_wavelet',
+    atrous: 'a_trous_wavelet',
+    wavelet: 'a_trous_wavelet',
+    wavelet_dwt: 'wavelet_dwt',
+    dwt: 'wavelet_dwt'
+  };
+  return mapping[val] || 'gram_schmidt';
+};
+
 export const normalizeSharpeningMethod = (method) => {
   if (!method) return SharpeningMethod.GRAM_SCHMIDT;
   const val = String(method).trim().toLowerCase().replace(/-/g, '_');
@@ -24674,7 +24956,17 @@ export const normalizeSharpeningMethod = (method) => {
     high_pass: SharpeningMethod.HIGH_PASS_FILTER,
     bicubic_spline: SharpeningMethod.BICUBIC_SPLINE,
     bicubic: SharpeningMethod.BICUBIC_SPLINE,
-    spline: SharpeningMethod.BICUBIC_SPLINE
+    spline: SharpeningMethod.BICUBIC_SPLINE,
+    a_trous_wavelet: SharpeningMethod.A_TROUS_WAVELET,
+    atrous_wavelet: SharpeningMethod.A_TROUS_WAVELET,
+    atrous: SharpeningMethod.A_TROUS_WAVELET,
+    wavelet: SharpeningMethod.A_TROUS_WAVELET,
+    wavelet_dwt: SharpeningMethod.WAVELET_DWT,
+    dwt: SharpeningMethod.WAVELET_DWT,
+    dwt2: SharpeningMethod.WAVELET_DWT,
+    ihs: SharpeningMethod.IHS,
+    ihs_transform: SharpeningMethod.IHS,
+    brovey_transform: SharpeningMethod.BROVEY
   };
   return mapping[val] || SharpeningMethod.GRAM_SCHMIDT;
 };

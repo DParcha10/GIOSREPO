@@ -288,6 +288,7 @@ class STACHarvesterService:
             "example.com" in ep.target_url or
             "localhost" in ep.target_url or
             "test" in ep.target_url.lower() or
+            "mock" in ep.target_url.lower() or
             "hooks.slack.com/services/T" in ep.target_url
         )
         if not is_synthetic:
@@ -350,6 +351,7 @@ class STACHarvesterService:
             "example.com" in endpoint.target_url or
             "localhost" in endpoint.target_url or
             "test" in endpoint.target_url.lower() or
+            "mock" in endpoint.target_url.lower() or
             "hooks.slack.com/services/T" in endpoint.target_url
         )
 

@@ -121,6 +121,18 @@ import {
   PHENOLOGY_BENCHMARK_SITES,
   PHENOLOGY_METRIC_CONFIGS,
   buildPhenologyTileUrl,
+  WaveletFilterType,
+  WAVELET_FILTER_TYPES,
+  A_TROUS_B3_SPLINE_1D,
+  A_TROUS_B3_SPLINE_2D,
+  MTFModelType,
+  MTF_MODEL_TYPES,
+  MTFSensorPreset,
+  MTF_SENSOR_PRESET_KEYS,
+  MTF_SENSOR_PRESETS,
+  SubPixelAlignmentMethod,
+  SUBPIXEL_ALIGNMENT_METHODS,
+  PANSHARPEN_METHODS,
   SharpeningMethod,
   SHARPENING_METHODS,
   SharpeningTargetBand,
@@ -3832,7 +3844,10 @@ const demoAdapter = async (config) => {
           benchmark_scenes: SHARPENING_BENCHMARK_SCENES,
           pan_weights: SYNTHETIC_PAN_WEIGHTS,
           supported_target_bands: SHARPENING_TARGET_BANDS,
-          supported_guidance_bands: SHARPENING_GUIDANCE_BANDS
+          supported_guidance_bands: SHARPENING_GUIDANCE_BANDS,
+          mtf_presets: MTF_SENSOR_PRESETS,
+          subpixel_methods: SUBPIXEL_ALIGNMENT_METHODS,
+          wavelet_filters: WAVELET_FILTER_TYPES
         };
       }
       else if (url.includes('/api/v1/analysis/sharpening/sharpen') || url.includes('/analysis/sharpening/sharpen')) {
@@ -3869,6 +3884,65 @@ const demoAdapter = async (config) => {
           },
           processed_at: new Date().toISOString(),
           status: 'success'
+        };
+      }
+      else if (url.includes('/api/v1/analysis/imagery/pan-sharpen') || url.includes('/analysis/imagery/pan-sharpen') || url.includes('/imagery/pan-sharpen')) {
+        let parsed = {};
+        try { parsed = config.data ? (typeof config.data === 'string' ? JSON.parse(config.data) : config.data) : {}; } catch { parsed = {}; }
+        const method = normalizeSharpeningMethod(parsed.method);
+        const col = parsed.collection || 'sentinel-2-l2a';
+        const itemId = parsed.item_id || 'LC09_L2SP_042034_20260915';
+        const panBand = parsed.pan_band || 'B08';
+        const msBands = parsed.ms_bands || ['B02', 'B03', 'B04', 'B05'];
+        const bandsMap = {};
+        for (const b of msBands) {
+          bandsMap[b] = {
+            band: b,
+            low_res_reflectance: 0.182,
+            sharpened_reflectance: 0.185,
+            high_pass_delta: 0.015,
+            mtf_gain: 1.52,
+            uiqi_q4: 0.945
+          };
+        }
+        data = {
+          collection: col,
+          item_id: itemId,
+          pan_band: panBand,
+          method: method,
+          spatial_resolution_boost: 2.0,
+          pan_gsd_m: 15.0,
+          ms_gsd_m: 30.0,
+          simulated_pan_reflectance: 0.245,
+          spectral_angle_mapper_deg: 1.375,
+          ergas_index: 1.85,
+          fidelity_tier: 'pristine_spectral_preservation',
+          tier_metadata: {
+            id: 'pristine_spectral_preservation',
+            label: 'Pristine Spectral Preservation (SAM < 2.5 deg, ERGAS < 2.0)',
+            color: '#10b981',
+            badge: 'PRISTINE'
+          },
+          bands: bandsMap,
+          tile_url_template: `/api/v1/tiles/imagery/pan-sharpen/${col}/${itemId}/{z}/{x}/{y}.png`,
+          sharpened_at: new Date().toISOString(),
+          mtf_filter_applied: parsed.mtf_filter_config ? {
+            model_type: parsed.mtf_filter_config.model_type || 'gaussian',
+            sensor_preset: parsed.mtf_filter_config.sensor_preset || null,
+            nyquist_cutoff: parsed.mtf_filter_config.nyquist_cutoff || 0.25,
+            kernel_dimension: parsed.mtf_filter_config.kernel_dimension || 5,
+            filter_applied: true
+          } : null,
+          subpixel_alignment_applied: parsed.subpixel_alignment ? {
+            method: parsed.subpixel_alignment.method || 'cross_correlation',
+            dx: parsed.subpixel_alignment.dx || 0.0,
+            dy: parsed.subpixel_alignment.dy || 0.0,
+            correlation_coefficient: 1.0
+          } : null,
+          wavelet_metadata: method.includes('wavelet') || method.includes('dwt') ? {
+            wavelet_basis: 'b3_spline',
+            decomposition_levels: 2
+          } : null
         };
       }
       else if (url.includes('/api/v1/analysis/sharpening/evaluate') || url.includes('/analysis/sharpening/evaluate')) {
@@ -10050,8 +10124,51 @@ export const evaluateSharpeningQuality = async (params = {}) => {
  * @param {Object} [options={}] - Options (method, target, colormap)
  * @returns {string} Leaflet tile URL template
  */
+/**
+ * Fetches pre-calibrated sensor Modulation Transfer Function (MTF) specifications.
+ * 
+ * @returns {Promise<Object>} MTF presets and sensor cutoff dictionary
+ */
+export const fetchMtfSensorPresets = async () => {
+  try {
+    const response = await giosApi.get('/api/v1/analysis/sharpening/methods');
+    return response.data?.mtf_presets || MTF_SENSOR_PRESETS;
+  } catch {
+    return MTF_SENSOR_PRESETS;
+  }
+};
+
 export const getSharpenedTileUrlTemplate = (options = {}) => {
   return buildSharpenedTileUrlTemplate(options);
+};
+
+/**
+ * Submits a high-resolution pan-sharpening fusion request (Gram-Schmidt, Wavelet, Brovey, IHS).
+ * 
+ * @param {Object} [params={}] - Pan-sharpening request payload
+ * @returns {Promise<Object>} Pan-sharpened dataset response
+ */
+export const requestPanSharpening = async (params = {}) => {
+  try {
+    const response = await giosApi.post('/api/v1/analysis/imagery/pan-sharpen', params);
+    return response.data;
+  } catch {
+    const response = await giosApi.post('/api/v1/analysis/sharpening/sharpen', params);
+    return response.data;
+  }
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for pan-sharpened imagery.
+ * 
+ * @param {string} [collection='sentinel-2-l2a'] - Sensor collection
+ * @param {string} [itemId='scene-01'] - Scene asset identifier
+ * @param {string} [method='gram_schmidt'] - Sharpening fusion method
+ * @param {string} [target='true_color_sharp'] - Target band or index
+ * @returns {string} Tile URL template
+ */
+export const getPanSharpenTileUrlTemplate = (collection = 'sentinel-2-l2a', itemId = 'scene-01', method = 'gram_schmidt', target = 'true_color_sharp') => {
+  return `/api/v1/tiles/imagery/pan-sharpen/${collection}/${itemId}/{z}/{x}/{y}.png?method=${method}&target=${target}`;
 };
 
 /**
@@ -10747,6 +10864,21 @@ export {
   evaluateMultiHarmonicCurve,
   extractPhenologyTransitionMetrics,
   buildPhenologyTileUrl,
+  WaveletFilterType,
+  WAVELET_FILTER_TYPES,
+  A_TROUS_B3_SPLINE_1D,
+  A_TROUS_B3_SPLINE_2D,
+  MTFModelType,
+  MTF_MODEL_TYPES,
+  MTFSensorPreset,
+  MTF_SENSOR_PRESET_KEYS,
+  MTF_SENSOR_PRESETS,
+  generateMtfFilterKernel,
+  SubPixelAlignmentMethod,
+  SUBPIXEL_ALIGNMENT_METHODS,
+  normalizePanSharpenMethod,
+  PANSHARPEN_METHODS,
+  calculatePanSharpenFusion,
   SharpeningMethod,
   SHARPENING_METHODS,
   SharpeningTargetBand,

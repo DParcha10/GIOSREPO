@@ -6751,7 +6751,8 @@ class TileService:
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
         sharp_cache_dir = os.path.join(TILE_CACHE_DIR, "sharpened", norm_method, norm_target)
         dot_cache_dir = os.path.join(".cache", "tiles", "sharpened", norm_method, norm_target)
-        for d in (sharp_cache_dir, dot_cache_dir):
+        data_cache_dir = os.path.join("data", "tiles", "sharpened", norm_method, norm_target)
+        for d in (sharp_cache_dir, dot_cache_dir, data_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
                 cf = os.path.join(d, f"{cache_hash}.png")
@@ -6775,6 +6776,12 @@ class TileService:
             sharp_bands, _ = sharpening_service.sharpen_brovey(targets, guidance)
         elif norm_method == "high_pass_filter":
             sharp_bands, _ = sharpening_service.sharpen_high_pass_filter(targets, guidance)
+        elif norm_method == "a_trous_wavelet":
+            sharp_bands, _ = sharpening_service.sharpen_a_trous_wavelet(targets, guidance)
+        elif norm_method == "wavelet_dwt":
+            sharp_bands, _ = sharpening_service.sharpen_wavelet_dwt(targets, guidance)
+        elif norm_method == "ihs":
+            sharp_bands, _ = sharpening_service.sharpen_ihs(targets, guidance)
         elif norm_method == "bicubic_spline":
             sharp_bands, _ = sharpening_service.sharpen_bicubic_spline(targets, (256, 256))
         else: # gram_schmidt default
@@ -6814,7 +6821,7 @@ class TileService:
             png_bytes = buf.getvalue()
 
         # 6. Cache write
-        for d in (sharp_cache_dir, dot_cache_dir):
+        for d in (sharp_cache_dir, dot_cache_dir, data_cache_dir):
             try:
                 cf = os.path.join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:

@@ -15935,7 +15935,304 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         )
 
 
+    def test_task_t372_pansharpening_wavelet_mtf_and_subpixel_contracts(self):
+        """Verify Cycle v2.5.52 Core Scaffolding Hardening: Pan-Sharpening, Wavelet, MTF & Sub-Pixel Alignment (Task T-372)."""
+        import math
+        from pydantic import ValidationError
+        from app.models.schemas import (
+            PanSharpenMethod,
+            normalize_pan_sharpen_method,
+            WaveletFilterType,
+            A_TROUS_B3_SPLINE_1D,
+            A_TROUS_B3_SPLINE_2D,
+            MTFModelType,
+            MTFSensorPreset,
+            MTF_SENSOR_PRESETS,
+            generate_mtf_filter_kernel,
+            MTFFilterConfig,
+            SubPixelAlignmentMethod,
+            SubPixelAlignmentParams,
+            SpectralFidelityTier,
+            PANSHARPEN_TIER_METADATA,
+            classify_spectral_fidelity_tier,
+            PanSharpenBandDetail,
+            PanSharpenRequest,
+            PanSharpenResponse,
+            calculate_pansharpen_fusion,
+            build_pansharpen_tile_url,
+            SharpeningMethod,
+            SpectralSharpeningRequest,
+            SpectralSharpeningResponse,
+            SharpeningMethodsResponse,
+            API_ROUTE_CONTRACTS,
+            API_ROUTES,
+            format_api_route,
+        )
+
+        # 1. PanSharpenMethod enum & Normalization
+        self.assertEqual(PanSharpenMethod.GRAM_SCHMIDT.value, "gram_schmidt")
+        self.assertEqual(PanSharpenMethod.HIGH_PASS_FILTER.value, "high_pass_filter")
+        self.assertEqual(PanSharpenMethod.BROVEY_TRANSFORM.value, "brovey_transform")
+        self.assertEqual(PanSharpenMethod.IHS_TRANSFORM.value, "ihs_transform")
+        self.assertEqual(PanSharpenMethod.A_TROUS_WAVELET.value, "a_trous_wavelet")
+        self.assertEqual(PanSharpenMethod.WAVELET_DWT.value, "wavelet_dwt")
+
+        self.assertEqual(normalize_pan_sharpen_method("gram_schmidt"), PanSharpenMethod.GRAM_SCHMIDT)
+        self.assertEqual(normalize_pan_sharpen_method("gs"), PanSharpenMethod.GRAM_SCHMIDT)
+        self.assertEqual(normalize_pan_sharpen_method("hpf"), PanSharpenMethod.HIGH_PASS_FILTER)
+        self.assertEqual(normalize_pan_sharpen_method("brovey"), PanSharpenMethod.BROVEY_TRANSFORM)
+        self.assertEqual(normalize_pan_sharpen_method("ihs"), PanSharpenMethod.IHS_TRANSFORM)
+        self.assertEqual(normalize_pan_sharpen_method("a_trous_wavelet"), PanSharpenMethod.A_TROUS_WAVELET)
+        self.assertEqual(normalize_pan_sharpen_method("atrous"), PanSharpenMethod.A_TROUS_WAVELET)
+        self.assertEqual(normalize_pan_sharpen_method("wavelet"), PanSharpenMethod.A_TROUS_WAVELET)
+        self.assertEqual(normalize_pan_sharpen_method("wavelet_dwt"), PanSharpenMethod.WAVELET_DWT)
+        self.assertEqual(normalize_pan_sharpen_method("dwt"), PanSharpenMethod.WAVELET_DWT)
+        self.assertEqual(normalize_pan_sharpen_method("mallat"), PanSharpenMethod.WAVELET_DWT)
+
+        with self.assertRaises(ValueError):
+            normalize_pan_sharpen_method("invalid_method_xyz")
+
+        # 2. WaveletFilterType & Spline Kernels
+        self.assertEqual(WaveletFilterType.B3_SPLINE.value, "b3_spline")
+        self.assertEqual(WaveletFilterType.HAAR.value, "haar")
+        self.assertEqual(WaveletFilterType.DAUBECHIES.value, "daubechies")
+        self.assertEqual(WaveletFilterType.BIORTHOGONAL.value, "biorthogonal")
+
+        self.assertEqual(len(A_TROUS_B3_SPLINE_1D), 5)
+        self.assertAlmostEqual(sum(A_TROUS_B3_SPLINE_1D), 1.0, places=6)
+        self.assertEqual(A_TROUS_B3_SPLINE_1D[0], A_TROUS_B3_SPLINE_1D[4])
+        self.assertEqual(A_TROUS_B3_SPLINE_1D[1], A_TROUS_B3_SPLINE_1D[3])
+
+        self.assertEqual(len(A_TROUS_B3_SPLINE_2D), 5)
+        self.assertEqual(len(A_TROUS_B3_SPLINE_2D[0]), 5)
+        self.assertAlmostEqual(sum(sum(row) for row in A_TROUS_B3_SPLINE_2D), 1.0, places=6)
+        self.assertEqual(A_TROUS_B3_SPLINE_2D[2][2], 36.0 / 256.0)
+
+        # 3. MTF Models, Sensor Presets & Calibration Metadata
+        self.assertEqual(MTFModelType.GAUSSIAN.value, "gaussian")
+        self.assertEqual(MTFModelType.SINC.value, "sinc")
+        self.assertEqual(MTFModelType.DIFFRACTION_LIMITED.value, "diffraction")
+        self.assertEqual(MTFModelType.CUSTOM.value, "custom")
+
+        self.assertEqual(MTFSensorPreset.LANDSAT_8_OLI.value, "landsat_8_oli")
+        self.assertEqual(MTFSensorPreset.LANDSAT_9_OLI.value, "landsat_9_oli")
+        self.assertEqual(MTFSensorPreset.SENTINEL_2_MSI.value, "sentinel_2_msi")
+        self.assertEqual(MTFSensorPreset.WORLDVIEW_3.value, "worldview_3")
+        self.assertEqual(MTFSensorPreset.PLEIADES_NEO.value, "pleiades_neo")
+        self.assertEqual(MTFSensorPreset.GENERIC_DRONE_RGB.value, "drone_rgb")
+
+        self.assertIn("landsat_8_oli", MTF_SENSOR_PRESETS)
+        self.assertIn("sentinel_2_msi", MTF_SENSOR_PRESETS)
+        self.assertIn("worldview_3", MTF_SENSOR_PRESETS)
+        self.assertEqual(MTF_SENSOR_PRESETS["landsat_8_oli"]["pan_nyquist_mtf"], 0.20)
+        self.assertEqual(MTF_SENSOR_PRESETS["sentinel_2_msi"]["pan_nyquist_mtf"], 0.28)
+        self.assertEqual(MTF_SENSOR_PRESETS["worldview_3"]["gsd_ratio"], 4.0)
+
+        # 4. generate_mtf_filter_kernel Mathematical Invariants
+        k5 = generate_mtf_filter_kernel(nyquist_cutoff=0.25, kernel_dimension=5, gsd_ratio=2.0)
+        self.assertEqual(len(k5), 5)
+        self.assertEqual(len(k5[0]), 5)
+        # Symmetry check
+        self.assertAlmostEqual(k5[0][0], k5[4][4], places=5)
+        self.assertAlmostEqual(k5[0][4], k5[4][0], places=5)
+        self.assertAlmostEqual(k5[1][2], k5[3][2], places=5)
+        self.assertAlmostEqual(k5[2][1], k5[2][3], places=5)
+        # Unit sum check
+        k5_sum = sum(sum(r) for r in k5)
+        self.assertAlmostEqual(k5_sum, 1.0, places=4)
+        # Center peak check
+        center_val = k5[2][2]
+        self.assertGreater(center_val, k5[0][0])
+        self.assertGreater(center_val, k5[1][1])
+
+        # 7x7 kernel check for high-ratio sensor
+        k7 = generate_mtf_filter_kernel(nyquist_cutoff=0.16, kernel_dimension=7, gsd_ratio=4.0)
+        self.assertEqual(len(k7), 7)
+        self.assertAlmostEqual(sum(sum(r) for r in k7), 1.0, places=4)
+
+        # 5. MTFFilterConfig Model Validation
+        mtf_default = MTFFilterConfig()
+        self.assertEqual(mtf_default.model_type, MTFModelType.GAUSSIAN)
+        self.assertEqual(mtf_default.nyquist_cutoff, 0.25)
+        self.assertEqual(mtf_default.kernel_dimension, 5)
+
+        mtf_preset = MTFFilterConfig(sensor_preset=MTFSensorPreset.SENTINEL_2_MSI)
+        self.assertEqual(mtf_preset.sensor_preset, MTFSensorPreset.SENTINEL_2_MSI)
+        self.assertEqual(mtf_preset.nyquist_cutoff, 0.28)
+
+        mtf_alias = MTFFilterConfig(modelType="sinc", nyquistCutoff=0.30, kernelDimension=7, gainCompensation=1.2)
+        self.assertEqual(mtf_alias.model_type, MTFModelType.SINC)
+        self.assertEqual(mtf_alias.nyquist_cutoff, 0.30)
+        self.assertEqual(mtf_alias.kernel_dimension, 7)
+        self.assertEqual(mtf_alias.gain_compensation, 1.2)
+
+        with self.assertRaises(ValidationError):
+            MTFFilterConfig(nyquist_cutoff=0.005)
+        with self.assertRaises(ValidationError):
+            MTFFilterConfig(kernel_dimension=2)
+
+        # 6. SubPixelAlignmentMethod & SubPixelAlignmentParams
+        self.assertEqual(SubPixelAlignmentMethod.CROSS_CORRELATION.value, "cross_correlation")
+        self.assertEqual(SubPixelAlignmentMethod.PHASE_CORRELATION.value, "phase_correlation")
+        self.assertEqual(SubPixelAlignmentMethod.OPTICAL_FLOW.value, "optical_flow")
+        self.assertEqual(SubPixelAlignmentMethod.AFFINE_RANSAC.value, "affine_ransac")
+
+        sp_default = SubPixelAlignmentParams()
+        self.assertEqual(sp_default.method, SubPixelAlignmentMethod.CROSS_CORRELATION)
+        self.assertEqual(sp_default.dx, 0.0)
+        self.assertEqual(sp_default.dy, 0.0)
+        self.assertTrue(sp_default.auto_align)
+
+        sp_custom = SubPixelAlignmentParams(
+            method=SubPixelAlignmentMethod.PHASE_CORRELATION,
+            dx=0.35,
+            dy=-0.20,
+            correlation_coefficient=0.92,
+            resampling_order=3,
+            subpixel_precision=0.02
+        )
+        self.assertEqual(sp_custom.dx, 0.35)
+        self.assertEqual(sp_custom.dy, -0.20)
+        self.assertEqual(sp_custom.correlation_coefficient, 0.92)
+
+        sp_alias = SubPixelAlignmentParams(correlationCoefficient=0.88, autoAlign=False, subpixelPrecision=0.01)
+        self.assertEqual(sp_alias.correlation_coefficient, 0.88)
+        self.assertFalse(sp_alias.auto_align)
+        self.assertEqual(sp_alias.subpixel_precision, 0.01)
+
+        with self.assertRaises(ValidationError):
+            SubPixelAlignmentParams(dx=6.0)
+        with self.assertRaises(ValidationError):
+            SubPixelAlignmentParams(dy=-7.5)
+        with self.assertRaises(ValidationError):
+            SubPixelAlignmentParams(subpixel_precision=0.0)
+
+        # 7. calculate_pansharpen_fusion with Wavelet, MTF & Sub-Pixel
+        # 7a. A Trous Wavelet
+        res_wavelet = calculate_pansharpen_fusion(
+            method=PanSharpenMethod.A_TROUS_WAVELET,
+            sensor_pan_gsd_m=10.0,
+            sensor_ms_gsd_m=20.0
+        )
+        self.assertEqual(res_wavelet["method"], "a_trous_wavelet")
+        self.assertEqual(res_wavelet["spatial_resolution_boost"], 2.0)
+        self.assertGreater(res_wavelet["spectral_angle_mapper_deg"], 0.0)
+        self.assertIn(res_wavelet["fidelity_tier"], PANSHARPEN_TIER_METADATA)
+        self.assertIsNotNone(res_wavelet["wavelet_metadata"])
+        self.assertEqual(res_wavelet["wavelet_metadata"]["wavelet_basis"], "b3_spline")
+
+        # 7b. Wavelet DWT
+        res_dwt = calculate_pansharpen_fusion(
+            method="dwt",
+            sensor_pan_gsd_m=15.0,
+            sensor_ms_gsd_m=30.0
+        )
+        self.assertEqual(res_dwt["method"], "wavelet_dwt")
+        self.assertEqual(res_dwt["spatial_resolution_boost"], 2.0)
+
+        # 7c. With MTF and Sub-Pixel configs attached
+        mtf_cfg = MTFFilterConfig(sensor_preset=MTFSensorPreset.LANDSAT_9_OLI)
+        sp_cfg = SubPixelAlignmentParams(dx=0.15, dy=-0.10)
+        res_full = calculate_pansharpen_fusion(
+            method=PanSharpenMethod.GRAM_SCHMIDT,
+            mtf_filter_config=mtf_cfg,
+            subpixel_alignment=sp_cfg
+        )
+        self.assertIsNotNone(res_full["mtf_filter_applied"])
+        self.assertTrue(res_full["mtf_filter_applied"]["filter_applied"])
+        self.assertEqual(res_full["mtf_filter_applied"]["sensor_preset"], "landsat_9_oli")
+        self.assertIsNotNone(res_full["subpixel_alignment_applied"])
+        self.assertEqual(res_full["subpixel_alignment_applied"]["dx"], 0.15)
+        self.assertEqual(res_full["subpixel_alignment_applied"]["dy"], -0.10)
+
+        # 8. PanSharpenRequest & PanSharpenResponse Pydantic Serialization
+        pan_req = PanSharpenRequest(
+            method="atrous",
+            mtf_filter_config=mtf_cfg,
+            subpixel_alignment=sp_cfg,
+            wavelet_type=WaveletFilterType.B3_SPLINE,
+            wavelet_levels=3
+        )
+        self.assertEqual(pan_req.method, PanSharpenMethod.A_TROUS_WAVELET)
+        self.assertIsNotNone(pan_req.mtf_filter_config)
+        self.assertEqual(pan_req.wavelet_levels, 3)
+
+        pan_resp = PanSharpenResponse(
+            collection="landsat-c2-l2",
+            item_id="LC09_L2SP_042034_20260915",
+            pan_band="B08",
+            method=pan_req.method.value,
+            spatial_resolution_boost=2.0,
+            pan_gsd_m=15.0,
+            ms_gsd_m=30.0,
+            simulated_pan_reflectance=0.245,
+            spectral_angle_mapper_deg=1.35,
+            ergas_index=1.82,
+            fidelity_tier="pristine_spectral_preservation",
+            tier_metadata=PANSHARPEN_TIER_METADATA["pristine_spectral_preservation"],
+            bands={
+                "B02": PanSharpenBandDetail(
+                    band="B02",
+                    low_res_reflectance=0.095,
+                    sharpened_reflectance=0.105,
+                    high_pass_delta=0.010,
+                    band_weight=0.15,
+                    correlation_with_pan=0.94
+                )
+            },
+            tile_url_template="/api/v1/tiles/imagery/pan-sharpen/landsat-c2-l2/LC09_L2SP_042034_20260915/{z}/{x}/{y}.png",
+            mtf_filter_applied=res_full["mtf_filter_applied"],
+            subpixel_alignment_applied=res_full["subpixel_alignment_applied"],
+            wavelet_metadata={"wavelet_basis": "b3_spline", "levels": 3}
+        )
+        self.assertEqual(pan_resp.method, "a_trous_wavelet")
+        self.assertEqual(pan_resp.bands["B02"].high_pass_delta, 0.010)
+        self.assertIsNotNone(pan_resp.mtf_filter_applied)
+
+        # 9. SpectralSharpeningRequest with MTF & Sub-pixel
+        spec_req = SpectralSharpeningRequest(
+            method="wavelet_dwt",
+            mtf_filter_config=mtf_cfg,
+            subpixel_alignment=sp_cfg,
+            wavelet_filter=WaveletFilterType.B3_SPLINE
+        )
+        self.assertEqual(spec_req.method, SharpeningMethod.WAVELET_DWT)
+        self.assertIsNotNone(spec_req.mtf_filter_config)
+
+        # 10. SharpeningMethodsResponse Capabilities
+        caps = SharpeningMethodsResponse(
+            methods={},
+            benchmark_scenes={},
+            pan_weights={},
+            supported_target_bands=["B05", "B11"],
+            supported_guidance_bands=["B02", "B08"]
+        )
+        self.assertIn("landsat_8_oli", caps.mtf_presets)
+        self.assertIn("cross_correlation", caps.subpixel_methods)
+        self.assertIn("b3_spline", caps.wavelet_filters)
+
+        # 11. Route Contracts and URL Builders
+        self.assertIn("analysis_pansharpen", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_pansharpen_short", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_pansharpen", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_pansharpen_short", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_pansharpen"), "/api/v1/analysis/imagery/pan-sharpen")
+        self.assertEqual(format_api_route("analysis_pansharpen_short"), "/imagery/pan-sharpen")
+        self.assertEqual(
+            format_api_route("tiles_pansharpen", collection="landsat-c2-l2", item_id="LC09_TEST", z=12, x=652, y=1582),
+            "/api/v1/tiles/imagery/pan-sharpen/landsat-c2-l2/LC09_TEST/12/652/1582.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_pansharpen_short", collection="sentinel-2-l2a", item_id="S2A_TEST", z=14, x=2600, y=6320),
+            "/tiles/imagery/pan-sharpen/sentinel-2-l2a/S2A_TEST/14/2600/6320.png"
+        )
+        tile_url = build_pansharpen_tile_url("sentinel-2-l2a", "S2A_TEST", 12, 100, 200)
+        self.assertEqual(tile_url, "/api/v1/tiles/imagery/pan-sharpen/sentinel-2-l2a/S2A_TEST/12/100/200.png")
+
+
 if __name__ == "__main__":
+
     unittest.main()
 
 

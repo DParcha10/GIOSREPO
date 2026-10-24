@@ -342,9 +342,9 @@ class CalibrationService:
             # Orthogonal regression between source and target
             # Sample for performance if large
             sample_step = max(1, len(s_arr) // 512)
-            s_sub = s_arr[::sample_step].tolist()
-            t_sub = t_arr[::sample_step].tolist()
-            c_sub = c_arr[::sample_step].tolist()
+            s_sub = s_arr[::sample_step]
+            t_sub = t_arr[::sample_step]
+            c_sub = c_arr[::sample_step]
 
             coef = CROSS_SENSOR_BAND_COEFFICIENTS.get(b, {}).get("roy_2016", {"c0": 0.0, "c1": 1.0})
             c0, c1 = coef["c0"], coef["c1"]
@@ -534,7 +534,6 @@ class CalibrationService:
 
         # 6. Memory cleanup
         del source_bands, target_bands, calibrated_bands
-        gc.collect()
 
         return CrossSensorCalibrationResponse(
             request_id=req_id,
