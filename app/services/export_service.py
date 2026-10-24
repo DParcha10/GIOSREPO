@@ -190,6 +190,16 @@ class ExportService:
             return filepath, job.artifact.filename, job.artifact.mime_type
         return None
 
+    def export_zonal_statistics(self, req: Any) -> Any:
+        """Exports polygon zonal statistics in GeoJSON, CSV, or GeoTIFF format."""
+        from app.services.spatial import polygon_zonal_stats_engine
+        return polygon_zonal_stats_engine.export_zonal_artifact(req)
+
+    def get_zonal_export_artifact(self, export_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves in-memory or cached zonal export artifact."""
+        from app.services.spatial import polygon_zonal_stats_engine
+        return polygon_zonal_stats_engine.get_export_artifact(export_id)
+
     def list_jobs(self, limit: int = 50) -> List[ExportJobStatusResponse]:
         """Lists active and completed export jobs sorted by submission date."""
         with self._lock:

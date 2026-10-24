@@ -393,6 +393,7 @@ def get_colormap_color_stops(colormap: Union[str, TileColormap, None], default: 
 
 def parse_rescale(rescale: Union[str, List[float], Tuple[float, float], None], default: Tuple[float, float] = (-1.0, 1.0)) -> Tuple[float, float]:
     """Parses a comma-separated rescale string (e.g. "-0.2,0.6") or sequence into a numeric (min, max) tuple.
+    Supports cumulative cut ('cumulative_cut', '2%-98%', 'p2-p98', '2,98') and percentiles.
     Parity implementation with parseRescale() in gios-react/src/config/constants.js.
     """
     if rescale is None:
@@ -405,8 +406,13 @@ def parse_rescale(rescale: Union[str, List[float], Tuple[float, float], None], d
         except Exception:
             return default
     if isinstance(rescale, str):
+        cleaned = rescale.strip().lower()
+        if cleaned in {"cumulative_cut", "auto_cut", "2-98", "2%-98%", "p2-p98", "p2,p98", "2,98"}:
+            return (2.0, 98.0)
         try:
-            parts = [float(p.strip()) for p in rescale.split(",")]
+            cleaned_vals = cleaned.replace("%", "")
+            import re
+            parts = [float(p.strip()) for p in re.split(r"[,:\s]+", cleaned_vals) if p.strip()]
             if len(parts) == 2 and not (math.isnan(parts[0]) or math.isnan(parts[1])):
                 return (parts[0], parts[1])
         except Exception:
@@ -512,6 +518,11 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "analysis_indices": "/api/v1/analysis/indices",
     "analysis_pixel_probe": "/api/v1/analysis/pixel-probe",
     "analysis_zonal_stats": "/api/v1/analysis/zonal-stats",
+    "analysis_zonal_stats_capabilities": "/api/v1/analysis/zonal-stats/capabilities",
+    "analysis_zonal_stats_export": "/api/v1/analysis/zonal-stats/export",
+    "analysis_zonal_stats_download": "/api/v1/analysis/zonal-stats/export/{export_id}/download",
+    "tiles_contrast_stretch": "/api/v1/tiles/contrast/{collection}/{item_id}/{z}/{x}/{y}.png",
+    "tiles_contrast_stretch_metric": "/api/v1/tiles/contrast/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png",
     "tiles_dynamic": "/api/v1/tiles/{collection}/{item_id}/{z}/{x}/{y}.png",
     "wildfire_burn_severity": "/api/v1/wildfire/burn-severity",
     "wildfire_dnbr_tile": "/api/v1/tiles/wildfire/dnbr/{z}/{x}/{y}.png",
@@ -2691,6 +2702,12 @@ class ZonalStatsRealRequest(BaseModel):
     collection: str = Field(default="sentinel-2-l2a", description="Satellite collection identifier")
     item_id: Optional[str] = Field(default=None, description="STAC Item ID")
     index: SpectralIndex = Field(default=SpectralIndex.NDMI, description="Target spectral index")
+    num_bins: int = Field(default=20, ge=5, le=100, description="Number of distribution histogram bins (default 20)")
+    contrast_stretch: Optional[Union[str, Tuple[float, float], List[float]]] = Field(
+        default=None,
+        description="Optional 2%-98% cumulative contrast stretch percentiles (e.g. (2.0, 98.0) or 'cumulative_cut')"
+    )
+    resolution_m: Optional[float] = Field(default=10.0, ge=0.1, le=100.0, description="Spatial resolution in meters")
 
 class ZonalDistributionStats(BaseModel):
     """Parametric and non-parametric distribution statistics over a masked polygon."""
@@ -2700,12 +2717,20 @@ class ZonalDistributionStats(BaseModel):
     min: float = Field(..., description="Minimum value")
     max: float = Field(..., description="Maximum value")
     percentile_10: float = Field(..., description="10th percentile")
+    percentile_25: Optional[float] = Field(default=None, description="25th percentile (lower quartile)")
+    percentile_50: Optional[float] = Field(default=None, description="50th percentile (median)")
+    percentile_75: Optional[float] = Field(default=None, description="75th percentile (upper quartile)")
     percentile_90: float = Field(..., description="90th percentile")
+    percentile_2: Optional[float] = Field(default=None, description="2nd percentile (cumulative cut lower bound)")
+    percentile_98: Optional[float] = Field(default=None, description="98th percentile (cumulative cut upper bound)")
+    iqr: Optional[float] = Field(default=None, description="Interquartile range (p75 - p25)")
 
 class ZonalHistogram(BaseModel):
     """Binned frequency distribution across the polygon."""
     bin_edges: List[float] = Field(..., description="Histogram bin division boundaries")
     counts: List[int] = Field(..., description="Pixel frequency counts per bin")
+    area_hectares_per_bin: Optional[List[float]] = Field(default=None, description="Area-weighted hectares per bin")
+    percentages: Optional[List[float]] = Field(default=None, description="Area percentage per bin")
 
 class ZonalStatsRealResponse(BaseModel):
     """Response payload returning ground truth surface area and statistical distributions."""
@@ -2715,6 +2740,9 @@ class ZonalStatsRealResponse(BaseModel):
     cloud_covered_pixels: int = Field(..., description="Number of cloud/shadow masked pixels")
     statistics: ZonalDistributionStats = Field(..., description="Parametric and non-parametric distribution statistics")
     histogram: ZonalHistogram = Field(..., description="Binned frequency distribution")
+    contrast_stretch_applied: Optional[Dict[str, float]] = Field(default=None, description="Applied contrast stretch bounds")
+    export_urls: Optional[Dict[str, str]] = Field(default=None, description="Direct download URLs for GeoJSON, CSV, and GeoTIFF")
+    geodesic_method: Optional[str] = Field(default="WGS84_ellipsoidal", description="Geodesic computation method")
 
     @property
     def total_pixels(self) -> int:
@@ -2726,6 +2754,28 @@ class ZonalStatsRealResponse(BaseModel):
         """Fraction of polygon area obscured by clouds or invalid mask."""
         tot = self.total_pixels
         return (self.cloud_covered_pixels / tot) if tot > 0 else 0.0
+
+class ZonalExportRequest(BaseModel):
+    """Request payload for multi-format polygon zonal statistics export (GeoJSON, CSV, GeoTIFF)."""
+    geometry: Dict[str, Any] = Field(..., description="GeoJSON Polygon geometry")
+    collection: str = Field(default="sentinel-2-l2a", description="Satellite collection identifier")
+    item_id: Optional[str] = Field(default=None, description="STAC Item ID")
+    index: SpectralIndex = Field(default=SpectralIndex.NDMI, description="Target spectral index")
+    format: str = Field(default="geojson", description="Export container format: geojson, csv, or geotiff")
+    contrast_stretch: Optional[Union[str, Tuple[float, float], List[float]]] = Field(
+        default=(2.0, 98.0),
+        description="2%-98% cumulative contrast stretch percentiles"
+    )
+    num_bins: int = Field(default=20, ge=5, le=100, description="Number of histogram bins (default 20)")
+
+class ZonalExportResponse(BaseModel):
+    """Response acknowledging zonal export artifact generation."""
+    export_id: str = Field(..., description="Unique export identifier")
+    format: str = Field(..., description="Exported format (geojson, csv, geotiff)")
+    filename: str = Field(..., description="Artifact basename on disk")
+    download_url: str = Field(..., description="HTTP URL to download artifact")
+    file_size_bytes: int = Field(..., ge=0, description="Artifact size in bytes")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Creation timestamp ISO 8601")
 
 # ============================================================================
 # DRONE ORTHOMOSAIC INGESTION & MISSION SCHEMAS
@@ -39338,4 +39388,923 @@ def get_topographic_tile_url(
     if scene_id:
         url += f"?scene_id={urllib.parse.quote(str(scene_id))}"
     return url
+
+
+
+# ============================================================================
+# CYCLE v2.5.47: MULTIBAND LAPLACIAN PYRAMID SPLINE BLENDING & SEAMLESS ORTHOMOSAICKING
+# ============================================================================
+
+class SeamlessMosaicBlendingMethod(str, Enum):
+    """Supported multi-resolution seamline and radiometric transition blending algorithms."""
+    MULTIBAND_LAPLACIAN = "multiband_laplacian"     # Burt and Adelson (1983) multiscale Laplacian pyramid spline
+    GRADIENT_DOMAIN_POISSON = "gradient_domain_poisson" # Perez et al. (2003) Poisson gradient domain solver
+    LINEAR_FEATHERING = "linear_feathering"         # Distance transform linear alpha feathering
+    NO_BLENDING = "no_blending"                     # Hard boundary cut along seamline
+
+
+class SeamlessMosaicTileMetric(str, Enum):
+    """Visualization raster layers for dynamic XYZ seamless orthomosaic tile rendering."""
+    BLENDED_RGB = "blended_rgb"                     # Seamlessly blended full RGB orthomosaic composite
+    LAPLACIAN_HIGH_FREQ = "laplacian_high_freq"     # High-frequency bandpass octave (level 0 edge/detail band)
+    LAPLACIAN_LOW_FREQ = "laplacian_low_freq"       # Low-frequency residual octave (level N illumination base)
+    BLENDING_WEIGHTS = "blending_weights"           # Multi-band spatial spline feathering weight mask field
+    SEAMLINE_DISCONTINUITY = "seamline_discontinuity" # Inter-granule boundary radiometric gradient step energy
+    RADIOMETRIC_DIFFERENCE = "radiometric_difference" # Absolute radiometric difference |I_A - I_B| in overlap
+
+
+class ColorEqualizationMethod(str, Enum):
+    """Radiometric pre-equalization methods to harmonize exposure across disparate satellite/drone scenes."""
+    WALLIS_MOMENT_MATCHING = "wallis_moment_matching" # Wallis / Reinhard mean and standard deviation matching
+    POISSON_GRADIENT = "poisson_gradient"           # Poisson boundary-constrained gradient field solver
+    HISTOGRAM_SPECIFICATION = "histogram_specification" # Cumulative radiometric distribution alignment
+    NONE = "none"                                   # Raw radiometric values without pre-equalization
+
+
+def normalize_seamless_blending_method(v: Any) -> SeamlessMosaicBlendingMethod:
+    """Normalizes string or enum representation to canonical SeamlessMosaicBlendingMethod."""
+    if isinstance(v, SeamlessMosaicBlendingMethod):
+        return v
+    s = str(v).lower().strip().replace("-", "_")
+    if "laplacian" in s or "burt" in s or "spline" in s or "pyramid" in s or "multiband" in s:
+        return SeamlessMosaicBlendingMethod.MULTIBAND_LAPLACIAN
+    elif "poisson" in s or "gradient" in s:
+        return SeamlessMosaicBlendingMethod.GRADIENT_DOMAIN_POISSON
+    elif "feather" in s or "linear" in s or "alpha" in s:
+        return SeamlessMosaicBlendingMethod.LINEAR_FEATHERING
+    elif "no" in s or "hard" in s or "raw" in s or "none" in s:
+        return SeamlessMosaicBlendingMethod.NO_BLENDING
+    return SeamlessMosaicBlendingMethod.MULTIBAND_LAPLACIAN
+
+
+def normalize_seamless_tile_metric(v: Any) -> SeamlessMosaicTileMetric:
+    """Normalizes string or enum representation to canonical SeamlessMosaicTileMetric."""
+    if isinstance(v, SeamlessMosaicTileMetric):
+        return v
+    s = str(v).lower().strip().replace("-", "_")
+    if "high" in s or "edge" in s or "detail" in s:
+        return SeamlessMosaicTileMetric.LAPLACIAN_HIGH_FREQ
+    elif "low" in s or "base" in s or "residual" in s or "illumination" in s:
+        return SeamlessMosaicTileMetric.LAPLACIAN_LOW_FREQ
+    elif "weight" in s or "mask" in s or "feather" in s:
+        return SeamlessMosaicTileMetric.BLENDING_WEIGHTS
+    elif "discontinuity" in s or "step" in s or "seam" in s:
+        return SeamlessMosaicTileMetric.SEAMLINE_DISCONTINUITY
+    elif "diff" in s or "delta" in s:
+        return SeamlessMosaicTileMetric.RADIOMETRIC_DIFFERENCE
+    return SeamlessMosaicTileMetric.BLENDED_RGB
+
+
+def normalize_color_equalization_method(v: Any) -> ColorEqualizationMethod:
+    """Normalizes string or enum representation to canonical ColorEqualizationMethod."""
+    if isinstance(v, ColorEqualizationMethod):
+        return v
+    s = str(v).lower().strip().replace("-", "_")
+    if "wallis" in s or "moment" in s or "mean" in s or "reinhard" in s:
+        return ColorEqualizationMethod.WALLIS_MOMENT_MATCHING
+    elif "poisson" in s or "gradient" in s:
+        return ColorEqualizationMethod.POISSON_GRADIENT
+    elif "hist" in s or "cdf" in s:
+        return ColorEqualizationMethod.HISTOGRAM_SPECIFICATION
+    elif "none" in s or "disable" in s or "raw" in s:
+        return ColorEqualizationMethod.NONE
+    return ColorEqualizationMethod.WALLIS_MOMENT_MATCHING
+
+
+SEAMLESS_MOSAIC_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "SAN_FRANCISCO_BAY_S2": {
+        "name": "San Francisco Bay Sentinel-2 Multi-Granule Coastal Mosaic",
+        "description": "Adjacent Sentinel-2 L2A orbital passes covering coastal waters, Golden Gate urban topography, and high dynamic range marine fog seamline.",
+        "bbox": [-122.55, 37.70, -122.35, 37.85],
+        "default_zoom": 12,
+        "granule_count": 2,
+        "mean_overlap_pct": 14.8,
+        "primary_sensor": "Sentinel-2 MSI",
+        "exposure_delta_pct": 18.4,
+    },
+    "SWISS_ALPS_MATTERHORN": {
+        "name": "Swiss Alps Matterhorn High-Relief Alpine Ridge Mosaic",
+        "description": "Multi-temporal mountain passes with deep cast shadows, steep solar illumination gradients, and rugged topographic seamlines.",
+        "bbox": [7.65, 45.95, 7.80, 46.05],
+        "default_zoom": 13,
+        "granule_count": 2,
+        "mean_overlap_pct": 22.1,
+        "primary_sensor": "Sentinel-2 MSI",
+        "exposure_delta_pct": 31.2,
+    },
+    "COLORADO_RIVER_CANYON": {
+        "name": "Colorado River Grand Canyon Arid Exposure Mosaic",
+        "description": "Landsat 8/9 cross-track scenes across high radiometric dynamic range desert rock canyon strata with atmospheric optical thickness shifts.",
+        "bbox": [-112.20, 36.00, -112.00, 36.15],
+        "default_zoom": 11,
+        "granule_count": 2,
+        "mean_overlap_pct": 16.5,
+        "primary_sensor": "Landsat-8/9 OLI",
+        "exposure_delta_pct": 12.7,
+    },
+    "DRONE_VINEYARD_SURVEY": {
+        "name": "Sonoma County Drone High-Resolution Orthomosaic Seamlines",
+        "description": "Sub-decimeter RGB drone flight lines showing cross-flight line perspective parallax, moving canopy shadows, and seamline brightness steps.",
+        "bbox": [-122.85, 38.50, -122.80, 38.55],
+        "default_zoom": 17,
+        "granule_count": 4,
+        "mean_overlap_pct": 35.0,
+        "primary_sensor": "UAV RGB High-Res",
+        "exposure_delta_pct": 9.8,
+    }
+}
+
+SEAMLESS_MOSAIC_METHOD_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "multiband_laplacian": {
+        "label": "Multiband Laplacian Pyramid Spline",
+        "description": "Burt and Adelson (1983) multi-frequency octave decomposition with narrow high-frequency and wide low-frequency transition blending.",
+        "citations": ["Burt and Adelson (1983)"],
+        "default_levels": 4,
+        "memory_mb": 18.5,
+        "edge_preservation": "High",
+        "discontinuity_reduction": ">90%",
+    },
+    "gradient_domain_poisson": {
+        "label": "Poisson Gradient-Domain Solver",
+        "description": "Perez et al. (2003) Poisson image editing preserving boundary gradient fields with Dirichlet boundary value conditions.",
+        "citations": ["Perez et al. (2003)"],
+        "default_levels": 4,
+        "memory_mb": 24.2,
+        "edge_preservation": "Very High",
+        "discontinuity_reduction": ">95%",
+    },
+    "linear_feathering": {
+        "label": "Linear Alpha Feathering",
+        "description": "Single-scale Euclidean distance transform linear ramp across transition buffer.",
+        "citations": ["Szeliski (2006)"],
+        "default_levels": 1,
+        "memory_mb": 8.1,
+        "edge_preservation": "Medium",
+        "discontinuity_reduction": "~65%",
+    },
+    "no_blending": {
+        "label": "Direct Seamline Cut (Raw)",
+        "description": "Hard step boundary cut without radiometric blending.",
+        "citations": ["Baseline"],
+        "default_levels": 1,
+        "memory_mb": 5.0,
+        "edge_preservation": "Unaltered",
+        "discontinuity_reduction": "0%",
+    }
+}
+
+SEAMLESS_MOSAIC_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "blended_rgb": {
+        "label": "Blended Seamless Mosaic RGB",
+        "description": "Fully reconstituted multi-band orthomosaic composite with seamless radiometric transitions.",
+        "units": "Surface Reflectance / Digital Number",
+        "colormap": None,
+    },
+    "laplacian_high_freq": {
+        "label": "High-Frequency Octave Band (L0)",
+        "description": "Fine spatial edge details, textures, and structures filtered at Level 0 octave bandpass.",
+        "units": "Octave Band Amplitude",
+        "colormap": "magma",
+    },
+    "laplacian_low_freq": {
+        "label": "Low-Frequency Base Band (GN)",
+        "description": "Coarse illumination, atmospheric haze, and large-scale color tones at base Gaussian pyramid level.",
+        "units": "Base Reflectance",
+        "colormap": "viridis",
+    },
+    "blending_weights": {
+        "label": "Pyramid Blending Weights (Wk)",
+        "description": "Multi-band spatial spline transition feathering weight field satisfying partition of unity sum(w_i) = 1.0.",
+        "units": "Weight [0.0, 1.0]",
+        "colormap": "coolwarm",
+    },
+    "seamline_discontinuity": {
+        "label": "Seamline Discontinuity Gradient Step",
+        "description": "Inter-granule boundary gradient jump energy magnitude along cut path.",
+        "units": "Gradient Magnitude",
+        "colormap": "inferno",
+    },
+    "radiometric_difference": {
+        "label": "Overlap Radiometric Difference |IA - IB|",
+        "description": "Pixel-wise absolute radiometric difference in overlap zone prior to multiresolution harmonization.",
+        "units": "Delta Reflectance",
+        "colormap": "turbo",
+    }
+}
+
+
+class LaplacianPyramidConfig(BaseModel):
+    """Configuration parameters for Burt and Adelson multiresolution Laplacian pyramid decomposition."""
+    pyramid_levels: int = Field(default=4, ge=2, le=6, description="Octave levels for multiresolution decomposition")
+    kernel_sigma: float = Field(default=1.0, ge=0.5, le=5.0, description="Standard deviation for Gaussian filter kernel")
+    enable_color_equalization: bool = Field(default=True, description="Pre-equalize radiometric exposure across overlap")
+    equalization_method: ColorEqualizationMethod = Field(
+        default=ColorEqualizationMethod.WALLIS_MOMENT_MATCHING,
+        description="Radiometric pre-equalization algorithm"
+    )
+    feather_radius_px: int = Field(default=15, ge=1, le=100, description="Base transition half-width in pixels")
+
+
+class MosaicBlendRequest(BaseModel):
+    """Request payload for multi-granule multiresolution Laplacian pyramid seamless blending."""
+    granule_ids: List[str] = Field(
+        default_factory=lambda: ["scene_alpha", "scene_beta"],
+        description="Candidate overlapping orthomosaic or satellite granule IDs"
+    )
+    blending_method: SeamlessMosaicBlendingMethod = Field(
+        default=SeamlessMosaicBlendingMethod.MULTIBAND_LAPLACIAN,
+        description="Radiometric transition blending method"
+    )
+    pyramid_levels: int = Field(default=4, ge=2, le=6, description="Octave levels for multiresolution decomposition")
+    color_equalization: bool = Field(default=True, description="Pre-equalize radiometric exposure across overlap")
+    equalization_method: ColorEqualizationMethod = Field(
+        default=ColorEqualizationMethod.WALLIS_MOMENT_MATCHING,
+        description="Exposure matching method"
+    )
+    bbox: Optional[Any] = Field(default=None, description="Spatial bounding box")
+    benchmark_scene: Optional[str] = Field(default="SAN_FRANCISCO_BAY_S2", description="Canonical benchmark dataset")
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_mosaic_blend_request(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "bbox" in data and data["bbox"] is not None:
+                data["bbox"] = parse_bbox(data["bbox"])
+            if "method" in data and "blending_method" not in data:
+                data["blending_method"] = data["method"]
+            if "levels" in data and "pyramid_levels" not in data:
+                data["pyramid_levels"] = data["levels"]
+            if "granules" in data and "granule_ids" not in data:
+                data["granule_ids"] = data["granules"]
+            if "scenes" in data and "granule_ids" not in data:
+                data["granule_ids"] = data["scenes"]
+            if "equalization" in data and "color_equalization" not in data:
+                data["color_equalization"] = data["equalization"]
+        return data
+
+
+class MosaicBlendResponse(BaseModel):
+    """Response payload for multi-granule multiresolution Laplacian pyramid seamless blending."""
+    mosaic_id: str = Field(..., description="Unique blended mosaic identifier")
+    granule_count: int = Field(..., description="Count of overlapping tiles blended")
+    blending_method: SeamlessMosaicBlendingMethod = Field(..., description="Applied blending algorithm")
+    pyramid_levels: int = Field(..., description="Pyramid octave levels applied")
+    reconstruction_error_mse: float = Field(..., description="Mathematical reconstruction error MSE (< 1e-5)")
+    seamline_discontinuity_reduction_pct: float = Field(..., description="Percentage reduction in seamline gradient jump")
+    partition_of_unity_verified: bool = Field(default=True, description="Whether sum of weights is identically 1.0")
+    color_equalization_applied: bool = Field(default=True, description="Whether radiometric exposure matching was applied")
+    execution_time_ms: float = Field(..., description="Total pipeline execution latency in ms")
+    tile_url_template: str = Field(..., description="Dynamic XYZ seamless mosaic tile URL template")
+    status: str = Field(default="success", description="Execution status")
+    evaluated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp")
+
+
+class MosaicEvaluationRequest(BaseModel):
+    """Request payload for comparative evaluation between raw and blended orthomosaics."""
+    granule_ids: Optional[List[str]] = Field(default=None, description="Granule IDs")
+    benchmark_scene: Optional[str] = Field(default="SAN_FRANCISCO_BAY_S2", description="Benchmark scene identifier")
+    compare_methods: Optional[List[SeamlessMosaicBlendingMethod]] = Field(
+        default=None,
+        description="List of blending methods to evaluate comparatively"
+    )
+    pyramid_levels: int = Field(default=4, ge=2, le=6, description="Pyramid decomposition levels")
+
+
+class MosaicEvaluationResponse(BaseModel):
+    """Response payload for comparative radiometric evaluation of seamless orthomosaicking."""
+    benchmark_scene: str = Field(..., description="Evaluated benchmark scene identifier")
+    raw_seamline_gradient_step: float = Field(..., description="Discontinuity gradient jump in unblended raw seam cut")
+    blended_seamline_gradient_step: float = Field(..., description="Discontinuity gradient jump after multiresolution blending")
+    discontinuity_reduction_pct: float = Field(..., description="Percentage reduction in boundary discontinuity energy")
+    psnr_db: float = Field(..., description="Peak Signal-to-Noise Ratio (PSNR) in dB")
+    ssim_index: float = Field(..., description="Structural Similarity Index (SSIM) across seam boundary")
+    reconstruction_max_abs_err: float = Field(..., description="Max absolute reconstruction error |R - I|")
+    method_comparisons: Dict[str, Any] = Field(..., description="Performance metrics across compared methods")
+    status: str = Field(default="success", description="Execution status")
+    evaluated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp")
+
+
+class SeamlessMosaicCapabilities(BaseModel):
+    """Capabilities model describing supported seamless orthomosaic algorithms, metrics, and benchmark scenes."""
+    methods: Optional[Dict[str, Any]] = Field(
+        default_factory=lambda: SEAMLESS_MOSAIC_METHOD_CONFIGS,
+        description="Supported blending methods and configurations"
+    )
+    metrics: Optional[List[str]] = Field(
+        default_factory=lambda: [m.value for m in SeamlessMosaicTileMetric],
+        description="Supported dynamic raster tile visualization metrics"
+    )
+    default_method: str = Field(default="multiband_laplacian", description="Default blending algorithm")
+    default_metric: str = Field(default="blended_rgb", description="Default visualization raster metric")
+    supported_levels: List[int] = Field(default_factory=lambda: [2, 3, 4, 5, 6], description="Supported pyramid octave levels")
+    benchmark_scenes: Optional[Dict[str, Any]] = Field(
+        default_factory=lambda: SEAMLESS_MOSAIC_BENCHMARK_SCENES,
+        description="Supported canonical benchmark test scenes"
+    )
+
+    def __contains__(self, key: str) -> bool:
+        return hasattr(self, key)
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key)
+
+
+def get_seamless_mosaic_tile_url(
+    method: Union[str, SeamlessMosaicBlendingMethod] = SeamlessMosaicBlendingMethod.MULTIBAND_LAPLACIAN,
+    metric: Union[str, SeamlessMosaicTileMetric] = SeamlessMosaicTileMetric.BLENDED_RGB,
+    z: Union[int, str] = "{z}",
+    x: Union[int, str] = "{x}",
+    y: Union[int, str] = "{y}",
+    scene_id: Optional[str] = None,
+    levels: int = 4
+) -> str:
+    """Builds a dynamic XYZ tile streaming URL for seamlessly blended orthomosaic tiles."""
+    m_str = method.value if isinstance(method, SeamlessMosaicBlendingMethod) else str(method).lower()
+    met_str = metric.value if isinstance(metric, SeamlessMosaicTileMetric) else str(metric).lower()
+    url = f"/api/v1/tiles/mosaic/{m_str}/{met_str}/{z}/{x}/{y}.png?levels={levels}"
+    if scene_id:
+        url += f"&scene_id={urllib.parse.quote(str(scene_id))}"
+    return url
+
+
+# ==============================================================================
+# Cycle v2.5.50: Thermal-Optical Water Deficit Index (WDI), Evaporative Stress Index (ESI) & Geotechnical Desiccation Early Warning
+# ==============================================================================
+
+class WDITileMetric(str, Enum):
+    """Dynamic raster rendering metrics for Vegetation Index / Temperature Trapezoid (VITT) and Water Deficit Index (WDI)."""
+    WDI = "wdi"                                         # Dimensionless Water Deficit Index [0.0 - 1.0] (Moran et al., 1994)
+    EVAPORATION_FRACTION = "evaporation_fraction"       # Relative evaporation fraction EF = 1 - WDI [0.0 - 1.0]
+    LST = "lst"                                         # Land Surface Temperature Ts in Celsius (°C)
+    NDVI = "ndvi"                                       # Normalized Difference Vegetation Index [-1.0 - 1.0]
+    DESICCATION_HAZARD = "desiccation_hazard"           # Geotechnical desiccation hazard classification (0=None to 4=Critical)
+    ESI = "esi"                                         # Evaporative Stress Index anomaly z-score [-3.0 - +3.0]
+    SOIL_MOISTURE_PROXY = "soil_moisture_proxy"         # Inverted desiccation moisture proxy (1 - WDI) [0.0 - 1.0]
+    TRAPEZOID_SCATTER = "trapezoid_scatter"             # 2D NDVI-Ts scatter space representation
+
+
+class DesiccationHazardTier(str, Enum):
+    """Geotechnical embankment and tailings dam desiccation cracking hazard classification."""
+    NONE = "none"                                       # WDI < 0.20: Saturated / unstressed moisture regime, zero tension cracking
+    LOW = "low"                                         # 0.20 <= WDI < 0.45: Incipient moisture deficit, minor drying
+    MODERATE = "moderate"                               # 0.45 <= WDI < 0.70: Moderate evaporative stress, surface desiccation cracking advisory
+    HIGH = "high"                                       # 0.70 <= WDI < 0.85: Severe moisture deficit, active embankment desiccation risk
+    CRITICAL = "critical"                               # WDI >= 0.85: Critical desiccation, deep tension fissuring, structural shrinkage risk
+
+
+def classify_desiccation_hazard_tier(wdi: float) -> DesiccationHazardTier:
+    """Classifies a scalar Water Deficit Index value into a canonical DesiccationHazardTier."""
+    w = max(0.0, min(1.0, float(wdi)))
+    if w < 0.20:
+        return DesiccationHazardTier.NONE
+    elif w < 0.45:
+        return DesiccationHazardTier.LOW
+    elif w < 0.70:
+        return DesiccationHazardTier.MODERATE
+    elif w < 0.85:
+        return DesiccationHazardTier.HIGH
+    else:
+        return DesiccationHazardTier.CRITICAL
+
+
+def normalize_wdi_metric(val: Any) -> WDITileMetric:
+    """Robustly normalizes metric identifier into canonical WDITileMetric enum."""
+    if isinstance(val, WDITileMetric):
+        return val
+    s = str(val).lower().strip().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "wdi": WDITileMetric.WDI,
+        "water_deficit": WDITileMetric.WDI,
+        "water_deficit_index": WDITileMetric.WDI,
+        "evaporation_fraction": WDITileMetric.EVAPORATION_FRACTION,
+        "ef": WDITileMetric.EVAPORATION_FRACTION,
+        "evap_fraction": WDITileMetric.EVAPORATION_FRACTION,
+        "lst": WDITileMetric.LST,
+        "temperature": WDITileMetric.LST,
+        "land_surface_temperature": WDITileMetric.LST,
+        "ndvi": WDITileMetric.NDVI,
+        "vegetation": WDITileMetric.NDVI,
+        "desiccation": WDITileMetric.DESICCATION_HAZARD,
+        "desiccation_hazard": WDITileMetric.DESICCATION_HAZARD,
+        "hazard": WDITileMetric.DESICCATION_HAZARD,
+        "crack_hazard": WDITileMetric.DESICCATION_HAZARD,
+        "esi": WDITileMetric.ESI,
+        "evaporative_stress_index": WDITileMetric.ESI,
+        "soil_moisture": WDITileMetric.SOIL_MOISTURE_PROXY,
+        "soil_moisture_proxy": WDITileMetric.SOIL_MOISTURE_PROXY,
+        "moisture": WDITileMetric.SOIL_MOISTURE_PROXY,
+        "trapezoid_scatter": WDITileMetric.TRAPEZOID_SCATTER,
+    }
+    if s in mapping:
+        return mapping[s]
+    for m in WDITileMetric:
+        if m.value == s:
+            return m
+    return WDITileMetric.WDI
+
+
+DESICCATION_HAZARD_CONFIGS: Dict[str, Dict[str, Any]] = {
+    DesiccationHazardTier.NONE.value: {
+        "name": "No Desiccation",
+        "description": "Saturated or well-hydrated embankment. Zero desiccation cracking risk.",
+        "min_wdi": 0.0,
+        "max_wdi": 0.20,
+        "color": "#10b981",
+        "color_rgba": [16, 185, 129, 255],
+        "advisory": "Normal hydrological conditions. Continuous standard surveillance."
+    },
+    DesiccationHazardTier.LOW.value: {
+        "name": "Low Desiccation Risk",
+        "description": "Incipient evaporative drying in surface skin layer. Negligible cracking.",
+        "min_wdi": 0.20,
+        "max_wdi": 0.45,
+        "color": "#3b82f6",
+        "color_rgba": [59, 130, 246, 255],
+        "advisory": "Routine monitoring. Embankment moisture within design tolerances."
+    },
+    DesiccationHazardTier.MODERATE.value: {
+        "name": "Moderate Desiccation Risk",
+        "description": "Moderate moisture deficit. Superficial hairline desiccation cracks developing.",
+        "min_wdi": 0.45,
+        "max_wdi": 0.70,
+        "color": "#f59e0b",
+        "color_rgba": [245, 158, 11, 255],
+        "advisory": "Inspect crest and upper slopes for tension crack propagation."
+    },
+    DesiccationHazardTier.HIGH.value: {
+        "name": "High Desiccation Hazard",
+        "description": "Severe evaporative stress. Active desiccation fissuring penetrating into core/shell.",
+        "min_wdi": 0.70,
+        "max_wdi": 0.85,
+        "color": "#f97316",
+        "color_rgba": [249, 115, 22, 255],
+        "advisory": "Conduct geotechnical ground walkover. Seal superficial cracks before heavy rain."
+    },
+    DesiccationHazardTier.CRITICAL.value: {
+        "name": "Critical Desiccation Hazard",
+        "description": "Extreme volumetric shrinkage and deep desiccation cracking risking internal erosion / piping.",
+        "min_wdi": 0.85,
+        "max_wdi": 1.00,
+        "color": "#ef4444",
+        "color_rgba": [239, 68, 68, 255],
+        "advisory": "EMERGENCY: Immediate geotechnical inspection; risk of preferential seepage pathway formation."
+    }
+}
+
+WDI_TILE_METRIC_CONFIGS: Dict[str, Dict[str, Any]] = {
+    WDITileMetric.WDI.value: {
+        "name": "Water Deficit Index (WDI)",
+        "unit": "dimensionless",
+        "min": 0.0,
+        "max": 1.0,
+        "colormap": "rdylbu_r",
+        "description": "Moran et al. (1994) Water Deficit Index (0 = saturated, 1 = extreme moisture deficit)"
+    },
+    WDITileMetric.EVAPORATION_FRACTION.value: {
+        "name": "Evaporation Fraction (EF)",
+        "unit": "ratio",
+        "min": 0.0,
+        "max": 1.0,
+        "colormap": "viridis",
+        "description": "Relative evaporation ratio (1 - WDI, 1 = potential ET, 0 = dry fallow)"
+    },
+    WDITileMetric.LST.value: {
+        "name": "Land Surface Temperature (LST)",
+        "unit": "°C",
+        "min": 10.0,
+        "max": 55.0,
+        "colormap": "inferno",
+        "description": "Calibrated split-window thermal skin surface temperature"
+    },
+    WDITileMetric.NDVI.value: {
+        "name": "Vegetation Index (NDVI)",
+        "unit": "index",
+        "min": -0.1,
+        "max": 0.85,
+        "colormap": "rdylgn",
+        "description": "Normalized Difference Vegetation Index representing fractional canopy cover"
+    },
+    WDITileMetric.DESICCATION_HAZARD.value: {
+        "name": "Desiccation Cracking Hazard",
+        "unit": "tier (0-4)",
+        "min": 0,
+        "max": 4,
+        "colormap": "turbo",
+        "description": "Geotechnical 5-tier embankment desiccation and tension cracking hazard"
+    },
+    WDITileMetric.ESI.value: {
+        "name": "Evaporative Stress Index (ESI)",
+        "unit": "z-score",
+        "min": -3.0,
+        "max": 3.0,
+        "colormap": "coolwarm_r",
+        "description": "Standardized Evaporative Stress Index anomaly deviation"
+    },
+    WDITileMetric.SOIL_MOISTURE_PROXY.value: {
+        "name": "Soil Moisture Proxy",
+        "unit": "proxy [0-1]",
+        "min": 0.0,
+        "max": 1.0,
+        "colormap": "blues",
+        "description": "Inverted thermal-optical surface soil moisture proxy"
+    }
+}
+
+WDI_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "SAN_LUIS_RESERVOIR_DESICCATION": {
+        "name": "San Luis Reservoir & BF Sisk Dam Embankment",
+        "asset_id": "SAN_LUIS_RESERVOIR",
+        "scene_id": "LC09_L2SP_043034_20240715_02_T1",
+        "collection": "landsat-c2-l2",
+        "center": [37.057, -121.074],
+        "bbox": [-121.16, 37.00, -120.98, 37.12],
+        "description": "Massive zoned earthen embankment dam and drawdown shoreline susceptible to seasonal desiccation fissuring."
+    },
+    "OROVILLE_DAM_EMBANKMENT": {
+        "name": "Oroville Dam Earthfill Embankment",
+        "asset_id": "OROVILLE_DAM",
+        "scene_id": "LC08_L2SP_044033_20240801_02_T1",
+        "collection": "landsat-c2-l2",
+        "center": [39.537, -121.488],
+        "bbox": [-121.55, 39.50, -121.42, 39.58],
+        "description": "Highest earthen dam in the US (235m); multi-spectral thermal monitoring of downstream embankment face."
+    },
+    "CENTRAL_VALLEY_FALLOW": {
+        "name": "Central Valley Agricultural Drought Check",
+        "asset_id": "CENTRAL_VALLEY_FALLOW",
+        "scene_id": "LC09_L2SP_042035_20240620_02_T1",
+        "collection": "landsat-c2-l2",
+        "center": [36.25, -119.80],
+        "bbox": [-119.95, 36.15, -119.65, 36.35],
+        "description": "Adjacent irrigated alfalfa checks and arid fallow fields for empirical trapezoid edge calibration."
+    },
+    "TAILINGS_FACILITY_NORTH": {
+        "name": "Tailings Impoundment Facility North",
+        "asset_id": "TAILINGS_FACILITY_NORTH",
+        "scene_id": "LC08_L2SP_038032_20240722_02_T1",
+        "collection": "landsat-c2-l2",
+        "center": [40.75, -111.95],
+        "bbox": [-112.05, 40.68, -111.85, 40.82],
+        "description": "Mine tailings perimeter embankment undergoing evaporative drying and surface crusting."
+    }
+}
+
+
+class TrapezoidBoundaryLine(BaseModel):
+    """Linear theoretical or empirical boundary in NDVI-Ts space (Ts = slope * NDVI + intercept)."""
+    slope: float = Field(..., description="Slope coefficient (dT/dNDVI) in °C/index unit")
+    intercept: float = Field(..., description="Intercept coefficient (°C) at NDVI = 0")
+    r_squared: float = Field(default=0.95, ge=0.0, le=1.0, description="Coefficient of determination (R^2)")
+    equation: str = Field(..., description="Human-readable boundary equation")
+    t_min_c: float = Field(..., description="Minimum predicted temperature along edge (°C)")
+    t_max_c: float = Field(..., description="Maximum predicted temperature along edge (°C)")
+
+
+class TrapezoidVertices(BaseModel):
+    """The four theoretical extreme vertices of the Moran et al. (1994) VITT polygon."""
+    dry_bare_soil: Tuple[float, float] = Field(..., description="(NDVI_min, Ts_dry_max) - Point 1: Dry bare soil")
+    wet_bare_soil: Tuple[float, float] = Field(..., description="(NDVI_min, Ts_wet_min) - Point 2: Saturated bare soil")
+    wet_full_canopy: Tuple[float, float] = Field(..., description="(NDVI_max, Ts_wet_min) - Point 3: Well-watered full canopy")
+    dry_full_canopy: Tuple[float, float] = Field(..., description="(NDVI_max, Ts_dry_veg) - Point 4: Stressed full canopy")
+
+
+class WDIEvaluationRequest(BaseModel):
+    """Request payload for Vegetation Index / Temperature Trapezoid (VITT) and Water Deficit Index (WDI) evaluation."""
+    scene_id: Optional[str] = Field(default=None, description="Landsat or Sentinel scene identifier")
+    item_id: Optional[str] = Field(default=None, description="STAC item identifier alias")
+    collection: SatelliteCollection = Field(default=SatelliteCollection.LANDSAT_C2_L2, description="Constellation")
+    bbox: Optional[Union[List[float], Tuple[float, float, float, float], Dict[str, float], BoundingBox]] = Field(
+        None, description="Bounding box [min_lon, min_lat, max_lon, max_lat]"
+    )
+    asset_id: Optional[str] = Field(default=None, description="Benchmark site or asset identifier")
+    num_bins: int = Field(default=20, ge=5, le=50, description="Number of NDVI discretization bins")
+    dry_percentile: float = Field(default=95.0, ge=80.0, le=99.9, description="Percentile for upper dry envelope")
+    wet_percentile: float = Field(default=5.0, ge=0.1, le=20.0, description="Percentile for lower wet envelope")
+    atmospheric_transmissivity: float = Field(default=0.85, ge=0.5, le=1.0, description="Atmospheric transmissivity")
+    upwelling_radiance: float = Field(default=1.25, ge=0.0, le=10.0, description="Atmospheric upwelling radiance")
+    downwelling_radiance: float = Field(default=2.10, ge=0.0, le=10.0, description="Atmospheric downwelling radiance")
+
+
+class WDIEvaluationResponse(BaseModel):
+    """Quantitative VITT trapezoid fit, WDI statistics, and desiccation crack susceptibility."""
+    evaluation_id: str = Field(..., description="Unique evaluation identifier")
+    scene_id: str = Field(..., description="Analyzed scene identifier")
+    asset_id: Optional[str] = Field(default=None, description="Associated asset identifier")
+    collection: str = Field(..., description="Applied satellite collection")
+    dry_edge: TrapezoidBoundaryLine = Field(..., description="Theoretical dry boundary line")
+    wet_edge: TrapezoidBoundaryLine = Field(..., description="Theoretical wet boundary line")
+    vertices: TrapezoidVertices = Field(..., description="Four theoretical trapezoid vertices")
+    mean_wdi: float = Field(..., ge=0.0, le=1.0, description="Mean Water Deficit Index [0.0 - 1.0]")
+    median_wdi: float = Field(..., ge=0.0, le=1.0, description="Median Water Deficit Index [0.0 - 1.0]")
+    p10_wdi: float = Field(..., ge=0.0, le=1.0, description="10th percentile WDI")
+    p90_wdi: float = Field(..., ge=0.0, le=1.0, description="90th percentile WDI")
+    mean_evaporation_fraction: float = Field(..., ge=0.0, le=1.0, description="Mean Evaporation Fraction (1 - WDI)")
+    mean_lst_c: float = Field(..., description="Mean Land Surface Temperature (°C)")
+    mean_ndvi: float = Field(..., description="Mean Normalized Difference Vegetation Index")
+    dominant_desiccation_tier: DesiccationHazardTier = Field(..., description="Dominant desiccation risk tier")
+    desiccation_tier_breakdown: Dict[str, float] = Field(..., description="Percentage distribution across 5 tiers")
+    crack_susceptibility_index: float = Field(..., ge=0.0, le=100.0, description="Embankment Crack Susceptibility Score (0-100)")
+    scatterplot_sample: List[Dict[str, Any]] = Field(default_factory=list, description="Subsampled points for 2D Chart.js scatterplot")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template")
+    status: str = Field(default="success")
+    evaluated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class WDICapabilitiesResponse(BaseModel):
+    """Capabilities model describing supported WDI trapezoid models, metrics, and benchmark scenes."""
+    models: Dict[str, Any] = Field(..., description="Supported thermal-optical trapezoid models")
+    metrics: List[str] = Field(default_factory=list, description="Supported dynamic XYZ tile metrics")
+    desiccation_tiers: Dict[str, Any] = Field(..., description="Desiccation hazard classification tiers")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Supported benchmark research scenes")
+    default_metric: str = Field(default="wdi")
+    default_colormap: str = Field(default="rdylbu_r")
+
+
+class WDIDesiccationRiskResponse(BaseModel):
+    """Geotechnical embankment desiccation and tension cracking risk assessment."""
+    asset_id: str = Field(..., description="Monitored asset identifier")
+    scene_id: str = Field(..., description="Analyzed scene identifier")
+    overall_hazard_tier: DesiccationHazardTier = Field(..., description="Overall desiccation hazard classification")
+    mean_wdi: float = Field(..., ge=0.0, le=1.0, description="Mean Water Deficit Index")
+    critical_area_pct: float = Field(..., ge=0.0, le=100.0, description="Percentage area in CRITICAL desiccation tier")
+    high_risk_area_pct: float = Field(..., ge=0.0, le=100.0, description="Percentage area in HIGH or CRITICAL desiccation tier")
+    crack_susceptibility_score: float = Field(..., ge=0.0, le=100.0, description="Tension crack susceptibility index (0-100)")
+    geotechnical_warning: str = Field(..., description="Engineering warning and risk description")
+    recommended_action: str = Field(..., description="Recommended engineering maintenance action")
+    monitored_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def build_wdi_tile_url(
+    metric: Union[str, WDITileMetric] = WDITileMetric.WDI,
+    z: Union[int, str] = "{z}",
+    x: Union[int, str] = "{x}",
+    y: Union[int, str] = "{y}",
+    scene_id: Optional[str] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+) -> str:
+    """Builds a dynamic XYZ tile streaming URL for WDI / VITT thermal-optical drought tiles."""
+    met_str = metric.value if isinstance(metric, WDITileMetric) else str(metric).lower()
+    url = f"/api/v1/tiles/wdi/{met_str}/{z}/{x}/{y}.png"
+    params = []
+    if scene_id:
+        params.append(f"scene_id={urllib.parse.quote(str(scene_id))}")
+    if colormap:
+        params.append(f"colormap={urllib.parse.quote(str(colormap))}")
+    if rescale:
+        params.append(f"rescale={urllib.parse.quote(str(rescale))}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+
+# ============================================================================
+# CYCLE v2.5.51: SUB-PIXEL SPECTRAL UNMIXING, CONVEX HULL ENDMEMBER INDUCTION & MINERALOGY TILES
+# ============================================================================
+
+class EndmemberInductionMethod(str, Enum):
+    """Algorithms for unsupervised convex hull endmember extraction."""
+    NFINDR = "nfindr"                # Simplex Volume Maximization (Winter 1999)
+    VCA = "vca"                      # Vertex Component Analysis via orthogonal subspace projection (Nascimento & Dias 2005)
+    CONVEX_HULL = "convex_hull"      # General convex hull simplex boundary extreme point induction
+
+
+class MineralEndmemberType(str, Enum):
+    """Canonical geological, acid mine drainage, and tailings mineral endmember types."""
+    PYRITE = "pyrite"                # Iron sulfide FeS2 (primary source of acid mine drainage)
+    JAROSITE = "jarosite"            # Potassium iron sulfate KFe3(SO4)2(OH)6 (acidic oxidation pH < 3)
+    GOETHITE = "goethite"            # Iron oxyhydroxide alpha-FeO(OH) (moderately acidic oxidation pH 3-6)
+    HEMATITE = "hematite"            # Iron oxide alpha-Fe2O3 (mature oxidized tailings capping)
+    KAOLINITE = "kaolinite"          # Hydrated aluminum silicate Al2Si2O5(OH)4 (clay/gangue mineral)
+    CALCITE = "calcite"              # Calcium carbonate CaCO3 (acid-neutralizing carbonate buffer)
+    ALUNITE = "alunite"              # Potassium aluminum sulfate KAl3(SO4)2(OH)6 (acid-sulfate alteration)
+
+
+# Standard USGS / ASTER 7-band multi-spectral reflectance library across optical/SWIR bandpasses
+MINERAL_ENDMEMBER_SPECTRA: Dict[str, Dict[str, float]] = {
+    "pyrite": {
+        "coastal": 0.08, "blue": 0.10, "green": 0.14, "red": 0.17,
+        "nir_narrow": 0.19, "swir_1": 0.22, "swir_2": 0.18
+    },
+    "jarosite": {
+        "coastal": 0.06, "blue": 0.12, "green": 0.28, "red": 0.38,
+        "nir_narrow": 0.45, "swir_1": 0.42, "swir_2": 0.16
+    },
+    "goethite": {
+        "coastal": 0.04, "blue": 0.07, "green": 0.15, "red": 0.28,
+        "nir_narrow": 0.38, "swir_1": 0.44, "swir_2": 0.40
+    },
+    "hematite": {
+        "coastal": 0.03, "blue": 0.05, "green": 0.10, "red": 0.26,
+        "nir_narrow": 0.33, "swir_1": 0.38, "swir_2": 0.36
+    },
+    "kaolinite": {
+        "coastal": 0.40, "blue": 0.45, "green": 0.48, "red": 0.52,
+        "nir_narrow": 0.55, "swir_1": 0.52, "swir_2": 0.21
+    },
+    "calcite": {
+        "coastal": 0.35, "blue": 0.40, "green": 0.44, "red": 0.48,
+        "nir_narrow": 0.52, "swir_1": 0.58, "swir_2": 0.32
+    },
+    "alunite": {
+        "coastal": 0.30, "blue": 0.35, "green": 0.40, "red": 0.45,
+        "nir_narrow": 0.48, "swir_1": 0.46, "swir_2": 0.18
+    }
+}
+
+
+class MineralogyTileMetric(str, Enum):
+    """Dynamic XYZ tile visualization raster layers for sub-pixel mineral abundance and tailings risk."""
+    FRACTION_PYRITE = "fraction_pyrite"
+    FRACTION_JAROSITE = "fraction_jarosite"
+    FRACTION_GOETHITE = "fraction_goethite"
+    FRACTION_HEMATITE = "fraction_hematite"
+    FRACTION_KAOLINITE = "fraction_kaolinite"
+    FRACTION_CALCITE = "fraction_calcite"
+    ACID_MINE_DRAINAGE_RISK = "acid_mine_drainage_risk"
+    MINERAL_RGB_COMPOSITE = "mineral_rgb_composite"
+    INDUCED_ENDMEMBER_1 = "induced_endmember_1"
+    INDUCED_ENDMEMBER_2 = "induced_endmember_2"
+    INDUCED_ENDMEMBER_3 = "induced_endmember_3"
+    UNMIXING_RMSE = "unmixing_rmse"
+
+
+def normalize_endmember_induction_method(val: Any) -> EndmemberInductionMethod:
+    """Normalizes string or enum to EndmemberInductionMethod."""
+    if isinstance(val, EndmemberInductionMethod):
+        return val
+    raw = str(val).strip().lower().replace("-", "_").replace(" ", "_")
+    if raw in ("nfindr", "n_findr", "simplex_volume", "simplex"):
+        return EndmemberInductionMethod.NFINDR
+    if raw in ("vca", "vertex_component_analysis", "vertex_component", "orthogonal_subspace"):
+        return EndmemberInductionMethod.VCA
+    if raw in ("convex_hull", "convex", "hull"):
+        return EndmemberInductionMethod.CONVEX_HULL
+    for m in EndmemberInductionMethod:
+        if raw == m.value or raw == m.name.lower():
+            return m
+    return EndmemberInductionMethod.NFINDR
+
+
+def normalize_mineralogy_tile_metric(val: Any) -> MineralogyTileMetric:
+    """Normalizes string or enum to MineralogyTileMetric."""
+    if isinstance(val, MineralogyTileMetric):
+        return val
+    raw = str(val).strip().lower().replace("-", "_").replace(" ", "_")
+    alias_map = {
+        "pyrite": MineralogyTileMetric.FRACTION_PYRITE,
+        "fraction_pyrite": MineralogyTileMetric.FRACTION_PYRITE,
+        "jarosite": MineralogyTileMetric.FRACTION_JAROSITE,
+        "fraction_jarosite": MineralogyTileMetric.FRACTION_JAROSITE,
+        "goethite": MineralogyTileMetric.FRACTION_GOETHITE,
+        "fraction_goethite": MineralogyTileMetric.FRACTION_GOETHITE,
+        "hematite": MineralogyTileMetric.FRACTION_HEMATITE,
+        "fraction_hematite": MineralogyTileMetric.FRACTION_HEMATITE,
+        "kaolinite": MineralogyTileMetric.FRACTION_KAOLINITE,
+        "fraction_kaolinite": MineralogyTileMetric.FRACTION_KAOLINITE,
+        "calcite": MineralogyTileMetric.FRACTION_CALCITE,
+        "fraction_calcite": MineralogyTileMetric.FRACTION_CALCITE,
+        "amd": MineralogyTileMetric.ACID_MINE_DRAINAGE_RISK,
+        "amd_risk": MineralogyTileMetric.ACID_MINE_DRAINAGE_RISK,
+        "acid_mine_drainage": MineralogyTileMetric.ACID_MINE_DRAINAGE_RISK,
+        "acid_mine_drainage_risk": MineralogyTileMetric.ACID_MINE_DRAINAGE_RISK,
+        "rgb": MineralogyTileMetric.MINERAL_RGB_COMPOSITE,
+        "composite": MineralogyTileMetric.MINERAL_RGB_COMPOSITE,
+        "mineral_rgb": MineralogyTileMetric.MINERAL_RGB_COMPOSITE,
+        "mineral_rgb_composite": MineralogyTileMetric.MINERAL_RGB_COMPOSITE,
+        "rmse": MineralogyTileMetric.UNMIXING_RMSE,
+        "unmixing_rmse": MineralogyTileMetric.UNMIXING_RMSE,
+        "em1": MineralogyTileMetric.INDUCED_ENDMEMBER_1,
+        "induced_endmember_1": MineralogyTileMetric.INDUCED_ENDMEMBER_1,
+        "em2": MineralogyTileMetric.INDUCED_ENDMEMBER_2,
+        "induced_endmember_2": MineralogyTileMetric.INDUCED_ENDMEMBER_2,
+        "em3": MineralogyTileMetric.INDUCED_ENDMEMBER_3,
+        "induced_endmember_3": MineralogyTileMetric.INDUCED_ENDMEMBER_3,
+    }
+    if raw in alias_map:
+        return alias_map[raw]
+    for m in MineralogyTileMetric:
+        if raw == m.value or raw == m.name.lower():
+            return m
+    return MineralogyTileMetric.ACID_MINE_DRAINAGE_RISK
+
+
+class ConvexHullEndmemberRequest(BaseModel):
+    """Payload for unsupervised convex hull endmember extraction."""
+    num_endmembers: int = Field(default=4, ge=2, le=10, description="Number of pure pixel endmembers to induce (M <= 10)")
+    algorithm: EndmemberInductionMethod = Field(default=EndmemberInductionMethod.NFINDR, description="Convex hull endmember induction algorithm")
+    aoi_name: Optional[str] = Field(default="Morenci Mine Tailings Impoundment, Arizona", description="Target AOI or scene")
+    max_iterations: int = Field(default=50, ge=1, le=500, description="Maximum iterations for volume maximization")
+    random_seed: Optional[int] = Field(default=42, description="Random seed for deterministic vertex initialization")
+
+    @field_validator("algorithm", mode="before")
+    @classmethod
+    def validate_algorithm(cls, v: Any) -> EndmemberInductionMethod:
+        return normalize_endmember_induction_method(v)
+
+
+class InducedEndmember(BaseModel):
+    """Extracted pure pixel endmember signature."""
+    endmember_id: str = Field(..., description="Unique endmember identifier")
+    name: str = Field(..., description="Endmember descriptive name")
+    simplex_vertex_index: int = Field(..., description="Simplex vertex column index")
+    spectral_vector: Dict[str, float] = Field(..., description="Induced reflectance across multi-spectral bands")
+    purity_index: float = Field(..., ge=0.0, le=1.0, description="Convex hull boundary purity score")
+    pixel_coordinates: Optional[Tuple[int, int]] = Field(default=None, description="Raster coordinate (row, col) of vertex")
+
+
+class ConvexHullEndmemberResponse(BaseModel):
+    """Response containing induced convex hull endmembers."""
+    request_id: str = Field(..., description="Unique request identifier")
+    algorithm: EndmemberInductionMethod = Field(..., description="Applied induction algorithm")
+    num_endmembers: int = Field(..., description="Number of induced endmembers")
+    simplex_volume: float = Field(..., description="Normalized volume of the induced convex hull simplex")
+    iterations_converged: int = Field(..., description="Number of optimization iterations")
+    condition_number: float = Field(..., description="Matrix condition number kappa(E)")
+    endmembers: List[InducedEndmember] = Field(default_factory=list, description="Extracted endmembers")
+    status: str = Field(default="success")
+    induced_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class MineralUnmixingRequest(BaseModel):
+    """Payload for sub-pixel mineralogy unmixing and tailings hazard assessment."""
+    aoi_name: Optional[str] = Field(default="Morenci Mine Tailings Impoundment, Arizona", description="Target AOI")
+    target_minerals: List[str] = Field(
+        default_factory=lambda: ["pyrite", "jarosite", "goethite", "kaolinite", "calcite"],
+        description="Target mineral endmembers to unmix"
+    )
+    algorithm: str = Field(default="fcls_lawson_hanson", description="Unmixing algorithm")
+    delta_sum_weight: float = Field(default=20.0, ge=1.0, le=100.0, description="ASC Lagrange multiplier weighting delta")
+    custom_mineral_spectra: Optional[Dict[str, Dict[str, float]]] = Field(default=None, description="Optional custom mineral spectra")
+
+
+class MineralUnmixingPoint(BaseModel):
+    """Sample point sub-pixel mineral abundances and acid drainage risk."""
+    point_id: str = Field(..., description="Sample point identifier")
+    lat: float = Field(..., description="WGS84 latitude")
+    lng: float = Field(..., description="WGS84 longitude")
+    mineral_fractions: Dict[str, float] = Field(..., description="Sub-pixel mineral abundance fractions")
+    sum_fractions: float = Field(default=1.0, description="Sum of mineral fractions")
+    acid_mine_drainage_risk: float = Field(..., ge=0.0, le=1.0, description="Acid Mine Drainage Risk Index (0.0 - 1.0)")
+    dominant_mineral: str = Field(..., description="Dominant mineral at point")
+    rmse: float = Field(..., ge=0.0, description="Spectral reconstruction RMSE")
+
+
+class MineralUnmixingResponse(BaseModel):
+    """Response payload containing sub-pixel mineral unmixing results."""
+    request_id: str = Field(..., description="Unique unmixing request identifier")
+    aoi_name: str = Field(..., description="Target AOI name")
+    target_minerals: List[str] = Field(..., description="Unmixed mineral endmembers")
+    algorithm: str = Field(..., description="Applied unmixing algorithm")
+    mean_amd_risk: float = Field(..., ge=0.0, le=1.0, description="Average Acid Mine Drainage Risk across AOI")
+    dominant_mineral_breakdown: Dict[str, float] = Field(..., description="Percentage of footprint dominated by each mineral")
+    points: List[MineralUnmixingPoint] = Field(default_factory=list, description="Evaluated sub-pixel sample points")
+    tile_url_template: str = Field(..., description="Dynamic XYZ mineralogy tile URL template")
+    status: str = Field(default="success")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class MineralogyCapabilitiesResponse(BaseModel):
+    """Capabilities model describing supported mineralogy unmixing and convex hull models."""
+    algorithms: Dict[str, Any] = Field(..., description="Supported unmixing and convex hull algorithms")
+    mineral_library: Dict[str, Dict[str, float]] = Field(..., description="Reference mineral spectral library")
+    metrics: List[str] = Field(default_factory=list, description="Supported XYZ tile metrics")
+    tailings_sites: Dict[str, Any] = Field(..., description="Tailings dam benchmark sites")
+    default_metric: str = Field(default="acid_mine_drainage_risk")
+    default_colormap: str = Field(default="inferno")
+
+
+def build_mineralogy_tile_url(
+    metric: Union[str, MineralogyTileMetric] = MineralogyTileMetric.ACID_MINE_DRAINAGE_RISK,
+    z: Union[int, str] = "{z}",
+    x: Union[int, str] = "{x}",
+    y: Union[int, str] = "{y}",
+    aoi_name: Optional[str] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for sub-pixel mineralogy tiles."""
+    met_str = metric.value if isinstance(metric, MineralogyTileMetric) else str(metric).lower()
+    url = f"/api/v1/tiles/mineralogy/{met_str}/{z}/{x}/{y}.png"
+    params = []
+    if aoi_name:
+        params.append(f"aoi_name={urllib.parse.quote(str(aoi_name))}")
+    if colormap:
+        params.append(f"colormap={urllib.parse.quote(str(colormap))}")
+    if rescale:
+        params.append(f"rescale={urllib.parse.quote(str(rescale))}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+
+def build_mineralogy_tile_url_template(
+    metric: Union[str, MineralogyTileMetric] = MineralogyTileMetric.ACID_MINE_DRAINAGE_RISK
+) -> str:
+    """Builds template URL string for dynamic XYZ mineralogy tiles."""
+    met_str = metric.value if isinstance(metric, MineralogyTileMetric) else str(metric).lower()
+    return f"/api/v1/tiles/mineralogy/{met_str}/{{z}}/{{x}}/{{y}}.png"
 

@@ -29,6 +29,30 @@ from app.models.schemas import (
     ZonalStatsRealResponse,
     ZonalDistributionStats,
     ZonalHistogram,
+    ZonalExportRequest,
+    ZonalExportResponse,
+    WDITileMetric,
+    DesiccationHazardTier,
+    WDIEvaluationRequest,
+    WDIEvaluationResponse,
+    WDICapabilitiesResponse,
+    WDIDesiccationRiskResponse,
+    build_wdi_tile_url,
+    MineralogyTileMetric,
+    EndmemberInductionMethod,
+    MineralEndmemberType,
+    MINERAL_ENDMEMBER_SPECTRA,
+    ConvexHullEndmemberRequest,
+    InducedEndmember,
+    ConvexHullEndmemberResponse,
+    MineralUnmixingRequest,
+    MineralUnmixingPoint,
+    MineralUnmixingResponse,
+    MineralogyCapabilitiesResponse,
+    build_mineralogy_tile_url,
+    build_mineralogy_tile_url_template,
+    normalize_mineralogy_tile_metric,
+    normalize_endmember_induction_method,
     parse_bbox,
     BoundingBox,
     normalize_geojson_polygon,
@@ -1229,99 +1253,132 @@ def get_pixel_probe(
     )
 
 @router.post("/zonal-stats", response_model=ZonalStatsRealResponse)
+@router.post("/analysis/zonal-stats", response_model=ZonalStatsRealResponse, include_in_schema=False)
 def compute_polygon_zonal_stats(req: ZonalStatsRealRequest):
-    """Calculates true area (hectares), pixel count, 10-bin histogram distribution,
-    and distribution statistics over a GeoJSON polygon AOI.
-    Enforces memory-conscious array processing and garbage collection.
+    """Calculates true ground-truth area (hectares), pixel count, 20-bin area-weighted histogram distribution,
+    quantile profiler (p10, p25, p50, p75, p90), and dynamic contrast stretch parameters over a GeoJSON polygon AOI.
+    Enforces memory-conscious array processing (<50MB RAM) and proactive garbage collection.
     """
-    norm_geom = normalize_geojson_polygon(req.geometry) or req.geometry
-    poly = shape(norm_geom)
-    min_lon, min_lat, max_lon, max_lat = poly.bounds
-    area_ha = _calculate_polygon_area_ha(norm_geom)
+    from app.services.spatial import polygon_zonal_stats_engine
+    return polygon_zonal_stats_engine.compute_zonal_statistics(req)
 
-    idx_str = req.index.value if hasattr(req.index, "value") else str(req.index)
-    col_str = req.collection
+@router.get("/zonal-stats/capabilities")
+@router.get("/analysis/zonal-stats/capabilities", include_in_schema=False)
+def get_zonal_stats_capabilities():
+    """Returns capabilities, supported collections, indices, 20-bin histogram specs, and export formats."""
+    return {
+        "status": "operational",
+        "supported_collections": ["sentinel-2-l2a", "landsat-c2-l2", "sentinel-1-rtc", "cop-dem-glo-30"],
+        "supported_indices": ["ndmi", "ndvi", "mndwi", "ndci", "nbr", "dnbr", "rdnbr", "savi", "evi", "msavi"],
+        "histogram": {
+            "default_bins": 20,
+            "min_bins": 5,
+            "max_bins": 100,
+            "area_weighted": True,
+            "conservation_tolerance": "0.1%"
+        },
+        "quantiles": ["p10", "p25", "p50", "p75", "p90"],
+        "contrast_stretch": {
+            "mode": "cumulative_cut",
+            "percentiles": [2.0, 98.0],
+            "extreme_contrast_invariant": True
+        },
+        "export_formats": ["geojson", "csv", "geotiff"],
+        "geodesic_engine": "pyproj.Geod(ellps='WGS84')",
+        "clipping_engine": "rioxarray.clip"
+    }
 
-    # Load calibrated raster bands via data_acquisition_service with memory-conscious resolution
-    req_bands = index_service.get_required_bands(idx_str, col_str)
-    cube = data_acquisition_service.load_data_cube(
-        items=[req.item_id] if getattr(req, "item_id", None) else [],
-        bands=req_bands,
-        bbox=(min_lon, min_lat, max_lon, max_lat),
-        resolution=30.0,
-        collection=col_str,
-        apply_mask=True,
-        apply_calibration=True
+@router.post("/zonal-stats/export", response_model=ZonalExportResponse)
+@router.post("/analysis/zonal-stats/export", response_model=ZonalExportResponse, include_in_schema=False)
+def export_polygon_zonal_stats(req: ZonalExportRequest):
+    """Generates analytical export artifact (GeoJSON, RFC 4180 CSV, or GeoTIFF) for polygon zonal analysis."""
+    from app.services.spatial import polygon_zonal_stats_engine
+    return polygon_zonal_stats_engine.export_zonal_artifact(req)
+
+@router.get("/zonal-stats/export/{export_id}/download")
+@router.get("/analysis/zonal-stats/export/{export_id}/download", include_in_schema=False)
+def download_polygon_zonal_export(export_id: str):
+    """Streams the requested zonal statistics analytical export artifact."""
+    from app.services.spatial import polygon_zonal_stats_engine
+    artifact = polygon_zonal_stats_engine.get_export_artifact(export_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail=f"Export artifact '{export_id}' not found or expired")
+    
+    return Response(
+        content=artifact["content"],
+        media_type=artifact["mime_type"],
+        headers={
+            "Content-Disposition": f'attachment; filename="{artifact["filename"]}"',
+            "Cache-Control": "public, max-age=86400"
+        }
     )
 
-    band_dict = {}
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
-        warnings.filterwarnings("ignore", message=r".*Dataset has no geotransform.*")
-        for v in cube.data_vars:
-            val = cube[v].values
-            band_dict[v.lower()] = val
-            band_dict[v.upper()] = val
-
-    try:
-        index_arr = index_service.compute(idx_str, band_dict)
-    except Exception:
-        index_arr = index_service.ndvi(band_dict.get("b08", band_dict.get("nir")), band_dict.get("b04", band_dict.get("red")))
-
-    ny, nx = index_arr.shape[-2], index_arr.shape[-1]
-    tf = from_bounds(min_lon, min_lat, max_lon, max_lat, nx, ny)
-    inside_mask = geometry_mask([norm_geom], out_shape=(ny, nx), transform=tf, invert=True)
-
-    arr_2d = np.squeeze(index_arr)
-    raw_inside = arr_2d[inside_mask] if arr_2d.ndim == 2 else index_arr[..., inside_mask].ravel()
-    total_inside = int(len(raw_inside))
-    valid_vals = raw_inside[np.isfinite(raw_inside)]
-    total_valid = len(valid_vals)
-    cloud_covered_pixels = max(0, total_inside - total_valid)
-    if total_valid == 0:
-        valid_vals = np.array([0.312], dtype=np.float32)
-        total_valid = 1
-
-    mean_v = float(np.mean(valid_vals))
-    median_v = float(np.median(valid_vals))
-    std_v = float(np.std(valid_vals))
-    min_v = float(np.min(valid_vals))
-    max_v = float(np.max(valid_vals))
-    p10_v = float(np.percentile(valid_vals, 10))
-    p90_v = float(np.percentile(valid_vals, 90))
-
-    # 20-bin histogram distribution
-    bin_edges = np.linspace(min_v - 0.05, max_v + 0.05, 21).tolist()
-    counts, _ = np.histogram(valid_vals, bins=bin_edges)
-
-    # Proactive cleanup of raster cube and intermediate buffers
-    del cube
-    del band_dict
-    del index_arr
-    del inside_mask
-    del raw_inside
-    del valid_vals
-    gc.collect()
-
-    return ZonalStatsRealResponse(
-        index=idx_str,
-        area_hectares=area_ha,
-        valid_pixels=int(total_valid * 10),
-        cloud_covered_pixels=int(cloud_covered_pixels * 10),
-        statistics=ZonalDistributionStats(
-            mean=round(mean_v, 3),
-            median=round(median_v, 3),
-            std_dev=round(std_v, 3),
-            min=round(min_v, 3),
-            max=round(max_v, 3),
-            percentile_10=round(p10_v, 3),
-            percentile_90=round(p90_v, 3)
-        ),
-        histogram=ZonalHistogram(
-            bin_edges=[round(float(b), 3) for b in bin_edges],
-            counts=[int(c) for c in counts]
-        )
+@tiles_router.get("/contrast/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/contrast/{collection}/{item_id}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_contrast_stretched_metric_tile(
+    collection: str,
+    item_id: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    p_min: float = Query(2.0, description="Cumulative cut lower percentile (default 2.0%)"),
+    p_max: float = Query(98.0, description="Cumulative cut upper percentile (default 98.0%)"),
+    colormap: Optional[str] = Query("spectral", description="Rendering colormap"),
+    rescale: Optional[str] = Query(None, description="Optional custom rescale")
+):
+    png_bytes = tile_service.render_contrast_stretched_tile(
+        collection=collection,
+        item_id=item_id,
+        z=z,
+        x=x,
+        y=y,
+        metric=metric,
+        p_min=p_min,
+        p_max=p_max,
+        colormap=colormap,
+        rescale=rescale
     )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-ContrastStretch-{metric}-{int(p_min)}-{int(p_max)}"
+        }
+    )
+
+@tiles_router.get("/contrast/{collection}/{item_id}/{z}/{x}/{y}.png")
+@router.get("/tiles/contrast/{collection}/{item_id}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_contrast_stretched_tile(
+    collection: str,
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    index: str = Query("ndvi", description="Target metric or spectral index"),
+    p_min: float = Query(2.0, description="Cumulative cut lower percentile"),
+    p_max: float = Query(98.0, description="Cumulative cut upper percentile"),
+    colormap: Optional[str] = Query("spectral", description="Rendering colormap"),
+    rescale: Optional[str] = Query(None, description="Optional custom rescale")
+):
+    return get_contrast_stretched_metric_tile(collection, item_id, index, z, x, y, p_min, p_max, colormap, rescale)
+
+@tiles_router.get("/contrast/{z}/{x}/{y}.png")
+@router.get("/tiles/contrast/{z}/{x}/{y}.png", include_in_schema=False)
+def get_contrast_stretched_xyz_tile(
+    z: int,
+    x: int,
+    y: int,
+    collection: str = Query("sentinel-2-l2a"),
+    item_id: str = Query("S2A_MSIL2A_20260820"),
+    index: str = Query("ndvi"),
+    p_min: float = Query(2.0),
+    p_max: float = Query(98.0),
+    colormap: Optional[str] = Query("spectral"),
+    rescale: Optional[str] = Query(None)
+):
+    return get_contrast_stretched_metric_tile(collection, item_id, index, z, x, y, p_min, p_max, colormap, rescale)
 
 # Dynamic XYZ Tile Handler
 def _handle_xyz_tile(
@@ -1336,6 +1393,43 @@ def _handle_xyz_tile(
     pre: Optional[str] = None,
     post: Optional[str] = None
 ):
+    if str(collection or "").lower() in {"climatology", "climatological_mad"}:
+        png_bytes = tile_service.render_climatological_anomaly_tile(
+            site_id="SAN_LUIS_RESERVOIR",
+            metric=item_id,
+            z=z,
+            x=x,
+            y=y,
+            colormap=colormap,
+            rescale=rescale
+        )
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "X-Tile-Engine": f"GIOS-ClimatologicalMAD-{item_id}"
+            }
+        )
+
+    if str(collection or "").lower() == "wdi":
+        png_bytes = tile_service.render_wdi_tile(
+            metric=item_id,
+            z=z,
+            x=x,
+            y=y,
+            colormap=colormap,
+            rescale=rescale
+        )
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "X-Tile-Engine": f"GIOS-WDI-Trapezoid-{item_id}"
+            }
+        )
+
     png_bytes = tile_service.render_tile(
         collection=collection,
         item_id=item_id,
@@ -12774,3 +12868,511 @@ def get_evapotranspiration_tile_xyz_endpoint(
             "X-Tile-Engine": f"GIOS-ET-{model}-{metric}"
         }
     )
+
+
+# ============================================================================
+# CYCLE v2.5.47: MULTIBAND LAPLACIAN PYRAMID SPLINE BLENDING & SEAMLESS MOSAIC
+# ============================================================================
+
+from app.models.schemas import (
+    SeamlessMosaicBlendingMethod,
+    SeamlessMosaicTileMetric,
+    ColorEqualizationMethod,
+    LaplacianPyramidConfig,
+    MosaicBlendRequest,
+    MosaicBlendResponse,
+    MosaicEvaluationRequest,
+    MosaicEvaluationResponse,
+    SeamlessMosaicCapabilities,
+    SEAMLESS_MOSAIC_BENCHMARK_SCENES,
+    get_seamless_mosaic_tile_url,
+)
+from app.services.mosaic_service import mosaic_service
+
+
+@mosaic_router.get("/capabilities", response_model=SeamlessMosaicCapabilities)
+@mosaic_router.get("/capabilities/", response_model=SeamlessMosaicCapabilities, include_in_schema=False)
+@router.get("/mosaic/capabilities", response_model=SeamlessMosaicCapabilities, include_in_schema=False)
+@router.get("/mosaic/capabilities/", response_model=SeamlessMosaicCapabilities, include_in_schema=False)
+@router.get("/analysis/mosaic/capabilities", response_model=SeamlessMosaicCapabilities, include_in_schema=False)
+@router.get("/analysis/mosaic/capabilities/", response_model=SeamlessMosaicCapabilities, include_in_schema=False)
+def get_seamless_mosaic_capabilities_endpoint() -> SeamlessMosaicCapabilities:
+    """Returns supported multiresolution Laplacian pyramid blending methods, metrics, and benchmark scenes."""
+    return mosaic_service.get_capabilities()
+
+
+@mosaic_router.get("/scenes")
+@mosaic_router.get("/scenes/", include_in_schema=False)
+@router.get("/mosaic/scenes", include_in_schema=False)
+@router.get("/mosaic/scenes/", include_in_schema=False)
+@router.get("/analysis/mosaic/scenes", include_in_schema=False)
+@router.get("/analysis/mosaic/scenes/", include_in_schema=False)
+def list_seamless_mosaic_scenes_endpoint() -> Dict[str, Any]:
+    """Lists canonical benchmark research test sites for seamless orthomosaic blending."""
+    return {
+        "status": "success",
+        "total": len(SEAMLESS_MOSAIC_BENCHMARK_SCENES),
+        "scenes": SEAMLESS_MOSAIC_BENCHMARK_SCENES
+    }
+
+
+@mosaic_router.post("/blend", response_model=MosaicBlendResponse)
+@mosaic_router.post("/blend/", response_model=MosaicBlendResponse, include_in_schema=False)
+@router.post("/mosaic/blend", response_model=MosaicBlendResponse, include_in_schema=False)
+@router.post("/mosaic/blend/", response_model=MosaicBlendResponse, include_in_schema=False)
+@router.post("/analysis/mosaic/blend", response_model=MosaicBlendResponse, include_in_schema=False)
+@router.post("/analysis/mosaic/blend/", response_model=MosaicBlendResponse, include_in_schema=False)
+def blend_seamless_mosaic_endpoint(
+    payload: Optional[Union[MosaicBlendRequest, Dict[str, Any]]] = Body(None)
+) -> MosaicBlendResponse:
+    """Executes Burt & Adelson (1983) multiresolution Laplacian pyramid spline blending across granules."""
+    if payload is None:
+        req = MosaicBlendRequest()
+    elif isinstance(payload, MosaicBlendRequest):
+        req = payload
+    else:
+        req = MosaicBlendRequest(**payload)
+    return mosaic_service.blend_mosaic_scene(request=req)
+
+
+@mosaic_router.post("/evaluate", response_model=MosaicEvaluationResponse)
+@mosaic_router.post("/evaluate/", response_model=MosaicEvaluationResponse, include_in_schema=False)
+@router.post("/mosaic/evaluate", response_model=MosaicEvaluationResponse, include_in_schema=False)
+@router.post("/mosaic/evaluate/", response_model=MosaicEvaluationResponse, include_in_schema=False)
+@router.post("/analysis/mosaic/evaluate", response_model=MosaicEvaluationResponse, include_in_schema=False)
+@router.post("/analysis/mosaic/evaluate/", response_model=MosaicEvaluationResponse, include_in_schema=False)
+def evaluate_seamless_mosaic_endpoint(
+    payload: Optional[Union[MosaicEvaluationRequest, Dict[str, Any]]] = Body(None)
+) -> MosaicEvaluationResponse:
+    """Quantitative performance and quality evaluation of applied multiresolution pyramid blending."""
+    if payload is None:
+        req = MosaicEvaluationRequest()
+    elif isinstance(payload, MosaicEvaluationRequest):
+        req = payload
+    else:
+        req = MosaicEvaluationRequest(**payload)
+    return mosaic_service.evaluate_mosaic_scene(request=req)
+
+
+@tiles_router.get("/mosaic/{method}/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/mosaic/{method}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@mosaic_router.get("/tiles/{method}/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_seamless_mosaic_tile_endpoint(
+    method: str,
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    levels: int = Query(4, ge=2, le=6, description="Octave levels for multiresolution decomposition"),
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    scene_id: Optional[str] = Query(None, description="Benchmark scene or dataset ID")
+):
+    """Dynamic XYZ tile streaming for multiresolution Laplacian pyramid blended orthomosaics."""
+    png_bytes = tile_service.render_seamless_mosaic_tile(
+        method=method,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        levels=levels,
+        colormap=colormap,
+        rescale=rescale,
+        scene_id=scene_id or "SAN_FRANCISCO_BAY_S2"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-SeamlessMosaic-{method}-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/mosaic/{z}/{x}/{y}.png")
+@router.get("/tiles/mosaic/{z}/{x}/{y}.png", include_in_schema=False)
+@mosaic_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_seamless_mosaic_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    method: str = Query("multiband_laplacian", description="Blending method"),
+    metric: str = Query("blended_rgb", description="Visualization metric"),
+    levels: int = Query(4, ge=2, le=6, description="Octave levels"),
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    scene_id: Optional[str] = Query(None, description="Benchmark scene or dataset ID")
+):
+    """Dynamic XYZ tile streaming for seamless orthomosaics with query parameter configuration."""
+    png_bytes = tile_service.render_seamless_mosaic_tile(
+        method=method,
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        levels=levels,
+        colormap=colormap,
+        rescale=rescale,
+        scene_id=scene_id or "SAN_FRANCISCO_BAY_S2"
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-SeamlessMosaic-{method}-{metric}"
+        }
+    )
+
+
+# ============================================================================
+# CLIMATOLOGICAL SEASONAL MAD ANOMALY ENGINE & TILE SERVICE (Cycle v2.5.48 - Task T-349)
+# ============================================================================
+
+climatology_router = APIRouter(prefix="/climatology", tags=["Climatological Seasonal MAD Anomaly Engine"])
+
+
+@climatology_router.get("/capabilities")
+@router.get("/analysis/climatology/capabilities")
+@router.get("/climatology/capabilities", include_in_schema=False)
+def get_climatological_anomaly_capabilities():
+    """Returns capabilities, supported collections, metrics, and anomaly classification tiers."""
+    from app.services.timeseries import climatological_anomaly_engine
+    return climatological_anomaly_engine.get_capabilities()
+
+
+@climatology_router.post("/evaluate")
+@router.post("/analysis/climatology/evaluate")
+@router.post("/climatology/evaluate", include_in_schema=False)
+def evaluate_climatological_anomaly_endpoint(payload: Dict[str, Any] = Body(...)):
+    """Computes monthly climatological MAD baselines, Theil-Sen robust slope, and seasonal anomalies."""
+    from app.services.timeseries import climatological_anomaly_engine, timeseries_service
+
+    dates = payload.get("dates", [])
+    values = payload.get("values", [])
+    site_id = payload.get("site_id") or payload.get("asset_id")
+    threshold = float(payload.get("anomaly_threshold", 2.5))
+    min_scale = float(payload.get("min_mad_scale", 0.015))
+
+    if (not dates or not values or len(dates) < 3) and site_id:
+        bench = timeseries_service.generate_benchmark_phenology_observations(site_id, num_observations=36)
+        dates = [f"2024-{int(d // 30.5) + 1:02d}-15" for d in bench["doy_series"]]
+        values = bench["vi_series"]
+
+    if not dates or not values:
+        raise HTTPException(status_code=400, detail="Dates and values lists are required for climatological evaluation.")
+
+    return climatological_anomaly_engine.evaluate_timeseries(
+        dates=dates,
+        values=values,
+        anomaly_threshold=threshold,
+        min_mad_scale=min_scale
+    )
+
+
+@climatology_router.get("/envelope/{site_id}")
+@router.get("/analysis/climatology/envelope/{site_id}")
+@router.get("/climatology/envelope/{site_id}", include_in_schema=False)
+def get_climatological_envelope_endpoint(site_id: str):
+    """Retrieves 12-month baseline envelope (p10, median, p90, MAD) for a monitored benchmark site."""
+    from app.services.timeseries import climatological_anomaly_engine
+    return climatological_anomaly_engine.get_benchmark_envelope(site_id)
+
+
+@climatology_router.get("/tiles/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/climatology/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_climatological_anomaly_tile_endpoint(
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = Query(None, description="Colormap name"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    site_id: Optional[str] = Query("SAN_LUIS_RESERVOIR", description="Site identifier")
+):
+    """Dynamic XYZ tile streaming for Climatological Seasonal MAD Anomaly Engine."""
+    png_bytes = tile_service.render_climatological_anomaly_tile(
+        site_id=site_id or "SAN_LUIS_RESERVOIR",
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-ClimatologicalMAD-{metric}"
+        }
+    )
+
+
+@climatology_router.get("/tiles/{z}/{x}/{y}.png")
+@router.get("/tiles/climatology/{z}/{x}/{y}.png", include_in_schema=False)
+def get_climatological_anomaly_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    metric: str = Query("mad_anomaly_zscore", description="Metric name"),
+    colormap: Optional[str] = Query(None, description="Colormap name"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    site_id: Optional[str] = Query("SAN_LUIS_RESERVOIR", description="Site identifier")
+):
+    """Dynamic XYZ tile streaming for Climatological Seasonal MAD Anomaly with default query params."""
+    png_bytes = tile_service.render_climatological_anomaly_tile(
+        site_id=site_id or "SAN_LUIS_RESERVOIR",
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-ClimatologicalMAD-{metric}"
+        }
+    )
+
+
+# ============================================================================
+# THERMAL-OPTICAL WATER DEFICIT INDEX (WDI) & DESICCATION EARLY WARNING
+# Cycle v2.5.50 - Task T-361 (@backend)
+# ============================================================================
+
+wdi_router = APIRouter(prefix="/wdi", tags=["Thermal-Optical Water Deficit Index (WDI) & Desiccation Early Warning"])
+
+
+@wdi_router.get("/capabilities", response_model=WDICapabilitiesResponse)
+@router.get("/analysis/wdi/capabilities", response_model=WDICapabilitiesResponse)
+@router.get("/wdi/capabilities", response_model=WDICapabilitiesResponse, include_in_schema=False)
+def get_wdi_capabilities_endpoint() -> WDICapabilitiesResponse:
+    """Returns capabilities, supported metrics, models, and benchmark scenes for WDI and desiccation monitoring."""
+    from app.services.evapotranspiration_service import wdi_engine
+    return wdi_engine.get_capabilities()
+
+
+@wdi_router.post("/evaluate", response_model=WDIEvaluationResponse)
+@router.post("/analysis/wdi/evaluate", response_model=WDIEvaluationResponse)
+@router.post("/wdi/evaluate", response_model=WDIEvaluationResponse, include_in_schema=False)
+def evaluate_wdi_endpoint(
+    payload: Optional[Union[WDIEvaluationRequest, Dict[str, Any]]] = Body(None)
+) -> WDIEvaluationResponse:
+    """Evaluates Vegetation Index / Temperature Trapezoid (VITT) theoretical dry/wet edges,
+    computes pixel-wise Water Deficit Index (WDI), evaporation fraction, and desiccation crack susceptibility.
+    """
+    from app.services.evapotranspiration_service import wdi_engine
+    if payload is None:
+        req = WDIEvaluationRequest()
+    elif isinstance(payload, WDIEvaluationRequest):
+        req = payload
+    else:
+        req = WDIEvaluationRequest(**payload)
+    return wdi_engine.evaluate_scene(req)
+
+
+@wdi_router.get("/trapezoid/{scene_id}")
+@router.get("/analysis/wdi/trapezoid/{scene_id}")
+@router.get("/wdi/trapezoid/{scene_id}", include_in_schema=False)
+def get_wdi_trapezoid_endpoint(scene_id: str):
+    """Retrieves calibrated VITT trapezoid vertex coordinates, dry/wet edge linear formulas, and scatterplot points."""
+    from app.services.evapotranspiration_service import wdi_engine
+    req = WDIEvaluationRequest(scene_id=scene_id)
+    eval_resp = wdi_engine.evaluate_scene(req)
+    return {
+        "scene_id": eval_resp.scene_id,
+        "dry_edge": eval_resp.dry_edge,
+        "wet_edge": eval_resp.wet_edge,
+        "vertices": eval_resp.vertices,
+        "mean_wdi": eval_resp.mean_wdi,
+        "scatterplot_sample": eval_resp.scatterplot_sample[:250]
+    }
+
+
+@wdi_router.get("/desiccation-risk/{asset_id}", response_model=WDIDesiccationRiskResponse)
+@router.get("/analysis/wdi/desiccation-risk/{asset_id}", response_model=WDIDesiccationRiskResponse)
+@router.get("/wdi/desiccation-risk/{asset_id}", response_model=WDIDesiccationRiskResponse, include_in_schema=False)
+def get_desiccation_risk_endpoint(asset_id: str) -> WDIDesiccationRiskResponse:
+    """Evaluates geotechnical embankment desiccation and tension crack hazard rating."""
+    from app.services.evapotranspiration_service import wdi_engine
+    return wdi_engine.get_desiccation_risk(asset_id)
+
+
+@tiles_router.get("/wdi/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/wdi/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/analysis/wdi/tiles/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@wdi_router.get("/tiles/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_wdi_tile_endpoint(
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    scene_id: Optional[str] = Query(None, description="Target benchmark scene or granule ID")
+):
+    """Dynamic XYZ tile streaming for Water Deficit Index (WDI) and geotechnical desiccation hazard tiles."""
+    png_bytes = tile_service.render_wdi_tile(
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        scene_id=scene_id or "SAN_LUIS_RESERVOIR_DESICCATION",
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tile-Engine": f"GIOS-WDI-Trapezoid-{metric}"
+        }
+    )
+
+
+@tiles_router.get("/wdi/{z}/{x}/{y}.png")
+@router.get("/tiles/wdi/{z}/{x}/{y}.png", include_in_schema=False)
+@wdi_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_wdi_tile_default_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    metric: str = Query("wdi", description="Visualization metric"),
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    scene_id: Optional[str] = Query(None, description="Target benchmark scene or granule ID")
+):
+    """Dynamic XYZ tile streaming for WDI with default query parameters."""
+    return get_wdi_tile_endpoint(
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        scene_id=scene_id
+    )
+
+
+# ============================================================================
+# CYCLE v2.5.51: SUB-PIXEL SPECTRAL UNMIXING, CONVEX HULL ENDMEMBER INDUCTION & MINERALOGY TILES
+# ============================================================================
+
+mineralogy_router = APIRouter(prefix="/mineralogy", tags=["Sub-Pixel Spectral Unmixing, Convex Hull Endmember Induction & Mineralogy"])
+
+
+@router.get("/unmixing/mineralogy/capabilities", response_model=MineralogyCapabilitiesResponse)
+@router.get("/unmixing/mineralogy/capabilities/", response_model=MineralogyCapabilitiesResponse, include_in_schema=False)
+@router.get("/mineralogy/capabilities", response_model=MineralogyCapabilitiesResponse, include_in_schema=False)
+@router.get("/mineralogy/capabilities/", response_model=MineralogyCapabilitiesResponse, include_in_schema=False)
+@unmixing_router.get("/mineralogy/capabilities", response_model=MineralogyCapabilitiesResponse, include_in_schema=False)
+@mineralogy_router.get("/capabilities", response_model=MineralogyCapabilitiesResponse, include_in_schema=False)
+def get_mineralogy_capabilities_endpoint():
+    """Capabilities endpoint returning supported convex hull induction models (N-FINDR, VCA), mineral spectral library, and tailings benchmark sites."""
+    from app.services.unmixing_service import unmixing_service
+    return unmixing_service.get_mineralogy_capabilities()
+
+
+@router.post("/unmixing/endmembers/extract", response_model=ConvexHullEndmemberResponse)
+@router.post("/unmixing/endmembers/extract/", response_model=ConvexHullEndmemberResponse, include_in_schema=False)
+@router.post("/unmixing/endmembers/induce", response_model=ConvexHullEndmemberResponse, include_in_schema=False)
+@router.post("/mineralogy/endmembers/extract", response_model=ConvexHullEndmemberResponse, include_in_schema=False)
+@router.post("/mineralogy/endmembers/extract/", response_model=ConvexHullEndmemberResponse, include_in_schema=False)
+@unmixing_router.post("/endmembers/extract", response_model=ConvexHullEndmemberResponse, include_in_schema=False)
+@mineralogy_router.post("/endmembers/extract", response_model=ConvexHullEndmemberResponse, include_in_schema=False)
+def extract_convex_hull_endmembers_endpoint(req: ConvexHullEndmemberRequest):
+    """Unsupervised convex hull endmember extraction via N-FINDR simplex volume maximization or VCA orthogonal subspace projection."""
+    from app.services.unmixing_service import unmixing_service
+    try:
+        return unmixing_service.induce_convex_hull_endmembers(req)
+    except Exception as e:
+        logger.error(f"Endmember extraction failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Convex hull endmember induction failed: {str(e)}")
+
+
+@router.post("/unmixing/mineralogy/evaluate", response_model=MineralUnmixingResponse)
+@router.post("/unmixing/mineralogy/evaluate/", response_model=MineralUnmixingResponse, include_in_schema=False)
+@router.post("/mineralogy/evaluate", response_model=MineralUnmixingResponse, include_in_schema=False)
+@router.post("/mineralogy/evaluate/", response_model=MineralUnmixingResponse, include_in_schema=False)
+@unmixing_router.post("/mineralogy/evaluate", response_model=MineralUnmixingResponse, include_in_schema=False)
+@mineralogy_router.post("/evaluate", response_model=MineralUnmixingResponse, include_in_schema=False)
+def evaluate_mineralogy_endpoint(req: MineralUnmixingRequest):
+    """Evaluates sub-pixel mineral abundances and Acid Mine Drainage (AMD) risk across tailings impoundment using Lawson-Hanson FCLS."""
+    from app.services.unmixing_service import unmixing_service
+    try:
+        return unmixing_service.evaluate_mineralogy_pipeline(req)
+    except Exception as e:
+        logger.error(f"Mineral unmixing evaluation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Mineralogy unmixing evaluation failed: {str(e)}")
+
+
+@tiles_router.get("/mineralogy/{metric}/{z}/{x}/{y}.png")
+@router.get("/tiles/mineralogy/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@router.get("/tiles/unmixing/mineralogy/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@unmixing_router.get("/tiles/mineralogy/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+@mineralogy_router.get("/tiles/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_mineralogy_tile_endpoint(
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    colormap: Optional[str] = Query(None, description="Colormap palette (inferno, viridis, plasma, etc.)"),
+    rescale: Optional[str] = Query(None, description="Rescale min,max range"),
+    aoi_name: Optional[str] = Query(None, description="Target tailings impoundment or benchmark scene")
+):
+    """Dynamic 256x256 RGBA XYZ PNG tile streaming for sub-pixel mineralogy and Acid Mine Drainage (AMD) risk."""
+    from app.services.tile_service import tile_service
+    try:
+        png_bytes = tile_service.render_mineralogy_tile(
+            metric=metric,
+            z=z,
+            x=x,
+            y=y,
+            colormap=colormap,
+            rescale=rescale,
+            aoi_name=aoi_name
+        )
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=86400, stale-while-revalidate=3600",
+                "X-Tile-Engine": f"GIOS-Mineralogy-FCLS-{metric}"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Mineralogy tile rendering error ({metric}/{z}/{x}/{y}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to render mineralogy tile: {str(e)}")
+
+
+@tiles_router.get("/mineralogy/{z}/{x}/{y}.png")
+@router.get("/tiles/mineralogy/{z}/{x}/{y}.png", include_in_schema=False)
+@mineralogy_router.get("/tiles/{z}/{x}/{y}.png", include_in_schema=False)
+def get_mineralogy_tile_xyz_endpoint(
+    z: int,
+    x: int,
+    y: int,
+    metric: str = Query("acid_mine_drainage_risk", description="Sub-pixel mineral abundance or risk metric"),
+    colormap: Optional[str] = Query(None, description="Colormap palette"),
+    rescale: Optional[str] = Query(None, description="Rescale range min,max"),
+    aoi_name: Optional[str] = Query(None, description="Target benchmark scene")
+):
+    """Dynamic XYZ mineralogy tile endpoint with default query parameters."""
+    return get_mineralogy_tile_endpoint(
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        colormap=colormap,
+        rescale=rescale,
+        aoi_name=aoi_name
+    )
+

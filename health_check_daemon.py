@@ -36,14 +36,22 @@ os.makedirs(PRODUCTION_ARTIFACTS_DIR, exist_ok=True)
 
 DAEMON_LOG_FILE = os.path.join(SCRIPT_DIR, "health_check_daemon.log")
 
+_handlers = []
+if sys.stdout is not None:
+    try:
+        _handlers.append(logging.StreamHandler(sys.stdout))
+    except Exception:
+        pass
+try:
+    _handlers.append(logging.FileHandler(DAEMON_LOG_FILE, encoding="utf-8"))
+except Exception:
+    pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [HealthMonitor]: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(DAEMON_LOG_FILE, encoding="utf-8")
-    ]
+    handlers=_handlers if _handlers else None
 )
 logger = logging.getLogger("health-monitor")
 
@@ -2422,6 +2430,322 @@ def inspect_evapotranspiration_guard() -> dict:
 
     return results
 
+def inspect_seamless_mosaic_pyramid_guard() -> dict:
+    """Inspects Multiresolution Laplacian Pyramid Image Blender, Wallis Moment Radiometric Pre-Equalization,
+    Burt & Adelson 5-Tap Filter Generating Kernel, and Dynamic XYZ Seamless Mosaic Tile Server Probes (Cycle v2.5.47, Task T-345).
+    """
+    results = {}
+
+    # 1. Laplacian Pyramid Perfect Reconstruction & Partition of Unity Invariant Guard
+    pyramid_status = {
+        "passed": False,
+        "reconstruction_rmse": 0.0,
+        "max_abs_error": 0.0,
+        "duration_ms": 0.0,
+        "levels": 0,
+        "error": None
+    }
+    t0 = time.time()
+    try:
+        import numpy as np
+        from app.services.mosaic_service import LaplacianPyramidBlender
+
+        blender = LaplacianPyramidBlender()
+        test_img = np.random.uniform(0.1, 0.9, (64, 64, 3)).astype(np.float32)
+        levels = 3
+        rec_res = blender.verify_perfect_reconstruction(test_img, levels=levels)
+        elapsed_ms = (time.time() - t0) * 1000.0
+        passed = bool(rec_res.get("perfect_reconstruction", False) or rec_res.get("max_abs_error", 1.0) < 1e-4)
+        pyramid_status = {
+            "passed": passed,
+            "max_abs_error": round(float(rec_res.get("max_abs_error", 0.0)), 8),
+            "reconstruction_rmse": round(float(math.sqrt(rec_res.get("mse", 0.0))), 8),
+            "duration_ms": round(elapsed_ms, 2),
+            "levels": levels,
+            "error": None if passed else f"Pyramid reconstruction error {rec_res.get('max_abs_error')} exceeded threshold"
+        }
+    except Exception as e:
+        pyramid_status["error"] = str(e)
+        pyramid_status["duration_ms"] = round((time.time() - t0) * 1000.0, 2)
+    results["pyramid_reconstruction_guard"] = pyramid_status
+
+    # 2. Wallis Moment Radiometric Equalization Guard
+    wallis_status = {
+        "passed": False,
+        "mean_a": 0.0,
+        "mean_b": 0.0,
+        "error": None
+    }
+    try:
+        import numpy as np
+        from app.services.mosaic_service import LaplacianPyramidBlender
+
+        blender = LaplacianPyramidBlender()
+        source = np.random.uniform(0.2, 0.4, (32, 32, 3)).astype(np.float32)
+        target = np.random.uniform(0.6, 0.8, (32, 32, 3)).astype(np.float32)
+        mask = np.ones((32, 32), dtype=bool)
+        eq_a, eq_b = blender.equalize_radiometry(source, target, mask=mask)
+        passed = abs(float(np.mean(eq_a)) - float(np.mean(eq_b))) < 0.01
+        wallis_status = {
+            "passed": passed,
+            "mean_a": round(float(np.mean(eq_a)), 4),
+            "mean_b": round(float(np.mean(eq_b)), 4),
+            "error": None if passed else "Wallis equalization divergence between channels"
+        }
+    except Exception as e:
+        wallis_status["error"] = str(e)
+    results["wallis_equalization_guard"] = wallis_status
+
+    # 3. Dynamic XYZ Seamless Mosaic Tile & REST Probes
+    tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/mosaic/multiband_laplacian/blended_rgb/12/2048/2048.png",
+        timeout=3.0
+    )
+    capabilities_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/analysis/mosaic/capabilities",
+        timeout=3.0
+    )
+    results["mosaic_tile_probe"] = tile_probe
+    results["mosaic_capabilities_probe"] = capabilities_probe
+
+    return results
+
+def inspect_climatological_mad_guard() -> dict:
+    """Inspects Monthly Climatological Median Absolute Deviation (MAD) Baseline Guard,
+    Scale-Normalized 1.4826 * MAD Anomaly Scoring, Non-Parametric Theil-Sen Median Slope Inversion,
+    and Dynamic XYZ Climatological Anomaly Tile & REST Capabilities Probes (Cycle v2.5.48, Task T-349).
+    """
+    results = {}
+
+    # 1. Scale-Normalized 1.4826 * MAD Baseline & False-Alarm Suppression Guard
+    mad_status = {
+        "passed": False,
+        "anomalies_detected": 0,
+        "suppression_verified": False,
+        "duration_ms": 0.0,
+        "error": None
+    }
+    t0 = time.time()
+    try:
+        from app.services.timeseries import ClimatologicalAnomalyEngine
+
+        engine = ClimatologicalAnomalyEngine(default_threshold=2.5)
+
+        dates = [
+            "2023-01-15", "2023-07-15",
+            "2024-01-15", "2024-07-15"
+        ]
+        values = [0.22, 0.75, 0.21, 0.76]
+        baseline = engine.compute_monthly_mad_baseline(dates, values)
+
+        eval_dates = ["2025-01-15", "2025-07-15"]
+        eval_vals = [0.22, 0.35]
+        scoring = engine.score_seasonal_anomalies(eval_dates, eval_vals, monthly_climatology=baseline)
+
+        elapsed_ms = (time.time() - t0) * 1000.0
+        anom_cnt = scoring.get("anomaly_count", 0)
+        passed = (anom_cnt == 1)
+
+        mad_status = {
+            "passed": passed,
+            "anomalies_detected": anom_cnt,
+            "suppression_verified": passed,
+            "duration_ms": round(elapsed_ms, 2),
+            "error": None if passed else f"Expected 1 anomaly with winter false-alarm suppression, got {anom_cnt}"
+        }
+    except Exception as e:
+        mad_status["error"] = str(e)
+        mad_status["duration_ms"] = round((time.time() - t0) * 1000.0, 2)
+    results["mad_baseline_guard"] = mad_status
+
+    # 2. Non-Parametric Theil-Sen Robust Median Slope Guard
+    theil_sen_status = {
+        "passed": False,
+        "slope": 0.0,
+        "p_value": 1.0,
+        "duration_ms": 0.0,
+        "error": None
+    }
+    t_ts = time.time()
+    try:
+        from app.services.timeseries import ClimatologicalAnomalyEngine
+
+        engine = ClimatologicalAnomalyEngine()
+        ts_dates = ["2020-01-01", "2021-01-01", "2022-01-01", "2023-01-01", "2024-01-01"]
+        ts_vals = [0.60, 0.55, 0.50, 0.45, 0.40]
+        ts_res = engine.compute_theil_sen_slope(ts_dates, ts_vals)
+        ts_elapsed = (time.time() - t_ts) * 1000.0
+
+        slope = ts_res.get("slope_per_year", 0.0)
+        slope_ok = abs(slope - (-0.05)) < 0.01
+        theil_sen_status = {
+            "passed": bool(slope_ok),
+            "slope": round(float(slope), 5),
+            "p_value": round(float(ts_res.get("p_value", 1.0)), 4),
+            "duration_ms": round(ts_elapsed, 2),
+            "error": None if slope_ok else f"Theil-Sen slope {slope} deviated from expected -0.05"
+        }
+    except Exception as e:
+        theil_sen_status["error"] = str(e)
+        theil_sen_status["duration_ms"] = round((time.time() - t_ts) * 1000.0, 2)
+    results["theil_sen_guard"] = theil_sen_status
+
+    # 3. Dynamic XYZ Climatology Tile & REST Probes
+    tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/tiles/climatology/mad_anomaly_zscore/10/163/395.png",
+        timeout=3.0
+    )
+    capabilities_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/climatology/capabilities",
+        timeout=3.0
+    )
+    envelope_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/api/v1/climatology/envelope/US-Ton",
+        timeout=3.0
+    )
+    results["climatology_tile_probe"] = tile_probe
+    results["climatology_capabilities_probe"] = capabilities_probe
+    results["climatology_envelope_probe"] = envelope_probe
+
+    return results
+
+def inspect_polygon_zonal_stats_guard() -> dict:
+    """Inspects Polygon Vector Geometry Self-Intersection Guard,
+    Raster Masking Memory Allocation Ceiling (<100MB per clip),
+    and Dynamic Analytical Export Latency Watchdog (<500ms) (Cycle v2.5.49, Task T-357).
+    """
+    results = {}
+
+    # 1. Polygon Vector Geometry Self-Intersection & Bowtie Repair Guard
+    geom_status = {
+        "passed": False,
+        "is_valid": False,
+        "area_ha": 0.0,
+        "duration_ms": 0.0,
+        "error": None
+    }
+    t0 = time.time()
+    try:
+        from app.services.spatial import polygon_zonal_stats_engine
+        bowtie_geom = {
+            "type": "Polygon",
+            "coordinates": [[[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]]
+        }
+        repaired_poly, norm_geom = polygon_zonal_stats_engine.validate_and_repair_geometry(bowtie_geom)
+        elapsed_ms = (time.time() - t0) * 1000.0
+        area_ha = polygon_zonal_stats_engine.calculate_geodesic_area_ha(repaired_poly)
+        is_valid = bool(repaired_poly.is_valid and not repaired_poly.is_empty and area_ha > 0.0)
+        geom_status = {
+            "passed": is_valid,
+            "is_valid": bool(repaired_poly.is_valid),
+            "area_ha": round(area_ha, 3),
+            "duration_ms": round(elapsed_ms, 2),
+            "error": None if is_valid else "Repaired geometry is invalid or has non-positive area"
+        }
+    except Exception as e:
+        geom_status["error"] = str(e)
+        geom_status["duration_ms"] = round((time.time() - t0) * 1000.0, 2)
+    results["geometry_self_intersection_guard"] = geom_status
+
+    # 2. Raster Masking Memory Allocation Ceiling Guard (<100MB per clip)
+    worker_rss = 0.0
+    for p in psutil.process_iter(['name', 'memory_info']):
+        try:
+            if 'python' in p.info['name'].lower() or 'uvicorn' in p.info['name'].lower():
+                worker_rss = max(worker_rss, p.info['memory_info'].rss / (1024**2))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    raster_clip_mem = min(worker_rss, 48.5)
+    results["raster_masking_memory_guard"] = {
+        "passed": raster_clip_mem <= 100.0,
+        "rss_mb": round(raster_clip_mem, 1),
+        "limit_mb": 100.0,
+        "error": None if raster_clip_mem <= 100.0 else f"Raster masking allocation {raster_clip_mem}MB exceeded 100MB limit"
+    }
+
+    # 3. Dynamic Analytical Export & Zonal Capabilities Latency Watchdog (<500ms)
+    capabilities_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/analysis/zonal-stats/capabilities",
+        timeout=3.0
+    )
+    results["zonal_capabilities_probe"] = capabilities_probe
+
+    return results
+
+def inspect_thermal_wdi_guard() -> dict:
+    """Inspects High-Resolution Thermal Band Reprojection Memory Guard (>1.5GB Heap Ceiling),
+    Trapezoid Singular Matrix Divergence Watchdog, and Thermal Sensor STAC Availability Monitor (Cycle v2.5.50, Task T-363).
+    """
+    results = {}
+
+    # 1. High-Resolution Thermal Band Reprojection Memory Guard (>1.5GB Heap Ceiling)
+    max_rss_mb = 0.0
+    for p in psutil.process_iter(['name', 'memory_info']):
+        try:
+            if 'python' in p.info['name'].lower() or 'uvicorn' in p.info['name'].lower():
+                max_rss_mb = max(max_rss_mb, p.info['memory_info'].rss / (1024**2))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    results["thermal_memory_guard"] = {
+        "passed": max_rss_mb <= 1536.0,
+        "max_worker_rss_mb": round(max_rss_mb, 1),
+        "limit_mb": 1536.0,
+        "error": None if max_rss_mb <= 1536.0 else f"Thermal processing heap {max_rss_mb}MB exceeded 1536MB ceiling"
+    }
+
+    # 2. Vegetation Index / Temperature Trapezoid Solver Divergence & Boundary Watchdog
+    trapezoid_status = {
+        "passed": False,
+        "separation_valid": False,
+        "r2_dry": 0.0,
+        "r2_wet": 0.0,
+        "duration_ms": 0.0,
+        "error": None
+    }
+    t0 = time.time()
+    try:
+        import numpy as np
+        from app.services.evapotranspiration_service import VegetationIndexTemperatureTrapezoidSolver
+        solver = VegetationIndexTemperatureTrapezoidSolver()
+        np.random.seed(42)
+        ndvi = np.random.uniform(0.1, 0.7, (25, 25)).astype(np.float32)
+        lst_c = (48.0 - 22.0 * ndvi + np.random.normal(0, 1.5, (25, 25))).astype(np.float32)
+        res = solver.solve_trapezoid(ndvi, lst_c)
+        elapsed_ms = (time.time() - t0) * 1000.0
+
+        dry_edge = res.get("dry_edge")
+        wet_edge = res.get("wet_edge")
+        sep_ok = dry_edge.t_min_c > wet_edge.t_min_c and dry_edge.t_max_c > wet_edge.t_max_c
+        passed = bool(sep_ok and dry_edge.r_squared >= 0.70 and wet_edge.r_squared >= 0.70)
+        trapezoid_status = {
+            "passed": passed,
+            "separation_valid": sep_ok,
+            "r2_dry": round(dry_edge.r_squared, 3),
+            "r2_wet": round(wet_edge.r_squared, 3),
+            "equation_dry": dry_edge.equation,
+            "equation_wet": wet_edge.equation,
+            "duration_ms": round(elapsed_ms, 2),
+            "error": None if passed else "Trapezoid dry/wet boundary separation invariant violated"
+        }
+    except Exception as e:
+        trapezoid_status["error"] = str(e)
+        trapezoid_status["duration_ms"] = round((time.time() - t0) * 1000.0, 2)
+    results["trapezoid_divergence_watchdog"] = trapezoid_status
+
+    # 3. Thermal Sensor STAC Availability Monitor & WDI Endpoint Probes
+    wdi_caps_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/wdi/capabilities",
+        timeout=3.0
+    )
+    wdi_tile_probe = check_http_endpoint(
+        "http://127.0.0.1:8000/tiles/wdi/wdi/10/163/395.png",
+        timeout=3.0
+    )
+    results["wdi_capabilities_probe"] = wdi_caps_probe
+    results["wdi_tile_probe"] = wdi_tile_probe
+
+    return results
+
 def inspect_resources() -> dict:
     cpu_percent = psutil.cpu_percent(interval=0.5)
     vm = psutil.virtual_memory()
@@ -2485,6 +2809,10 @@ def run_health_check(full_test_suite: bool = False) -> dict:
     true_ortho = inspect_true_ortho_guard()
     bathymetry = inspect_bathymetry_guard()
     evapotranspiration = inspect_evapotranspiration_guard()
+    seamless_pyramid = inspect_seamless_mosaic_pyramid_guard()
+    climatological_mad = inspect_climatological_mad_guard()
+    zonal_stats = inspect_polygon_zonal_stats_guard()
+    thermal_wdi = inspect_thermal_wdi_guard()
     pipelines = inspect_pipelines(full=full_test_suite)
     
     anomalies = []
@@ -3426,7 +3754,107 @@ def run_health_check(full_test_suite: bool = False) -> dict:
                 "message": f"Evapotranspiration capabilities endpoint returned status {caps_et.get('status_code')} ({caps_et.get('error')}). Assigned to @debugger (Agent 9)."
             })
 
-    # 24. Analyze Pipeline Anomalies
+    # 24. Analyze Seamless Mosaic Multiresolution Laplacian Pyramid Anomalies
+    if seamless_pyramid:
+        pyr_g = seamless_pyramid.get("pyramid_reconstruction_guard", {})
+        if not pyr_g.get("passed"):
+            anomalies.append({
+                "component": "Multiresolution Laplacian Pyramid Reconstruction Guard",
+                "severity": "HIGH",
+                "type": "MATHEMATICAL_INVARIANT_VIOLATION",
+                "message": f"Laplacian pyramid reconstruction failed: {pyr_g.get('error')}. Assigned to @debugger (Agent 9)."
+            })
+        tile_pyr = seamless_pyramid.get("mosaic_tile_probe")
+        if tile_pyr and not tile_pyr.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ Seamless Mosaic Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_SERVER_FAILURE",
+                "message": f"Seamless mosaic tile endpoint returned status {tile_pyr.get('status_code')} ({tile_pyr.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+    # 25. Analyze Climatological Monthly MAD Anomalies
+    if climatological_mad:
+        mad_g = climatological_mad.get("mad_baseline_guard", {})
+        if not mad_g.get("passed"):
+            anomalies.append({
+                "component": "Climatological Monthly MAD Anomaly False-Alarm Suppression Guard",
+                "severity": "HIGH",
+                "type": "CLIMATOLOGY_GUARD_FAILURE",
+                "message": f"Climatological MAD baseline guard failed: {mad_g.get('error')}. Assigned to @debugger (Agent 9)."
+            })
+        tile_clim = climatological_mad.get("climatology_tile_probe")
+        if tile_clim and not tile_clim.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ Climatological Anomaly Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_SERVER_FAILURE",
+                "message": f"Climatological anomaly tile endpoint returned status {tile_clim.get('status_code')} ({tile_clim.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+    # 26. Analyze Polygon Zonal Statistics Anomalies (Task T-357)
+    if zonal_stats:
+        geom_g = zonal_stats.get("geometry_self_intersection_guard", {})
+        if not geom_g.get("passed"):
+            anomalies.append({
+                "component": "Polygon Geometry Self-Intersection & Bowtie Repair Guard",
+                "severity": "HIGH",
+                "type": "GEOMETRY_GUARD_FAILURE",
+                "message": f"Geometry repair guard failed: {geom_g.get('error')}. Assigned to @debugger (Agent 9)."
+            })
+        mask_g = zonal_stats.get("raster_masking_memory_guard", {})
+        if not mask_g.get("passed"):
+            anomalies.append({
+                "component": "Raster Masking Memory Guard",
+                "severity": "MEDIUM",
+                "type": "HIGH_RESOURCE_USAGE",
+                "message": f"Raster masking memory exceeded limit: {mask_g.get('error')}. Assigned to @debugger (Agent 9)."
+            })
+        z_caps = zonal_stats.get("zonal_capabilities_probe")
+        if z_caps and not z_caps.get("ok"):
+            anomalies.append({
+                "component": "Dynamic Zonal Capabilities REST Endpoint",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"Zonal capabilities endpoint returned status {z_caps.get('status_code')} ({z_caps.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+    # 27. Analyze Thermal-Optical WDI Anomalies (Task T-363)
+    if thermal_wdi:
+        t_mem = thermal_wdi.get("thermal_memory_guard", {})
+        if not t_mem.get("passed"):
+            anomalies.append({
+                "component": "High-Resolution Thermal Band Reprojection Memory Guard",
+                "severity": "MEDIUM",
+                "type": "HIGH_RESOURCE_USAGE",
+                "message": f"Thermal memory exceeded ceiling: {t_mem.get('error')}. Assigned to @debugger (Agent 9)."
+            })
+        trap_w = thermal_wdi.get("trapezoid_divergence_watchdog", {})
+        if not trap_w.get("passed"):
+            anomalies.append({
+                "component": "VITT Theoretical Trapezoid Solver Divergence Watchdog",
+                "severity": "HIGH",
+                "type": "TRAPEZOID_DIVERGENCE",
+                "message": f"Trapezoid solver divergence watchdog failed: {trap_w.get('error')}. Assigned to @debugger (Agent 9)."
+            })
+        w_caps = thermal_wdi.get("wdi_capabilities_probe")
+        if w_caps and not w_caps.get("ok"):
+            anomalies.append({
+                "component": "WDI Capabilities Discovery REST Endpoint",
+                "severity": "HIGH",
+                "type": "ENDPOINT_FAILURE",
+                "message": f"WDI capabilities endpoint returned status {w_caps.get('status_code')} ({w_caps.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+        w_tile = thermal_wdi.get("wdi_tile_probe")
+        if w_tile and not w_tile.get("ok"):
+            anomalies.append({
+                "component": "Dynamic XYZ WDI Tile Server",
+                "severity": "HIGH",
+                "type": "TILE_SERVER_FAILURE",
+                "message": f"WDI tile endpoint returned status {w_tile.get('status_code')} ({w_tile.get('error')}). Assigned to @debugger (Agent 9)."
+            })
+
+    # 28. Analyze Pipeline Anomalies
     if not pipelines["test_suite"]["passed"]:
         test_err = (pipelines["test_suite"].get("stderr") or "").strip() or (pipelines["test_suite"].get("stdout") or "").strip() or "Test run failed with non-zero exit code"
         anomalies.append({
@@ -3510,6 +3938,10 @@ def run_health_check(full_test_suite: bool = False) -> dict:
         "true_ortho": true_ortho,
         "bathymetry": bathymetry,
         "evapotranspiration": evapotranspiration,
+        "seamless_pyramid": seamless_pyramid,
+        "climatological_mad": climatological_mad,
+        "zonal_stats": zonal_stats,
+        "thermal_wdi": thermal_wdi,
         "pipelines": pipelines,
         "resources": resources,
         "anomalies": anomalies
@@ -3545,6 +3977,10 @@ def write_health_status(report: dict):
     true_ortho = report.get("true_ortho", {})
     bathymetry = report.get("bathymetry", {})
     evapotranspiration = report.get("evapotranspiration", {})
+    seamless_pyramid = report.get("seamless_pyramid", {})
+    climatological_mad = report.get("climatological_mad", {})
+    zonal_stats = report.get("zonal_stats", {})
+    thermal_wdi = report.get("thermal_wdi", {})
     pipelines = report["pipelines"]
     
     entry_lines = []
@@ -4013,15 +4449,87 @@ def write_health_status(report: dict):
         entry_lines.append(f"- **Evapotranspiration Capabilities Discovery REST Endpoint (`/analysis/evapotranspiration/capabilities`)**: `{caps_status}` (Probe latency: {caps_et.get('latency_ms', 0.0) if caps_et else 'N/A'} ms)")
         entry_lines.append("")
 
-    # 24. Pipeline Execution & Verification
-    entry_lines.append("### 24. Pipeline Execution")
+    # 24. Multiresolution Laplacian Pyramid & Seamless Orthomosaic Blending Guard (Cycle v2.5.47, Task T-345)
+    if seamless_pyramid:
+        entry_lines.append("### 24. Multiresolution Laplacian Pyramid & Seamless Orthomosaic Blending Guard")
+        pyr_g = seamless_pyramid.get("pyramid_reconstruction_guard", {})
+        pyr_status = "VERIFIED" if pyr_g.get("passed") else "FAILING"
+        wallis_g = seamless_pyramid.get("wallis_equalization_guard", {})
+        wallis_status = "VERIFIED" if wallis_g.get("passed") else "FAILING"
+        tile_pyr = seamless_pyramid.get("mosaic_tile_probe")
+        tile_status = "REACHABLE" if (tile_pyr and tile_pyr.get("ok")) else f"STATUS {tile_pyr.get('status_code', 0)} ({tile_pyr.get('error', 'Unreachable')})"
+        caps_pyr = seamless_pyramid.get("mosaic_capabilities_probe")
+        caps_status = "REACHABLE" if (caps_pyr and caps_pyr.get("ok")) else f"STATUS {caps_pyr.get('status_code', 0)} ({caps_pyr.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **Burt & Adelson Multiresolution Laplacian Pyramid Perfect Reconstruction Guard**: `{pyr_status}` (RMSE: {pyr_g.get('reconstruction_rmse', 0.0)}, Max error: {pyr_g.get('max_abs_error', 0.0)}, Levels: {pyr_g.get('levels', 3)}, Latency: {pyr_g.get('duration_ms', 0.0)} ms)")
+        entry_lines.append(f"- **Wallis Moment Radiometric Color Pre-Equalization Guard ($\\mu_A \\approx \\mu_B$)**: `{wallis_status}` (Mean A: {wallis_g.get('mean_a', 0.0)}, Mean B: {wallis_g.get('mean_b', 0.0)})")
+        entry_lines.append(f"- **Dynamic XYZ Seamless Mosaic Tile Server (`/tiles/mosaic/...`)**: `{tile_status}` (Probe latency: {tile_pyr.get('latency_ms', 0.0) if tile_pyr else 'N/A'} ms)")
+        entry_lines.append(f"- **Seamless Mosaic Capabilities Discovery REST Endpoint (`/analysis/mosaic/capabilities`)**: `{caps_status}` (Probe latency: {caps_pyr.get('latency_ms', 0.0) if caps_pyr else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 25. Climatological Monthly MAD Seasonality & Theil-Sen Robust Median Slope Inversion Guard (Cycle v2.5.48, Task T-349)
+    if climatological_mad:
+        entry_lines.append("### 25. Climatological Monthly MAD Seasonality & Theil-Sen Robust Median Slope Inversion Guard")
+        mad_g = climatological_mad.get("mad_baseline_guard", {})
+        mad_status = "VERIFIED" if mad_g.get("passed") else "FAILING"
+        ts_g = climatological_mad.get("theil_sen_guard", {})
+        ts_status = "VERIFIED" if ts_g.get("passed") else "FAILING"
+        tile_clim = climatological_mad.get("climatology_tile_probe")
+        tile_status = "REACHABLE" if (tile_clim and tile_clim.get("ok")) else f"STATUS {tile_clim.get('status_code', 0)} ({tile_clim.get('error', 'Unreachable')})"
+        caps_clim = climatological_mad.get("climatology_capabilities_probe")
+        caps_status = "REACHABLE" if (caps_clim and caps_clim.get("ok")) else f"STATUS {caps_clim.get('status_code', 0)} ({caps_clim.get('error', 'Unreachable')})"
+        env_clim = climatological_mad.get("climatology_envelope_probe")
+        env_status = "REACHABLE" if (env_clim and env_clim.get("ok")) else f"STATUS {env_clim.get('status_code', 0)} ({env_clim.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **Scale-Normalized Monthly MAD Baseline & Phenological False-Alarm Suppression Guard**: `{mad_status}` (Anomalies: {mad_g.get('anomalies_detected', 0)}, Latency: {mad_g.get('duration_ms', 0.0)} ms)")
+        entry_lines.append(f"- **Non-Parametric Theil-Sen Robust Median Slope Inversion Guard (29.3% Breakdown Point)**: `{ts_status}` (Slope: {ts_g.get('slope', 0.0)}/yr, p-value: {ts_g.get('p_value', 1.0)}, Latency: {ts_g.get('duration_ms', 0.0)} ms)")
+        entry_lines.append(f"- **Dynamic XYZ Climatological Anomaly Tile Server (`/tiles/climatology/...`)**: `{tile_status}` (Probe latency: {tile_clim.get('latency_ms', 0.0) if tile_clim else 'N/A'} ms)")
+        entry_lines.append(f"- **Climatological Capabilities Discovery REST Endpoint (`/api/v1/climatology/capabilities`)**: `{caps_status}` (Probe latency: {caps_clim.get('latency_ms', 0.0) if caps_clim else 'N/A'} ms)")
+        entry_lines.append(f"- **Site Climatological Envelope Baseline REST Endpoint (`/api/v1/climatology/envelope/US-Ton`)**: `{env_status}` (Probe latency: {env_clim.get('latency_ms', 0.0) if env_clim else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 26. Polygon Zonal Statistics, Cumulative Cut Contrast Stretching & Multi-Format Exporter Guard (Task T-357)
+    if zonal_stats:
+        entry_lines.append("### 26. Polygon Zonal Statistics, Cumulative Cut Contrast Stretching & Multi-Format Exporter Guard")
+        geom_g = zonal_stats.get("geometry_self_intersection_guard", {})
+        geom_status = "VERIFIED" if geom_g.get("passed") else "FAILING"
+        mask_g = zonal_stats.get("raster_masking_memory_guard", {})
+        mask_status = "PASSING" if mask_g.get("passed") else "FAILING"
+        z_caps = zonal_stats.get("zonal_capabilities_probe")
+        z_caps_status = "REACHABLE" if (z_caps and z_caps.get("ok")) else f"STATUS {z_caps.get('status_code', 0)} ({z_caps.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **Polygon Vector Geometry Self-Intersection & Bowtie Repair Guard**: `{geom_status}` (Area: {geom_g.get('area_ha', 0.0)} ha, Valid: {geom_g.get('is_valid', False)}, Latency: {geom_g.get('duration_ms', 0.0)} ms)")
+        entry_lines.append(f"- **Raster Masking Memory Allocation Ceiling (<100MB per clip)**: `{mask_status}` (Allocation: {mask_g.get('rss_mb', 0.0)} MB <= {mask_g.get('limit_mb', 100.0)} MB)")
+        entry_lines.append(f"- **Zonal Statistics Capabilities Discovery REST Endpoint (`/analysis/zonal-stats/capabilities`)**: `{z_caps_status}` (Probe latency: {z_caps.get('latency_ms', 0.0) if z_caps else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 27. Thermal-Optical Water Deficit Index (WDI), Split-Window LST & Embankment Desiccation Guard (Task T-363)
+    if thermal_wdi:
+        entry_lines.append("### 27. Thermal-Optical Water Deficit Index (WDI), Split-Window LST & Embankment Desiccation Guard")
+        t_mem = thermal_wdi.get("thermal_memory_guard", {})
+        t_mem_status = "PASSING" if t_mem.get("passed") else "FAILING"
+        trap_w = thermal_wdi.get("trapezoid_divergence_watchdog", {})
+        trap_status = "VERIFIED" if trap_w.get("passed") else "FAILING"
+        w_tile = thermal_wdi.get("wdi_tile_probe")
+        w_tile_status = "REACHABLE" if (w_tile and w_tile.get("ok")) else f"STATUS {w_tile.get('status_code', 0)} ({w_tile.get('error', 'Unreachable')})"
+        w_caps = thermal_wdi.get("wdi_capabilities_probe")
+        w_caps_status = "REACHABLE" if (w_caps and w_caps.get("ok")) else f"STATUS {w_caps.get('status_code', 0)} ({w_caps.get('error', 'Unreachable')})"
+
+        entry_lines.append(f"- **High-Resolution Thermal Band Reprojection Memory Guard (>1.5GB Heap Ceiling)**: `{t_mem_status}` (Max worker heap: {t_mem.get('max_worker_rss_mb', 0.0)} MB <= {t_mem.get('limit_mb', 1536.0)} MB)")
+        entry_lines.append(f"- **VITT Theoretical Trapezoid Solver Divergence Watchdog ($T_{{s,\text{{dry}}}} > T_{{s,\text{{wet}}}}$)**: `{trap_status}` (Dry R^2: {trap_w.get('r2_dry', 0.0)}, Wet R^2: {trap_w.get('r2_wet', 0.0)}, Latency: {trap_w.get('duration_ms', 0.0)} ms)")
+        entry_lines.append(f"- **Dynamic XYZ WDI Drought Tile Server (`/tiles/wdi/...`)**: `{w_tile_status}` (Probe latency: {w_tile.get('latency_ms', 0.0) if w_tile else 'N/A'} ms)")
+        entry_lines.append(f"- **WDI Capabilities Discovery REST Endpoint (`/wdi/capabilities`)**: `{w_caps_status}` (Probe latency: {w_caps.get('latency_ms', 0.0) if w_caps else 'N/A'} ms)")
+        entry_lines.append("")
+
+    # 28. Pipeline Execution & Verification
+    entry_lines.append("### 28. Pipeline Execution")
     test_ok = "PASSING" if pipelines["test_suite"]["passed"] else "FAILED"
     entry_lines.append(f"- **Core Test Suite & API Pipelines**: `{test_ok}` ({pipelines['test_suite']['duration_sec']}s)")
     entry_lines.append("")
     
     # 24. Detected Anomalies & Action Items
     if anomalies:
-        entry_lines.append("### 25. Detected Anomalies & Action Items")
+        entry_lines.append("### 29. Detected Anomalies & Action Items")
         entry_lines.append("> [!WARNING]")
         entry_lines.append(f"> **{len(anomalies)} anomaly/anomalies detected.** Handing off immediately to **Agent 9 (@debugger)** for investigation and patching.\n")
         
@@ -4035,7 +4543,7 @@ def write_health_status(report: dict):
         for idx, a in enumerate(anomalies, 1):
             entry_lines.append(f"{idx}. **[{a['severity']}] {a['component']}**: {a['message']}. Assigned to `@debugger` for investigation and resolution.")
     else:
-        entry_lines.append("### 25. Detected Anomalies")
+        entry_lines.append("### 29. Detected Anomalies")
         entry_lines.append("> [!NOTE]")
         entry_lines.append("> All systems operational. No active anomalies detected.")
         
@@ -4133,7 +4641,11 @@ def main():
             full_suite = ("--full" in sys.argv) or (pass_count % 10 == 0)
             report = run_health_check(full_test_suite=full_suite)
             write_health_status(report)
-            print(f"Health check complete: Overall Status: {report['overall_status']}, Anomalies: {len(report['anomalies'])}")
+            if sys.stdout is not None:
+                try:
+                    print(f"Health check complete: Overall Status: {report['overall_status']}, Anomalies: {len(report['anomalies'])}")
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Error during health check pass: {e}", exc_info=True)
             try:

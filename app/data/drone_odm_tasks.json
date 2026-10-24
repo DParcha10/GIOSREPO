@@ -15,9 +15,9 @@
     "artifacts": null,
     "tile_url_template": "/api/v1/tiles/drone/odm/ODM_TEST_20261001_999/{z}/{x}/{y}.png",
     "error_message": null,
-    "dispatched_at": "2026-10-24T03:27:03.352406+00:00",
-    "created_at": "2026-10-24T03:27:03.352406+00:00",
-    "updated_at": "2026-10-24T03:27:03.369843+00:00",
+    "dispatched_at": "2026-10-24T13:28:45.060597+00:00",
+    "created_at": "2026-10-24T13:28:45.060597+00:00",
+    "updated_at": "2026-10-24T13:28:45.073756+00:00",
     "gsd_target_cm": 1.5,
     "camera_model": "DJI-ZENMUSE-P1-35MM",
     "feature_quality": "high",
@@ -662,7 +662,7 @@
     },
     "tile_url_template": "/api/v1/tiles/drone/photogrammetry/ODM-INTEGRATION-001/{z}/{x}/{y}.png",
     "error_message": null,
-    "created_at": "2026-10-24T03:27:01.662011+00:00",
-    "updated_at": "2026-10-24T03:27:01.691455+00:00"
+    "created_at": "2026-10-24T13:28:44.926817+00:00",
+    "updated_at": "2026-10-24T13:28:44.944141+00:00"
   }
 }
