@@ -47,6 +47,27 @@ from app.models.schemas import (
     TrendAnalysisResponse,
     TrendTileRequestParams,
     TrendModelsResponse,
+    CVAMethod,
+    CVATileMetric,
+    CVADisturbanceSector,
+    CVASeverityTier,
+    CVA_SECTOR_METADATA,
+    CVA_BENCHMARK_SCENES,
+    normalize_cva_method,
+    normalize_cva_tile_metric,
+    normalize_cva_sector,
+    normalize_cva_severity_tier,
+    calculate_spectral_angle_mapper,
+    classify_disturbance_sector,
+    calculate_change_vector,
+    build_cva_tile_url,
+    build_cva_tile_url_template,
+    CVAPointSample,
+    CVARequest,
+    CVAResponse,
+    CVATileRequestParams,
+    CVACapabilitiesResponse,
+    SatelliteCollection,
 )
 
 logger = logging.getLogger(__name__)
@@ -835,6 +856,581 @@ class TrendService:
             "observation_count": t_count,
             "trend_results": trend_results
         }
+
+    # =========================================================================
+    # CYCLE v2.5.53: MULTI-TEMPORAL CHANGE VECTOR ANALYSIS (CVA) & SAM ENGINE
+    # =========================================================================
+
+    def get_cva_capabilities(self) -> CVACapabilitiesResponse:
+        """Retrieves supported multi-temporal CVA differencing algorithms, SAM angular metrics,
+        8-sector disturbance taxonomy, and benchmark scenes (Cycle v2.5.53 - Task T-379)."""
+        methods_dict = {
+            CVAMethod.STANDARD_EUCLIDEAN.value: {
+                "name": "Standard Euclidean Multi-Band CVA",
+                "citation": "Malila (1980), Johnson & Kasischke (1998)",
+                "description": "Multi-dimensional Euclidean distance Delta M = ||x2 - x1||_2 across arbitrary N-band reflectance vectors with polar trajectory partitioning.",
+                "triangle_inequality_enforced": True,
+                "polar_partitioning": "8-sector octant disturbance taxonomy",
+            },
+            CVAMethod.NORMALIZED_REFLECTANCE.value: {
+                "name": "Z-Score Normalized Reflectance CVA",
+                "citation": "Lambin & Strahler (1994)",
+                "description": "Band-standardized differencing compensating for heteroscedastic spectral variance across visible and shortwave infrared bands.",
+                "triangle_inequality_enforced": True,
+                "polar_partitioning": "8-sector octant disturbance taxonomy",
+            },
+            CVAMethod.TASSELED_CAP_CVA.value: {
+                "name": "Tasseled Cap Brightness-Greenness-Wetness CVA",
+                "citation": "Crist & Cicone (1984), Healey et al. (2005)",
+                "description": "Orthogonal physical transformation decomposing multi-spectral vectors into Brightness, Greenness, and Wetness axes prior to trajectory classification.",
+                "triangle_inequality_enforced": True,
+                "polar_partitioning": "8-sector octant disturbance taxonomy",
+            },
+            CVAMethod.SPECTRAL_ANGLE_MAPPER.value: {
+                "name": "Illuminance-Invariant Spectral Angle Mapper (SAM)",
+                "citation": "Kruse et al. (1993), Dennison et al. (2004)",
+                "description": "Cosine angle alpha = arccos((x1 . x2) / (||x1|| ||x2||)) invariant to topographic shading and illumination gain, bounded in [0, pi/2] radians.",
+                "triangle_inequality_enforced": True,
+                "polar_partitioning": "8-sector octant disturbance taxonomy",
+            },
+            CVAMethod.SPATIAL_SPECTRAL_CVA.value: {
+                "name": "Hybrid Spatial-Spectral CVA",
+                "citation": "Chen et al. (2003)",
+                "description": "Integrates local spatial texture variance and edge gradient magnitudes with multi-spectral change vector metrics for robust landscape disturbance mapping.",
+                "triangle_inequality_enforced": True,
+                "polar_partitioning": "8-sector octant disturbance taxonomy",
+            },
+        }
+
+        severity_tiers_dict = {
+            CVASeverityTier.INSIGNIFICANT.value: {
+                "multiplier_range": "< 1.0 * tau",
+                "label": "Insignificant / Stable",
+                "description": "Sub-threshold background sensor noise or negligible seasonal fluctuation.",
+            },
+            CVASeverityTier.LOW.value: {
+                "multiplier_range": "1.0 * tau <= Delta M < 1.5 * tau",
+                "label": "Low Disturbance",
+                "description": "Mild canopy thinning, light soil drying, or initial stress manifestation.",
+            },
+            CVASeverityTier.MODERATE.value: {
+                "multiplier_range": "1.5 * tau <= Delta M < 2.5 * tau",
+                "label": "Moderate Disturbance",
+                "description": "Moderate vegetative dieback, selective logging, or localized water level alteration.",
+            },
+            CVASeverityTier.HIGH.value: {
+                "multiplier_range": "2.5 * tau <= Delta M < 4.0 * tau",
+                "label": "High Disturbance",
+                "description": "Severe canopy defoliation, clearings, or active excavation boundary expansion.",
+            },
+            CVASeverityTier.CRITICAL.value: {
+                "multiplier_range": ">= 4.0 * tau",
+                "label": "Critical Disturbance",
+                "description": "Catastrophic land cover transformation: tailings dam failure mudflow scar, intensive wildfire burn, or deep impoundment inundation.",
+            },
+        }
+
+        return CVACapabilitiesResponse(
+            methods=methods_dict,
+            metrics=[m.value for m in CVATileMetric],
+            sectors=CVA_SECTOR_METADATA,
+            severity_tiers=severity_tiers_dict,
+            benchmark_scenes=CVA_BENCHMARK_SCENES,
+            default_bands=["B02", "B03", "B04", "B08", "B11", "B12"],
+            default_metric="magnitude",
+            default_colormap="inferno",
+        )
+
+    @classmethod
+    def compute_vectorized_cva(
+        cls,
+        cube_t1: np.ndarray,
+        cube_t2: np.ndarray,
+        bands: Sequence[str],
+        method: Union[str, CVAMethod] = CVAMethod.STANDARD_EUCLIDEAN,
+        threshold: float = 0.15,
+        axis_x_band: str = "B04",
+        axis_y_band: str = "B08",
+        eps: float = 1e-7,
+    ) -> Dict[str, Any]:
+        """Vectorized multi-dimensional Change Vector Analysis (CVA) & SAM inversion engine.
+
+        Derives:
+        1. Multi-band Euclidean change vector magnitude Delta M = ||x2 - x1||_2
+        2. Illuminance-invariant Spectral Angle Mapper (SAM) angle alpha in [0, pi/2] rad and [0, 90] deg
+        3. Triangle inequality validation: ||x2 - x1|| <= ||x1|| + ||x2||
+        4. Polar direction azimuth angle theta in [0, 360) deg partitioned into 8 directional octant disturbance sectors
+        5. Physical disturbance severity classification: Insignificant, Low, Moderate, High, Critical
+        """
+        norm_method = normalize_cva_method(method)
+        arr1 = np.asarray(cube_t1, dtype=np.float32)
+        arr2 = np.asarray(cube_t2, dtype=np.float32)
+
+        # Transpose if passed as (B, H, W)
+        if arr1.ndim == 3 and arr1.shape[0] == len(bands) and arr1.shape[2] != len(bands):
+            arr1 = np.transpose(arr1, (1, 2, 0))
+        if arr2.ndim == 3 and arr2.shape[0] == len(bands) and arr2.shape[2] != len(bands):
+            arr2 = np.transpose(arr2, (1, 2, 0))
+        if arr1.ndim == 2:
+            arr1 = arr1[:, None, :]
+        if arr2.ndim == 2:
+            arr2 = arr2[:, None, :]
+
+        h, w, b_count = arr1.shape
+        # Physical reflectance non-negativity
+        arr1 = np.maximum(0.0, arr1)
+        arr2 = np.maximum(0.0, arr2)
+
+        band_list = [str(b).upper() for b in bands]
+        x_target = axis_x_band.upper()
+        y_target = axis_y_band.upper()
+
+        if x_target in band_list:
+            x_idx = band_list.index(x_target)
+        elif "RED" in band_list:
+            x_idx = band_list.index("RED")
+        elif "B04" in band_list:
+            x_idx = band_list.index("B04")
+        else:
+            x_idx = min(2, b_count - 1)
+
+        if y_target in band_list:
+            y_idx = band_list.index(y_target)
+        elif "NIR" in band_list:
+            y_idx = band_list.index("NIR")
+        elif "B08" in band_list:
+            y_idx = band_list.index("B08")
+        elif "B05" in band_list:
+            y_idx = band_list.index("B05")
+        else:
+            y_idx = min(3, b_count - 1)
+
+        delta_x = (arr2[:, :, x_idx] - arr1[:, :, x_idx]).astype(np.float32)
+        delta_y = (arr2[:, :, y_idx] - arr1[:, :, y_idx]).astype(np.float32)
+
+        # Vector space preprocessing
+        if norm_method == CVAMethod.NORMALIZED_REFLECTANCE:
+            mu1 = np.mean(arr1, axis=(0, 1), keepdims=True)
+            std1 = np.std(arr1, axis=(0, 1), keepdims=True) + 1e-6
+            mu2 = np.mean(arr2, axis=(0, 1), keepdims=True)
+            std2 = np.std(arr2, axis=(0, 1), keepdims=True) + 1e-6
+            v1 = (arr1 - mu1) / std1
+            v2 = (arr2 - mu2) / std2
+        elif norm_method == CVAMethod.TASSELED_CAP_CVA and b_count >= 3:
+            tc_matrix = np.array([
+                [0.3415, 0.3844, 0.4064, 0.5437, 0.4049, 0.3397],
+                [-0.2014, -0.2119, -0.3100, 0.7788, -0.1265, -0.4438],
+                [0.1584, 0.1748, 0.3346, 0.3856, -0.6201, -0.5524]
+            ], dtype=np.float32)
+            if b_count == 6:
+                v1 = np.dot(arr1, tc_matrix.T)
+                v2 = np.dot(arr2, tc_matrix.T)
+            else:
+                v1 = arr1
+                v2 = arr2
+        else:
+            v1 = arr1
+            v2 = arr2
+
+        # 1. Multi-Dimensional Euclidean Magnitude: Delta M = ||v2 - v1||_2
+        diff = (v2 - v1).astype(np.float32)
+        sum_sq = np.sum(diff ** 2, axis=-1)
+        magnitude = np.sqrt(np.maximum(0.0, sum_sq)).astype(np.float32)
+
+        # Triangle inequality verification: ||v2 - v1|| <= ||v1|| + ||v2||
+        norm_v1 = np.sqrt(np.maximum(0.0, np.sum(v1 ** 2, axis=-1)))
+        norm_v2 = np.sqrt(np.maximum(0.0, np.sum(v2 ** 2, axis=-1)))
+        triangle_violations = np.sum(magnitude > (norm_v1 + norm_v2 + 1e-4))
+
+        # 2. Illuminance-Invariant Spectral Angle Mapper (SAM):
+        # alpha = arccos((x1 . x2) / (||x1|| * ||x2||))
+        dot_product = np.sum(arr1 * arr2, axis=-1).astype(np.float32)
+        norm_x1 = np.sqrt(np.maximum(0.0, np.sum(arr1 ** 2, axis=-1))).astype(np.float32)
+        norm_x2 = np.sqrt(np.maximum(0.0, np.sum(arr2 ** 2, axis=-1))).astype(np.float32)
+        denom = (norm_x1 * norm_x2).astype(np.float32)
+
+        zero_mask = denom <= eps
+        cos_alpha = np.where(zero_mask, 1.0, dot_product / np.maximum(denom, eps))
+        cos_alpha = np.clip(cos_alpha, -1.0, 1.0)
+        sam_rad = np.where(zero_mask, 0.0, np.arccos(cos_alpha)).astype(np.float32)
+        sam_rad = np.clip(sam_rad, 0.0, math.pi / 2.0)
+        sam_deg = (sam_rad * (180.0 / math.pi)).astype(np.float32)
+
+        # 3. Polar Trajectory Azimuth & 8-Sector Classification
+        angle_rad = np.arctan2(delta_y, delta_x)
+        angle_deg = ((np.degrees(angle_rad) + 360.0) % 360.0).astype(np.float32)
+
+        raw_sector_idx = (angle_deg // 45.0).astype(np.int32) % 8 + 1
+        is_subthreshold = (magnitude < threshold) | ((np.abs(delta_x) < 1e-7) & (np.abs(delta_y) < 1e-7))
+        sector_ids = np.where(is_subthreshold, 0, raw_sector_idx).astype(np.int32)
+
+        # 4. Severity Tiers: 0=Insignificant, 1=Low, 2=Moderate, 3=High, 4=Critical
+        severity_ids = np.zeros_like(magnitude, dtype=np.int32)
+        severity_ids = np.where(magnitude >= threshold, 1, severity_ids)
+        severity_ids = np.where(magnitude >= 1.5 * threshold, 2, severity_ids)
+        severity_ids = np.where(magnitude >= 2.5 * threshold, 3, severity_ids)
+        severity_ids = np.where(magnitude >= 4.0 * threshold, 4, severity_ids)
+
+        # 5. Change Probability
+        change_prob = (1.0 / (1.0 + np.exp(-np.clip(10.0 * (magnitude - threshold) / max(threshold, 0.01), -15.0, 15.0)))).astype(np.float32)
+        change_prob = np.where(magnitude < 0.5 * threshold, 0.0, change_prob)
+        change_prob = np.clip(change_prob, 0.0, 1.0)
+
+        # 6. Canopy Persistence Index
+        nir_t1 = arr1[:, :, y_idx]
+        nir_t2 = arr2[:, :, y_idx]
+        nir_ratio = np.clip(nir_t2 / np.maximum(nir_t1, 0.05), 0.0, 1.5) / 1.5
+        canopy_persist = (nir_ratio * (1.0 - sam_deg / 90.0)).astype(np.float32)
+        canopy_persist = np.clip(canopy_persist, 0.0, 1.0)
+
+        total_pixels = float(h * w)
+        sector_enum_map = {
+            0: CVADisturbanceSector.STABLE_UNMODIFIED.value,
+            1: CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE.value,
+            2: CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH.value,
+            3: CVADisturbanceSector.SECTOR_3_CANOPY_GREENING.value,
+            4: CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION.value,
+            5: CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE.value,
+            6: CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION.value,
+            7: CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK.value,
+            8: CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION.value,
+        }
+        sector_dist = {}
+        for s_id, s_name in sector_enum_map.items():
+            count = float(np.sum(sector_ids == s_id))
+            sector_dist[s_name] = round((count / total_pixels) * 100.0, 2)
+
+        severity_enum_map = {
+            0: CVASeverityTier.INSIGNIFICANT.value,
+            1: CVASeverityTier.LOW.value,
+            2: CVASeverityTier.MODERATE.value,
+            3: CVASeverityTier.HIGH.value,
+            4: CVASeverityTier.CRITICAL.value,
+        }
+        severity_dist = {}
+        for sev_id, sev_name in severity_enum_map.items():
+            count = float(np.sum(severity_ids == sev_id))
+            severity_dist[sev_name] = round((count / total_pixels) * 100.0, 2)
+
+        sig_count = float(np.sum(~is_subthreshold))
+        mean_mag = float(np.mean(magnitude))
+        max_mag = float(np.max(magnitude))
+        mean_sam = float(np.mean(sam_deg))
+
+        del diff, sum_sq, norm_v1, norm_v2, dot_product, norm_x1, norm_x2, denom, cos_alpha
+        gc.collect()
+
+        return {
+            "magnitude": magnitude,
+            "spectral_angle_deg": sam_deg,
+            "direction_angle_deg": angle_deg,
+            "delta_x": delta_x,
+            "delta_y": delta_y,
+            "sector_ids": sector_ids,
+            "severity_ids": severity_ids,
+            "change_prob": change_prob,
+            "canopy_persistence": canopy_persist,
+            "mean_magnitude": round(mean_mag, 5),
+            "max_magnitude": round(max_mag, 5),
+            "mean_spectral_angle_deg": round(mean_sam, 2),
+            "significant_pixel_ratio": round(sig_count / total_pixels, 4),
+            "sector_distribution": sector_dist,
+            "severity_distribution": severity_dist,
+            "triangle_violations": int(triangle_violations),
+        }
+
+    def execute_cva_pipeline(self, req: CVARequest) -> CVAResponse:
+        """Executes multi-temporal change vector analysis and SAM angle inversion pipeline."""
+        target_name = (req.aoi_name or "").lower()
+        t1_name = req.item_id_t1.lower()
+
+        center_lat, center_lon = 52.5486, -121.5978  # Mount Polley default
+        total_ha = 350.0
+
+        if "camp_fire" in target_name or "paradise" in target_name or "camp" in t1_name:
+            center_lat, center_lon = 39.7596, -121.6219
+            total_ha = 620.0
+        elif "amazon" in target_name or "mato" in target_name:
+            center_lat, center_lon = -11.5200, -55.4500
+            total_ha = 1250.0
+        elif "morenci" in target_name:
+            center_lat, center_lon = 33.0500, -109.3500
+            total_ha = 450.0
+        elif "salton" in target_name:
+            center_lat, center_lon = 33.3000, -115.8500
+            total_ha = 800.0
+        elif req.bbox and len(req.bbox) >= 4:
+            center_lon = (float(req.bbox[0]) + float(req.bbox[2])) / 2.0
+            center_lat = (float(req.bbox[1]) + float(req.bbox[3])) / 2.0
+            w_deg = abs(float(req.bbox[2]) - float(req.bbox[0]))
+            h_deg = abs(float(req.bbox[3]) - float(req.bbox[1]))
+            total_ha = max(10.0, w_deg * h_deg * 111.0 * 111.0 * 100.0)
+
+        grid_dim = 48
+        seed = (hash(req.item_id_t1) + hash(req.item_id_t2) + int(req.threshold * 1000)) % 1000003
+        rng = np.random.RandomState(seed)
+
+        xx, yy = np.meshgrid(
+            np.linspace(-1.0, 1.0, grid_dim, dtype=np.float32),
+            np.linspace(-1.0, 1.0, grid_dim, dtype=np.float32)
+        )
+        dist = np.sqrt(xx**2 + yy**2)
+        scar = np.exp(-((dist / 0.55)**2)).astype(np.float32)
+
+        bands = req.bands or ["B02", "B03", "B04", "B08", "B11", "B12"]
+        cube_t1 = np.zeros((grid_dim, grid_dim, len(bands)), dtype=np.float32)
+        cube_t2 = np.zeros((grid_dim, grid_dim, len(bands)), dtype=np.float32)
+
+        base_refl_t1 = {
+            "B01": 0.035, "B02": 0.045, "B03": 0.080, "B04": 0.060,
+            "B05": 0.120, "B06": 0.280, "B07": 0.360, "B08": 0.440,
+            "B8A": 0.450, "B09": 0.420, "B11": 0.180, "B12": 0.090,
+            "RED": 0.060, "NIR": 0.440, "SWIR1": 0.180, "SWIR2": 0.090
+        }
+
+        for b_i, b_name in enumerate(bands):
+            key = b_name.upper()
+            val1 = base_refl_t1.get(key, 0.10)
+            noise1 = rng.normal(0.0, 0.015, (grid_dim, grid_dim)).astype(np.float32)
+            noise2 = rng.normal(0.0, 0.015, (grid_dim, grid_dim)).astype(np.float32)
+
+            cube_t1[:, :, b_i] = np.clip(val1 + noise1, 0.01, 0.95)
+
+            if key in ("B04", "RED", "B03"):
+                delta = scar * 0.18 + noise2 * 0.02
+            elif key in ("B08", "NIR", "B07", "B8A"):
+                delta = -scar * 0.32 + noise2 * 0.02
+            elif key in ("B11", "SWIR1", "B12", "SWIR2"):
+                delta = scar * 0.22 + noise2 * 0.02
+            else:
+                delta = scar * 0.05 + noise2 * 0.02
+
+            cube_t2[:, :, b_i] = np.clip(cube_t1[:, :, b_i] + delta, 0.01, 0.95)
+
+        cva_stats = self.compute_vectorized_cva(
+            cube_t1=cube_t1,
+            cube_t2=cube_t2,
+            bands=bands,
+            method=req.method,
+            threshold=req.threshold,
+            axis_x_band=req.axis_x_band,
+            axis_y_band=req.axis_y_band
+        )
+
+        sig_area_ha = round(cva_stats["significant_pixel_ratio"] * total_ha, 2)
+
+        points: List[CVAPointSample] = []
+        sample_indices = [
+            (6, 6), (6, 24), (6, 42),
+            (16, 12), (16, 24), (16, 36),
+            (24, 8), (24, 20), (24, 28), (24, 40),
+            (32, 12), (32, 24), (32, 36),
+            (42, 6), (42, 24), (42, 42)
+        ]
+
+        d_lat = 0.04
+        d_lon = 0.05
+
+        sector_enum_lookup = [
+            CVADisturbanceSector.STABLE_UNMODIFIED,
+            CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE,
+            CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH,
+            CVADisturbanceSector.SECTOR_3_CANOPY_GREENING,
+            CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION,
+            CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE,
+            CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION,
+            CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK,
+            CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION,
+        ]
+
+        severity_enum_lookup = [
+            CVASeverityTier.INSIGNIFICANT,
+            CVASeverityTier.LOW,
+            CVASeverityTier.MODERATE,
+            CVASeverityTier.HIGH,
+            CVASeverityTier.CRITICAL,
+        ]
+
+        for pt_idx, (r, c) in enumerate(sample_indices):
+            p_lat = round(center_lat + (r / float(grid_dim) - 0.5) * 2.0 * d_lat, 5)
+            p_lon = round(center_lon + (c / float(grid_dim) - 0.5) * 2.0 * d_lon, 5)
+
+            refl_t1_pt = {b: round(float(cube_t1[r, c, b_i]), 4) for b_i, b in enumerate(bands)}
+            refl_t2_pt = {b: round(float(cube_t2[r, c, b_i]), 4) for b_i, b in enumerate(bands)}
+
+            mag_val = round(float(cva_stats["magnitude"][r, c]), 5)
+            sam_val = round(float(cva_stats["spectral_angle_deg"][r, c]), 2)
+            dir_val = round(float(cva_stats["direction_angle_deg"][r, c]), 2)
+
+            sec_id = int(cva_stats["sector_ids"][r, c])
+            sev_id = int(cva_stats["severity_ids"][r, c])
+
+            sec_enum = sector_enum_lookup[min(max(0, sec_id), len(sector_enum_lookup) - 1)]
+            sev_enum = severity_enum_lookup[min(max(0, sev_id), len(severity_enum_lookup) - 1)]
+
+            points.append(
+                CVAPointSample(
+                    point_id=f"PT-{pt_idx+1:03d}",
+                    lat=p_lat,
+                    lng=p_lon,
+                    reflectance_t1=refl_t1_pt,
+                    reflectance_t2=refl_t2_pt,
+                    magnitude=mag_val,
+                    spectral_angle_deg=sam_val,
+                    direction_angle_deg=dir_val,
+                    sector=sec_enum,
+                    severity=sev_enum,
+                    is_significant=bool(mag_val >= req.threshold)
+                )
+            )
+
+        tile_url = build_cva_tile_url_template(CVATileMetric.MAGNITUDE)
+
+        del cube_t1, cube_t2, xx, yy, dist, scar
+        gc.collect()
+
+        return CVAResponse(
+            request_id=f"CVA-{uuid.uuid4().hex[:10].upper()}",
+            method=req.method.value,
+            collection=req.collection.value,
+            item_id_t1=req.item_id_t1,
+            item_id_t2=req.item_id_t2,
+            bands=bands,
+            threshold=req.threshold,
+            mean_magnitude=cva_stats["mean_magnitude"],
+            max_magnitude=cva_stats["max_magnitude"],
+            mean_spectral_angle_deg=cva_stats["mean_spectral_angle_deg"],
+            significant_change_area_ha=sig_area_ha,
+            sector_distribution=cva_stats["sector_distribution"],
+            severity_distribution=cva_stats["severity_distribution"],
+            points=points,
+            tile_url_template=tile_url,
+            status="success",
+            processed_at=datetime.now(timezone.utc).isoformat()
+        )
+
+    def generate_synthetic_cva_tile_grid(
+        self,
+        metric: Union[str, CVATileMetric] = "magnitude",
+        method: Union[str, CVAMethod] = "standard_euclidean",
+        threshold: float = 0.15,
+        z: int = 12,
+        x: int = 650,
+        y: int = 1580,
+        t1: Optional[str] = None,
+        t2: Optional[str] = None,
+        aoi_name: Optional[str] = None,
+        grid_size: int = 256
+    ) -> np.ndarray:
+        """Generates realistic 256x256 spatial raster grids for dynamic XYZ CVA disturbance tiles."""
+        nx = ny = int(grid_size)
+        norm_metric = normalize_cva_tile_metric(metric)
+        norm_method = normalize_cva_method(method)
+
+        tile_seed = (int(z) * 10007 + int(x) * 389 + int(y)) % 1000003
+        rng = np.random.RandomState(tile_seed)
+
+        xx, yy = np.meshgrid(
+            np.linspace(0.0, 1.0, nx, dtype=np.float32),
+            np.linspace(0.0, 1.0, ny, dtype=np.float32)
+        )
+
+        cx = 0.45 + 0.10 * np.sin(z + x * 0.1)
+        cy = 0.50 + 0.10 * np.cos(z + y * 0.1)
+        dist = np.sqrt((xx - cx)**2 + (yy - cy)**2)
+        scar = np.exp(-((dist / 0.38)**2)).astype(np.float32)
+
+        topo = (
+            0.50 * np.sin(3.0 * np.pi * xx) * np.cos(2.5 * np.pi * yy) +
+            0.25 * np.sin(6.0 * np.pi * xx + 0.5) * np.sin(5.0 * np.pi * yy)
+        ).astype(np.float32)
+        topo = scipy.ndimage.gaussian_filter(topo, sigma=1.5).astype(np.float32)
+
+        bands = ["B02", "B03", "B04", "B08", "B11", "B12"]
+        c1 = np.zeros((ny, nx, 6), dtype=np.float32)
+        c2 = np.zeros((ny, nx, 6), dtype=np.float32)
+
+        base_vals = [0.045, 0.080, 0.060, 0.440, 0.180, 0.090]
+        for b_i, b_val in enumerate(base_vals):
+            n1 = rng.normal(0.0, 0.012, (ny, nx)).astype(np.float32)
+            n2 = rng.normal(0.0, 0.012, (ny, nx)).astype(np.float32)
+            c1[:, :, b_i] = np.clip(b_val + 0.03 * topo + n1, 0.01, 0.95)
+
+            if b_i == 2:  # B04 Red
+                delta = scar * 0.19 + n2 * 0.015
+            elif b_i == 3:  # B08 NIR
+                delta = -scar * 0.33 + n2 * 0.015
+            elif b_i == 4:  # B11 SWIR1
+                delta = scar * 0.22 + n2 * 0.015
+            else:
+                delta = scar * 0.04 + n2 * 0.015
+
+            c2[:, :, b_i] = np.clip(c1[:, :, b_i] + delta, 0.01, 0.95)
+
+        stats = self.compute_vectorized_cva(
+            cube_t1=c1,
+            cube_t2=c2,
+            bands=bands,
+            method=norm_method,
+            threshold=threshold,
+            axis_x_band="B04",
+            axis_y_band="B08"
+        )
+
+        m_val = norm_metric.value
+
+        if m_val == CVATileMetric.MAGNITUDE.value:
+            res = stats["magnitude"]
+        elif m_val == CVATileMetric.SPECTRAL_ANGLE.value:
+            res = stats["spectral_angle_deg"]
+        elif m_val == CVATileMetric.DIRECTION_SECTOR.value:
+            res = stats["sector_ids"]
+        elif m_val == CVATileMetric.CHANGE_PROBABILITY.value:
+            res = stats["change_prob"]
+        elif m_val == CVATileMetric.DISTURBANCE_MASK.value:
+            res = (stats["magnitude"] >= threshold).astype(np.float32)
+        elif m_val == CVATileMetric.CANOPY_PERSISTENCE.value:
+            res = stats["canopy_persistence"]
+        elif m_val == CVATileMetric.POLAR_RGB_COMPOSITE.value:
+            theta_deg = stats["direction_angle_deg"]
+            mag = stats["magnitude"]
+            sam_deg = stats["spectral_angle_deg"]
+
+            h = theta_deg / 360.0
+            s = np.clip(sam_deg / 45.0, 0.2, 1.0)
+            v = np.clip(mag / 0.50, 0.05, 1.0)
+
+            i = (h * 6.0).astype(np.int32) % 6
+            f = (h * 6.0) - (h * 6.0).astype(np.int32)
+            p = v * (1.0 - s)
+            q = v * (1.0 - f * s)
+            t = v * (1.0 - (1.0 - f) * s)
+
+            r = np.zeros_like(h)
+            g = np.zeros_like(h)
+            b = np.zeros_like(h)
+
+            m0 = (i == 0)
+            r[m0], g[m0], b[m0] = v[m0], t[m0], p[m0]
+            m1 = (i == 1)
+            r[m1], g[m1], b[m1] = q[m1], v[m1], p[m1]
+            m2 = (i == 2)
+            r[m2], g[m2], b[m2] = p[m2], v[m2], t[m2]
+            m3 = (i == 3)
+            r[m3], g[m3], b[m3] = p[m3], q[m3], v[m3]
+            m4 = (i == 4)
+            r[m4], g[m4], b[m4] = t[m4], p[m4], v[m4]
+            m5 = (i == 5)
+            r[m5], g[m5], b[m5] = v[m5], p[m5], q[m5]
+
+            res = (np.stack([r, g, b], axis=-1) * 255.0).astype(np.uint8)
+        else:
+            res = stats["magnitude"]
+
+        del c1, c2, xx, yy, dist, scar, topo
+        gc.collect()
+
+        return res
 
 
 trend_service = TrendService()

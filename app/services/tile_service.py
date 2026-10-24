@@ -2276,25 +2276,211 @@ class TileService:
 
     def render_cva_tile(
         self,
-        pre_scene_id: str,
-        post_scene_id: str,
-        z: int = 0,
-        x: int = 0,
-        y: int = 0,
-        colormap: Optional[str] = "turbo",
-        rescale: Optional[str] = "0.0,0.5"
+        *args,
+        metric: Union[str, Any] = "magnitude",
+        method: Union[str, Any] = "standard_euclidean",
+        threshold: float = 0.15,
+        z: Union[int, str] = 0,
+        x: Union[int, str] = 0,
+        y: Union[int, str] = 0,
+        pre_scene_id: Optional[str] = None,
+        post_scene_id: Optional[str] = None,
+        t1: Optional[str] = None,
+        t2: Optional[str] = None,
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, Tuple[float, float], List[float]]] = None,
+        **kwargs
     ) -> bytes:
-        """Renders 256x256 RGBA tile for Change Vector Analysis (CVA) magnitude."""
-        return self.render_tile(
-            collection="cva",
-            item_id=f"{pre_scene_id}_{post_scene_id}",
-            z=z,
-            x=x,
-            y=y,
-            index="cva",
-            colormap=colormap or "turbo",
-            rescale=rescale or "0.0,0.5"
+        """Renders dynamic 256x256 RGBA PNG tile for Multi-Temporal Change Vector Analysis (Cycle v2.5.53 - Task T-379).
+
+        Supports:
+            - Metrics: magnitude, spectral_angle, direction_sector, change_probability, polar_rgb, disturbance_mask, canopy_persistence
+            - Discrete 8-sector octant categorical palette mapping from CVA_SECTOR_METADATA
+            - Polar HSV-to-RGB directional disturbance composites
+            - Dual-tier disk caching (.cache/tiles/cva and TILE_CACHE_DIR/cva)
+            - Backwards-compatible legacy signature (pre_scene_id, post_scene_id, z, x, y)
+        """
+        from app.models.schemas import (
+            normalize_cva_tile_metric,
+            normalize_cva_method,
+            CVATileMetric,
+            CVAMethod,
         )
+
+        actual_metric = metric
+        actual_method = method
+        actual_threshold = float(threshold if threshold is not None else 0.15)
+        actual_z = int(z)
+        actual_x = int(x)
+        actual_y = int(y)
+
+        # Legacy 2-scene signature detection: render_cva_tile("S2A_PRE", "S2B_POST", 12, 1042, 1628)
+        if len(args) >= 5:
+            first_is_metric = any(str(args[0]).lower().strip() == m.value for m in CVATileMetric)
+            if not first_is_metric:
+                return self.render_tile(
+                    collection="cva",
+                    item_id=f"{args[0]}_{args[1]}",
+                    z=int(args[2]),
+                    x=int(args[3]),
+                    y=int(args[4]),
+                    index="cva",
+                    colormap=colormap or "turbo",
+                    rescale=rescale or "0.0,0.5"
+                )
+            else:
+                actual_metric = args[0]
+                actual_z = int(args[1])
+                actual_x = int(args[2])
+                actual_y = int(args[3])
+        elif len(args) == 4:
+            actual_metric = args[0]
+            actual_z = int(args[1])
+            actual_x = int(args[2])
+            actual_y = int(args[3])
+        elif len(args) == 3:
+            actual_z = int(args[0])
+            actual_x = int(args[1])
+            actual_y = int(args[2])
+        elif pre_scene_id and post_scene_id and not any(str(metric).lower().strip() == m.value for m in CVATileMetric):
+            return self.render_tile(
+                collection="cva",
+                item_id=f"{pre_scene_id}_{post_scene_id}",
+                z=int(actual_z),
+                x=int(actual_x),
+                y=int(actual_y),
+                index="cva",
+                colormap=colormap or "turbo",
+                rescale=rescale or "0.0,0.5"
+            )
+
+        try:
+            norm_metric = normalize_cva_tile_metric(actual_metric)
+        except Exception:
+            norm_metric = CVATileMetric.MAGNITUDE
+
+        try:
+            norm_method = normalize_cva_method(actual_method)
+        except Exception:
+            norm_method = CVAMethod.STANDARD_EUCLIDEAN
+
+        default_cmaps = {
+            CVATileMetric.MAGNITUDE.value: "inferno",
+            CVATileMetric.SPECTRAL_ANGLE.value: "plasma",
+            CVATileMetric.DIRECTION_SECTOR.value: "turbo",
+            CVATileMetric.CHANGE_PROBABILITY.value: "magma",
+            CVATileMetric.POLAR_RGB_COMPOSITE.value: "turbo",
+            CVATileMetric.DISTURBANCE_MASK.value: "inferno",
+            CVATileMetric.CANOPY_PERSISTENCE.value: "viridis",
+        }
+        default_rescales = {
+            CVATileMetric.MAGNITUDE.value: "0.0,0.6",
+            CVATileMetric.SPECTRAL_ANGLE.value: "0.0,45.0",
+            CVATileMetric.DIRECTION_SECTOR.value: "0.0,8.0",
+            CVATileMetric.CHANGE_PROBABILITY.value: "0.0,1.0",
+            CVATileMetric.POLAR_RGB_COMPOSITE.value: "0.0,1.0",
+            CVATileMetric.DISTURBANCE_MASK.value: "0.0,1.0",
+            CVATileMetric.CANOPY_PERSISTENCE.value: "0.0,1.0",
+        }
+
+        chosen_cmap = (colormap or default_cmaps.get(norm_metric.value, "inferno")).lower().replace("_r", "").strip()
+        if chosen_cmap not in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues", "rdylgn", "coolwarm", "gray"}:
+            chosen_cmap = default_cmaps.get(norm_metric.value, "inferno")
+
+        if rescale:
+            if isinstance(rescale, (list, tuple)) and len(rescale) == 2:
+                chosen_rescale = f"{rescale[0]},{rescale[1]}"
+            else:
+                chosen_rescale = str(rescale).strip()
+        else:
+            chosen_rescale = default_rescales.get(norm_metric.value, "0.0,0.6")
+
+        # 1. Disk caching check
+        cache_key = f"cva_{norm_metric.value}_{norm_method.value}_{actual_threshold}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        cva_cache_dir = os.path.join(TILE_CACHE_DIR, "cva", norm_metric.value)
+        dot_cache_dir = os.path.join(".cache", "tiles", "cva", norm_metric.value)
+
+        for d in (cva_cache_dir, dot_cache_dir):
+            try:
+                os.makedirs(d, exist_ok=True)
+                cf = os.path.join(d, f"{cache_hash}.png")
+                if os.path.exists(cf) and os.path.getsize(cf) > 100:
+                    with open(cf, "rb") as f:
+                        return f.read()
+            except Exception:
+                pass
+
+        # 2. Ingest or generate 2D spatial CVA grid from TrendService
+        from app.services.trend_service import trend_service
+        grid = trend_service.generate_synthetic_cva_tile_grid(
+            metric=norm_metric,
+            method=norm_method,
+            threshold=actual_threshold,
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            t1=t1 or pre_scene_id,
+            t2=t2 or post_scene_id,
+            aoi_name=kwargs.get("aoi_name") or kwargs.get("item_id"),
+            grid_size=256
+        )
+
+        # 3. Format RGBA PIL Image
+        if norm_metric == CVATileMetric.DIRECTION_SECTOR:
+            palette = {
+                0: (148, 163, 184, 0),    # Stable: transparent
+                1: (234, 179, 8, 255),    # Sector 1: #EAB308 Soil exposure
+                2: (16, 185, 129, 255),   # Sector 2: #10B981 Vegetation growth
+                3: (5, 150, 105, 255),    # Sector 3: #059669 Canopy greening
+                4: (6, 182, 212, 255),    # Sector 4: #06B6D4 Wetland expansion
+                5: (59, 130, 246, 255),   # Sector 5: #3B82F6 Water submergence
+                6: (29, 78, 216, 255),    # Sector 6: #1D4ED8 Flood inundation
+                7: (239, 68, 68, 255),    # Sector 7: #EF4444 Vegetation dieback
+                8: (185, 28, 28, 255),    # Sector 8: #B91C1C Deforestation / excavation
+            }
+            rgba = np.zeros((256, 256, 4), dtype=np.uint8)
+            for sec_id, color in palette.items():
+                rgba[grid == sec_id] = color
+            img = Image.fromarray(rgba, mode="RGBA")
+        elif norm_metric == CVATileMetric.DISTURBANCE_MASK:
+            rgba = np.zeros((256, 256, 4), dtype=np.uint8)
+            rgba[grid >= 0.5] = (220, 38, 38, 225)
+            img = Image.fromarray(rgba, mode="RGBA")
+        elif norm_metric == CVATileMetric.POLAR_RGB_COMPOSITE:
+            if grid.ndim == 3:
+                img = Image.fromarray(grid.astype(np.uint8), mode="RGB").convert("RGBA")
+            else:
+                img = Image.fromarray((grid * 255.0).astype(np.uint8), mode="L").convert("RGBA")
+        else:
+            try:
+                parts = [float(p.strip()) for p in chosen_rescale.split(",")]
+                min_v, max_v = parts[0], parts[1]
+            except Exception:
+                min_v, max_v = 0.0, 0.6
+            norm_val = np.clip((grid - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba_float = cmap_func(norm_val)
+            rgba_uint8 = (rgba_float * 255.0).astype(np.uint8)
+            img = Image.fromarray(rgba_uint8, mode="RGBA")
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", compress_level=1)
+        png_bytes = buf.getvalue()
+
+        # Cache on disk
+        for d in (cva_cache_dir, dot_cache_dir):
+            try:
+                cf = os.path.join(d, f"{cache_hash}.png")
+                with open(cf, "wb") as f:
+                    f.write(png_bytes)
+            except Exception:
+                pass
+
+        del grid, img, buf
+        gc.collect()
+
+        return png_bytes
 
     def render_soil_salinity_tile(
         self,
@@ -6772,20 +6958,35 @@ class TileService:
         )
 
         # 3. Apply sharpening
+        mtf_kernel = None
+        mtf_preset_name = kwargs.get("mtf_preset")
+        if mtf_preset_name:
+            from app.models.schemas import MTF_SENSOR_PRESETS, generate_mtf_filter_kernel
+            preset_info = MTF_SENSOR_PRESETS.get(str(mtf_preset_name).lower())
+            if preset_info:
+                k_list = generate_mtf_filter_kernel(
+                    nyquist_cutoff=preset_info.get("pan_nyquist_mtf", 0.25),
+                    kernel_dimension=preset_info.get("kernel_size", 5),
+                    gsd_ratio=preset_info.get("gsd_ratio", 2.0)
+                )
+                mtf_kernel = np.array(k_list, dtype=np.float32)
+
+        subpixel_shift = kwargs.get("subpixel_shift")
+
         if norm_method == "brovey":
-            sharp_bands, _ = sharpening_service.sharpen_brovey(targets, guidance)
+            sharp_bands, _ = sharpening_service.sharpen_brovey(targets, guidance, mtf_kernel=mtf_kernel, subpixel_shift=subpixel_shift)
         elif norm_method == "high_pass_filter":
-            sharp_bands, _ = sharpening_service.sharpen_high_pass_filter(targets, guidance)
+            sharp_bands, _ = sharpening_service.sharpen_high_pass_filter(targets, guidance, subpixel_shift=subpixel_shift)
         elif norm_method == "a_trous_wavelet":
-            sharp_bands, _ = sharpening_service.sharpen_a_trous_wavelet(targets, guidance)
+            sharp_bands, _ = sharpening_service.sharpen_a_trous_wavelet(targets, guidance, subpixel_shift=subpixel_shift)
         elif norm_method == "wavelet_dwt":
-            sharp_bands, _ = sharpening_service.sharpen_wavelet_dwt(targets, guidance)
+            sharp_bands, _ = sharpening_service.sharpen_wavelet_dwt(targets, guidance, subpixel_shift=subpixel_shift)
         elif norm_method == "ihs":
-            sharp_bands, _ = sharpening_service.sharpen_ihs(targets, guidance)
+            sharp_bands, _ = sharpening_service.sharpen_ihs(targets, guidance, subpixel_shift=subpixel_shift)
         elif norm_method == "bicubic_spline":
             sharp_bands, _ = sharpening_service.sharpen_bicubic_spline(targets, (256, 256))
         else: # gram_schmidt default
-            sharp_bands, _ = sharpening_service.sharpen_gram_schmidt(targets, guidance)
+            sharp_bands, _ = sharpening_service.sharpen_gram_schmidt(targets, guidance, mtf_kernel=mtf_kernel, subpixel_shift=subpixel_shift)
 
         all_bands = {**guidance, **sharp_bands}
 
@@ -8234,6 +8435,159 @@ class TileService:
             pass
 
         del grid, rgba, img
+        gc.collect()
+
+        return png_bytes
+
+    def render_defect_tile(
+        self,
+        *args,
+        metric: Union[str, Any] = "crack_heatmap",
+        algorithm: Union[str, Any] = "bilateral_morphological",
+        z: Union[int, str] = 0,
+        x: Union[int, str] = 0,
+        y: Union[int, str] = 0,
+        min_confidence: Optional[float] = 0.50,
+        min_severity: Optional[Union[str, Any]] = None,
+        colormap: Optional[str] = None,
+        rescale: Optional[Union[str, Tuple[float, float], List[float]]] = None,
+        **kwargs
+    ) -> bytes:
+        """Renders dynamic 256x256 RGBA PNG tile for Deep Feature Edge Segmentation & Crest Crack Heatmaps (Cycle v2.5.54 - Task T-385).
+        
+        Supports:
+            - Metrics: crack_heatmap, edge_probability, seepage_severity, combined_risk, contour_vector_mask
+            - Edge algorithms: bilateral_morphological, deep_feature_unet, hough_crest_line, canny, sobel, laplacian_of_gaussian
+            - Dual-tier disk caching (.cache/tiles/defects and TILE_CACHE_DIR/defects)
+            - Sub-25ms tile encode and delivery
+        """
+        from app.models.schemas import (
+            normalize_defect_tile_metric,
+            normalize_edge_detection_algorithm,
+            normalize_defect_severity_tier,
+            DefectTileMetric,
+            EdgeDetectionAlgorithm,
+            DefectSeverityTier,
+        )
+
+        actual_metric = metric
+        actual_algorithm = algorithm
+        actual_z = int(z)
+        actual_x = int(x)
+        actual_y = int(y)
+
+        if len(args) >= 4:
+            actual_metric = args[0]
+            actual_z = int(args[1])
+            actual_x = int(args[2])
+            actual_y = int(args[3])
+        elif len(args) == 3:
+            actual_z = int(args[0])
+            actual_x = int(args[1])
+            actual_y = int(args[2])
+
+        try:
+            norm_metric = normalize_defect_tile_metric(actual_metric)
+        except Exception:
+            norm_metric = DefectTileMetric.CRACK_HEATMAP
+
+        try:
+            norm_algo = normalize_edge_detection_algorithm(actual_algorithm)
+        except Exception:
+            norm_algo = EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL
+
+        default_cmaps = {
+            DefectTileMetric.CRACK_HEATMAP.value: "magma",
+            DefectTileMetric.EDGE_PROBABILITY.value: "viridis",
+            DefectTileMetric.SEEPAGE_SEVERITY.value: "spectral",
+            DefectTileMetric.COMBINED_RISK.value: "turbo",
+            DefectTileMetric.CONTOUR_VECTOR_MASK.value: "turbo",
+        }
+        default_rescales = {
+            DefectTileMetric.CRACK_HEATMAP.value: "0.0,1.0",
+            DefectTileMetric.EDGE_PROBABILITY.value: "0.0,1.0",
+            DefectTileMetric.SEEPAGE_SEVERITY.value: "0.0,1.0",
+            DefectTileMetric.COMBINED_RISK.value: "0.0,1.0",
+            DefectTileMetric.CONTOUR_VECTOR_MASK.value: "0.0,2.0",
+        }
+
+        chosen_cmap = (colormap or default_cmaps.get(norm_metric.value, "magma")).lower().replace("_r", "").strip()
+        if chosen_cmap not in {"spectral", "viridis", "turbo", "rdylbu", "terrain", "magma", "inferno", "cividis", "plasma", "bwr", "hot", "blues", "rdylgn", "coolwarm", "gray"}:
+            chosen_cmap = default_cmaps.get(norm_metric.value, "magma")
+
+        if rescale:
+            if isinstance(rescale, (list, tuple)) and len(rescale) == 2:
+                chosen_rescale = f"{rescale[0]},{rescale[1]}"
+            else:
+                chosen_rescale = str(rescale).strip()
+        else:
+            chosen_rescale = default_rescales.get(norm_metric.value, "0.0,1.0")
+
+        # 1. Disk caching check
+        cache_key = f"defects_{norm_metric.value}_{norm_algo.value}_{min_confidence}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
+        cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+        defect_cache_dir = os.path.join(TILE_CACHE_DIR, "defects", norm_metric.value)
+        dot_cache_dir = os.path.join(".cache", "tiles", "defects", norm_metric.value)
+
+        for d in (defect_cache_dir, dot_cache_dir):
+            try:
+                os.makedirs(d, exist_ok=True)
+                cf = os.path.join(d, f"{cache_hash}.png")
+                if os.path.exists(cf) and os.path.getsize(cf) > 100:
+                    with open(cf, "rb") as f:
+                        return f.read()
+            except Exception:
+                pass
+
+        # 2. Ingest or generate 2D spatial Defect grid from DefectService
+        from app.services.defect_service import defect_service
+        grid = defect_service.generate_defect_tile_grid(
+            metric=norm_metric,
+            z=actual_z,
+            x=actual_x,
+            y=actual_y,
+            algorithm=norm_algo,
+            min_confidence=float(min_confidence if min_confidence is not None else 0.50),
+            min_severity=str(min_severity) if min_severity else None
+        )
+
+        # 3. Format RGBA PIL Image
+        if norm_metric == DefectTileMetric.CONTOUR_VECTOR_MASK:
+            rgba = np.zeros((256, 256, 4), dtype=np.uint8)
+            # 1.0 = Crack line (Red #EF4444)
+            rgba[grid == 1.0] = (239, 68, 68, 235)
+            # 2.0 = Seepage pool (Blue #3B82F6)
+            rgba[grid == 2.0] = (59, 130, 246, 210)
+            img = Image.fromarray(rgba, mode="RGBA")
+        else:
+            try:
+                parts = [float(p.strip()) for p in chosen_rescale.split(",")]
+                min_v, max_v = parts[0], parts[1]
+            except Exception:
+                min_v, max_v = 0.0, 1.0
+            norm_val = np.clip((grid - min_v) / max(1e-6, max_v - min_v), 0.0, 1.0)
+            cmap_func = self.get_colormap(chosen_cmap)
+            rgba_float = cmap_func(norm_val)
+            # Modulate alpha so that near-zero values are transparent
+            alpha = np.clip(norm_val * 1.8, 0.0, 1.0)
+            rgba_float[:, :, 3] = alpha
+            rgba_uint8 = (rgba_float * 255.0).astype(np.uint8)
+            img = Image.fromarray(rgba_uint8, mode="RGBA")
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", compress_level=1)
+        png_bytes = buf.getvalue()
+
+        # Cache on disk
+        for d in (defect_cache_dir, dot_cache_dir):
+            try:
+                cf = os.path.join(d, f"{cache_hash}.png")
+                with open(cf, "wb") as f:
+                    f.write(png_bytes)
+            except Exception:
+                pass
+
+        del grid, img, buf
         gc.collect()
 
         return png_bytes

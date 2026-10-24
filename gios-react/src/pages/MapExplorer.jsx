@@ -14,7 +14,7 @@ import {
   Wrench, ShieldAlert, MapPin, Grid, GitCompare, Gauge, Waves,
   Thermometer, Sun, Sprout, Wind,
   Move, Trees, Cloud, HardDrive, ArrowUpRight, TrendingUp, CloudSnow,
-  Cpu, Bell, BellRing, CloudRain, Zap, Clock, RotateCcw, Camera, Calculator
+  Cpu, Bell, BellRing, CloudRain, Zap, Clock, RotateCcw, Camera, Calculator, PieChart
 } from 'lucide-react';
 import useAuthStore from '../store/authStore';
 import { useNavigate, Link } from 'react-router-dom';
@@ -213,6 +213,8 @@ import ExportDatasetModal from '../components/ExportDatasetModal';
 import PhenologySeasonalityModal from '../components/PhenologySeasonalityModal';
 import SpectralSharpeningModal from '../components/SpectralSharpeningModal';
 import PanSharpeningModal from '../components/PanSharpeningModal';
+import ChangeVectorAnalysisModal from '../components/ChangeVectorAnalysisModal';
+import CrestDeformationModal from '../components/CrestDeformationModal';
 import CrossSensorCalibrationModal from '../components/CrossSensorCalibrationModal';
 import TrendAnalysisModal from '../components/TrendAnalysisModal';
 import MultimodalFusionModal from '../components/MultimodalFusionModal';
@@ -403,7 +405,14 @@ import {
   SpectralUnmixingModel,
   SpectralUnmixingTileMetric,
   SubPixelDominanceClass,
-  buildETTileUrlTemplate
+  buildETTileUrlTemplate,
+  buildCvaTileUrlTemplate,
+  CVAMethod,
+  CVATileMetric,
+  buildDefectTileUrlTemplate,
+  DefectTileMetric,
+  classifyCrackSeverity,
+  calculateCrackOrientation
 } from '../config/constants';
 
 const DEFAULT_MAP_GCPS = [
@@ -1000,6 +1009,30 @@ export default function MapExplorer() {
     mtf_high_freq_gain: 1.45,
     radiometric_energy_conservation_ratio: 1.002,
     quality_rating: SharpeningQualityRating?.EXCELLENT || 'EXCELLENT'
+  });
+
+  // Cycle v2.5.53 Multi-Temporal Change Vector Analysis (CVA) & SAM Studio State (Task T-380)
+  const [cvaStudioModalOpen, setCvaStudioModalOpen] = useState(false);
+  const [showCvaStudioTileLayer, setShowCvaStudioTileLayer] = useState(false);
+  const [cvaStudioSceneKey, setCvaStudioSceneKey] = useState('MOUNT_POLLEY_TAILINGS_2014');
+  const [cvaStudioSceneName, setCvaStudioSceneName] = useState('Mount Polley Tailings Dam Failure, British Columbia');
+  const [cvaStudioMethod, setCvaStudioMethod] = useState(CVAMethod?.STANDARD_EUCLIDEAN || 'standard_euclidean');
+  const [cvaStudioMetric, setCvaStudioMetric] = useState(CVATileMetric,
+  buildDefectTileUrlTemplate,
+  DefectTileMetric,
+  classifyCrackSeverity,
+  calculateCrackOrientation?.MAGNITUDE || 'magnitude');
+  const [cvaStudioThreshold, setCvaStudioThreshold] = useState(0.15);
+  const [cvaStudioColormap, setCvaStudioColormap] = useState('inferno');
+  const [cvaStudioOpacity, setCvaStudioOpacity] = useState(0.85);
+  const [cvaStudioRescale, setCvaStudioRescale] = useState('0.0,0.5');
+  const [cvaStudioTileUrl, setCvaStudioTileUrl] = useState('');
+  const [cvaStudioSummary, setCvaStudioSummary] = useState({
+    magnitude: 0.285,
+    spectral_angle_deg: 24.8,
+    sector: 'sector_8_deforestation_excavation',
+    severity: 'high',
+    area_ha: 148.6
   });
 
   // Cycle v2.5.38 Multi-Sensor Cross-Calibration & Harmonized Surface Reflectance State (Task T-290)
@@ -5354,6 +5387,24 @@ export default function MapExplorer() {
                 maxZoom={22}
                 keepBuffer={4}
                 zIndex={449}
+              />
+            )}
+
+            {/* Cycle v2.5.53 Multi-Temporal Change Vector Analysis & SAM Dynamic TileLayer (Task T-380) */}
+            {showCvaStudioTileLayer && !curtainActive && (
+              <TileLayer 
+                key={`cva-studio-tile-${cvaStudioSceneKey}-${cvaStudioMethod}-${cvaStudioMetric}-${cvaStudioThreshold}-${cvaStudioColormap}-${cvaStudioOpacity}`}
+                url={cvaStudioTileUrl || buildCvaTileUrlTemplate(cvaStudioMetric, {
+                  method: cvaStudioMethod,
+                  threshold: cvaStudioThreshold,
+                  colormap: cvaStudioColormap,
+                  rescale: cvaStudioRescale
+                })}
+                opacity={cvaStudioOpacity}
+                maxNativeZoom={18}
+                maxZoom={22}
+                keepBuffer={4}
+                zIndex={451}
               />
             )}
 
@@ -10869,6 +10920,97 @@ export default function MapExplorer() {
             </div>
           )}
 
+          {/* Cycle v2.5.53 Multi-Temporal Change Vector Analysis (CVA) & SAM Active Layer Banner (Task T-380) */}
+          {showCvaStudioTileLayer && (
+            <div className="bg-gray-950/90 border border-cyan-500/40 rounded-xl p-3 shadow-lg space-y-2 backdrop-blur-md">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="flex items-center gap-1.5 text-xs font-bold text-white">
+                    <Compass className="w-4 h-4 text-cyan-400" />
+                    <span>CVA & SAM Studio</span>
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    {cvaStudioSceneName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    {cvaStudioMethod.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    Metric: {cvaStudioMetric.toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    τ = {cvaStudioThreshold}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setCvaStudioModalOpen(true)}
+                    className="px-2 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 rounded text-[10px] font-bold uppercase transition-all"
+                  >
+                    Adjust
+                  </button>
+                  <button
+                    onClick={() => setShowCvaStudioTileLayer(false)}
+                    className="text-slate-400 hover:text-white"
+                    title="Dismiss CVA Layer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-zinc-500 uppercase">Magnitude ΔM:</span>
+                  <span className="text-cyan-400 font-bold">{Number(cvaStudioSummary?.magnitude ?? 0.285).toFixed(3)}</span>
+                  <span className="text-zinc-500 uppercase ml-1">SAM α:</span>
+                  <span className="text-purple-400 font-bold">{Number(cvaStudioSummary?.spectral_angle_deg ?? 24.8).toFixed(1)}°</span>
+                  <span className="text-zinc-500 uppercase ml-1">Dominant Sector:</span>
+                  <span className="text-emerald-400 font-bold uppercase">{cvaStudioSummary?.sector ?? 'sector_8_deforestation_excavation'}</span>
+                  <span className="text-zinc-500 uppercase ml-1">Changed Area:</span>
+                  <span className="text-amber-300 font-bold">{cvaStudioSummary?.area_ha ?? 148.6} ha</span>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-300 pt-1 border-t border-gray-800/80">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-zinc-500 uppercase">Metric:</span>
+                  {['magnitude', 'spectral_angle', 'direction_sector', 'disturbance_mask'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setCvaStudioMetric(m)}
+                      className={`px-1.5 py-0.5 rounded uppercase font-bold transition-all ${
+                        cvaStudioMetric === m
+                          ? 'bg-cyan-600 text-white shadow-sm'
+                          : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+                      }`}
+                    >
+                      {m.replace(/_/g, ' ').toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="text-zinc-500 uppercase">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={cvaStudioOpacity}
+                      onChange={(e) => setCvaStudioOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-cyan-400 cursor-pointer"
+                    />
+                    <span className="text-cyan-400 font-bold">{Math.round(cvaStudioOpacity * 100)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Cycle v2.5.38 Floating Multi-Sensor Cross-Calibration HUD Card (Task T-290) */}
           {showCrossCalibratedTileLayer && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[920] glass-panel px-4 py-3 rounded-xl border-amber-500/50 shadow-2xl bg-zinc-950/90 backdrop-blur-md flex flex-col gap-2.5 w-[700px]">
@@ -12710,6 +12852,18 @@ export default function MapExplorer() {
               >
                 <Mountain className="w-3.5 h-3.5 text-amber-400" />
                 <span>Topo Normalization (v2.5.46)</span>
+              </button>
+
+              {/* Cycle v2.5.53 Multi-Temporal Change Vector Analysis & SAM Studio Shortcut (Task T-380) */}
+              <button
+                onClick={() => setCvaStudioModalOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase font-mono rounded transition-all text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/30 ${
+                  cvaStudioModalOpen || showCvaStudioTileLayer ? 'bg-cyan-600 text-white font-extrabold shadow-[0_0_12px_rgba(6,182,212,0.6)]' : ''
+                }`}
+                title="Multi-Temporal Change Vector Analysis Studio, 2D Polar Vector Field, 8-Sector Disturbance Wheel & Dynamic Leaflet Tiles (Cycle v2.5.53)"
+              >
+                <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                <span>CVA & SAM (v2.5.53)</span>
               </button>
 
               {/* Cycle v2.5.52 High-Resolution Pan-Sharpening & Wavelet Fusion Studio Shortcut (Task T-374) */}
@@ -25236,6 +25390,41 @@ export default function MapExplorer() {
           }
           setShowTopoNormTileLayer(true);
           setTopoNormModalOpen(false);
+        }}
+      />
+
+      {/* Cycle v2.5.53 Multi-Temporal Change Vector Analysis & SAM Studio Modal (Task T-380) */}
+      <ChangeVectorAnalysisModal
+        isOpen={cvaStudioModalOpen}
+        onClose={() => setCvaStudioModalOpen(false)}
+        initialSceneKey={cvaStudioSceneKey}
+        onApply={(payload) => {
+          setCvaStudioSceneKey(payload.sceneKey || 'MOUNT_POLLEY_TAILINGS_2014');
+          setCvaStudioSceneName(payload.sceneName || 'Mount Polley Tailings Dam Failure, British Columbia');
+          setCvaStudioMethod(payload.method || 'standard_euclidean');
+          setCvaStudioMetric(payload.metric || 'magnitude');
+          setCvaStudioThreshold(payload.threshold ?? 0.15);
+          setCvaStudioColormap(payload.colormap || 'inferno');
+          setCvaStudioOpacity(payload.opacity ?? 0.85);
+          setCvaStudioRescale(payload.rescale || '0.0,0.5');
+          setCvaStudioTileUrl(payload.tileUrl || payload.tileUrlTemplate || '');
+          if (payload.summary) {
+            setCvaStudioSummary(payload.summary);
+          }
+          setShowCvaStudioTileLayer(true);
+        }}
+        onApplyTileLayer={(url, extra = {}) => {
+          setCvaStudioTileUrl(url);
+          if (extra.method) setCvaStudioMethod(extra.method);
+          if (extra.metric) setCvaStudioMetric(extra.metric);
+          if (extra.colormap) setCvaStudioColormap(extra.colormap);
+          if (extra.threshold !== undefined) setCvaStudioThreshold(extra.threshold);
+          if (extra.opacity !== undefined) setCvaStudioOpacity(extra.opacity);
+          if (extra.rescale) setCvaStudioRescale(extra.rescale);
+          if (extra.summary) setCvaStudioSummary(extra.summary);
+          if (extra.sceneName) setCvaStudioSceneName(extra.sceneName);
+          setShowCvaStudioTileLayer(true);
+          setCvaStudioModalOpen(false);
         }}
       />
 

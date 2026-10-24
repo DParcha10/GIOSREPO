@@ -50,6 +50,11 @@ from app.models.schemas import (
     SpectralSharpeningResponse,
     SharpeningTileRequestParams,
     SharpeningMethodsResponse,
+    MTF_SENSOR_PRESETS,
+    generate_mtf_filter_kernel,
+    SubPixelAlignmentMethod,
+    MTFFilterConfig,
+    SubPixelAlignmentParams,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +100,9 @@ class SharpeningService:
             pan_weights=SYNTHETIC_PAN_WEIGHTS,
             supported_target_bands=[b.value for b in SharpeningTargetBand],
             supported_guidance_bands=[b.value for b in SharpeningGuidanceBand],
+            mtf_presets=MTF_SENSOR_PRESETS,
+            subpixel_methods=[m.value for m in SubPixelAlignmentMethod],
+            wavelet_filters=[w.value for w in WaveletFilterType],
         )
 
     def generate_synthetic_scene_bands(
@@ -224,9 +232,19 @@ class SharpeningService:
     def simulate_low_res_panchromatic(
         self,
         high_res_pan: np.ndarray,
-        scale_factor: int = 2
+        scale_factor: int = 2,
+        mtf_kernel: Optional[np.ndarray] = None
     ) -> np.ndarray:
-        """Simulates low-resolution panchromatic band matching the 20m point-spread function."""
+        """Simulates low-resolution panchromatic band matching the point-spread function (PSF).
+        
+        Uses Gaussian PSF simulation or 2D Modulation Transfer Function (MTF) filter kernel.
+        """
+        if mtf_kernel is not None:
+            k = np.asarray(mtf_kernel, dtype=np.float32)
+            if k.ndim == 2 and k.shape[0] > 1 and k.shape[1] > 1:
+                k_norm = k / (float(np.sum(k)) or 1.0)
+                sim = scipy.signal.convolve2d(high_res_pan, k_norm, mode="same", boundary="symm")
+                return np.clip(sim, 0.0, 1.0).astype(np.float32)
         low_res = scipy.ndimage.gaussian_filter(high_res_pan, sigma=1.2)
         return low_res.astype(np.float32)
 
@@ -234,28 +252,41 @@ class SharpeningService:
         self,
         band_20m: np.ndarray,
         target_shape: Tuple[int, int],
-        order: int = 3
+        order: int = 3,
+        subpixel_shift: Optional[Tuple[float, float]] = None
     ) -> np.ndarray:
-        """Upsamples a 20m raster band to the 10m target resolution using spline interpolation."""
+        """Upsamples a 20m raster band to the 10m target resolution using spline interpolation.
+        
+        Optionally applies sub-pixel phase shift (dx, dy) for sensor coregistration.
+        """
         if band_20m.shape == target_shape:
-            return band_20m.copy().astype(np.float32)
+            up = band_20m.copy().astype(np.float32)
+        else:
+            zoom_factors = (target_shape[0] / band_20m.shape[0], target_shape[1] / band_20m.shape[1])
+            up = scipy.ndimage.zoom(band_20m, zoom_factors, order=order)
+            up = np.clip(up, 0.0, 1.0).astype(np.float32)
 
-        zoom_factors = (target_shape[0] / band_20m.shape[0], target_shape[1] / band_20m.shape[1])
-        up = scipy.ndimage.zoom(band_20m, zoom_factors, order=order)
-        return np.clip(up, 0.0, 1.0).astype(np.float32)
+        if subpixel_shift is not None and (abs(subpixel_shift[0]) > 1e-4 or abs(subpixel_shift[1]) > 1e-4):
+            dy, dx = float(subpixel_shift[1]), float(subpixel_shift[0])
+            up = scipy.ndimage.shift(up, [dy, dx], mode="reflect", order=order)
+            up = np.clip(up, 0.0, 1.0).astype(np.float32)
+
+        return up
 
     def sharpen_gram_schmidt(
         self,
         target_bands: Dict[str, np.ndarray],
         guidance_bands: Dict[str, np.ndarray],
-        weights: Optional[Dict[str, float]] = None
+        weights: Optional[Dict[str, float]] = None,
+        mtf_kernel: Optional[np.ndarray] = None,
+        subpixel_shift: Optional[Tuple[float, float]] = None
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """Applies Gram-Schmidt orthogonalization (Laben & Brower 2000) pan-sharpening.
         
         Strictly preserves low-frequency radiometric mean while injecting high-frequency detail.
         """
         pan_high = self.synthesize_panchromatic(guidance_bands, weights)
-        pan_low = self.simulate_low_res_panchromatic(pan_high)
+        pan_low = self.simulate_low_res_panchromatic(pan_high, mtf_kernel=mtf_kernel)
         pan_delta = pan_high - pan_low
 
         var_pan_low = float(np.var(pan_low)) + 1e-7
@@ -264,7 +295,7 @@ class SharpeningService:
         orig_up = {}
 
         for b, arr in target_bands.items():
-            b_up = self.upsample_band(arr, pan_high.shape, order=3)
+            b_up = self.upsample_band(arr, pan_high.shape, order=3, subpixel_shift=subpixel_shift)
             orig_up[b] = b_up
 
             # Gram-Schmidt covariance gain
@@ -290,11 +321,13 @@ class SharpeningService:
         target_bands: Dict[str, np.ndarray],
         guidance_bands: Dict[str, np.ndarray],
         weights: Optional[Dict[str, float]] = None,
-        epsilon: float = 1e-6
+        epsilon: float = 1e-6,
+        mtf_kernel: Optional[np.ndarray] = None,
+        subpixel_shift: Optional[Tuple[float, float]] = None
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """Applies Brovey color-normalized ratio fusion (Gillespie et al. 1987)."""
         pan_high = self.synthesize_panchromatic(guidance_bands, weights)
-        pan_low = self.simulate_low_res_panchromatic(pan_high)
+        pan_low = self.simulate_low_res_panchromatic(pan_high, mtf_kernel=mtf_kernel)
 
         ratio = pan_high / np.maximum(pan_low, epsilon)
         ratio = np.clip(ratio, 0.45, 2.2)
@@ -303,7 +336,7 @@ class SharpeningService:
         orig_up = {}
 
         for b, arr in target_bands.items():
-            b_up = self.upsample_band(arr, pan_high.shape, order=3)
+            b_up = self.upsample_band(arr, pan_high.shape, order=3, subpixel_shift=subpixel_shift)
             orig_up[b] = b_up
             sharp_b = b_up * ratio
             sharpened[b] = np.clip(sharp_b, 0.0, 1.0).astype(np.float32)
@@ -316,7 +349,8 @@ class SharpeningService:
         target_bands: Dict[str, np.ndarray],
         guidance_bands: Dict[str, np.ndarray],
         config: Optional[HighPassFilterConfig] = None,
-        weights: Optional[Dict[str, float]] = None
+        weights: Optional[Dict[str, float]] = None,
+        subpixel_shift: Optional[Tuple[float, float]] = None
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """Applies High-Pass Filter (HPF) spatial frequency detail injection (Chavez et al. 1991)."""
         pan_high = self.synthesize_panchromatic(guidance_bands, weights)
@@ -335,7 +369,7 @@ class SharpeningService:
         orig_up = {}
 
         for b, arr in target_bands.items():
-            b_up = self.upsample_band(arr, pan_high.shape, order=3)
+            b_up = self.upsample_band(arr, pan_high.shape, order=3, subpixel_shift=subpixel_shift)
             orig_up[b] = b_up
             sharp_b = np.maximum(0.0, b_up + filter_gain * high_freq_delta)
             sharpened[b] = np.clip(sharp_b, 0.0, 1.0).astype(np.float32)
@@ -348,7 +382,8 @@ class SharpeningService:
         target_bands: Dict[str, np.ndarray],
         guidance_bands: Dict[str, np.ndarray],
         weights: Optional[Dict[str, float]] = None,
-        levels: int = 2
+        levels: int = 2,
+        subpixel_shift: Optional[Tuple[float, float]] = None
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """Applies A Trous stationary wavelet transform multi-band fusion (Shensa 1992, Nunez 1999).
         
@@ -379,7 +414,7 @@ class SharpeningService:
         orig_up = {}
 
         for b, arr in target_bands.items():
-            b_up = self.upsample_band(arr, pan_high.shape, order=3)
+            b_up = self.upsample_band(arr, pan_high.shape, order=3, subpixel_shift=subpixel_shift)
             orig_up[b] = b_up
 
             # Multi-scale injection weight proportional to local band standard deviation
@@ -403,7 +438,8 @@ class SharpeningService:
         self,
         target_bands: Dict[str, np.ndarray],
         guidance_bands: Dict[str, np.ndarray],
-        weights: Optional[Dict[str, float]] = None
+        weights: Optional[Dict[str, float]] = None,
+        subpixel_shift: Optional[Tuple[float, float]] = None
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """Applies 2D Discrete Wavelet Transform (DWT) Mallat subband pyramid fusion (Mallat 1989, Ranchin & Wald 2000)."""
         pan_high = self.synthesize_panchromatic(guidance_bands, weights)
@@ -413,7 +449,7 @@ class SharpeningService:
         orig_up = {}
 
         for b, arr in target_bands.items():
-            b_up = self.upsample_band(arr, pan_high.shape, order=3)
+            b_up = self.upsample_band(arr, pan_high.shape, order=3, subpixel_shift=subpixel_shift)
             orig_up[b] = b_up
 
             ms_LL, ms_LH, ms_HL, ms_HH = _dwt2_haar(b_up)
@@ -441,7 +477,8 @@ class SharpeningService:
         self,
         target_bands: Dict[str, np.ndarray],
         guidance_bands: Dict[str, np.ndarray],
-        weights: Optional[Dict[str, float]] = None
+        weights: Optional[Dict[str, float]] = None,
+        subpixel_shift: Optional[Tuple[float, float]] = None
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """Applies Intensity-Hue-Saturation (IHS) component substitution (Haydn et al. 1982)."""
         pan_high = self.synthesize_panchromatic(guidance_bands, weights)
@@ -454,7 +491,7 @@ class SharpeningService:
         orig_up = {}
 
         for b, arr in target_bands.items():
-            b_up = self.upsample_band(arr, pan_high.shape, order=3)
+            b_up = self.upsample_band(arr, pan_high.shape, order=3, subpixel_shift=subpixel_shift)
             orig_up[b] = b_up
 
             # Histogram match high-res pan to multispectral band intensity
@@ -657,43 +694,102 @@ class SharpeningService:
             grid_size=256
         )
 
-        # 2. Sharpening Inversion
+        # 2. MTF Kernel Configuration & Simulation
+        mtf_kernel = None
+        mtf_meta = None
+        if req.mtf_filter_config is not None:
+            cfg = req.mtf_filter_config
+            boost = float(req.native_resolution_m or 20.0) / max(0.1, float(req.sharpened_resolution_m or 10.0))
+            if cfg.custom_kernel:
+                mtf_kernel = np.array(cfg.custom_kernel, dtype=np.float32)
+            else:
+                k_list = generate_mtf_filter_kernel(
+                    nyquist_cutoff=cfg.nyquist_cutoff,
+                    kernel_dimension=cfg.kernel_dimension,
+                    gsd_ratio=boost
+                )
+                mtf_kernel = np.array(k_list, dtype=np.float32)
+            mtf_meta = {
+                "model_type": cfg.model_type.value if hasattr(cfg.model_type, "value") else str(cfg.model_type),
+                "sensor_preset": cfg.sensor_preset.value if cfg.sensor_preset and hasattr(cfg.sensor_preset, "value") else (str(cfg.sensor_preset) if cfg.sensor_preset else None),
+                "nyquist_cutoff": cfg.nyquist_cutoff,
+                "kernel_dimension": cfg.kernel_dimension,
+                "gain_compensation": cfg.gain_compensation,
+                "filter_applied": True
+            }
+
+        # 3. Sub-Pixel Alignment Resolution
+        subpixel_shift = None
+        subpixel_meta = None
+        if req.subpixel_alignment is not None:
+            sp = req.subpixel_alignment
+            subpixel_shift = (sp.dx, sp.dy)
+            subpixel_meta = {
+                "method": sp.method.value if hasattr(sp.method, "value") else str(sp.method),
+                "dx": sp.dx,
+                "dy": sp.dy,
+                "correlation_coefficient": sp.correlation_coefficient,
+                "resampling_order": sp.resampling_order,
+                "auto_align": sp.auto_align,
+                "subpixel_precision": sp.subpixel_precision
+            }
+
+        # 4. Wavelet Decomposition Metadata
+        wavelet_meta = None
+        if method in (SharpeningMethod.A_TROUS_WAVELET, SharpeningMethod.WAVELET_DWT) or req.wavelet_filter:
+            w_basis = req.wavelet_filter.value if req.wavelet_filter and hasattr(req.wavelet_filter, "value") else str(req.wavelet_filter or "b3_spline")
+            wavelet_meta = {
+                "wavelet_basis": w_basis,
+                "decomposition_levels": req.wavelet_levels or 2,
+                "filter_coefficients": A_TROUS_B3_SPLINE_1D if w_basis == "b3_spline" else [0.7071, 0.7071]
+            }
+
+        # 5. Sharpening Inversion
         if method == SharpeningMethod.GRAM_SCHMIDT:
             sharpened_bands, orig_up = self.sharpen_gram_schmidt(
                 target_bands=target_bands,
                 guidance_bands=guidance_bands,
-                weights=req.pan_weights
+                weights=req.pan_weights,
+                mtf_kernel=mtf_kernel,
+                subpixel_shift=subpixel_shift
             )
         elif method == SharpeningMethod.BROVEY:
             sharpened_bands, orig_up = self.sharpen_brovey(
                 target_bands=target_bands,
                 guidance_bands=guidance_bands,
-                weights=req.pan_weights
+                weights=req.pan_weights,
+                mtf_kernel=mtf_kernel,
+                subpixel_shift=subpixel_shift
             )
         elif method == SharpeningMethod.HIGH_PASS_FILTER:
             sharpened_bands, orig_up = self.sharpen_high_pass_filter(
                 target_bands=target_bands,
                 guidance_bands=guidance_bands,
                 config=req.high_pass_config,
-                weights=req.pan_weights
+                weights=req.pan_weights,
+                subpixel_shift=subpixel_shift
             )
         elif method == SharpeningMethod.A_TROUS_WAVELET:
             sharpened_bands, orig_up = self.sharpen_a_trous_wavelet(
                 target_bands=target_bands,
                 guidance_bands=guidance_bands,
-                weights=req.pan_weights
+                weights=req.pan_weights,
+                levels=req.wavelet_levels or 2,
+                subpixel_shift=subpixel_shift
             )
         elif method == SharpeningMethod.WAVELET_DWT:
             sharpened_bands, orig_up = self.sharpen_wavelet_dwt(
                 target_bands=target_bands,
                 guidance_bands=guidance_bands,
-                weights=req.pan_weights
+                weights=req.pan_weights,
+                subpixel_shift=subpixel_shift
             )
         elif method == SharpeningMethod.IHS:
             sharpened_bands, orig_up = self.sharpen_ihs(
                 target_bands=target_bands,
                 guidance_bands=guidance_bands,
-                weights=req.pan_weights
+                weights=req.pan_weights,
+                subpixel_shift=subpixel_shift
             )
         else: # BICUBIC_SPLINE
             sharpened_bands, orig_up = self.sharpen_bicubic_spline(
@@ -701,7 +797,7 @@ class SharpeningService:
                 target_shape=(256, 256)
             )
 
-        # 3. Quality evaluation
+        # 6. Quality evaluation
         quality_summary = self.evaluate_quality_summary(
             orig_bands_up=orig_up,
             sharp_bands=sharpened_bands,
@@ -709,7 +805,7 @@ class SharpeningService:
             matched_scene=matched_scene
         )
 
-        # 4. Canonical Tile URLs and Derived Index Endpoints
+        # 7. Canonical Tile URLs and Derived Index Endpoints
         tile_template = build_sharpened_tile_url_template(method=method, target="{target}")
         derived_indices = {
             "ndmi_10m": build_sharpened_tile_url(method=method, target="ndmi", z=12, x=652, y=1582),
@@ -721,6 +817,8 @@ class SharpeningService:
 
         # Memory cleanup
         del guidance_bands, target_bands, orig_up, sharpened_bands
+        if mtf_kernel is not None:
+            del mtf_kernel
         gc.collect()
 
         return SpectralSharpeningResponse(
@@ -735,6 +833,9 @@ class SharpeningService:
             quality_summary=quality_summary,
             tile_url_template=tile_template,
             derived_indices=derived_indices,
+            mtf_metadata=mtf_meta,
+            subpixel_metadata=subpixel_meta,
+            wavelet_metadata=wavelet_meta,
             processed_at=datetime.now(timezone.utc).isoformat(),
             status="success"
         )

@@ -16230,6 +16230,609 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         tile_url = build_pansharpen_tile_url("sentinel-2-l2a", "S2A_TEST", 12, 100, 200)
         self.assertEqual(tile_url, "/api/v1/tiles/imagery/pan-sharpen/sentinel-2-l2a/S2A_TEST/12/100/200.png")
 
+    def test_task_t376_pansharpen_and_tile_url_resolution(self):
+        """Verify MapExplorer and PanSharpeningModal tile URL template resolution and symbol hygiene (Task T-376)."""
+        from pathlib import Path
+
+        map_explorer_path = Path("gios-react/src/pages/MapExplorer.jsx")
+        self.assertTrue(map_explorer_path.exists(), "MapExplorer.jsx must exist")
+        me_content = map_explorer_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("buildSharpenedTileUrl({", me_content,
+                         "MapExplorer must not invoke unimported buildSharpenedTileUrl; must use buildSharpenedTileUrlTemplate")
+        self.assertIn("buildSharpenedTileUrlTemplate({", me_content,
+                      "MapExplorer must invoke imported buildSharpenedTileUrlTemplate")
+
+        modal_path = Path("gios-react/src/components/PanSharpeningModal.jsx")
+        self.assertTrue(modal_path.exists(), "PanSharpeningModal.jsx must exist")
+        modal_content = modal_path.read_text(encoding="utf-8")
+        self.assertNotIn("const [backendError, setBackendError]", modal_content)
+
+
+    def test_task_t378_change_vector_analysis_and_sam_contracts(self):
+        """Verify Cycle v2.5.53 Core Scaffolding Hardening: Multi-Temporal Change Vector Analysis (CVA),
+        Spectral Angle Mapper (SAM) Angle Invariant Models & 8-Sector Directional Disturbance Contracts (Task T-378)."""
+        import math
+        from pydantic import ValidationError
+        from app.models.schemas import (
+            CVAMethod,
+            normalize_cva_method,
+            CVATileMetric,
+            normalize_cva_tile_metric,
+            CVADisturbanceSector,
+            normalize_cva_sector,
+            CVASeverityTier,
+            normalize_cva_severity_tier,
+            CVA_SECTOR_METADATA,
+            CVA_BENCHMARK_SCENES,
+            calculate_spectral_angle_mapper,
+            classify_disturbance_sector,
+            calculate_change_vector,
+            CVAPointSample,
+            CVARequest,
+            CVAResponse,
+            CVATileRequestParams,
+            CVACapabilitiesResponse,
+            build_cva_tile_url,
+            build_cva_tile_url_template,
+            API_ROUTE_CONTRACTS,
+            format_api_route,
+        )
+
+        # 1. CVAMethod Enum & Normalization
+        self.assertEqual(CVAMethod.STANDARD_EUCLIDEAN.value, "standard_euclidean")
+        self.assertEqual(CVAMethod.NORMALIZED_REFLECTANCE.value, "normalized_reflectance")
+        self.assertEqual(CVAMethod.TASSELED_CAP_CVA.value, "tasseled_cap_cva")
+        self.assertEqual(CVAMethod.SPECTRAL_ANGLE_MAPPER.value, "spectral_angle_mapper")
+        self.assertEqual(CVAMethod.SPATIAL_SPECTRAL_CVA.value, "spatial_spectral_cva")
+
+        self.assertEqual(normalize_cva_method("standard_euclidean"), CVAMethod.STANDARD_EUCLIDEAN)
+        self.assertEqual(normalize_cva_method("euclidean"), CVAMethod.STANDARD_EUCLIDEAN)
+        self.assertEqual(normalize_cva_method("cva"), CVAMethod.STANDARD_EUCLIDEAN)
+        self.assertEqual(normalize_cva_method("normalized"), CVAMethod.NORMALIZED_REFLECTANCE)
+        self.assertEqual(normalize_cva_method("zscore"), CVAMethod.NORMALIZED_REFLECTANCE)
+        self.assertEqual(normalize_cva_method("tasseled_cap"), CVAMethod.TASSELED_CAP_CVA)
+        self.assertEqual(normalize_cva_method("tc_cva"), CVAMethod.TASSELED_CAP_CVA)
+        self.assertEqual(normalize_cva_method("sam"), CVAMethod.SPECTRAL_ANGLE_MAPPER)
+        self.assertEqual(normalize_cva_method("spectral_angle_mapper"), CVAMethod.SPECTRAL_ANGLE_MAPPER)
+        self.assertEqual(normalize_cva_method("spatial_spectral"), CVAMethod.SPATIAL_SPECTRAL_CVA)
+
+        with self.assertRaises(ValueError):
+            normalize_cva_method("invalid_method_xyz")
+
+        # 2. CVATileMetric Enum & Normalization
+        self.assertEqual(CVATileMetric.MAGNITUDE.value, "magnitude")
+        self.assertEqual(CVATileMetric.SPECTRAL_ANGLE.value, "spectral_angle")
+        self.assertEqual(CVATileMetric.DIRECTION_SECTOR.value, "direction_sector")
+        self.assertEqual(CVATileMetric.CHANGE_PROBABILITY.value, "change_probability")
+        self.assertEqual(CVATileMetric.POLAR_RGB_COMPOSITE.value, "polar_rgb")
+        self.assertEqual(CVATileMetric.DISTURBANCE_MASK.value, "disturbance_mask")
+        self.assertEqual(CVATileMetric.CANOPY_PERSISTENCE.value, "canopy_persistence")
+
+        self.assertEqual(normalize_cva_tile_metric("mag"), CVATileMetric.MAGNITUDE)
+        self.assertEqual(normalize_cva_tile_metric("sam"), CVATileMetric.SPECTRAL_ANGLE)
+        self.assertEqual(normalize_cva_tile_metric("direction"), CVATileMetric.DIRECTION_SECTOR)
+        self.assertEqual(normalize_cva_tile_metric("octant"), CVATileMetric.DIRECTION_SECTOR)
+        self.assertEqual(normalize_cva_tile_metric("prob"), CVATileMetric.CHANGE_PROBABILITY)
+        self.assertEqual(normalize_cva_tile_metric("polar_rgb"), CVATileMetric.POLAR_RGB_COMPOSITE)
+        self.assertEqual(normalize_cva_tile_metric("mask"), CVATileMetric.DISTURBANCE_MASK)
+        self.assertEqual(normalize_cva_tile_metric("persistence"), CVATileMetric.CANOPY_PERSISTENCE)
+
+        # 3. CVADisturbanceSector Enum & Normalization
+        self.assertEqual(CVADisturbanceSector.STABLE_UNMODIFIED.value, "stable_unmodified")
+        self.assertEqual(CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE.value, "sector_1_soil_exposure")
+        self.assertEqual(CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH.value, "sector_2_vegetation_growth")
+        self.assertEqual(CVADisturbanceSector.SECTOR_3_CANOPY_GREENING.value, "sector_3_canopy_greening")
+        self.assertEqual(CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION.value, "sector_4_wetland_expansion")
+        self.assertEqual(CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE.value, "sector_5_water_submergence")
+        self.assertEqual(CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION.value, "sector_6_flood_inundation")
+        self.assertEqual(CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK.value, "sector_7_vegetation_dieback")
+        self.assertEqual(CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION.value, "sector_8_deforestation_excavation")
+
+        self.assertEqual(normalize_cva_sector("0"), CVADisturbanceSector.STABLE_UNMODIFIED)
+        self.assertEqual(normalize_cva_sector("soil_exposure"), CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE)
+        self.assertEqual(normalize_cva_sector("vegetation_growth"), CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH)
+        self.assertEqual(normalize_cva_sector("canopy_greening"), CVADisturbanceSector.SECTOR_3_CANOPY_GREENING)
+        self.assertEqual(normalize_cva_sector("wetland_expansion"), CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION)
+        self.assertEqual(normalize_cva_sector("water_submergence"), CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE)
+        self.assertEqual(normalize_cva_sector("flood_inundation"), CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION)
+        self.assertEqual(normalize_cva_sector("vegetation_dieback"), CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK)
+        self.assertEqual(normalize_cva_sector("deforestation_excavation"), CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION)
+
+        # 4. CVASeverityTier Enum & Normalization
+        self.assertEqual(CVASeverityTier.INSIGNIFICANT.value, "insignificant")
+        self.assertEqual(CVASeverityTier.LOW.value, "low")
+        self.assertEqual(CVASeverityTier.MODERATE.value, "moderate")
+        self.assertEqual(CVASeverityTier.HIGH.value, "high")
+        self.assertEqual(CVASeverityTier.CRITICAL.value, "critical")
+        self.assertEqual(normalize_cva_severity_tier("critical"), CVASeverityTier.CRITICAL)
+
+        # 5. CVA_SECTOR_METADATA & CVA_BENCHMARK_SCENES
+        self.assertEqual(len(CVA_SECTOR_METADATA), 9)
+        for sector_key in [e.value for e in CVADisturbanceSector]:
+            self.assertIn(sector_key, CVA_SECTOR_METADATA)
+            self.assertIn("color_hex", CVA_SECTOR_METADATA[sector_key])
+            self.assertIn("description", CVA_SECTOR_METADATA[sector_key])
+
+        self.assertIn("MOUNT_POLLEY_TAILINGS_2014", CVA_BENCHMARK_SCENES)
+        self.assertIn("CAMP_FIRE_PARADISE_2018", CVA_BENCHMARK_SCENES)
+        self.assertIn("AMAZON_DEFORESTATION_ARC", CVA_BENCHMARK_SCENES)
+        self.assertIn("MORENCI_MINE_LEACHING_2026", CVA_BENCHMARK_SCENES)
+        self.assertIn("SALTON_SEA_DESICCATION_2026", CVA_BENCHMARK_SCENES)
+
+        mp = CVA_BENCHMARK_SCENES["MOUNT_POLLEY_TAILINGS_2014"]
+        self.assertEqual(mp["threshold"], 0.18)
+        self.assertIn("dominant_sectors", mp)
+
+        # 6. calculate_spectral_angle_mapper Mathematical Invariants
+        # Invariant 6a: Identity / Parallel -> 0.0
+        v_ident = [0.12, 0.24, 0.08, 0.45]
+        self.assertAlmostEqual(calculate_spectral_angle_mapper(v_ident, v_ident), 0.0, places=6)
+
+        # Invariant 6b: Strict Illumination Invariance (SAM(x, c*x) == 0)
+        v_scaled = [c * 2.75 for c in v_ident]
+        self.assertAlmostEqual(calculate_spectral_angle_mapper(v_ident, v_scaled), 0.0, places=6)
+
+        # Invariant 6c: Orthogonal vectors -> pi / 2
+        v_ortho_1 = [1.0, 0.0, 0.0]
+        v_ortho_2 = [0.0, 1.0, 0.0]
+        self.assertAlmostEqual(calculate_spectral_angle_mapper(v_ortho_1, v_ortho_2), math.pi / 2.0, places=6)
+
+        # Invariant 6d: Strict physical reflection bounds [0, pi / 2]
+        v_arb_1 = [0.05, 0.12, 0.15, 0.35, 0.22, 0.11]
+        v_arb_2 = [0.18, 0.22, 0.28, 0.10, 0.31, 0.25]
+        sam_rad = calculate_spectral_angle_mapper(v_arb_1, v_arb_2)
+        self.assertGreaterEqual(sam_rad, 0.0)
+        self.assertLessEqual(sam_rad, math.pi / 2.0)
+
+        # Invariant 6e: Zero-norm dark pixel degenerate case
+        v_zero_3 = [0.0, 0.0, 0.0]
+        self.assertEqual(calculate_spectral_angle_mapper(v_zero_3, v_zero_3), 0.0)
+        v_zero_4 = [0.0, 0.0, 0.0, 0.0]
+        self.assertGreaterEqual(calculate_spectral_angle_mapper(v_zero_4, v_ident), 0.0)
+
+        with self.assertRaises(ValueError):
+            calculate_spectral_angle_mapper([0.1, 0.2], [0.1, 0.2, 0.3])
+
+        # 7. classify_disturbance_sector All 8 Octants Partition
+        # Sector 1: [0, 45) deg
+        s1, a1 = classify_disturbance_sector(0.20, 0.05, magnitude=0.25, threshold=0.10)
+        self.assertEqual(s1, CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE)
+        self.assertTrue(0.0 <= a1 < 45.0)
+
+        # Sector 2: [45, 90) deg
+        s2, a2 = classify_disturbance_sector(0.10, 0.20, magnitude=0.25, threshold=0.10)
+        self.assertEqual(s2, CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH)
+        self.assertTrue(45.0 <= a2 < 90.0)
+
+        # Sector 3: [90, 135) deg
+        s3, a3 = classify_disturbance_sector(-0.05, 0.20, magnitude=0.25, threshold=0.10)
+        self.assertEqual(s3, CVADisturbanceSector.SECTOR_3_CANOPY_GREENING)
+        self.assertTrue(90.0 <= a3 < 135.0)
+
+        # Sector 4: [135, 180) deg
+        s4, a4 = classify_disturbance_sector(-0.20, 0.05, magnitude=0.25, threshold=0.10)
+        self.assertEqual(s4, CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION)
+        self.assertTrue(135.0 <= a4 < 180.0)
+
+        # Sector 5: [180, 225) deg
+        s5, a5 = classify_disturbance_sector(-0.20, -0.05, magnitude=0.25, threshold=0.10)
+        self.assertEqual(s5, CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE)
+        self.assertTrue(180.0 <= a5 < 225.0)
+
+        # Sector 6: [225, 270) deg
+        s6, a6 = classify_disturbance_sector(-0.10, -0.20, magnitude=0.25, threshold=0.10)
+        self.assertEqual(s6, CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION)
+        self.assertTrue(225.0 <= a6 < 270.0)
+
+        # Sector 7: [270, 315) deg
+        s7, a7 = classify_disturbance_sector(0.05, -0.20, magnitude=0.25, threshold=0.10)
+        self.assertEqual(s7, CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK)
+        self.assertTrue(270.0 <= a7 < 315.0)
+
+        # Sector 8: [315, 360) deg
+        s8, a8 = classify_disturbance_sector(0.20, -0.05, magnitude=0.25, threshold=0.10)
+        self.assertEqual(s8, CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION)
+        self.assertTrue(315.0 <= a8 < 360.0)
+
+        # Sub-threshold stability
+        s_stable, a_stable = classify_disturbance_sector(0.02, 0.01, magnitude=0.03, threshold=0.15)
+        self.assertEqual(s_stable, CVADisturbanceSector.STABLE_UNMODIFIED)
+        self.assertEqual(a_stable, 0.0)
+
+        # 8. calculate_change_vector & Triangle Inequality Invariant
+        t1_spec = {"B02": 0.08, "B03": 0.12, "B04": 0.09, "B08": 0.42, "B11": 0.18, "B12": 0.10}
+        # Post-event: Deforestation / Excavation (NIR drops to 0.12, Red rises to 0.28)
+        t2_spec = {"B02": 0.14, "B03": 0.18, "B04": 0.28, "B08": 0.12, "B11": 0.35, "B12": 0.26}
+
+        cva_res = calculate_change_vector(
+            t1_spec,
+            t2_spec,
+            threshold=0.15,
+            axis_x="B04",
+            axis_y="B08"
+        )
+        self.assertTrue(cva_res["triangle_inequality_satisfied"])
+        self.assertGreater(cva_res["magnitude"], 0.15)
+        self.assertTrue(cva_res["is_significant"])
+        self.assertEqual(cva_res["sector"], CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK.value)
+
+        # Test Sector 8 (Deforestation / Excavation: strong red rise, moderate NIR drop)
+        t2_excavation = {"B02": 0.16, "B03": 0.22, "B04": 0.35, "B08": 0.34, "B11": 0.38, "B12": 0.30}
+        cva_sec8 = calculate_change_vector(t1_spec, t2_excavation, threshold=0.15, axis_x="B04", axis_y="B08")
+        self.assertEqual(cva_sec8["sector"], CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION.value)
+        self.assertGreater(cva_res["spectral_angle_deg"], 0.0)
+        self.assertLessEqual(cva_res["spectral_angle_deg"], 90.0)
+        self.assertIn(cva_res["severity"], [CVASeverityTier.MODERATE.value, CVASeverityTier.HIGH.value, CVASeverityTier.CRITICAL.value])
+
+        # 9. Pydantic Models & Field Validation
+        pt = CVAPointSample(
+            point_id="PT-001",
+            lat=52.5486,
+            lng=-121.5978,
+            reflectance_t1=t1_spec,
+            reflectance_t2=t2_spec,
+            magnitude=cva_res["magnitude"],
+            spectral_angle_deg=cva_res["spectral_angle_deg"],
+            direction_angle_deg=cva_res["direction_angle_deg"],
+            sector=CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION,
+            severity=CVASeverityTier.HIGH,
+            is_significant=True
+        )
+        self.assertEqual(pt.point_id, "PT-001")
+        self.assertTrue(pt.is_significant)
+
+        req = CVARequest(
+            method="sam",
+            threshold=0.20,
+            itemIdT1="S2A_20250815",
+            itemIdT2="S2B_20260815",
+            axisXBand="B04",
+            axisYBand="B08"
+        )
+        self.assertEqual(req.method, CVAMethod.SPECTRAL_ANGLE_MAPPER)
+        self.assertEqual(req.item_id_t1, "S2A_20250815")
+        self.assertEqual(req.threshold, 0.20)
+
+        with self.assertRaises(ValidationError):
+            CVARequest(threshold=0.0)
+
+        resp = CVAResponse(
+            request_id="REQ-CVA-01",
+            method=req.method.value,
+            collection="sentinel-2-l2a",
+            item_id_t1=req.item_id_t1,
+            item_id_t2=req.item_id_t2,
+            bands=req.bands,
+            threshold=req.threshold,
+            mean_magnitude=0.245,
+            max_magnitude=0.680,
+            mean_spectral_angle_deg=18.4,
+            significant_change_area_ha=142.5,
+            sector_distribution={"sector_8_deforestation_excavation": 65.4, "stable_unmodified": 34.6},
+            severity_distribution={"high": 42.1, "moderate": 23.3, "insignificant": 34.6},
+            points=[pt],
+            tile_url_template="/api/v1/tiles/cva/magnitude/{z}/{x}/{y}.png"
+        )
+        self.assertEqual(resp.request_id, "REQ-CVA-01")
+        self.assertEqual(resp.significant_change_area_ha, 142.5)
+
+        tile_params = CVATileRequestParams(metric="magnitude", method="euclidean", threshold=0.18)
+        self.assertEqual(tile_params.metric, CVATileMetric.MAGNITUDE)
+        self.assertEqual(tile_params.method, CVAMethod.STANDARD_EUCLIDEAN)
+
+        caps = CVACapabilitiesResponse(
+            methods={},
+            metrics=["magnitude", "spectral_angle", "direction_sector"],
+            sectors=CVA_SECTOR_METADATA,
+            severity_tiers={},
+            benchmark_scenes=CVA_BENCHMARK_SCENES
+        )
+        self.assertIn("magnitude", caps.metrics)
+        self.assertIn("MOUNT_POLLEY_TAILINGS_2014", caps.benchmark_scenes)
+
+        # 10. Route Contracts & Dynamic Tile URL Builders
+        self.assertIn("analysis_cva_capabilities", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_cva_capabilities_short", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_cva_evaluate", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_cva_evaluate_short", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_cva_xyz", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_cva_xyz_short", API_ROUTE_CONTRACTS)
+
+        self.assertEqual(format_api_route("analysis_cva_capabilities"), "/api/v1/analysis/cva/capabilities")
+        self.assertEqual(format_api_route("analysis_cva_capabilities_short"), "/cva/capabilities")
+        self.assertEqual(format_api_route("analysis_cva_evaluate"), "/api/v1/analysis/cva/evaluate")
+        self.assertEqual(
+            format_api_route("tiles_cva_xyz", metric="magnitude", z=14, x=2650, y=6320),
+            "/api/v1/tiles/cva/magnitude/14/2650/6320.png"
+        )
+        self.assertEqual(
+            format_api_route("tiles_cva_xyz_short", metric="spectral_angle", z=12, x=652, y=1582),
+            "/tiles/cva/spectral_angle/12/652/1582.png"
+        )
+
+        tile_url = build_cva_tile_url(
+            metric=CVATileMetric.DIRECTION_SECTOR,
+            z=12,
+            x=652,
+            y=1582,
+            method=CVAMethod.STANDARD_EUCLIDEAN,
+            threshold=0.18,
+            colormap="turbo"
+        )
+        self.assertIn("/api/v1/tiles/cva/direction_sector/12/652/1582.png", tile_url)
+        self.assertIn("method=standard_euclidean", tile_url)
+        self.assertIn("threshold=0.18", tile_url)
+        self.assertIn("colormap=turbo", tile_url)
+
+        tile_tpl = build_cva_tile_url_template(CVATileMetric.MAGNITUDE)
+        self.assertEqual(tile_tpl, "/api/v1/tiles/cva/magnitude/{z}/{x}/{y}.png")
+
+
+    def test_task_t382_cva_frontend_contracts_and_lint_hygiene(self):
+        """Verify CVA frontend contracts, import hygiene, and template resolution (Task T-382)."""
+        from pathlib import Path
+
+        gios_api_path = Path("gios-react/src/api/giosApi.js")
+        self.assertTrue(gios_api_path.exists(), "giosApi.js must exist")
+        api_content = gios_api_path.read_text(encoding="utf-8")
+
+        required_symbols = [
+            "CVA_METHODS",
+            "CVA_TILE_METRICS",
+            "CVA_SECTOR_METADATA",
+            "CVA_SEVERITY_TIERS",
+            "CVA_BENCHMARK_SCENES",
+            "calculateChangeVector",
+            "buildCvaTileUrlTemplate",
+        ]
+        for sym in required_symbols:
+            self.assertIn(
+                sym,
+                api_content,
+                f"giosApi.js must declare or import '{sym}' to prevent no-undef lint failures",
+            )
+
+        constants_path = Path("gios-react/src/config/constants.js")
+        self.assertTrue(constants_path.exists(), "constants.js must exist")
+        const_content = constants_path.read_text(encoding="utf-8")
+
+        # Invariant: No arrow functions using 'arguments' object
+        self.assertNotIn(
+            "arguments.length",
+            const_content,
+            "constants.js must not reference 'arguments' inside arrow functions",
+        )
+        self.assertIn("export const buildCvaTileUrlTemplate", const_content)
+        self.assertIn("export const evaluateMultiTemporalCva", const_content)
+        self.assertIn("export const classifyDisturbanceSector", const_content)
+
+
+
+    def test_task_t384_deep_feature_edge_segmentation_and_crest_crack_contracts(self):
+        """
+        Cycle v2.5.54 Task T-384 Verification:
+        Validates Deep Feature Edge Segmentation Schemas, Tailings Dam Crest Crack & Seepage Geometry Models,
+        Non-Negative Area Invariant, Geometric Positive-Definiteness, and Dynamic Tile Endpoints.
+        """
+        from app.models.schemas import (
+            EdgeDetectionAlgorithm,
+            DefectType,
+            DefectSeverityTier,
+            DefectTileMetric,
+            normalize_edge_detection_algorithm,
+            normalize_defect_type,
+            normalize_defect_severity_tier,
+            normalize_defect_tile_metric,
+            DEFECT_SEVERITY_THRESHOLDS,
+            DEFECT_BENCHMARK_SITES,
+            classify_crack_severity,
+            calculate_crack_orientation,
+            verify_polygon_closure,
+            calculate_polygon_enclosed_area,
+            build_defect_tile_url,
+            build_defect_tile_url_template,
+            CrestCrackFeature,
+            SeepageZoneFeature,
+            CrestDeformationSummary,
+            CrestCrackDetectionRequest,
+            CrestCrackDetectionResponse,
+            DefectTileRequestParams,
+            DefectCapabilitiesResponse,
+            format_api_route,
+            API_ROUTE_CONTRACTS,
+        )
+        from pydantic import ValidationError
+
+        # 1. Edge Detection Algorithm Normalization
+        self.assertEqual(normalize_edge_detection_algorithm("sobel"), EdgeDetectionAlgorithm.SOBEL)
+        self.assertEqual(normalize_edge_detection_algorithm("CANNY"), EdgeDetectionAlgorithm.CANNY)
+        self.assertEqual(normalize_edge_detection_algorithm("tophat"), EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL)
+        self.assertEqual(normalize_edge_detection_algorithm("u_net_cnn"), EdgeDetectionAlgorithm.DEEP_FEATURE_UNET)
+        self.assertEqual(normalize_edge_detection_algorithm("crest_hough"), EdgeDetectionAlgorithm.HOUGH_CREST_LINE)
+        self.assertEqual(normalize_edge_detection_algorithm("log_filter"), EdgeDetectionAlgorithm.LAPLACIAN_OF_GAUSSIAN)
+
+        # 2. Defect Type & Severity Normalization
+        self.assertEqual(normalize_defect_type("longitudinal_tension"), DefectType.CREST_TENSION_CRACK)
+        self.assertEqual(normalize_defect_type("transverse_shear"), DefectType.TRANSVERSE_SHEAR_CRACK)
+        self.assertEqual(normalize_defect_type("phreatic_saturation"), DefectType.SEEPAGE_SATURATION_ZONE)
+        self.assertEqual(normalize_defect_type("toe_heave"), DefectType.TOE_BULGE_HEAVE)
+        self.assertEqual(normalize_defect_type("crest_slump"), DefectType.CREST_CREEP_SETTLEMENT)
+
+        self.assertEqual(normalize_defect_severity_tier("negligible"), DefectSeverityTier.NEGLIGIBLE)
+        self.assertEqual(normalize_defect_severity_tier("minor"), DefectSeverityTier.LOW)
+        self.assertEqual(normalize_defect_severity_tier("moderate"), DefectSeverityTier.MODERATE)
+        self.assertEqual(normalize_defect_severity_tier("severe"), DefectSeverityTier.HIGH)
+        self.assertEqual(normalize_defect_severity_tier("emergency"), DefectSeverityTier.CRITICAL)
+
+        self.assertEqual(normalize_defect_tile_metric("heatmap"), DefectTileMetric.CRACK_HEATMAP)
+        self.assertEqual(normalize_defect_tile_metric("edge_prob"), DefectTileMetric.EDGE_PROBABILITY)
+        self.assertEqual(normalize_defect_tile_metric("seepage"), DefectTileMetric.SEEPAGE_SEVERITY)
+        self.assertEqual(normalize_defect_tile_metric("hazard_risk"), DefectTileMetric.COMBINED_RISK)
+        self.assertEqual(normalize_defect_tile_metric("vector_mask"), DefectTileMetric.CONTOUR_VECTOR_MASK)
+
+        # 3. ICOLD Bulletin 139 / USBR Severity Classification & Length Escalation
+        self.assertEqual(classify_crack_severity(5.0), DefectSeverityTier.NEGLIGIBLE)
+        self.assertEqual(classify_crack_severity(18.0), DefectSeverityTier.LOW)
+        self.assertEqual(classify_crack_severity(35.0), DefectSeverityTier.MODERATE)
+        self.assertEqual(classify_crack_severity(75.0), DefectSeverityTier.HIGH)
+        self.assertEqual(classify_crack_severity(120.0), DefectSeverityTier.CRITICAL)
+        # Length escalation (>50m escalates by 1 tier)
+        self.assertEqual(classify_crack_severity(18.0, length_m=65.0), DefectSeverityTier.MODERATE)
+        self.assertEqual(classify_crack_severity(35.0, length_m=80.0), DefectSeverityTier.HIGH)
+        self.assertEqual(classify_crack_severity(75.0, length_m=95.0), DefectSeverityTier.CRITICAL)
+
+        # 4. Crack Geometry Positive-Definiteness Invariants
+        valid_crack = CrestCrackFeature(
+            crack_id="CRK-101",
+            defect_type=DefectType.CREST_TENSION_CRACK,
+            severity=DefectSeverityTier.MODERATE,
+            length_m=42.5,
+            mean_width_mm=30.0,
+            max_width_mm=25.0,  # Clamped to mean_width_mm
+            orientation_deg=45.0,
+            confidence=0.91,
+            coordinates=[[-109.342, 33.056], [-109.341, 33.057]],
+        )
+        self.assertEqual(valid_crack.max_width_mm, 30.0, "max_width_mm must be >= mean_width_mm")
+
+        # Zero or negative length strictly rejected
+        with self.assertRaises(ValidationError):
+            CrestCrackFeature(
+                crack_id="CRK-INVALID-1",
+                defect_type=DefectType.CREST_TENSION_CRACK,
+                severity=DefectSeverityTier.LOW,
+                length_m=0.0,  # Invalid: gt=0.0
+                mean_width_mm=15.0,
+                max_width_mm=15.0,
+                orientation_deg=0.0,
+                confidence=0.8,
+                coordinates=[[-109.342, 33.056], [-109.341, 33.057]],
+            )
+
+        # Zero or negative width strictly rejected
+        with self.assertRaises(ValidationError):
+            CrestCrackFeature(
+                crack_id="CRK-INVALID-2",
+                defect_type=DefectType.CREST_TENSION_CRACK,
+                severity=DefectSeverityTier.LOW,
+                length_m=10.0,
+                mean_width_mm=-5.0,  # Invalid: gt=0.0
+                max_width_mm=15.0,
+                orientation_deg=0.0,
+                confidence=0.8,
+                coordinates=[[-109.342, 33.056], [-109.341, 33.057]],
+            )
+
+        # 5. Azimuth Orientation Angle Bounds
+        bearing = calculate_crack_orientation([[-109.342, 33.056], [-109.341, 33.057]])
+        self.assertGreaterEqual(bearing, 0.0)
+        self.assertLess(bearing, 360.0)
+
+        # 6. Non-Negative Area & Polygon Closure Invariants
+        unclosed_ring = [[-109.341, 33.056], [-109.340, 33.056], [-109.340, 33.057], [-109.341, 33.057]]
+        closed_ring = [[-109.341, 33.056], [-109.340, 33.056], [-109.340, 33.057], [-109.341, 33.057], [-109.341, 33.056]]
+        self.assertFalse(verify_polygon_closure(unclosed_ring))
+        self.assertTrue(verify_polygon_closure(closed_ring))
+
+        area_m2 = calculate_polygon_enclosed_area(closed_ring)
+        self.assertGreater(area_m2, 0.0, "Enclosed area must be strictly positive for non-degenerate ring")
+
+        # Auto-closure validator in SeepageZoneFeature
+        seep_zone = SeepageZoneFeature(
+            seepage_id="SEP-001",
+            defect_type=DefectType.SEEPAGE_SATURATION_ZONE,
+            severity=DefectSeverityTier.HIGH,
+            area_m2=area_m2,
+            perimeter_m=450.0,
+            confidence=0.88,
+            polygon_coordinates=[unclosed_ring],  # Passed unclosed
+        )
+        self.assertTrue(verify_polygon_closure(seep_zone.polygon_coordinates[0]), "Validator must auto-close ring")
+
+        # 7. Request & Response Payload Contracts
+        req = CrestCrackDetectionRequest(
+            dam_name="Morenci Tailings Dam Crest",
+            algorithm="bilateral_morphological",
+            min_crack_length_m=1.0,
+            min_crack_width_mm=10.0,
+        )
+        self.assertEqual(req.algorithm, EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL)
+
+        summary = CrestDeformationSummary(
+            total_cracks_detected=1,
+            total_seepage_zones_detected=1,
+            cumulative_crack_length_m=42.5,
+            max_crack_width_mm=30.0,
+            total_seepage_area_m2=area_m2,
+            overall_crest_condition="ELEVATED_RISK",
+            highest_severity=DefectSeverityTier.HIGH,
+        )
+        resp = CrestCrackDetectionResponse(
+            request_id="DEF-TEST-001",
+            dam_name="Morenci Tailings Dam Crest",
+            algorithm=req.algorithm,
+            summary=summary,
+            cracks=[valid_crack],
+            seepage_zones=[seep_zone],
+            geojson={
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "LineString", "coordinates": valid_crack.coordinates},
+                        "properties": {"crack_id": valid_crack.crack_id},
+                    }
+                ],
+            },
+            tile_url_template=build_defect_tile_url_template(DefectTileMetric.CRACK_HEATMAP),
+        )
+        self.assertEqual(resp.status, "success")
+        self.assertIn("/api/v1/tiles/defects/crack_heatmap/{z}/{x}/{y}.png", resp.tile_url_template)
+
+        # 8. Dynamic Tile URL Builder & Route Contracts
+        tile_url = build_defect_tile_url(
+            metric=DefectTileMetric.CRACK_HEATMAP,
+            z=14,
+            x=3200,
+            y=6400,
+            algorithm=EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL,
+            colormap="magma",
+        )
+        self.assertIn("/api/v1/tiles/defects/crack_heatmap/14/3200/6400.png", tile_url)
+        self.assertIn("algorithm=bilateral_morphological", tile_url)
+        self.assertIn("colormap=magma", tile_url)
+
+        # Route Contracts Registration
+        self.assertIn("analysis_defects_capabilities", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_defects_crest_cracks", API_ROUTE_CONTRACTS)
+        self.assertIn("analysis_defects_seepage", API_ROUTE_CONTRACTS)
+        self.assertIn("tiles_defects_xyz", API_ROUTE_CONTRACTS)
+        self.assertEqual(
+            format_api_route("tiles_defects_xyz", metric="crack_heatmap", z=12, x=652, y=1582),
+            "/api/v1/tiles/defects/crack_heatmap/12/652/1582.png",
+        )
+
+        # 9. Frontend Constants & API Parity
+        from pathlib import Path
+        constants_path = Path("gios-react/src/config/constants.js")
+        self.assertTrue(constants_path.exists())
+        const_text = constants_path.read_text(encoding="utf-8")
+        self.assertIn("export const EdgeDetectionAlgorithm", const_text)
+        self.assertIn("export const DefectType", const_text)
+        self.assertIn("export const DefectSeverityTier", const_text)
+        self.assertIn("export const DefectTileMetric", const_text)
+        self.assertIn("export const classifyCrackSeverity", const_text)
+        self.assertIn("export const buildDefectTileUrlTemplate", const_text)
+
+        api_path = Path("gios-react/src/api/giosApi.js")
+        self.assertTrue(api_path.exists())
+        api_text = api_path.read_text(encoding="utf-8")
+        self.assertIn("export const fetchDefectCapabilities", api_text)
+        self.assertIn("export const detectCrestCracks", api_text)
+        self.assertIn("export const detectSeepageZones", api_text)
+        self.assertIn("export const getDefectTileUrlTemplate", api_text)
+
 
 if __name__ == "__main__":
 

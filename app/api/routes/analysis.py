@@ -294,6 +294,16 @@ from app.models.schemas import (
     CVAAnalysisResponse,
     calculate_change_vector,
     build_cva_tile_url,
+    CVAMethod,
+    CVATileMetric,
+    CVADisturbanceSector,
+    CVASeverityTier,
+    CVAPointSample,
+    CVARequest,
+    CVAResponse,
+    CVATileRequestParams,
+    CVACapabilitiesResponse,
+    build_cva_tile_url_template,
     SalinityIndexType,
     SalinityHazardTier,
     SoilSalinityAnalysisRequest,
@@ -1073,6 +1083,7 @@ unmixing_router = APIRouter(prefix="/unmixing", tags=["Linear Spectral Mixture A
 true_ortho_router = APIRouter(prefix="/true-ortho", tags=["True Orthorectification & Graph-Cut Seamlines"])
 bathymetry_router = APIRouter(prefix="/bathymetry", tags=["Satellite-Derived Bathymetry & Water Column Radiative Transfer"])
 evapotranspiration_router = APIRouter(prefix="/evapotranspiration", tags=["Satellite-Derived Evapotranspiration SEBAL/METRIC"])
+cva_router = APIRouter(prefix="/cva", tags=["Multi-Temporal Change Vector Analysis & SAM Engine"])
 
 def _calculate_polygon_area_ha(geometry: Dict[str, Any]) -> float:
     try:
@@ -4401,6 +4412,121 @@ def get_analysis_cva_tile(
     rescale: Optional[str] = "0.0,0.5"
 ):
     return get_cva_tile(pre_scene_id=pre_scene_id, post_scene_id=post_scene_id, z=z, x=x, y=y, colormap=colormap, rescale=rescale)
+
+
+# ============================================================================
+# CYCLE v2.5.53: MULTI-TEMPORAL CHANGE VECTOR ANALYSIS (CVA) & SAM
+# ============================================================================
+
+@cva_router.get("/capabilities", response_model=CVACapabilitiesResponse, tags=["Multi-Temporal Change Vector Analysis & SAM Engine"])
+@cva_router.get("/capabilities/", response_model=CVACapabilitiesResponse, include_in_schema=False)
+def get_cva_capabilities_direct():
+    return trend_service.get_cva_capabilities()
+
+@cva_router.post("/evaluate", response_model=CVAResponse, tags=["Multi-Temporal Change Vector Analysis & SAM Engine"])
+@cva_router.post("/evaluate/", response_model=CVAResponse, include_in_schema=False)
+def evaluate_cva_direct(req: CVARequest):
+    return trend_service.execute_cva_pipeline(req)
+
+@router.get("/cva/capabilities", response_model=CVACapabilitiesResponse, tags=["Multi-Temporal Change Vector Analysis & SAM Engine"])
+@router.get("/cva/capabilities/", response_model=CVACapabilitiesResponse, include_in_schema=False)
+@router.get("/analysis/cva/capabilities", response_model=CVACapabilitiesResponse, include_in_schema=False)
+def get_cva_capabilities_endpoint():
+    """Retrieves supported CVA inversion algorithms, SAM metrics, 8-sector disturbance taxonomy, and benchmark scenes."""
+    return trend_service.get_cva_capabilities()
+
+@router.post("/cva/evaluate", response_model=CVAResponse, tags=["Multi-Temporal Change Vector Analysis & SAM Engine"])
+@router.post("/cva/evaluate/", response_model=CVAResponse, include_in_schema=False)
+@router.post("/analysis/cva/evaluate", response_model=CVAResponse, include_in_schema=False)
+def evaluate_cva_endpoint(req: CVARequest):
+    """Executes multi-temporal change vector analysis, SAM angle inversion, and 8-sector disturbance classification."""
+    return trend_service.execute_cva_pipeline(req)
+
+@tiles_router.get("/cva/{metric}/{z}/{x}/{y}.png", tags=["Dynamic COG Tiles"])
+def get_cva_xyz_tile(
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    method: Optional[str] = "standard_euclidean",
+    threshold: Optional[float] = 0.15,
+    t1: Optional[str] = None,
+    t2: Optional[str] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    """Renders dynamic 256x256 RGBA XYZ tile for Multi-Temporal CVA disturbance metrics."""
+    png_bytes = tile_service.render_cva_tile(
+        metric=metric,
+        z=z,
+        x=x,
+        y=y,
+        method=method or "standard_euclidean",
+        threshold=threshold if threshold is not None else 0.15,
+        t1=t1,
+        t2=t2,
+        colormap=colormap,
+        rescale=rescale
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400", "X-Tile-Engine": "GIOS-CVA-XYZ"}
+    )
+
+@tiles_router.get("/cva/{z}/{x}/{y}.png", tags=["Dynamic COG Tiles"], include_in_schema=False)
+def get_cva_xyz_default_tile(
+    z: int,
+    x: int,
+    y: int,
+    method: Optional[str] = "standard_euclidean",
+    threshold: Optional[float] = 0.15,
+    t1: Optional[str] = None,
+    t2: Optional[str] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_cva_xyz_tile(
+        metric="magnitude",
+        z=z,
+        x=x,
+        y=y,
+        method=method,
+        threshold=threshold,
+        t1=t1,
+        t2=t2,
+        colormap=colormap,
+        rescale=rescale
+    )
+
+@router.get("/tiles/cva/{metric}/{z}/{x}/{y}.png", include_in_schema=False)
+def get_analysis_cva_xyz_tile(
+    metric: str,
+    z: int,
+    x: int,
+    y: int,
+    method: Optional[str] = "standard_euclidean",
+    threshold: Optional[float] = 0.15,
+    t1: Optional[str] = None,
+    t2: Optional[str] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_cva_xyz_tile(metric=metric, z=z, x=x, y=y, method=method, threshold=threshold, t1=t1, t2=t2, colormap=colormap, rescale=rescale)
+
+@router.get("/tiles/cva/{z}/{x}/{y}.png", include_in_schema=False)
+def get_analysis_cva_xyz_default_tile(
+    z: int,
+    x: int,
+    y: int,
+    method: Optional[str] = "standard_euclidean",
+    threshold: Optional[float] = 0.15,
+    t1: Optional[str] = None,
+    t2: Optional[str] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None
+):
+    return get_cva_xyz_tile(metric="magnitude", z=z, x=x, y=y, method=method, threshold=threshold, t1=t1, t2=t2, colormap=colormap, rescale=rescale)
 
 
 # ============================================================================
@@ -13403,7 +13529,11 @@ def post_imagery_pan_sharpen_endpoint(req: PanSharpenRequest):
         sensor_ms_gsd_m=req.sensor_ms_gsd_m,
         high_pass_kernel_size=req.high_pass_kernel_size,
         observed_pan_reflectance=req.observed_pan_reflectance,
-        observed_ms_reflectances=req.observed_ms_reflectances
+        observed_ms_reflectances=req.observed_ms_reflectances,
+        mtf_filter_config=getattr(req, "mtf_filter_config", getattr(req, "mtf_filter", None)),
+        subpixel_alignment=getattr(req, "subpixel_alignment", None),
+        wavelet_type=getattr(req, "wavelet_type", getattr(req, "wavelet_filter", None)),
+        wavelet_levels=getattr(req, "wavelet_levels", 2)
     )
     col_str = req.collection.value if hasattr(req.collection, "value") else str(req.collection)
     tile_template = f"/api/v1/tiles/imagery/pan-sharpen/{col_str}/{req.item_id}/{{z}}/{{x}}/{{y}}.png"
@@ -13422,7 +13552,10 @@ def post_imagery_pan_sharpen_endpoint(req: PanSharpenRequest):
         tier_metadata=fusion_dict["tier_metadata"],
         bands={k: PanSharpenBandDetail(**v) for k, v in fusion_dict["bands"].items()},
         tile_url_template=tile_template,
-        sharpened_at=datetime.now(timezone.utc).isoformat()
+        sharpened_at=datetime.now(timezone.utc).isoformat(),
+        mtf_filter_applied=fusion_dict.get("mtf_filter_applied"),
+        subpixel_alignment_applied=fusion_dict.get("subpixel_alignment_applied"),
+        wavelet_metadata=fusion_dict.get("wavelet_metadata")
     )
 
 

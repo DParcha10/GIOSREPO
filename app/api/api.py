@@ -25,6 +25,7 @@ api_router.include_router(analysis.unmixing_router)
 api_router.include_router(analysis.true_ortho_router)
 api_router.include_router(analysis.bathymetry_router)
 api_router.include_router(analysis.evapotranspiration_router)
+api_router.include_router(analysis.cva_router)
 api_router.include_router(analysis.climatology_router)
 api_router.include_router(analysis.wdi_router)
 api_router.include_router(analysis.mineralogy_router)
@@ -39,5 +40,12 @@ api_router.include_router(operations.work_orders_router)
 api_router.include_router(operations.subscriptions_router)
 api_router.include_router(operations.operations_router)
 api_router.include_router(byoc.router)
+
+
+@api_router.post("/imagery/pan-sharpen", response_model=analysis.PanSharpenResponse, tags=["Multi-Band Super-Resolution Sharpening"])
+@api_router.post("/imagery/pan-sharpen/", response_model=analysis.PanSharpenResponse, include_in_schema=False)
+def api_pan_sharpen_imagery_direct_route(req: analysis.PanSharpenRequest):
+    """Direct canonical proxy endpoint for high-resolution panchromatic spectral sharpening."""
+    return analysis.post_imagery_pan_sharpen_endpoint(req)
 
 

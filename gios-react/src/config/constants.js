@@ -1217,7 +1217,23 @@ export const API_ENDPOINTS = {
   TILES_MULTIMODAL: (model, metric, z, x, y) => `/api/v1/tiles/multimodal/${model}/${metric}/${z}/${x}/${y}.png`,
   TILES_MULTIMODAL_SHORT: (model, metric, z, x, y) => `/tiles/multimodal/${model}/${metric}/${z}/${x}/${y}.png`,
   TILES_MULTIMODAL_XYZ: (z, x, y) => `/api/v1/tiles/multimodal/${z}/${x}/${y}.png`,
-  TILES_MULTIMODAL_XYZ_SHORT: (z, x, y) => `/tiles/multimodal/${z}/${x}/${y}.png`
+  TILES_MULTIMODAL_XYZ_SHORT: (z, x, y) => `/tiles/multimodal/${z}/${x}/${y}.png`,
+  // Cycle v2.5.53: Multi-Temporal Change Vector Analysis (CVA) & Spectral Angle Mapper (SAM) Contracts
+  ANALYSIS_CVA_CAPABILITIES: '/api/v1/analysis/cva/capabilities',
+  ANALYSIS_CVA_CAPABILITIES_SHORT: '/cva/capabilities',
+  ANALYSIS_CVA_EVALUATE: '/api/v1/analysis/cva/evaluate',
+  ANALYSIS_CVA_EVALUATE_SHORT: '/cva/evaluate',
+  TILES_CVA_XYZ: (metric, z, x, y) => `/api/v1/tiles/cva/${metric}/${z}/${x}/${y}.png`,
+  TILES_CVA_XYZ_SHORT: (metric, z, x, y) => `/tiles/cva/${metric}/${z}/${x}/${y}.png`,
+  // Cycle v2.5.54: Deep Feature Edge Segmentation & Crest Crack Detection Contracts
+  ANALYSIS_DEFECTS_CAPABILITIES: '/api/v1/analysis/defects/capabilities',
+  ANALYSIS_DEFECTS_CAPABILITIES_SHORT: '/defects/capabilities',
+  ANALYSIS_DEFECTS_CREST_CRACKS: '/api/v1/analysis/defects/crest-cracks',
+  ANALYSIS_DEFECTS_CREST_CRACKS_SHORT: '/defects/crest-cracks',
+  ANALYSIS_DEFECTS_SEEPAGE: '/api/v1/analysis/defects/seepage',
+  ANALYSIS_DEFECTS_SEEPAGE_SHORT: '/defects/seepage',
+  TILES_DEFECTS_XYZ: (metric, z, x, y) => `/api/v1/tiles/defects/${metric}/${z}/${x}/${y}.png`,
+  TILES_DEFECTS_XYZ_SHORT: (metric, z, x, y) => `/tiles/defects/${metric}/${z}/${x}/${y}.png`
 };
 
 /**
@@ -1617,6 +1633,12 @@ export const formatApiRoute = (endpointKey, params = {}) => {
       case 'TILES_MULTIMODAL_XYZ':
       case 'TILES_MULTIMODAL_XYZ_SHORT':
         return endpoint(params.z, params.x, params.y);
+      case 'TILES_CVA_XYZ':
+      case 'TILES_CVA_XYZ_SHORT':
+        return endpoint(params.metric || 'magnitude', params.z, params.x, params.y);
+      case 'TILES_DEFECTS_XYZ':
+      case 'TILES_DEFECTS_XYZ_SHORT':
+        return endpoint(params.metric || 'crack_heatmap', params.z, params.x, params.y);
       default:
         return endpoint(params);
     }
@@ -4762,7 +4784,13 @@ export const CVA_DIRECTION_SECTORS = {
   DEFOLIATION_BURN: 'defoliation_burn'
 };
 
-export const calculateChangeVector = (preBands = {}, postBands = {}) => {
+export const calculateChangeVector = (preBands = {}, postBands = {}, options = {}) => {
+  // Cycle v2.5.53 8-sector multi-temporal CVA invocation
+  if (options.threshold !== undefined || options.axisX || options.axisY || options.use8Sectors || Array.isArray(preBands) || (preBands && !('red' in preBands && 'nir' in preBands))) {
+    return evaluateMultiTemporalCva(preBands, postBands, options);
+  }
+
+  // Legacy 4-quadrant CVA invocation
   const commonBands = Object.keys(preBands).filter((b) => b in postBands);
   if (commonBands.length === 0) {
     return {
@@ -4813,11 +4841,36 @@ export const calculateChangeVector = (preBands = {}, postBands = {}) => {
   };
 };
 
-export const buildCvaTileUrl = (preSceneId, postSceneId, z, x, y, options = {}) => {
-  const basePrefix = options.basePrefix || '/api/v1';
-  const rescale = options.rescale || '0.0,0.5';
-  const colormap = options.colormap || 'turbo';
-  return `${basePrefix}/tiles/change/cva/${preSceneId}/${postSceneId}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+export const buildCvaTileUrl = (...args) => {
+  // Legacy Signature: buildCvaTileUrl(preSceneId, postSceneId, z, x, y, options)
+  if (args.length >= 5 && typeof args[0] === 'string' && typeof args[1] === 'string' && !['magnitude', 'spectral_angle', 'direction_sector', 'change_probability', 'polar_rgb', 'disturbance_mask', 'canopy_persistence'].includes(args[0])) {
+    const [preSceneId, postSceneId, z, x, y, options = {}] = args;
+    const basePrefix = options.basePrefix || '/api/v1';
+    const rescale = options.rescale || '0.0,0.5';
+    const colormap = options.colormap || 'turbo';
+    return `${basePrefix}/tiles/change/cva/${preSceneId}/${postSceneId}/${z}/${x}/${y}.png?rescale=${rescale}&colormap=${colormap}`;
+  }
+
+  // Cycle v2.5.53 Signature: buildCvaTileUrl(metric, z, x, y, options)
+  const metric = args[0] || 'magnitude';
+  const z = args[1] !== undefined ? args[1] : '{z}';
+  const x = args[2] !== undefined ? args[2] : '{x}';
+  const y = args[3] !== undefined ? args[3] : '{y}';
+  const options = args[4] || {};
+
+  const metStr = normalizeCvaTileMetric(metric);
+  let url = `/api/v1/tiles/cva/${metStr}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (options.method) params.push(`method=${encodeURIComponent(options.method)}`);
+  if (options.t1) params.push(`t1=${encodeURIComponent(options.t1)}`);
+  if (options.t2) params.push(`t2=${encodeURIComponent(options.t2)}`);
+  if (options.threshold !== undefined && options.threshold !== null) params.push(`threshold=${options.threshold}`);
+  if (options.colormap) params.push(`colormap=${encodeURIComponent(options.colormap)}`);
+  if (options.rescale) params.push(`rescale=${encodeURIComponent(options.rescale)}`);
+  if (params.length > 0) {
+    url += `?${params.join('&')}`;
+  }
+  return url;
 };
 
 // ============================================================================
@@ -5303,7 +5356,33 @@ export const MINERAL_ENDMEMBER_LIBRARY = {
   acid_mine_drainage: { blue: 0.035, green: 0.072, red: 0.145, nir: 0.260, swir1: 0.350, swir2: 0.380 }
 };
 
-export const calculateSpectralAngleMapper = (pixelReflectance, endmemberReflectance) => {
+export const calculateSpectralAngleMapper = (pixelReflectance, endmemberReflectance, eps = 1e-7) => {
+  // Support vector sequences (Array): (Array, Array) -> float in radians
+  if (Array.isArray(pixelReflectance) && Array.isArray(endmemberReflectance)) {
+    if (pixelReflectance.length === 0 && endmemberReflectance.length === 0) return 0.0;
+    if (pixelReflectance.length !== endmemberReflectance.length) {
+      throw new Error(`Vector dimension mismatch: ${pixelReflectance.length} !== ${endmemberReflectance.length}`);
+    }
+    let dot = 0.0;
+    let norm1Sq = 0.0;
+    let norm2Sq = 0.0;
+    for (let i = 0; i < pixelReflectance.length; i++) {
+      const f1 = Number(pixelReflectance[i]);
+      const f2 = Number(endmemberReflectance[i]);
+      dot += f1 * f2;
+      norm1Sq += f1 * f1;
+      norm2Sq += f2 * f2;
+    }
+    const norm1 = Math.sqrt(norm1Sq);
+    const norm2 = Math.sqrt(norm2Sq);
+    if (norm1 < eps && norm2 < eps) return 0.0;
+    const denom = Math.max(norm1 * norm2, eps);
+    let cosVal = Math.max(-1.0, Math.min(1.0, dot / denom));
+    if (pixelReflectance.every(x => x >= -eps) && endmemberReflectance.every(x => x >= -eps) && cosVal < 0.0) {
+      cosVal = 0.0;
+    }
+    return Math.acos(cosVal);
+  }
   const commonBands = Object.keys(pixelReflectance).filter((b) => b in endmemberReflectance);
   if (commonBands.length === 0) {
     return {
@@ -28117,7 +28196,8 @@ ET_BENCHMARK_SITES.AL_JAWF = ET_BENCHMARK_SITES[4];
  * Canonical XYZ dynamic tile URL templates for Leaflet/MapLibre layers.
  */
 export const TILE_URL_TEMPLATES = {
-  EVAPOTRANSPIRATION: '/api/v1/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png'
+  EVAPOTRANSPIRATION: '/api/v1/tiles/evapotranspiration/{model}/{metric}/{z}/{x}/{y}.png',
+  CVA: '/api/v1/tiles/cva/{metric}/{z}/{x}/{y}.png'
 };
 
 /**
@@ -28151,3 +28231,740 @@ export const buildETTileUrlTemplate = (options = {}) => {
   return buildETTileUrl({ ...options, z: '{z}', x: '{x}', y: '{y}' });
 };
 
+
+
+// ============================================================================
+// CYCLE v2.5.53: MULTI-TEMPORAL CHANGE VECTOR ANALYSIS (CVA), SPECTRAL ANGLE
+// MAPPER (SAM) & 8-SECTOR DIRECTIONAL DISTURBANCE VECTOR FIELD ENGINE
+// ============================================================================
+
+/**
+ * Supported algorithms for multi-temporal change vector differencing.
+ */
+export const CVAMethod = {
+  STANDARD_EUCLIDEAN: 'standard_euclidean',
+  NORMALIZED_REFLECTANCE: 'normalized_reflectance',
+  TASSELED_CAP_CVA: 'tasseled_cap_cva',
+  SPECTRAL_ANGLE_MAPPER: 'spectral_angle_mapper',
+  SPATIAL_SPECTRAL_CVA: 'spatial_spectral_cva'
+};
+
+export const CVA_METHODS = [
+  { id: 'standard_euclidean', name: 'Standard Multi-Band Euclidean CVA', formula: '||x2 - x1||_2', desc: 'Normalized Euclidean distance across all multi-spectral bands (Malila 1980).' },
+  { id: 'normalized_reflectance', name: 'Z-Score Normalized Reflectance CVA', formula: '||z(x2) - z(x1)||_2', desc: 'Standardized band variance normalization suppressing phenological noise.' },
+  { id: 'tasseled_cap_cva', name: 'Tasseled Cap (Brightness, Greenness, Wetness) CVA', formula: 'TC(x2) - TC(x1)', desc: 'Orthogonal physical transformation isolating vegetative greening from soil brightness.' },
+  { id: 'spectral_angle_mapper', name: 'Illuminance-Invariant Spectral Angle Mapper (SAM)', formula: 'arccos((x1 . x2) / (||x1|| ||x2||))', desc: 'Pure spectral shape differencing invariant to topography and solar zenith (Kruse 1993).' },
+  { id: 'spatial_spectral_cva', name: 'Hybrid Spatial Texture & Spectral CVA', formula: '||x2 - x1|| + lambda * Delta Texture', desc: 'Combines Haralick GLCM contrast with spectral vector magnitude.' }
+];
+
+/**
+ * Normalizes string alias or enum into canonical CVAMethod.
+ */
+export const normalizeCvaMethod = (val) => {
+  if (!val) return CVAMethod.STANDARD_EUCLIDEAN;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_').replace(/ /g, '_');
+  const mapping = {
+    standard_euclidean: CVAMethod.STANDARD_EUCLIDEAN,
+    euclidean: CVAMethod.STANDARD_EUCLIDEAN,
+    standard: CVAMethod.STANDARD_EUCLIDEAN,
+    l2: CVAMethod.STANDARD_EUCLIDEAN,
+    cva: CVAMethod.STANDARD_EUCLIDEAN,
+    normalized_reflectance: CVAMethod.NORMALIZED_REFLECTANCE,
+    normalized: CVAMethod.NORMALIZED_REFLECTANCE,
+    zscore: CVAMethod.NORMALIZED_REFLECTANCE,
+    tasseled_cap_cva: CVAMethod.TASSELED_CAP_CVA,
+    tasseled_cap: CVAMethod.TASSELED_CAP_CVA,
+    tc_cva: CVAMethod.TASSELED_CAP_CVA,
+    spectral_angle_mapper: CVAMethod.SPECTRAL_ANGLE_MAPPER,
+    sam: CVAMethod.SPECTRAL_ANGLE_MAPPER,
+    spectral_angle: CVAMethod.SPECTRAL_ANGLE_MAPPER,
+    spatial_spectral_cva: CVAMethod.SPATIAL_SPECTRAL_CVA,
+    spatial_spectral: CVAMethod.SPATIAL_SPECTRAL_CVA
+  };
+  return mapping[raw] || CVAMethod.STANDARD_EUCLIDEAN;
+};
+
+/**
+ * Dynamic visualization metrics for XYZ raster tile layers.
+ */
+export const CVATileMetric = {
+  MAGNITUDE: 'magnitude',
+  SPECTRAL_ANGLE: 'spectral_angle',
+  DIRECTION_SECTOR: 'direction_sector',
+  CHANGE_PROBABILITY: 'change_probability',
+  POLAR_RGB_COMPOSITE: 'polar_rgb',
+  DISTURBANCE_MASK: 'disturbance_mask',
+  CANOPY_PERSISTENCE: 'canopy_persistence'
+};
+
+export const CVA_TILE_METRICS = [
+  { id: 'magnitude', label: 'Change Magnitude (Delta M)', unit: 'reflectance', defaultColormap: 'inferno' },
+  { id: 'spectral_angle', label: 'Spectral Angle Mapper (SAM)', unit: 'deg', defaultColormap: 'turbo' },
+  { id: 'direction_sector', label: '8-Sector Disturbance Taxonomy', unit: 'sector', defaultColormap: 'spectral' },
+  { id: 'change_probability', label: 'Disturbance Significance Probability', unit: 'prob', defaultColormap: 'viridis' },
+  { id: 'polar_rgb', label: 'Polar Directional Composite (HSV/RGB)', unit: 'RGB', defaultColormap: 'none' },
+  { id: 'disturbance_mask', label: 'Binary Disturbance Mask (Delta M >= tau)', unit: 'binary', defaultColormap: 'binary' },
+  { id: 'canopy_persistence', label: 'Canopy Persistence Index', unit: 'ratio', defaultColormap: 'plasma' }
+];
+
+export const normalizeCvaTileMetric = (val) => {
+  if (!val) return CVATileMetric.MAGNITUDE;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_').replace(/ /g, '_');
+  const mapping = {
+    magnitude: CVATileMetric.MAGNITUDE,
+    mag: CVATileMetric.MAGNITUDE,
+    dist: CVATileMetric.MAGNITUDE,
+    spectral_angle: CVATileMetric.SPECTRAL_ANGLE,
+    sam: CVATileMetric.SPECTRAL_ANGLE,
+    angle: CVATileMetric.SPECTRAL_ANGLE,
+    direction_sector: CVATileMetric.DIRECTION_SECTOR,
+    sector: CVATileMetric.DIRECTION_SECTOR,
+    direction: CVATileMetric.DIRECTION_SECTOR,
+    octant: CVATileMetric.DIRECTION_SECTOR,
+    change_probability: CVATileMetric.CHANGE_PROBABILITY,
+    probability: CVATileMetric.CHANGE_PROBABILITY,
+    prob: CVATileMetric.CHANGE_PROBABILITY,
+    polar_rgb: CVATileMetric.POLAR_RGB_COMPOSITE,
+    polar_rgb_composite: CVATileMetric.POLAR_RGB_COMPOSITE,
+    rgb: CVATileMetric.POLAR_RGB_COMPOSITE,
+    composite: CVATileMetric.POLAR_RGB_COMPOSITE,
+    disturbance_mask: CVATileMetric.DISTURBANCE_MASK,
+    mask: CVATileMetric.DISTURBANCE_MASK,
+    binary_mask: CVATileMetric.DISTURBANCE_MASK,
+    canopy_persistence: CVATileMetric.CANOPY_PERSISTENCE,
+    persistence: CVATileMetric.CANOPY_PERSISTENCE
+  };
+  return mapping[raw] || CVATileMetric.MAGNITUDE;
+};
+
+/**
+ * 8-Sector directional disturbance taxonomy categories.
+ */
+export const CVADisturbanceSector = {
+  STABLE_UNMODIFIED: 'stable_unmodified',
+  SECTOR_1_SOIL_EXPOSURE: 'sector_1_soil_exposure',
+  SECTOR_2_VEGETATION_GROWTH: 'sector_2_vegetation_growth',
+  SECTOR_3_CANOPY_GREENING: 'sector_3_canopy_greening',
+  SECTOR_4_WETLAND_EXPANSION: 'sector_4_wetland_expansion',
+  SECTOR_5_WATER_SUBMERGENCE: 'sector_5_water_submergence',
+  SECTOR_6_FLOOD_INUNDATION: 'sector_6_flood_inundation',
+  SECTOR_7_VEGETATION_DIEBACK: 'sector_7_vegetation_dieback',
+  SECTOR_8_DEFORESTATION_EXCAVATION: 'sector_8_deforestation_excavation'
+};
+
+export const CVA_DISTURBANCE_SECTORS = [
+  CVADisturbanceSector.STABLE_UNMODIFIED,
+  CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE,
+  CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH,
+  CVADisturbanceSector.SECTOR_3_CANOPY_GREENING,
+  CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION,
+  CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE,
+  CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION,
+  CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK,
+  CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION
+];
+
+export const normalizeCvaSector = (val) => {
+  if (!val) return CVADisturbanceSector.STABLE_UNMODIFIED;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_').replace(/ /g, '_');
+  const aliasMap = {
+    stable: CVADisturbanceSector.STABLE_UNMODIFIED,
+    unmodified: CVADisturbanceSector.STABLE_UNMODIFIED,
+    no_change: CVADisturbanceSector.STABLE_UNMODIFIED,
+    0: CVADisturbanceSector.STABLE_UNMODIFIED,
+    1: CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE,
+    soil_exposure: CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE,
+    2: CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH,
+    vegetation_growth: CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH,
+    3: CVADisturbanceSector.SECTOR_3_CANOPY_GREENING,
+    canopy_greening: CVADisturbanceSector.SECTOR_3_CANOPY_GREENING,
+    4: CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION,
+    wetland_expansion: CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION,
+    5: CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE,
+    water_submergence: CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE,
+    6: CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION,
+    flood_inundation: CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION,
+    7: CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK,
+    vegetation_dieback: CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK,
+    8: CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION,
+    deforestation_excavation: CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION
+  };
+  return aliasMap[raw] || CVADisturbanceSector.STABLE_UNMODIFIED;
+};
+
+/**
+ * Disturbance severity classification based on change magnitude.
+ */
+export const CVASeverityTier = {
+  INSIGNIFICANT: 'insignificant',
+  LOW: 'low',
+  MODERATE: 'moderate',
+  HIGH: 'high',
+  CRITICAL: 'critical'
+};
+
+export const CVA_SEVERITY_TIERS = [
+  { id: 'insignificant', label: 'Insignificant / Background Noise', range: 'Delta M < tau', colorHex: '#64748B' },
+  { id: 'low', label: 'Low Disturbance', range: 'tau <= Delta M < 1.5 * tau', colorHex: '#FBBF24' },
+  { id: 'moderate', label: 'Moderate Disturbance', range: '1.5 * tau <= Delta M < 2.5 * tau', colorHex: '#F97316' },
+  { id: 'high', label: 'High Disturbance', range: '2.5 * tau <= Delta M < 4.0 * tau', colorHex: '#EF4444' },
+  { id: 'critical', label: 'Critical Surface Collapse / Breach', range: 'Delta M >= 4.0 * tau', colorHex: '#7F1D1D' }
+];
+
+export const normalizeCvaSeverityTier = (val) => {
+  if (!val) return CVASeverityTier.LOW;
+  const raw = String(val).trim().toLowerCase().replace(/-/g, '_');
+  if (raw === 'critical') return CVASeverityTier.CRITICAL;
+  if (raw === 'high') return CVASeverityTier.HIGH;
+  if (raw === 'moderate') return CVASeverityTier.MODERATE;
+  if (raw === 'insignificant') return CVASeverityTier.INSIGNIFICANT;
+  return CVASeverityTier.LOW;
+};
+
+/**
+ * Comprehensive metadata dictionary for each disturbance sector.
+ */
+export const CVA_SECTOR_METADATA = {
+  [CVADisturbanceSector.STABLE_UNMODIFIED]: {
+    sectorId: 0,
+    name: 'Stable / Unmodified Surface',
+    angleRangeDeg: [0.0, 0.0],
+    colorHex: '#64748B',
+    description: 'Change magnitude Delta M is below statistical detection threshold tau. Reflectance variation is consistent with sensor noise or minor atmospheric fluctuation.'
+  },
+  [CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE]: {
+    sectorId: 1,
+    name: 'Soil Exposure & Surface Desiccation',
+    angleRangeDeg: [0.0, 45.0],
+    colorHex: '#F59E0B',
+    description: 'Vegetation removal or crop harvest leading to bare dry soil substrate exposure, increased mineral surface reflectance, and reduced moisture retention.'
+  },
+  [CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH]: {
+    sectorId: 2,
+    name: 'Vegetative Succession & Biomass Expansion',
+    angleRangeDeg: [45.0, 90.0],
+    colorHex: '#10B981',
+    description: 'Rapid vegetation growth, secondary ecological succession, crop emergence, or grassland greening following moisture events.'
+  },
+  [CVADisturbanceSector.SECTOR_3_CANOPY_GREENING]: {
+    sectorId: 3,
+    name: 'Canopy Greening & Agricultural Flush',
+    angleRangeDeg: [90.0, 135.0],
+    colorHex: '#059669',
+    description: 'Peak photosynthetic activity, chlorophyll absorption expansion in the red band, and dense mesophyll scattering in the near-infrared.'
+  },
+  [CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION]: {
+    sectorId: 4,
+    name: 'Wetland Expansion & Dense Shadow Canopy',
+    angleRangeDeg: [135.0, 180.0],
+    colorHex: '#06B6D4',
+    description: 'Canopy densification, shadow expansion in closed forest crowns, or emergence of emergent aquatic vegetation in shallow riparian wetlands.'
+  },
+  [CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE]: {
+    sectorId: 5,
+    name: 'Soil Wetting & Shallow Submergence',
+    angleRangeDeg: [180.0, 225.0],
+    colorHex: '#3B82F6',
+    description: 'Soil moisture saturation, phreatic line seepage emergence along tailings embankment toes, or shallow temporary ponding.'
+  },
+  [CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION]: {
+    sectorId: 6,
+    name: 'Deep Flood Inundation & Tailings Impoundment',
+    angleRangeDeg: [225.0, 270.0],
+    colorHex: '#1D4ED8',
+    description: 'Deep water inundation, tailings pond supernatant expansion, reservoir filling, or catastrophic flood wave passage.'
+  },
+  [CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK]: {
+    sectorId: 7,
+    name: 'Vegetation Dieback & Canopy Desiccation',
+    angleRangeDeg: [270.0, 315.0],
+    colorHex: '#EF4444',
+    description: 'Canopy foliage mortality, drought desiccation, insect infestation (bark beetle), senescence, or sublethal geotechnical ground deformation stress.'
+  },
+  [CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION]: {
+    sectorId: 8,
+    name: 'Deforestation, Excavation & Wildfire Scar',
+    angleRangeDeg: [315.0, 360.0],
+    colorHex: '#B91C1C',
+    description: 'Catastrophic land cover transformation: clearcut logging, open-pit mining excavation, tailings dam failure mudflow scar, or severe high-temperature wildfire burn.'
+  }
+};
+
+/**
+ * Curated real-world benchmark sites for multi-temporal disturbance tracking.
+ */
+export const CVA_BENCHMARK_SCENES = {
+  MOUNT_POLLEY_TAILINGS_2014: {
+    id: 'MOUNT_POLLEY_TAILINGS_2014',
+    name: 'Mount Polley Tailings Dam Failure, British Columbia',
+    latitude: 52.5486,
+    longitude: -121.5978,
+    preEventDate: '2014-07-28',
+    postEventDate: '2014-08-13',
+    recommendedMethod: 'standard_euclidean',
+    dominantSectors: ['sector_8_deforestation_excavation', 'sector_6_flood_inundation'],
+    threshold: 0.18,
+    description: 'Catastrophic breach of a 40m tailings dam in August 2014 releasing 25 million cubic meters of slurry into Polley Lake and Quesnel Lake.'
+  },
+  CAMP_FIRE_PARADISE_2018: {
+    id: 'CAMP_FIRE_PARADISE_2018',
+    name: 'Camp Fire Wildfire Scars, Paradise, California',
+    latitude: 39.7596,
+    longitude: -121.6219,
+    preEventDate: '2018-10-25',
+    postEventDate: '2018-11-20',
+    recommendedMethod: 'spectral_angle_mapper',
+    dominantSectors: ['sector_8_deforestation_excavation', 'sector_7_vegetation_dieback'],
+    threshold: 0.22,
+    description: 'Deadliest wildfire in California history consuming 153,336 acres; massive NIR collapse and charcoal ash deposition.'
+  },
+  AMAZON_DEFORESTATION_ARC: {
+    id: 'AMAZON_DEFORESTATION_ARC',
+    name: 'Amazon Basin Deforestation Arc, Mato Grosso, Brazil',
+    latitude: -11.5200,
+    longitude: -55.4500,
+    preEventDate: '2024-06-15',
+    postEventDate: '2025-06-15',
+    recommendedMethod: 'tasseled_cap_cva',
+    dominantSectors: ['sector_8_deforestation_excavation', 'sector_1_soil_exposure'],
+    threshold: 0.15,
+    description: 'Intense tropical rainforest clearing for mechanized soybean agriculture and cattle pasture.'
+  },
+  MORENCI_MINE_LEACHING_2026: {
+    id: 'MORENCI_MINE_LEACHING_2026',
+    name: 'Morenci Open Pit Mine Expansion & Tailings Leaching, Arizona',
+    latitude: 33.0583,
+    longitude: -109.3589,
+    preEventDate: '2025-09-01',
+    postEventDate: '2026-09-01',
+    recommendedMethod: 'standard_euclidean',
+    dominantSectors: ['sector_1_soil_exposure', 'sector_8_deforestation_excavation'],
+    threshold: 0.12,
+    description: 'Large-scale copper porphyry open pit excavation, waste rock dump expansion, and active tailings impoundment bench raising.'
+  },
+  SALTON_SEA_DESICCATION_2026: {
+    id: 'SALTON_SEA_DESICCATION_2026',
+    name: 'Salton Sea Desiccation & Playa Dust Exposure, California',
+    latitude: 33.3286,
+    longitude: -115.8434,
+    preEventDate: '2024-10-10',
+    postEventDate: '2026-10-10',
+    recommendedMethod: 'standard_euclidean',
+    dominantSectors: ['sector_1_soil_exposure'],
+    threshold: 0.20,
+    description: 'Rapid lakebed shrinkage in endorheic saline basin; deep water absorption transitions into bright evaporite salt crust.'
+  }
+};
+
+/**
+ * Classifies 2D change vector into 8 directional disturbance sectors.
+ */
+export const classifyDisturbanceSector = (deltaX, deltaY, magnitude = 1.0, threshold = 0.0) => {
+  if (magnitude < threshold || (Math.abs(deltaX) < 1e-9 && Math.abs(deltaY) < 1e-9)) {
+    return { sector: CVADisturbanceSector.STABLE_UNMODIFIED, angleDeg: 0.0 };
+  }
+  const angleRad = Math.atan2(Number(deltaY), Number(deltaX));
+  const angleDeg = (Math.round((angleRad * (180.0 / Math.PI)) + 360.0) % 360);
+  const sectorIdx = Math.min(Math.floor(angleDeg / 45.0), 7);
+  const sectorMap = [
+    CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE,
+    CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH,
+    CVADisturbanceSector.SECTOR_3_CANOPY_GREENING,
+    CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION,
+    CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE,
+    CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION,
+    CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK,
+    CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION
+  ];
+  return { sector: sectorMap[sectorIdx], angleDeg };
+};
+
+export const evaluateMultiTemporalCva = (vecT1, vecT2, options = {}) => {
+  const threshold = options.threshold !== undefined ? options.threshold : 0.15;
+  const axisX = options.axisX || 'B04';
+  const axisY = options.axisY || 'B08';
+  const eps = options.eps || 1e-7;
+
+  let v1List, v2List, bands, dxVal, dyVal;
+  if (typeof vecT1 === 'object' && !Array.isArray(vecT1) && typeof vecT2 === 'object' && !Array.isArray(vecT2)) {
+    // Legacy 2-band call support:
+    if ('red' in vecT1 && 'nir' in vecT1 && 'red' in vecT2 && 'nir' in vecT2 && options.threshold === undefined && !options.axisX && !options.use8Sectors) {
+      const dRed = Number(vecT2.red) - Number(vecT1.red);
+      const dNir = Number(vecT2.nir) - Number(vecT1.nir);
+      const mag = Math.sqrt(dRed * dRed + dNir * dNir);
+      const angleDeg = Math.round((Math.atan2(dNir, dRed) * 180.0) / Math.PI);
+      let legacySec = 'soil_drying';
+      if (dRed >= 0 && dNir >= 0) legacySec = 'soil_drying';
+      else if (dRed < 0 && dNir >= 0) legacySec = 'vegetation_growth';
+      else if (dRed < 0 && dNir < 0) legacySec = 'water_inundation';
+      else legacySec = 'defoliation_burn';
+
+      let tier = 'no_change';
+      if (mag < 0.05) tier = 'no_change';
+      else if (mag < 0.15) tier = 'low_change';
+      else if (mag < 0.30) tier = 'moderate_change';
+      else if (mag < 0.50) tier = 'significant_change';
+      else tier = 'extreme_change';
+
+      return {
+        magnitude: Number(mag.toFixed(4)),
+        direction_deg: Number(angleDeg.toFixed(2)),
+        delta_red: Number(dRed.toFixed(4)),
+        delta_nir: Number(dNir.toFixed(4)),
+        sector: legacySec,
+        magnitude_tier: tier
+      };
+    }
+
+    bands = options.bands || Object.keys(vecT1).filter(k => k in vecT2).sort();
+    if (bands.length === 0) bands = Object.keys(vecT1);
+    v1List = bands.map(b => Number(vecT1[b] || 0.0));
+    v2List = bands.map(b => Number(vecT2[b] || 0.0));
+    dxVal = Number(vecT2[axisX] || 0.0) - Number(vecT1[axisX] || 0.0);
+    dyVal = Number(vecT2[axisY] || 0.0) - Number(vecT1[axisY] || 0.0);
+  } else {
+    v1List = Array.from(vecT1).map(Number);
+    v2List = Array.from(vecT2).map(Number);
+    bands = v1List.map((_, i) => `Band_${i + 1}`);
+    dxVal = v2List.length > 0 ? v2List[0] - v1List[0] : 0.0;
+    dyVal = v2List.length > 1 ? v2List[1] - v1List[1] : 0.0;
+  }
+
+  if (v1List.length !== v2List.length) {
+    throw new Error(`Vector dimension mismatch: ${v1List.length} !== ${v2List.length}`);
+  }
+
+  const diffVector = v2List.map((v2, i) => v2 - v1List[i]);
+  const magnitude = Math.sqrt(diffVector.reduce((acc, d) => acc + d * d, 0));
+  const norm1 = Math.sqrt(v1List.reduce((acc, v) => acc + v * v, 0));
+  const norm2 = Math.sqrt(v2List.reduce((acc, v) => acc + v * v, 0));
+  const triangleHolds = magnitude <= (norm1 + norm2 + 1e-6);
+
+  const samRad = calculateSpectralAngleMapper(v1List, v2List, eps);
+  const samDeg = (samRad * 180.0) / Math.PI;
+
+  const { sector, angleDeg } = classifyDisturbanceSector(dxVal, dyVal, magnitude, threshold);
+
+  let severity = CVASeverityTier.LOW;
+  if (magnitude < threshold) severity = CVASeverityTier.INSIGNIFICANT;
+  else if (magnitude < 1.5 * threshold) severity = CVASeverityTier.LOW;
+  else if (magnitude < 2.5 * threshold) severity = CVASeverityTier.MODERATE;
+  else if (magnitude < 4.0 * threshold) severity = CVASeverityTier.HIGH;
+  else severity = CVASeverityTier.CRITICAL;
+
+  return {
+    bands,
+    delta_vector: Object.fromEntries(bands.map((b, i) => [b, Number(diffVector[i].toFixed(5))])),
+    magnitude: Number(magnitude.toFixed(5)),
+    norm_t1: Number(norm1.toFixed(5)),
+    norm_t2: Number(norm2.toFixed(5)),
+    triangle_inequality_satisfied: triangleHolds,
+    spectral_angle_rad: Number(samRad.toFixed(5)),
+    spectral_angle_deg: Number(samDeg.toFixed(3)),
+    direction_angle_deg: angleDeg,
+    sector: sector,
+    sector_metadata: CVA_SECTOR_METADATA[sector] || {},
+    severity: severity,
+    is_significant: magnitude >= threshold,
+    delta_x: Number(dxVal.toFixed(5)),
+    delta_y: Number(dyVal.toFixed(5))
+  };
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for CVA layers.
+ */
+export const buildCvaTileUrlTemplate = (metric = CVATileMetric.MAGNITUDE, options = {}) => {
+  return buildCvaTileUrl(metric, '{z}', '{x}', '{y}', options);
+};
+
+
+// ============================================================================
+// CYCLE v2.5.54: DEEP FEATURE EDGE PRESERVING SEGMENTATION & CREST CRACK DETECTION
+// ============================================================================
+
+/**
+ * Supported algorithms for deep feature edge segmentation, line tracking, and defect delineation.
+ */
+export const EdgeDetectionAlgorithm = Object.freeze({
+  SOBEL: 'sobel',
+  CANNY: 'canny',
+  BILATERAL_MORPHOLOGICAL: 'bilateral_morphological',
+  DEEP_FEATURE_UNET: 'deep_feature_unet',
+  HOUGH_CREST_LINE: 'hough_crest_line',
+  LAPLACIAN_OF_GAUSSIAN: 'laplacian_of_gaussian'
+});
+
+export const EDGE_DETECTION_ALGORITHMS = [
+  { id: 'bilateral_morphological', label: 'Bilateral Morphological Top-Hat (Recommended)', desc: 'Edge-preserving range/domain filter with linear top-hat extraction.' },
+  { id: 'deep_feature_unet', label: 'Deep Feature U-Net CNN', desc: 'Pre-trained convolutional encoder-decoder predicting crack probability masks.' },
+  { id: 'hough_crest_line', label: 'Probabilistic Hough Transform', desc: 'Linear accumulator detecting straight tension fractures along embankment axis.' },
+  { id: 'canny', label: 'Canny Multi-Stage Hysteresis', desc: 'Optimal edge detector with non-maximum suppression and hysteresis thresholding.' },
+  { id: 'sobel', label: 'Sobel 2D Gradient Kernel', desc: 'Classical first-order differential spatial convolution.' },
+  { id: 'laplacian_of_gaussian', label: 'Laplacian of Gaussian (LoG)', desc: 'Second-order zero-crossing boundary locator.' }
+];
+
+/**
+ * Structural defect categories for tailings dams and geotechnical embankments.
+ */
+export const DefectType = Object.freeze({
+  CREST_TENSION_CRACK: 'crest_tension_crack',
+  TRANSVERSE_SHEAR_CRACK: 'transverse_shear_crack',
+  SEEPAGE_SATURATION_ZONE: 'seepage_saturation_zone',
+  TOE_BULGE_HEAVE: 'toe_bulge_heave',
+  CREST_CREEP_SETTLEMENT: 'crest_creep_settlement'
+});
+
+export const DEFECT_TYPES = [
+  { id: 'crest_tension_crack', label: 'Longitudinal Tension Crack', color: '#EF4444' },
+  { id: 'transverse_shear_crack', label: 'Transverse Shear Fracture', color: '#F97316' },
+  { id: 'seepage_saturation_zone', label: 'Saturated Seepage Zone', color: '#06B6D4' },
+  { id: 'toe_bulge_heave', label: 'Slope Toe Bulge / Heave', color: '#A855F7' },
+  { id: 'crest_creep_settlement', label: 'Crest Creep Settlement Depression', color: '#EAB308' }
+];
+
+/**
+ * Geotechnical defect severity tiers according to ICOLD Bulletin 139 / USBR dam safety standards.
+ */
+export const DefectSeverityTier = Object.freeze({
+  NEGLIGIBLE: 'negligible',
+  LOW: 'low',
+  MODERATE: 'moderate',
+  HIGH: 'high',
+  CRITICAL: 'critical'
+});
+
+export const DEFECT_SEVERITY_TIERS = {
+  negligible: { tier: 'negligible', label: 'Negligible / Hairline', min_width_mm: 0.0, max_width_mm: 10.0, color: '#10B981', action: 'Routine visual monitoring' },
+  low: { tier: 'low', label: 'Low / Superficial Tension', min_width_mm: 10.0, max_width_mm: 25.0, color: '#3B82F6', action: 'Bi-weekly UAV photogrammetry survey' },
+  moderate: { tier: 'moderate', label: 'Moderate / Progressive Shear', min_width_mm: 25.0, max_width_mm: 50.0, color: '#F59E0B', action: 'Weekly inspection & piezometer correlation' },
+  high: { tier: 'high', label: 'High / Active Slumping', min_width_mm: 50.0, max_width_mm: 100.0, color: '#EF4444', action: 'Daily geotechnical review & recalculate slope FoS' },
+  critical: { tier: 'critical', label: 'Critical / Imminent Crest Breach', min_width_mm: 100.0, max_width_mm: 9999.0, color: '#7F1D1D', action: 'Emergency Action Plan (EAP) & reservoir drawdown' }
+};
+
+export const DEFECT_SEVERITY_THRESHOLDS = DEFECT_SEVERITY_TIERS;
+
+/**
+ * Dynamic XYZ tile visualization layers for crest defect inspection.
+ */
+export const DefectTileMetric = Object.freeze({
+  EDGE_PROBABILITY: 'edge_probability',
+  CRACK_HEATMAP: 'crack_heatmap',
+  SEEPAGE_SEVERITY: 'seepage_severity',
+  COMBINED_RISK: 'combined_risk',
+  CONTOUR_VECTOR_MASK: 'contour_vector_mask'
+});
+
+export const DEFECT_TILE_METRICS = [
+  { id: 'crack_heatmap', label: 'Crack Severity Heatmap', colormap: 'magma' },
+  { id: 'edge_probability', label: 'Edge Detection Probability Map', colormap: 'viridis' },
+  { id: 'seepage_severity', label: 'Saturated Seepage Moisture Mask', colormap: 'Blues' },
+  { id: 'combined_risk', label: 'Multi-Hazard Combined Risk Index', colormap: 'inferno' },
+  { id: 'contour_vector_mask', label: 'Vectorized Contour Polygon Mask', colormap: 'gray' }
+];
+
+/**
+ * Curated benchmark dam sites for high-resolution edge detection & crest crack analysis.
+ */
+export const DEFECT_BENCHMARK_SITES = {
+  MORENCI_TAILINGS_CREST: {
+    site_id: 'MORENCI_TAILINGS_CREST',
+    name: 'Morenci Tailings Dam Main Embankment Crest, AZ',
+    dam_type: 'Upstream Centerline Tailings Dam',
+    hazard_rating: 'Extreme (ICOLD / MSHA)',
+    lat: 33.0560,
+    lng: -109.3415,
+    crest_elevation_m: 1420.5,
+    crest_length_m: 1850.0,
+    default_sensor: 'UAV Drone High-Resolution RGB (5cm GSD)',
+    primary_defect_hazard: 'Longitudinal crest tension cracks and phreatic surface seepage breakout',
+    recommended_algorithm: 'bilateral_morphological',
+    sample_crack_count: 8,
+    max_recorded_crack_width_mm: 62.5
+  },
+  BRUMADINHO_DAM_1_CREST: {
+    site_id: 'BRUMADINHO_DAM_1_CREST',
+    name: 'Córrego do Feijão Dam I Crest Benchmark, Brazil',
+    dam_type: 'Upstream Raise Tailings Embankment',
+    hazard_rating: 'Critical Catastrophic Failure Case',
+    lat: -20.1197,
+    lng: -44.1198,
+    crest_elevation_m: 860.0,
+    crest_length_m: 720.0,
+    default_sensor: 'Pre-Failure Drone & High-Res Satellite Composite',
+    primary_defect_hazard: 'Internal creep deformation, shear cracking, and toe liquefaction',
+    recommended_algorithm: 'deep_feature_unet',
+    sample_crack_count: 14,
+    max_recorded_crack_width_mm: 115.0
+  },
+  MOUNT_POLLEY_PERIMETER: {
+    site_id: 'MOUNT_POLLEY_PERIMETER',
+    name: 'Mount Polley Perimeter Embankment, BC, Canada',
+    dam_type: 'Zoned Earthfill / Rockfill Tailings Dam',
+    hazard_rating: 'Historical Glacial Till Shearing',
+    lat: 52.5492,
+    lng: -121.6033,
+    crest_elevation_m: 966.0,
+    crest_length_m: 1200.0,
+    default_sensor: 'Drone Photogrammetry & InSAR Fusion',
+    primary_defect_hazard: 'Foundation glaciolacustrine shear sliding and crest settlement fissuring',
+    recommended_algorithm: 'hough_crest_line',
+    sample_crack_count: 6,
+    max_recorded_crack_width_mm: 48.0
+  },
+  BINGHAM_CANYON_EAST_DUMP: {
+    site_id: 'BINGHAM_CANYON_EAST_DUMP',
+    name: 'Bingham Canyon East Waste Rock Dump Crest, UT',
+    dam_type: 'Overburden Waste Rock Embankment',
+    hazard_rating: 'High Consequence',
+    lat: 40.5283,
+    lng: -112.1481,
+    crest_elevation_m: 1980.0,
+    crest_length_m: 2100.0,
+    default_sensor: 'UAV Drone 3cm GSD Orthomosaic',
+    primary_defect_hazard: 'Progressive crest tension fissures and crest face ravelling',
+    recommended_algorithm: 'canny',
+    sample_crack_count: 11,
+    max_recorded_crack_width_mm: 85.0
+  }
+};
+
+export const normalizeEdgeDetectionAlgorithm = (v) => {
+  if (!v) return EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL;
+  const s = String(v).toLowerCase().trim();
+  if (s.includes('bilateral') || s.includes('morph') || s.includes('tophat')) return EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL;
+  if (s.includes('unet') || s.includes('deep') || s.includes('cnn')) return EdgeDetectionAlgorithm.DEEP_FEATURE_UNET;
+  if (s.includes('hough') || s.includes('line') || s.includes('crest')) return EdgeDetectionAlgorithm.HOUGH_CREST_LINE;
+  if (s.includes('canny')) return EdgeDetectionAlgorithm.CANNY;
+  if (s.includes('sobel')) return EdgeDetectionAlgorithm.SOBEL;
+  if (s.includes('laplacian') || s.includes('log')) return EdgeDetectionAlgorithm.LAPLACIAN_OF_GAUSSIAN;
+  return EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL;
+};
+
+export const normalizeDefectType = (v) => {
+  if (!v) return DefectType.CREST_TENSION_CRACK;
+  const s = String(v).toLowerCase().trim();
+  if (s.includes('tension') || s.includes('longitudinal')) return DefectType.CREST_TENSION_CRACK;
+  if (s.includes('shear') || s.includes('transverse')) return DefectType.TRANSVERSE_SHEAR_CRACK;
+  if (s.includes('seep') || s.includes('phreatic') || s.includes('saturation') || s.includes('wet')) return DefectType.SEEPAGE_SATURATION_ZONE;
+  if (s.includes('toe') || s.includes('bulge') || s.includes('heave')) return DefectType.TOE_BULGE_HEAVE;
+  if (s.includes('creep') || s.includes('settle') || s.includes('depression') || s.includes('slump')) return DefectType.CREST_CREEP_SETTLEMENT;
+  return DefectType.CREST_TENSION_CRACK;
+};
+
+export const normalizeDefectSeverityTier = (v) => {
+  if (!v) return DefectSeverityTier.LOW;
+  const s = String(v).toLowerCase().trim();
+  if (s.includes('crit') || s.includes('emergency')) return DefectSeverityTier.CRITICAL;
+  if (s.includes('high') || s.includes('severe')) return DefectSeverityTier.HIGH;
+  if (s.includes('mod') || s.includes('medium')) return DefectSeverityTier.MODERATE;
+  if (s.includes('low') || s.includes('minor')) return DefectSeverityTier.LOW;
+  if (s.includes('negligible') || s.includes('hairline') || s.includes('zero')) return DefectSeverityTier.NEGLIGIBLE;
+  return DefectSeverityTier.LOW;
+};
+
+export const normalizeDefectTileMetric = (v) => {
+  if (!v) return DefectTileMetric.CRACK_HEATMAP;
+  const s = String(v).toLowerCase().trim();
+  if (s.includes('prob') || s.includes('edge')) return DefectTileMetric.EDGE_PROBABILITY;
+  if (s.includes('crack') || s.includes('heat')) return DefectTileMetric.CRACK_HEATMAP;
+  if (s.includes('seep') || s.includes('moist')) return DefectTileMetric.SEEPAGE_SEVERITY;
+  if (s.includes('comb') || s.includes('risk') || s.includes('hazard')) return DefectTileMetric.COMBINED_RISK;
+  if (s.includes('contour') || s.includes('vector') || s.includes('mask')) return DefectTileMetric.CONTOUR_VECTOR_MASK;
+  return DefectTileMetric.CRACK_HEATMAP;
+};
+
+/**
+ * Classifies crack severity according to ICOLD Bulletin 139 / USBR guidelines.
+ */
+export const classifyCrackSeverity = (meanWidthMm, lengthM = 0.0) => {
+  const w = Math.max(0.0, Number(meanWidthMm) || 0.0);
+  let base = DefectSeverityTier.NEGLIGIBLE;
+  if (w < 10.0) base = DefectSeverityTier.NEGLIGIBLE;
+  else if (w < 25.0) base = DefectSeverityTier.LOW;
+  else if (w < 50.0) base = DefectSeverityTier.MODERATE;
+  else if (w < 100.0) base = DefectSeverityTier.HIGH;
+  else base = DefectSeverityTier.CRITICAL;
+
+  if (lengthM > 50.0) {
+    if (base === DefectSeverityTier.NEGLIGIBLE) return DefectSeverityTier.LOW;
+    if (base === DefectSeverityTier.LOW) return DefectSeverityTier.MODERATE;
+    if (base === DefectSeverityTier.MODERATE) return DefectSeverityTier.HIGH;
+    if (base === DefectSeverityTier.HIGH || base === DefectSeverityTier.CRITICAL) return DefectSeverityTier.CRITICAL;
+  }
+  return base;
+};
+
+/**
+ * Computes forward azimuth bearing [0.0, 360.0) between endpoints of a crack LineString.
+ */
+export const calculateCrackOrientation = (coords) => {
+  if (!coords || coords.length < 2) return 0.0;
+  const [lon1, lat1] = coords[0];
+  const [lon2, lat2] = coords[coords.length - 1];
+  const phi1 = (lat1 * Math.PI) / 180.0;
+  const phi2 = (lat2 * Math.PI) / 180.0;
+  const dLambda = ((lon2 - lon1) * Math.PI) / 180.0;
+
+  const y = Math.sin(dLambda) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLambda);
+  const bearingRad = Math.atan2(y, x);
+  const bearingDeg = ((bearingRad * 180.0) / Math.PI + 360.0) % 360.0;
+  return Number(bearingDeg.toFixed(2));
+};
+
+/**
+ * Verifies that a polygon ring is closed.
+ */
+export const verifyPolygonClosure = (coords, tol = 1e-6) => {
+  if (!coords || coords.length < 4) return false;
+  const first = coords[0];
+  const last = coords[coords.length - 1];
+  return Math.abs(first[0] - last[0]) <= tol && Math.abs(first[1] - last[1]) <= tol;
+};
+
+/**
+ * Computes surface area in square meters using Shoelace formula with metric degree scaling.
+ * Non-negative area invariant (Area >= 0.0 m^2).
+ */
+export const calculatePolygonEnclosedArea = (coords) => {
+  if (!coords || coords.length < 3) return 0.0;
+  const meanLat = coords.reduce((acc, c) => acc + c[1], 0) / coords.length;
+  const latRad = (meanLat * Math.PI) / 180.0;
+  const mPerDegLat = 111320.0;
+  const mPerDegLon = 111320.0 * Math.cos(latRad);
+
+  const xy = coords.map(c => [c[0] * mPerDegLon, c[1] * mPerDegLat]);
+  let area = 0.0;
+  const n = xy.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += xy[i][0] * xy[j][1];
+    area -= xy[j][0] * xy[i][1];
+  }
+  return Number(Math.max(0.0, Math.abs(area) / 2.0).toFixed(2));
+};
+
+/**
+ * Constructs dynamic XYZ tile URL for crest defect inspection layers.
+ */
+export const buildDefectTileUrl = (metric = DefectTileMetric.CRACK_HEATMAP, z = '{z}', x = '{x}', y = '{y}', options = {}) => {
+  const metStr = normalizeDefectTileMetric(metric);
+  let url = `/api/v1/tiles/defects/${metStr}/${z}/${x}/${y}.png`;
+  const params = [];
+  if (options.algorithm) params.push(`algorithm=${encodeURIComponent(options.algorithm)}`);
+  if (options.min_confidence !== undefined && options.min_confidence !== null) params.push(`min_confidence=${options.min_confidence}`);
+  if (options.colormap) params.push(`colormap=${encodeURIComponent(options.colormap)}`);
+  if (options.rescale) params.push(`rescale=${encodeURIComponent(options.rescale)}`);
+  if (params.length > 0) {
+    url += `?${params.join('&')}`;
+  }
+  return url;
+};
+
+/**
+ * Constructs dynamic Leaflet tile URL template for crest defect layers.
+ */
+export const buildDefectTileUrlTemplate = (metric = DefectTileMetric.CRACK_HEATMAP, options = {}) => {
+  return buildDefectTileUrl(metric, '{z}', '{x}', '{y}', options);
+};

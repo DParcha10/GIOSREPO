@@ -1138,6 +1138,22 @@ API_ROUTE_CONTRACTS: Dict[str, str] = {
     "analysis_topographic_evaluate_short": "/analysis/topographic/evaluate",
     "tiles_topographic_xyz": "/api/v1/tiles/topographic/{method}/{metric}/{z}/{x}/{y}.png",
     "tiles_topographic_xyz_short": "/tiles/topographic/{method}/{metric}/{z}/{x}/{y}.png",
+    # Cycle v2.5.53: Multi-Temporal Change Vector Analysis (CVA) & Spectral Angle Mapper (SAM) Contracts
+    "analysis_cva_capabilities": "/api/v1/analysis/cva/capabilities",
+    "analysis_cva_capabilities_short": "/cva/capabilities",
+    "analysis_cva_evaluate": "/api/v1/analysis/cva/evaluate",
+    "analysis_cva_evaluate_short": "/cva/evaluate",
+    "tiles_cva_xyz": "/api/v1/tiles/cva/{metric}/{z}/{x}/{y}.png",
+    "tiles_cva_xyz_short": "/tiles/cva/{metric}/{z}/{x}/{y}.png",
+    # Cycle v2.5.54: Deep Feature Edge Segmentation & Crest Crack Detection Contracts
+    "analysis_defects_capabilities": "/api/v1/analysis/defects/capabilities",
+    "analysis_defects_capabilities_short": "/defects/capabilities",
+    "analysis_defects_crest_cracks": "/api/v1/analysis/defects/crest-cracks",
+    "analysis_defects_crest_cracks_short": "/defects/crest-cracks",
+    "analysis_defects_seepage": "/api/v1/analysis/defects/seepage",
+    "analysis_defects_seepage_short": "/defects/seepage",
+    "tiles_defects_xyz": "/api/v1/tiles/defects/{metric}/{z}/{x}/{y}.png",
+    "tiles_defects_xyz_short": "/tiles/defects/{metric}/{z}/{x}/{y}.png",
 }
 
 API_ROUTES: Dict[str, str] = API_ROUTE_CONTRACTS
@@ -1574,6 +1590,24 @@ def format_api_route(route_name: str, **kwargs) -> str:
                 kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
         else:
             kwargs["metric"] = "daily_et_mm"
+    elif route_name in ("tiles_cva_xyz", "tiles_cva_xyz_short"):
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            try:
+                kwargs["metric"] = normalize_cva_tile_metric(val).value
+            except Exception:
+                kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            kwargs["metric"] = "magnitude"
+    elif route_name in ("tiles_defects_xyz", "tiles_defects_xyz_short"):
+        if "metric" in kwargs:
+            val = kwargs["metric"]
+            try:
+                kwargs["metric"] = normalize_defect_tile_metric(val).value
+            except Exception:
+                kwargs["metric"] = val.value if hasattr(val, "value") else str(val).lower()
+        else:
+            kwargs["metric"] = "crack_heatmap"
     elif route_name in ("tiles_topographic_xyz", "tiles_topographic_xyz_short"):
         if "method" in kwargs:
             val = kwargs["method"]
@@ -8044,8 +8078,10 @@ def calculate_spectral_angle_mapper(
     # Vector sequences for multi-band sharpening fidelity
     vec_orig = [float(x) for x in pixel_reflectance]
     vec_sharp = [float(x) for x in endmember_reflectance]
-    if len(vec_orig) == 0 or len(vec_sharp) == 0 or len(vec_orig) != len(vec_sharp):
+    if len(vec_orig) == 0 and len(vec_sharp) == 0:
         return 0.0
+    if len(vec_orig) != len(vec_sharp):
+        raise ValueError(f"Vector dimension mismatch: {len(vec_orig)} != {len(vec_sharp)}")
     dot = sum(a * b for a, b in zip(vec_orig, vec_sharp))
     norm_u = math.sqrt(sum(a ** 2 for a in vec_orig))
     norm_v = math.sqrt(sum(b ** 2 for b in vec_sharp))
@@ -40737,3 +40773,1240 @@ def build_mineralogy_tile_url_template(
     met_str = metric.value if isinstance(metric, MineralogyTileMetric) else str(metric).lower()
     return f"/api/v1/tiles/mineralogy/{met_str}/{{z}}/{{x}}/{{y}}.png"
 
+
+
+# ============================================================================
+# CYCLE v2.5.53: MULTI-TEMPORAL CHANGE VECTOR ANALYSIS (CVA), SPECTRAL ANGLE
+# MAPPER (SAM) & 8-SECTOR DIRECTIONAL DISTURBANCE VECTOR FIELD ENGINE
+# ============================================================================
+
+class CVAMethod(str, Enum):
+    """Multi-temporal change vector analysis and spectral differencing algorithms."""
+    STANDARD_EUCLIDEAN = "standard_euclidean"        # Multi-band Euclidean distance ||x2 - x1||_2 (Malila 1980)
+    NORMALIZED_REFLECTANCE = "normalized_reflectance"  # Z-score normalized band differencing
+    TASSELED_CAP_CVA = "tasseled_cap_cva"            # Crist-Cicone Brightness-Greenness-Wetness CVA
+    SPECTRAL_ANGLE_MAPPER = "spectral_angle_mapper"  # Illuminance-invariant spectral angle alpha (Kruse et al. 1993)
+    SPATIAL_SPECTRAL_CVA = "spatial_spectral_cva"    # Hybrid spatial texture and spectral vector differencing
+
+
+class CVATileMetric(str, Enum):
+    """Dynamic XYZ visualization metrics for multi-temporal change vector tiles."""
+    MAGNITUDE = "magnitude"                          # Euclidean change vector magnitude Delta M in [0, sqrt(B)]
+    SPECTRAL_ANGLE = "spectral_angle"                # Spectral angle alpha in radians [0, pi/2] or degrees [0, 90]
+    DIRECTION_SECTOR = "direction_sector"            # 8-Sector disturbance taxonomy classification (0 to 8)
+    CHANGE_PROBABILITY = "change_probability"        # Normalized change probability / significance score in [0, 1]
+    POLAR_RGB_COMPOSITE = "polar_rgb"                # Polar composite (Magnitude -> Value, Angle -> Hue, SAM -> Saturation)
+    DISTURBANCE_MASK = "disturbance_mask"            # Thresholded binary disturbance mask (Delta M >= tau)
+    CANOPY_PERSISTENCE = "canopy_persistence"        # Forest canopy & vegetation stability index
+
+
+class CVADisturbanceSector(str, Enum):
+    """8-Sector directional disturbance trajectory categories (Malila 1980, Chen et al. 2003)."""
+    STABLE_UNMODIFIED = "stable_unmodified"                      # Delta M < threshold (no statistically significant change)
+    SECTOR_1_SOIL_EXPOSURE = "sector_1_soil_exposure"            # 0 to 45 deg (+Delta X, slight +Delta Y): Soil exposure & surface drying
+    SECTOR_2_VEGETATION_GROWTH = "sector_2_vegetation_growth"    # 45 to 90 deg (+Delta X, +Delta Y): Vegetative succession & biomass expansion
+    SECTOR_3_CANOPY_GREENING = "sector_3_canopy_greening"        # 90 to 135 deg (-Delta X, +Delta Y): Pure canopy greening & agricultural flush
+    SECTOR_4_WETLAND_EXPANSION = "sector_4_wetland_expansion"    # 135 to 180 deg (-Delta X, +Delta Y): Wetland afforestation & shadow canopy
+    SECTOR_5_WATER_SUBMERGENCE = "sector_5_water_submergence"    # 180 to 225 deg (-Delta X, -Delta Y): Soil wetting & shallow water submergence
+    SECTOR_6_FLOOD_INUNDATION = "sector_6_flood_inundation"      # 225 to 270 deg (-Delta X, -Delta Y): Deep flood inundation & tailings dam impoundment
+    SECTOR_7_VEGETATION_DIEBACK = "sector_7_vegetation_dieback"  # 270 to 315 deg (+Delta X, -Delta Y): Canopy senescence, drought stress & defoliation
+    SECTOR_8_DEFORESTATION_EXCAVATION = "sector_8_deforestation_excavation"  # 315 to 360 deg (+Delta X, -Delta Y): Severe clearing, wildfire burn, tailings deposition
+
+
+class CVASeverityTier(str, Enum):
+    """Physical disturbance severity classification based on change vector magnitude."""
+    INSIGNIFICANT = "insignificant"      # Delta M < tau
+    LOW = "low"                          # tau <= Delta M < 1.5 * tau
+    MODERATE = "moderate"                # 1.5 * tau <= Delta M < 2.5 * tau
+    HIGH = "high"                        # 2.5 * tau <= Delta M < 4.0 * tau
+    CRITICAL = "critical"                # Delta M >= 4.0 * tau
+
+
+def normalize_cva_method(method: Union[str, CVAMethod]) -> CVAMethod:
+    """Normalizes string alias or enum into canonical CVAMethod."""
+    if isinstance(method, CVAMethod):
+        return method
+    raw = str(method).strip().lower().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "standard_euclidean": CVAMethod.STANDARD_EUCLIDEAN,
+        "euclidean": CVAMethod.STANDARD_EUCLIDEAN,
+        "standard": CVAMethod.STANDARD_EUCLIDEAN,
+        "l2": CVAMethod.STANDARD_EUCLIDEAN,
+        "cva": CVAMethod.STANDARD_EUCLIDEAN,
+        "normalized_reflectance": CVAMethod.NORMALIZED_REFLECTANCE,
+        "normalized": CVAMethod.NORMALIZED_REFLECTANCE,
+        "zscore": CVAMethod.NORMALIZED_REFLECTANCE,
+        "tasseled_cap_cva": CVAMethod.TASSELED_CAP_CVA,
+        "tasseled_cap": CVAMethod.TASSELED_CAP_CVA,
+        "tc_cva": CVAMethod.TASSELED_CAP_CVA,
+        "spectral_angle_mapper": CVAMethod.SPECTRAL_ANGLE_MAPPER,
+        "sam": CVAMethod.SPECTRAL_ANGLE_MAPPER,
+        "spectral_angle": CVAMethod.SPECTRAL_ANGLE_MAPPER,
+        "spatial_spectral_cva": CVAMethod.SPATIAL_SPECTRAL_CVA,
+        "spatial_spectral": CVAMethod.SPATIAL_SPECTRAL_CVA,
+        "texture_cva": CVAMethod.SPATIAL_SPECTRAL_CVA,
+    }
+    if raw in mapping:
+        return mapping[raw]
+    for m in CVAMethod:
+        if raw == m.value or raw == m.name.lower():
+            return m
+    raise ValueError(f"Unsupported CVA method '{method}'. Allowed: {[e.value for e in CVAMethod]}")
+
+
+def normalize_cva_tile_metric(metric: Union[str, CVATileMetric]) -> CVATileMetric:
+    """Normalizes string alias or enum into canonical CVATileMetric."""
+    if isinstance(metric, CVATileMetric):
+        return metric
+    raw = str(metric).strip().lower().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "magnitude": CVATileMetric.MAGNITUDE,
+        "mag": CVATileMetric.MAGNITUDE,
+        "dist": CVATileMetric.MAGNITUDE,
+        "spectral_angle": CVATileMetric.SPECTRAL_ANGLE,
+        "sam": CVATileMetric.SPECTRAL_ANGLE,
+        "angle": CVATileMetric.SPECTRAL_ANGLE,
+        "direction_sector": CVATileMetric.DIRECTION_SECTOR,
+        "sector": CVATileMetric.DIRECTION_SECTOR,
+        "direction": CVATileMetric.DIRECTION_SECTOR,
+        "octant": CVATileMetric.DIRECTION_SECTOR,
+        "change_probability": CVATileMetric.CHANGE_PROBABILITY,
+        "probability": CVATileMetric.CHANGE_PROBABILITY,
+        "prob": CVATileMetric.CHANGE_PROBABILITY,
+        "polar_rgb": CVATileMetric.POLAR_RGB_COMPOSITE,
+        "polar_rgb_composite": CVATileMetric.POLAR_RGB_COMPOSITE,
+        "rgb": CVATileMetric.POLAR_RGB_COMPOSITE,
+        "composite": CVATileMetric.POLAR_RGB_COMPOSITE,
+        "disturbance_mask": CVATileMetric.DISTURBANCE_MASK,
+        "mask": CVATileMetric.DISTURBANCE_MASK,
+        "binary_mask": CVATileMetric.DISTURBANCE_MASK,
+        "canopy_persistence": CVATileMetric.CANOPY_PERSISTENCE,
+        "persistence": CVATileMetric.CANOPY_PERSISTENCE,
+    }
+    if raw in mapping:
+        return mapping[raw]
+    for m in CVATileMetric:
+        if raw == m.value or raw == m.name.lower():
+            return m
+    return CVATileMetric.MAGNITUDE
+
+
+def normalize_cva_sector(val: Union[str, CVADisturbanceSector]) -> CVADisturbanceSector:
+    """Normalizes string alias or enum into canonical CVADisturbanceSector."""
+    if isinstance(val, CVADisturbanceSector):
+        return val
+    raw = str(val).strip().lower().replace("-", "_").replace(" ", "_")
+    alias_map = {
+        "stable": CVADisturbanceSector.STABLE_UNMODIFIED,
+        "unmodified": CVADisturbanceSector.STABLE_UNMODIFIED,
+        "no_change": CVADisturbanceSector.STABLE_UNMODIFIED,
+        "0": CVADisturbanceSector.STABLE_UNMODIFIED,
+        "1": CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE,
+        "soil_exposure": CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE,
+        "2": CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH,
+        "vegetation_growth": CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH,
+        "3": CVADisturbanceSector.SECTOR_3_CANOPY_GREENING,
+        "canopy_greening": CVADisturbanceSector.SECTOR_3_CANOPY_GREENING,
+        "4": CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION,
+        "wetland_expansion": CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION,
+        "5": CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE,
+        "water_submergence": CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE,
+        "6": CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION,
+        "flood_inundation": CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION,
+        "7": CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK,
+        "vegetation_dieback": CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK,
+        "8": CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION,
+        "deforestation_excavation": CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION,
+    }
+    if raw in alias_map:
+        return alias_map[raw]
+    for s in CVADisturbanceSector:
+        if raw == s.value or raw == s.name.lower():
+            return s
+    return CVADisturbanceSector.STABLE_UNMODIFIED
+
+
+def normalize_cva_severity_tier(val: Union[str, CVASeverityTier]) -> CVASeverityTier:
+    """Normalizes string alias or enum into canonical CVASeverityTier."""
+    if isinstance(val, CVASeverityTier):
+        return val
+    raw = str(val).strip().lower().replace("-", "_")
+    for s in CVASeverityTier:
+        if raw == s.value or raw == s.name.lower():
+            return s
+    return CVASeverityTier.LOW
+
+
+CVA_SECTOR_METADATA: Dict[str, Dict[str, Any]] = {
+    CVADisturbanceSector.STABLE_UNMODIFIED.value: {
+        "sector_id": 0,
+        "name": "Stable / Unmodified Surface",
+        "angle_range_deg": [0.0, 0.0],
+        "delta_x_trend": "Neutral",
+        "delta_y_trend": "Neutral",
+        "color_hex": "#64748B",
+        "description": "Change magnitude Delta M is below statistical detection threshold tau. Reflectance variation is consistent with sensor noise or minor atmospheric fluctuation.",
+    },
+    CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE.value: {
+        "sector_id": 1,
+        "name": "Soil Exposure & Surface Desiccation",
+        "angle_range_deg": [0.0, 45.0],
+        "delta_x_trend": "Positive (Strong Brightness / Red rise)",
+        "delta_y_trend": "Positive (Slight NIR rise)",
+        "color_hex": "#F59E0B",
+        "description": "Vegetation removal or crop harvest leading to bare dry soil substrate exposure, increased mineral surface reflectance, and reduced moisture retention.",
+    },
+    CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH.value: {
+        "sector_id": 2,
+        "name": "Vegetative Succession & Biomass Expansion",
+        "angle_range_deg": [45.0, 90.0],
+        "delta_x_trend": "Positive (Moderate Brightness)",
+        "delta_y_trend": "Positive (Strong NIR rise)",
+        "color_hex": "#10B981",
+        "description": "Rapid vegetation growth, secondary ecological succession, crop emergence, or grassland greening following moisture events.",
+    },
+    CVADisturbanceSector.SECTOR_3_CANOPY_GREENING.value: {
+        "sector_id": 3,
+        "name": "Canopy Greening & Agricultural Flush",
+        "angle_range_deg": [90.0, 135.0],
+        "delta_x_trend": "Negative (Red absorption drop)",
+        "delta_y_trend": "Positive (Strong NIR canopy reflection)",
+        "color_hex": "#059669",
+        "description": "Peak photosynthetic activity, chlorophyll absorption expansion in the red band, and dense mesophyll scattering in the near-infrared.",
+    },
+    CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION.value: {
+        "sector_id": 4,
+        "name": "Wetland Expansion & Dense Shadow Canopy",
+        "angle_range_deg": [135.0, 180.0],
+        "delta_x_trend": "Negative (Strong Brightness drop)",
+        "delta_y_trend": "Positive (Moderate NIR persistence)",
+        "color_hex": "#06B6D4",
+        "description": "Canopy densification, shadow expansion in closed forest crowns, or emergence of emergent aquatic vegetation in shallow riparian wetlands.",
+    },
+    CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE.value: {
+        "sector_id": 5,
+        "name": "Soil Wetting & Shallow Submergence",
+        "angle_range_deg": [180.0, 225.0],
+        "delta_x_trend": "Negative (Strong Brightness drop)",
+        "delta_y_trend": "Negative (Moderate NIR drop)",
+        "color_hex": "#3B82F6",
+        "description": "Soil moisture saturation, phreatic line seepage emergence along tailings embankment toes, or shallow temporary ponding.",
+    },
+    CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION.value: {
+        "sector_id": 6,
+        "name": "Deep Flood Inundation & Tailings Impoundment",
+        "angle_range_deg": [225.0, 270.0],
+        "delta_x_trend": "Negative (Extreme Brightness drop)",
+        "delta_y_trend": "Negative (Complete NIR absorption)",
+        "color_hex": "#1D4ED8",
+        "description": "Deep water inundation, tailings pond supernatant expansion, reservoir filling, or catastrophic flood wave passage.",
+    },
+    CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK.value: {
+        "sector_id": 7,
+        "name": "Vegetation Dieback & Canopy Desiccation",
+        "angle_range_deg": [270.0, 315.0],
+        "delta_x_trend": "Positive (Slight Red rise)",
+        "delta_y_trend": "Negative (Strong NIR drop)",
+        "color_hex": "#EF4444",
+        "description": "Canopy foliage mortality, drought desiccation, insect infestation (bark beetle), senescence, or sublethal geotechnical ground deformation stress.",
+    },
+    CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION.value: {
+        "sector_id": 8,
+        "name": "Deforestation, Excavation & Wildfire Scar",
+        "angle_range_deg": [315.0, 360.0],
+        "delta_x_trend": "Positive (Strong Red / SWIR rise)",
+        "delta_y_trend": "Negative (Severe NIR collapse)",
+        "color_hex": "#B91C1C",
+        "description": "Catastrophic land cover transformation: clearcut logging, open-pit mining excavation, tailings dam failure mudflow scar, or severe high-temperature wildfire burn.",
+    },
+}
+
+CVA_BENCHMARK_SCENES: Dict[str, Dict[str, Any]] = {
+    "MOUNT_POLLEY_TAILINGS_2014": {
+        "name": "Mount Polley Tailings Dam Failure, British Columbia",
+        "latitude": 52.5486,
+        "longitude": -121.5978,
+        "description": "Catastrophic breach of a 40m tailings dam in August 2014 releasing 25 million cubic meters of slurry into Polley Lake and Quesnel Lake; extensive deforestation and heavy sediment scour.",
+        "pre_event_date": "2014-07-28",
+        "post_event_date": "2014-08-13",
+        "recommended_method": CVAMethod.STANDARD_EUCLIDEAN.value,
+        "dominant_sectors": [
+            CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION.value,
+            CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION.value
+        ],
+        "threshold": 0.18,
+        "expected_mean_magnitude": 0.32,
+        "expected_mean_sam_deg": 18.5,
+    },
+    "CAMP_FIRE_PARADISE_2018": {
+        "name": "Camp Fire Wildfire Scars, Paradise, California",
+        "latitude": 39.7596,
+        "longitude": -121.6219,
+        "description": "Deadliest wildfire in California history (November 2018) consuming 153,336 acres; massive NIR collapse and charcoal ash deposition across residential forest canopy.",
+        "pre_event_date": "2018-10-25",
+        "post_event_date": "2018-11-20",
+        "recommended_method": CVAMethod.SPECTRAL_ANGLE_MAPPER.value,
+        "dominant_sectors": [
+            CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION.value,
+            CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK.value
+        ],
+        "threshold": 0.22,
+        "expected_mean_magnitude": 0.44,
+        "expected_mean_sam_deg": 28.2,
+    },
+    "AMAZON_DEFORESTATION_ARC": {
+        "name": "Amazon Basin Deforestation Arc, Mato Grosso, Brazil",
+        "latitude": -11.5200,
+        "longitude": -55.4500,
+        "description": "Intense tropical rainforest clearing for mechanized soybean agriculture and cattle pasture; abrupt transition from pristine dense canopy to exposed oxisol soil.",
+        "pre_event_date": "2024-06-15",
+        "post_event_date": "2025-06-15",
+        "recommended_method": CVAMethod.TASSELED_CAP_CVA.value,
+        "dominant_sectors": [
+            CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION.value,
+            CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE.value
+        ],
+        "threshold": 0.15,
+        "expected_mean_magnitude": 0.28,
+        "expected_mean_sam_deg": 14.6,
+    },
+    "MORENCI_MINE_LEACHING_2026": {
+        "name": "Morenci Open Pit Mine Expansion & Tailings Leaching, Arizona",
+        "latitude": 33.0583,
+        "longitude": -109.3589,
+        "description": "Large-scale copper porphyry open pit excavation, waste rock dump expansion, and active tailings impoundment bench raising.",
+        "pre_event_date": "2025-09-01",
+        "post_event_date": "2026-09-01",
+        "recommended_method": CVAMethod.STANDARD_EUCLIDEAN.value,
+        "dominant_sectors": [
+            CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE.value,
+            CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION.value
+        ],
+        "threshold": 0.12,
+        "expected_mean_magnitude": 0.21,
+        "expected_mean_sam_deg": 11.2,
+    },
+    "SALTON_SEA_DESICCATION_2026": {
+        "name": "Salton Sea Desiccation & Playa Dust Exposure, California",
+        "latitude": 33.3286,
+        "longitude": -115.8434,
+        "description": "Rapid lakebed shrinkage in endorheic saline basin; deep water absorption transitions into bright evaporite salt crust and fine toxic playa dust.",
+        "pre_event_date": "2024-10-10",
+        "post_event_date": "2026-10-10",
+        "recommended_method": CVAMethod.STANDARD_EUCLIDEAN.value,
+        "dominant_sectors": [
+            CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE.value
+        ],
+        "threshold": 0.20,
+        "expected_mean_magnitude": 0.38,
+        "expected_mean_sam_deg": 24.8,
+    },
+}
+
+
+# Unified Multi-Temporal CVA Solvers & Dynamic Tile Builders (Cycle v2.5.53)
+
+def calculate_spectral_angle_mapper_v2(
+    vec_t1: Union[Dict[str, float], Sequence[float]],
+    vec_t2: Union[Dict[str, float], Sequence[float]],
+    eps: float = 1e-7
+) -> Union[Dict[str, Any], float]:
+    """Calculates n-dimensional spectral angle alpha between two multi-band vectors or endmember dicts."""
+    if isinstance(vec_t1, dict) and isinstance(vec_t2, dict):
+        common_bands = [b for b in vec_t1 if b in vec_t2]
+        if not common_bands:
+            return {
+                "spectral_angle_rad": math.pi / 2.0,
+                "spectral_angle_deg": 90.0,
+                "is_match": False,
+                "match_confidence": "none",
+                "similarity_score": 0.0
+            }
+        dot_product = 0.0
+        norm_r_sq = 0.0
+        norm_e_sq = 0.0
+        for b in common_bands:
+            r_val = max(0.0, float(vec_t1[b]))
+            e_val = max(0.0, float(vec_t2[b]))
+            dot_product += r_val * e_val
+            norm_r_sq += r_val * r_val
+            norm_e_sq += e_val * e_val
+        denom = math.sqrt(norm_r_sq) * math.sqrt(norm_e_sq)
+        if denom <= eps:
+            angle_rad = 0.0 if (norm_r_sq < eps and norm_e_sq < eps) else (math.pi / 2.0)
+        else:
+            cos_theta = max(-1.0, min(1.0, dot_product / denom))
+            angle_rad = math.acos(cos_theta)
+        angle_deg = math.degrees(angle_rad)
+        similarity = max(0.0, 1.0 - (angle_rad / (math.pi / 2.0)))
+        return {
+            "spectral_angle_rad": round(angle_rad, 4),
+            "spectral_angle_deg": round(angle_deg, 2),
+            "is_match": angle_rad <= 0.15,
+            "match_confidence": "high" if angle_rad <= 0.08 else ("moderate" if angle_rad <= 0.15 else "low"),
+            "similarity_score": round(similarity, 4)
+        }
+
+    if isinstance(vec_t1, dict) or isinstance(vec_t2, dict):
+        raise TypeError("Both vectors must be of the same type (both Dict or both Sequence)")
+
+    v1 = [float(x) for x in vec_t1]
+    v2 = [float(x) for x in vec_t2]
+    if len(v1) == 0 and len(v2) == 0:
+        return 0.0
+    if len(v1) != len(v2):
+        raise ValueError(f"Vector dimension mismatch: {len(v1)} != {len(v2)}")
+
+    dot = sum(a * b for a, b in zip(v1, v2))
+    norm1 = math.sqrt(sum(a * a for a in v1))
+    norm2 = math.sqrt(sum(b * b for b in v2))
+    if norm1 < eps and norm2 < eps:
+        return 0.0
+    denom = max(norm1 * norm2, eps)
+    cos_val = max(-1.0, min(1.0, dot / denom))
+    if all(x >= -eps for x in v1) and all(x >= -eps for x in v2) and cos_val < 0.0:
+        cos_val = 0.0
+    return float(math.acos(cos_val))
+
+# Bind canonical calculate_spectral_angle_mapper with backwards-compatible keyword arguments
+def calculate_spectral_angle_mapper(
+    vec_t1: Optional[Union[Dict[str, float], Sequence[float]]] = None,
+    vec_t2: Optional[Union[Dict[str, float], Sequence[float]]] = None,
+    eps: float = 1e-7,
+    *,
+    pixel_reflectance: Optional[Union[Dict[str, float], Sequence[float]]] = None,
+    endmember_reflectance: Optional[Union[Dict[str, float], Sequence[float]]] = None
+) -> Union[Dict[str, Any], float]:
+    r = pixel_reflectance if pixel_reflectance is not None else vec_t1
+    e = endmember_reflectance if endmember_reflectance is not None else vec_t2
+    if r is None or e is None:
+        raise ValueError("Both vectors / reflectance dictionaries must be provided to calculate_spectral_angle_mapper")
+    return calculate_spectral_angle_mapper_v2(r, e, eps=eps)
+
+
+def classify_disturbance_sector(
+    delta_x: float,
+    delta_y: float,
+    magnitude: float = 1.0,
+    threshold: float = 0.0
+) -> Tuple[CVADisturbanceSector, float]:
+    """Partitions 2D change vector (Delta X, Delta Y) into 8 directional octant disturbance sectors.
+    
+    Parameters:
+        delta_x: Change along primary axis (e.g. Red / Brightness, x2 - x1)
+        delta_y: Change along secondary axis (e.g. NIR / Greenness, y2 - y1)
+        magnitude: Euclidean distance of change vector
+        threshold: Minimum magnitude threshold tau for statistically significant change
+        
+    Returns:
+        (CVADisturbanceSector, direction_angle_deg)
+        where direction_angle_deg in [0.0, 360.0)
+    """
+    if magnitude < threshold or (abs(delta_x) < 1e-9 and abs(delta_y) < 1e-9):
+        return (CVADisturbanceSector.STABLE_UNMODIFIED, 0.0)
+        
+    angle_rad = math.atan2(float(delta_y), float(delta_x))
+    angle_deg = (math.degrees(angle_rad) + 360.0) % 360.0
+    
+    # 8-Sector partition: each sector spans 45 degrees
+    sector_idx = int(angle_deg // 45.0)
+    sector_map = [
+        CVADisturbanceSector.SECTOR_1_SOIL_EXPOSURE,
+        CVADisturbanceSector.SECTOR_2_VEGETATION_GROWTH,
+        CVADisturbanceSector.SECTOR_3_CANOPY_GREENING,
+        CVADisturbanceSector.SECTOR_4_WETLAND_EXPANSION,
+        CVADisturbanceSector.SECTOR_5_WATER_SUBMERGENCE,
+        CVADisturbanceSector.SECTOR_6_FLOOD_INUNDATION,
+        CVADisturbanceSector.SECTOR_7_VEGETATION_DIEBACK,
+        CVADisturbanceSector.SECTOR_8_DEFORESTATION_EXCAVATION,
+    ]
+    sector = sector_map[min(sector_idx, 7)]
+    return (sector, round(angle_deg, 2))
+
+
+def calculate_change_vector(
+    vec_t1: Union[Dict[str, float], Sequence[float]],
+    vec_t2: Union[Dict[str, float], Sequence[float]],
+    bands: Optional[List[str]] = None,
+    threshold: Optional[float] = None,
+    axis_x: Optional[str] = None,
+    axis_y: Optional[str] = None,
+    eps: float = 1e-7,
+    use_8_sectors: Optional[bool] = None
+) -> Dict[str, Any]:
+    """Calculates change vector, supporting both legacy 4-quadrant CVA and Cycle v2.5.53 8-sector CVA."""
+    # Check for legacy 2-band call: e.g. calculate_change_vector({"red": 0.1, "nir": 0.2}, {"red": 0.25, "nir": 0.35})
+    if (
+        isinstance(vec_t1, dict) and isinstance(vec_t2, dict)
+        and "red" in vec_t1 and "nir" in vec_t1
+        and "red" in vec_t2 and "nir" in vec_t2
+        and threshold is None and axis_x is None and not use_8_sectors
+    ):
+        common_bands = [b for b in vec_t1 if b in vec_t2]
+        sum_sq = sum((float(vec_t2[b]) - float(vec_t1[b])) ** 2 for b in common_bands)
+        mag = math.sqrt(sum_sq)
+        d_red = float(vec_t2.get("red", 0.0)) - float(vec_t1.get("red", 0.0))
+        d_nir = float(vec_t2.get("nir", 0.0)) - float(vec_t1.get("nir", 0.0))
+        angle_deg = math.degrees(math.atan2(d_nir, d_red))
+        if d_red >= 0.0 and d_nir >= 0.0:
+            legacy_sec = "soil_drying"
+        elif d_red < 0.0 and d_nir >= 0.0:
+            legacy_sec = "vegetation_growth"
+        elif d_red < 0.0 and d_nir < 0.0:
+            legacy_sec = "water_inundation"
+        else:
+            legacy_sec = "defoliation_burn"
+
+        if mag < 0.05:
+            tier = "no_change"
+        elif mag < 0.15:
+            tier = "low_change"
+        elif mag < 0.30:
+            tier = "moderate_change"
+        elif mag < 0.50:
+            tier = "significant_change"
+        else:
+            tier = "extreme_change"
+
+        return {
+            "magnitude": round(mag, 4),
+            "direction_deg": round(angle_deg, 2),
+            "delta_red": round(d_red, 4),
+            "delta_nir": round(d_nir, 4),
+            "sector": legacy_sec,
+            "magnitude_tier": tier
+        }
+
+    # Cycle v2.5.53 8-sector CVA implementation
+    eff_threshold = threshold if threshold is not None else 0.15
+    eff_axis_x = axis_x if axis_x is not None else "B04"
+    eff_axis_y = axis_y if axis_y is not None else "B08"
+
+    if isinstance(vec_t1, dict) and isinstance(vec_t2, dict):
+        if bands is None:
+            common = sorted(list(set(vec_t1.keys()).intersection(set(vec_t2.keys()))))
+            bands = common if common else list(vec_t1.keys())
+        v1_list = [float(vec_t1.get(b, 0.0)) for b in bands]
+        v2_list = [float(vec_t2.get(b, 0.0)) for b in bands]
+        dx_val = float(vec_t2.get(eff_axis_x, 0.0)) - float(vec_t1.get(eff_axis_x, 0.0))
+        dy_val = float(vec_t2.get(eff_axis_y, 0.0)) - float(vec_t1.get(eff_axis_y, 0.0))
+    else:
+        v1_list = [float(x) for x in vec_t1]
+        v2_list = [float(x) for x in vec_t2]
+        bands = [f"Band_{i+1}" for i in range(len(v1_list))]
+        dx_val = v2_list[0] - v1_list[0] if len(v1_list) > 0 else 0.0
+        dy_val = v2_list[1] - v1_list[1] if len(v1_list) > 1 else 0.0
+
+    if len(v1_list) != len(v2_list):
+        raise ValueError(f"Vector dimension mismatch: {len(v1_list)} != {len(v2_list)}")
+
+    diff_vector = [v2 - v1 for v1, v2 in zip(v1_list, v2_list)]
+    magnitude = math.sqrt(sum(d * d for d in diff_vector))
+
+    norm1 = math.sqrt(sum(v * v for v in v1_list))
+    norm2 = math.sqrt(sum(v * v for v in v2_list))
+
+    triangle_holds = magnitude <= (norm1 + norm2 + 1e-6)
+
+    sam_rad = calculate_spectral_angle_mapper(v1_list, v2_list, eps=eps)
+    sam_deg = math.degrees(sam_rad)
+
+    sector, angle_deg = classify_disturbance_sector(dx_val, dy_val, magnitude=magnitude, threshold=eff_threshold)
+
+    if magnitude < eff_threshold:
+        severity = CVASeverityTier.INSIGNIFICANT
+    elif magnitude < 1.5 * eff_threshold:
+        severity = CVASeverityTier.LOW
+    elif magnitude < 2.5 * eff_threshold:
+        severity = CVASeverityTier.MODERATE
+    elif magnitude < 4.0 * eff_threshold:
+        severity = CVASeverityTier.HIGH
+    else:
+        severity = CVASeverityTier.CRITICAL
+
+    return {
+        "bands": bands,
+        "delta_vector": {b: round(d, 5) for b, d in zip(bands, diff_vector)},
+        "magnitude": round(magnitude, 5),
+        "norm_t1": round(norm1, 5),
+        "norm_t2": round(norm2, 5),
+        "triangle_inequality_satisfied": triangle_holds,
+        "spectral_angle_rad": round(sam_rad, 5),
+        "spectral_angle_deg": round(sam_deg, 3),
+        "direction_angle_deg": angle_deg,
+        "sector": sector.value,
+        "sector_metadata": CVA_SECTOR_METADATA.get(sector.value, {}),
+        "severity": severity.value,
+        "is_significant": magnitude >= threshold,
+        "delta_x": round(dx_val, 5),
+        "delta_y": round(dy_val, 5),
+    }
+
+
+class CVAPointSample(BaseModel):
+    """Representative point sample detailing change vector and spectral disturbance."""
+    point_id: str = Field(..., description="Unique sample point identifier")
+    lat: float = Field(..., description="WGS84 latitude")
+    lng: float = Field(..., description="WGS84 longitude")
+    reflectance_t1: Dict[str, float] = Field(..., description="Pre-event surface reflectances")
+    reflectance_t2: Dict[str, float] = Field(..., description="Post-event surface reflectances")
+    magnitude: float = Field(..., ge=0.0, description="Change vector Euclidean magnitude")
+    spectral_angle_deg: float = Field(..., ge=0.0, le=90.0, description="SAM spectral angle in degrees")
+    direction_angle_deg: float = Field(..., ge=0.0, lt=360.0, description="Polar direction angle in degrees")
+    sector: CVADisturbanceSector = Field(..., description="Classified 8-sector disturbance category")
+    severity: CVASeverityTier = Field(..., description="Disturbance severity tier")
+    is_significant: bool = Field(..., description="True if magnitude >= detection threshold")
+
+
+class CVARequest(BaseModel):
+    """Request payload for multi-temporal change vector analysis and SAM inversion."""
+    collection: SatelliteCollection = Field(default=SatelliteCollection.SENTINEL_2_L2A, description="Sensor collection")
+    item_id_t1: str = Field(default="S2A_MSIL2A_20250815_T11SKB", description="Baseline pre-event STAC item ID")
+    item_id_t2: str = Field(default="S2B_MSIL2A_20260815_T11SKB", description="Post-event comparison STAC item ID")
+    method: CVAMethod = Field(default=CVAMethod.STANDARD_EUCLIDEAN, description="CVA differencing algorithm")
+    bands: List[str] = Field(
+        default_factory=lambda: ["B02", "B03", "B04", "B08", "B11", "B12"],
+        description="Multi-spectral bands included in vector differencing"
+    )
+    threshold: float = Field(default=0.15, ge=0.01, le=2.0, description="Minimum change magnitude detection threshold tau")
+    axis_x_band: str = Field(default="B04", description="Band assigned to polar scatter plot X-axis (Red / Brightness)")
+    axis_y_band: str = Field(default="B08", description="Band assigned to polar scatter plot Y-axis (NIR / Greenness)")
+    aoi_name: Optional[str] = Field(default="Mount Polley Impoundment, British Columbia", description="Target AOI label")
+    bbox: Optional[Any] = Field(default=None, description="Spatial bounding envelope [west, south, east, north]")
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def validate_method(cls, v: Any) -> CVAMethod:
+        return normalize_cva_method(v)
+
+    @model_validator(mode="before")
+    @classmethod
+    def preprocess_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "itemIdT1" in data and "item_id_t1" not in data:
+                data["item_id_t1"] = data["itemIdT1"]
+            if "itemIdT2" in data and "item_id_t2" not in data:
+                data["item_id_t2"] = data["itemIdT2"]
+            if "axisXBand" in data and "axis_x_band" not in data:
+                data["axis_x_band"] = data["axisXBand"]
+            if "axisYBand" in data and "axis_y_band" not in data:
+                data["axis_y_band"] = data["axisYBand"]
+            if "aoiName" in data and "aoi_name" not in data:
+                data["aoi_name"] = data["aoiName"]
+        return data
+
+
+class CVAResponse(BaseModel):
+    """Response payload containing multi-temporal change vector analysis results."""
+    request_id: str = Field(..., description="Unique request identifier")
+    method: str = Field(..., description="Applied CVA algorithm")
+    collection: str = Field(..., description="Satellite sensor collection")
+    item_id_t1: str = Field(..., description="Pre-event item ID")
+    item_id_t2: str = Field(..., description="Post-event item ID")
+    bands: List[str] = Field(..., description="Evaluated spectral bands")
+    threshold: float = Field(..., description="Change magnitude threshold tau")
+    mean_magnitude: float = Field(..., ge=0.0, description="Mean change vector magnitude across AOI")
+    max_magnitude: float = Field(..., ge=0.0, description="Peak change vector magnitude across AOI")
+    mean_spectral_angle_deg: float = Field(..., ge=0.0, le=90.0, description="Average SAM spectral angle in degrees")
+    significant_change_area_ha: float = Field(..., ge=0.0, description="Total disturbed area in hectares")
+    sector_distribution: Dict[str, float] = Field(..., description="Percentage of footprint in each 8-sector disturbance class")
+    severity_distribution: Dict[str, float] = Field(..., description="Percentage of footprint in each severity tier")
+    points: List[CVAPointSample] = Field(default_factory=list, description="Spatial point sample trajectories")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for Leaflet CVA layer")
+    status: str = Field(default="success", description="Execution status")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp")
+
+
+class CVATileRequestParams(BaseModel):
+    """Query parameters for dynamic XYZ CVA disturbance tile rendering."""
+    metric: CVATileMetric = Field(default=CVATileMetric.MAGNITUDE, description="Visualization metric")
+    method: CVAMethod = Field(default=CVAMethod.STANDARD_EUCLIDEAN, description="CVA algorithm")
+    threshold: Optional[float] = Field(default=0.15, ge=0.01, le=2.0, description="Magnitude threshold")
+    t1: Optional[str] = Field(default=None, description="Pre-event scene date or item ID")
+    t2: Optional[str] = Field(default=None, description="Post-event scene date or item ID")
+    colormap: Optional[str] = Field(default=None, description="Colormap name")
+    rescale: Optional[str] = Field(default=None, description="Rescale range min,max")
+
+    @field_validator("metric", mode="before")
+    @classmethod
+    def validate_metric(cls, v: Any) -> CVATileMetric:
+        return normalize_cva_tile_metric(v)
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def validate_method(cls, v: Any) -> CVAMethod:
+        return normalize_cva_method(v)
+
+
+class CVACapabilitiesResponse(BaseModel):
+    """Capabilities model describing supported CVA methods, metrics, sectors and benchmark scenes."""
+    methods: Dict[str, Any] = Field(..., description="Supported CVA algorithms and literature citations")
+    metrics: List[str] = Field(default_factory=list, description="Supported dynamic XYZ tile metrics")
+    sectors: Dict[str, Any] = Field(..., description="8-Sector disturbance taxonomy definitions")
+    severity_tiers: Dict[str, Any] = Field(..., description="Disturbance severity tier definitions")
+    benchmark_scenes: Dict[str, Any] = Field(..., description="Curated real-world change benchmark scenes")
+    default_bands: List[str] = Field(default_factory=lambda: ["B02", "B03", "B04", "B08", "B11", "B12"])
+    default_metric: str = Field(default="magnitude")
+    default_colormap: str = Field(default="inferno")
+
+
+def build_cva_tile_url(*args, **kwargs) -> str:
+    """Unified dynamic CVA tile URL builder supporting both legacy 2-scene URLs and Cycle v2.5.53 metric URLs."""
+    # Legacy Signature: build_cva_tile_url("S2A_PRE", "S2B_POST", 14, 2500, 5800, rescale="0.0,0.6", colormap="turbo")
+    if len(args) >= 5 and isinstance(args[0], str) and isinstance(args[1], str) and not any(args[0] == m.value for m in CVATileMetric):
+        pre_id, post_id, z, x, y = args[0], args[1], args[2], args[3], args[4]
+        base_prefix = kwargs.get("base_prefix", "/api/v1")
+        rescale = kwargs.get("rescale", "0.0,0.5")
+        colormap = kwargs.get("colormap", "turbo")
+        return f"{base_prefix}/tiles/change/cva/{pre_id}/{post_id}/{z}/{x}/{y}.png?rescale={rescale}&colormap={colormap}"
+
+    # Cycle v2.5.53 Signature:
+    metric = kwargs.get("metric", args[0] if len(args) > 0 else CVATileMetric.MAGNITUDE)
+    z = kwargs.get("z", args[1] if len(args) > 1 else "{z}")
+    x = kwargs.get("x", args[2] if len(args) > 2 else "{x}")
+    y = kwargs.get("y", args[3] if len(args) > 3 else "{y}")
+    method = kwargs.get("method", args[4] if len(args) > 4 else None)
+    t1 = kwargs.get("t1", None)
+    t2 = kwargs.get("t2", None)
+    threshold = kwargs.get("threshold", None)
+    colormap = kwargs.get("colormap", None)
+    rescale = kwargs.get("rescale", None)
+
+    met_str = metric.value if isinstance(metric, CVATileMetric) else str(metric).lower()
+    url = f"/api/v1/tiles/cva/{met_str}/{z}/{x}/{y}.png"
+    params = []
+    if method:
+        m_str = method.value if isinstance(method, CVAMethod) else str(method).lower()
+        params.append(f"method={urllib.parse.quote(m_str)}")
+    if t1:
+        params.append(f"t1={urllib.parse.quote(str(t1))}")
+    if t2:
+        params.append(f"t2={urllib.parse.quote(str(t2))}")
+    if threshold is not None:
+        params.append(f"threshold={threshold}")
+    if colormap:
+        params.append(f"colormap={urllib.parse.quote(str(colormap))}")
+    if rescale:
+        params.append(f"rescale={urllib.parse.quote(str(rescale))}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+def build_cva_tile_url_template(
+    metric: Union[str, CVATileMetric] = CVATileMetric.MAGNITUDE
+) -> str:
+    """Builds template URL string for dynamic XYZ CVA tiles."""
+    met_str = metric.value if isinstance(metric, CVATileMetric) else str(metric).lower()
+    return f"/api/v1/tiles/cva/{met_str}/{{z}}/{{x}}/{{y}}.png"
+
+
+# ============================================================================
+# CYCLE v2.5.54: DEEP FEATURE EDGE PRESERVING SEGMENTATION & CREST CRACK DETECTION
+# ============================================================================
+
+class EdgeDetectionAlgorithm(str, Enum):
+    """Algorithms for deep feature edge detection, line tracking, and defect segmentation."""
+    SOBEL = "sobel"                                       # 2D spatial gradient convolution kernel
+    CANNY = "canny"                                       # Multi-stage gradient hysteresis thresholding with non-maximum suppression
+    BILATERAL_MORPHOLOGICAL = "bilateral_morphological"   # Edge-preserving range/domain filter with top-hat morphological extraction
+    DEEP_FEATURE_UNET = "deep_feature_unet"               # Deep convolutional U-Net feature probability segmentation
+    HOUGH_CREST_LINE = "hough_crest_line"                 # Probabilistic Hough transform line detector for linear crest tension cracks
+    LAPLACIAN_OF_GAUSSIAN = "laplacian_of_gaussian"       # Second-derivative zero-crossing boundary detector
+
+
+class DefectType(str, Enum):
+    """Categorical taxonomy of tailings dam crest structural defects and geotechnical anomalies."""
+    CREST_TENSION_CRACK = "crest_tension_crack"           # Longitudinal fracture along embankment crest parallel to dam axis
+    TRANSVERSE_SHEAR_CRACK = "transverse_shear_crack"     # Differential settlement fracture perpendicular to dam axis
+    SEEPAGE_SATURATION_ZONE = "seepage_saturation_zone"   # Saturated phreatic anomaly / wet spot on crest or downstream face
+    TOE_BULGE_HEAVE = "toe_bulge_heave"                   # Slope toe heave / rotational deformation bulge
+    CREST_CREEP_SETTLEMENT = "crest_creep_settlement"     # Localized vertical crest depression or slump
+
+
+class DefectSeverityTier(str, Enum):
+    """Severity classification based on ICOLD Bulletin 139 & USBR dam safety defect thresholds."""
+    NEGLIGIBLE = "negligible"                             # Width < 10 mm (hairline shrinkage cracks)
+    LOW = "low"                                           # Width 10 - 25 mm (minor non-progressive tension cracks)
+    MODERATE = "moderate"                                 # Width 25 - 50 mm (moderate progressive shear deformation)
+    HIGH = "high"                                         # Width 50 - 100 mm (critical crest slumping / active piping head)
+    CRITICAL = "critical"                                 # Width > 100 mm (acute crest breach warning / emergency alert)
+
+
+class DefectTileMetric(str, Enum):
+    """Dynamic XYZ raster tile layers for crest defect and edge segmentation visualization."""
+    EDGE_PROBABILITY = "edge_probability"                 # Normalized continuous edge probability map [0.0, 1.0]
+    CRACK_HEATMAP = "crack_heatmap"                       # Spatial density and severity heatmap of detected fractures
+    SEEPAGE_SEVERITY = "seepage_severity"                 # Moisture saturation index anomaly contour overlay
+    COMBINED_RISK = "combined_risk"                       # Multi-hazard composite geotechnical risk index
+    CONTOUR_VECTOR_MASK = "contour_vector_mask"           # Binary rasterization mask of vectorized defect polygons
+
+
+def normalize_edge_detection_algorithm(v: Any) -> EdgeDetectionAlgorithm:
+    """Normalizes string or enum representation to canonical EdgeDetectionAlgorithm."""
+    if isinstance(v, EdgeDetectionAlgorithm):
+        return v
+    s = str(v).lower().strip()
+    if "bilateral" in s or "morph" in s or "tophat" in s or "top_hat" in s:
+        return EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL
+    elif "unet" in s or "u_net" in s or "deep" in s or "cnn" in s:
+        return EdgeDetectionAlgorithm.DEEP_FEATURE_UNET
+    elif "hough" in s or "line" in s or "crest" in s:
+        return EdgeDetectionAlgorithm.HOUGH_CREST_LINE
+    elif "canny" in s:
+        return EdgeDetectionAlgorithm.CANNY
+    elif "sobel" in s:
+        return EdgeDetectionAlgorithm.SOBEL
+    elif "laplacian" in s or "log" in s:
+        return EdgeDetectionAlgorithm.LAPLACIAN_OF_GAUSSIAN
+    return EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL
+
+
+def normalize_defect_type(v: Any) -> DefectType:
+    """Normalizes string or enum representation to canonical DefectType."""
+    if isinstance(v, DefectType):
+        return v
+    s = str(v).lower().strip()
+    if "tension" in s or "longitudinal" in s:
+        return DefectType.CREST_TENSION_CRACK
+    elif "shear" in s or "transverse" in s:
+        return DefectType.TRANSVERSE_SHEAR_CRACK
+    elif "seep" in s or "phreatic" in s or "saturation" in s or "wet" in s:
+        return DefectType.SEEPAGE_SATURATION_ZONE
+    elif "toe" in s or "bulge" in s or "heave" in s:
+        return DefectType.TOE_BULGE_HEAVE
+    elif "creep" in s or "settle" in s or "depression" in s or "slump" in s:
+        return DefectType.CREST_CREEP_SETTLEMENT
+    return DefectType.CREST_TENSION_CRACK
+
+
+def normalize_defect_severity_tier(v: Any) -> DefectSeverityTier:
+    """Normalizes string or enum representation to canonical DefectSeverityTier."""
+    if isinstance(v, DefectSeverityTier):
+        return v
+    s = str(v).lower().strip()
+    if "crit" in s or "emergency" in s:
+        return DefectSeverityTier.CRITICAL
+    elif "high" in s or "severe" in s:
+        return DefectSeverityTier.HIGH
+    elif "mod" in s or "medium" in s:
+        return DefectSeverityTier.MODERATE
+    elif "low" in s or "minor" in s:
+        return DefectSeverityTier.LOW
+    elif "negligible" in s or "hairline" in s or "none" in s or "zero" in s:
+        return DefectSeverityTier.NEGLIGIBLE
+    return DefectSeverityTier.LOW
+
+
+def normalize_defect_tile_metric(v: Any) -> DefectTileMetric:
+    """Normalizes string or enum representation to canonical DefectTileMetric."""
+    if isinstance(v, DefectTileMetric):
+        return v
+    s = str(v).lower().strip()
+    if "prob" in s or "edge" in s:
+        return DefectTileMetric.EDGE_PROBABILITY
+    elif "crack" in s or "heat" in s:
+        return DefectTileMetric.CRACK_HEATMAP
+    elif "seep" in s or "moist" in s:
+        return DefectTileMetric.SEEPAGE_SEVERITY
+    elif "comb" in s or "risk" in s or "hazard" in s:
+        return DefectTileMetric.COMBINED_RISK
+    elif "contour" in s or "vector" in s or "mask" in s:
+        return DefectTileMetric.CONTOUR_VECTOR_MASK
+    return DefectTileMetric.CRACK_HEATMAP
+
+
+DEFECT_SEVERITY_THRESHOLDS: Dict[DefectSeverityTier, Dict[str, Any]] = {
+    DefectSeverityTier.NEGLIGIBLE: {
+        "tier": "negligible",
+        "label": "Negligible / Hairline",
+        "min_width_mm": 0.0,
+        "max_width_mm": 10.0,
+        "color": "#10B981",
+        "action": "Routine periodic visual monitoring; no structural intervention required."
+    },
+    DefectSeverityTier.LOW: {
+        "tier": "low",
+        "label": "Low / Superficial Tension",
+        "min_width_mm": 10.0,
+        "max_width_mm": 25.0,
+        "color": "#3B82F6",
+        "action": "Bi-weekly UAV photogrammetry survey; verify crest crack pins."
+    },
+    DefectSeverityTier.MODERATE: {
+        "tier": "moderate",
+        "label": "Moderate / Progressive Shear",
+        "min_width_mm": 25.0,
+        "max_width_mm": 50.0,
+        "color": "#F59E0B",
+        "action": "Weekly inspection, correlation with piezometric flownet lines and InSAR creep."
+    },
+    DefectSeverityTier.HIGH: {
+        "tier": "high",
+        "label": "High / Active Slumping",
+        "min_width_mm": 50.0,
+        "max_width_mm": 100.0,
+        "color": "#EF4444",
+        "action": "Daily geotechnical engineering review, recalculate slope stability FoS, prepare containment."
+    },
+    DefectSeverityTier.CRITICAL: {
+        "tier": "critical",
+        "label": "Critical / Imminent Crest Breach",
+        "min_width_mm": 100.0,
+        "max_width_mm": 9999.0,
+        "color": "#7F1D1D",
+        "action": "Activate Emergency Action Plan (EAP), initiate controlled pool drawdown, immediate downstream alert."
+    }
+}
+
+
+DEFECT_BENCHMARK_SITES: Dict[str, Dict[str, Any]] = {
+    "MORENCI_TAILINGS_CREST": {
+        "site_id": "MORENCI_TAILINGS_CREST",
+        "name": "Morenci Tailings Dam Main Embankment Crest, AZ",
+        "dam_type": "Upstream Centerline Tailings Dam",
+        "hazard_rating": "Extreme (ICOLD / MSHA)",
+        "lat": 33.0560,
+        "lng": -109.3415,
+        "crest_elevation_m": 1420.5,
+        "crest_length_m": 1850.0,
+        "default_sensor": "UAV Drone High-Resolution RGB (5cm GSD)",
+        "primary_defect_hazard": "Longitudinal crest tension cracks and phreatic surface seepage breakout",
+        "recommended_algorithm": "bilateral_morphological",
+        "sample_crack_count": 8,
+        "max_recorded_crack_width_mm": 62.5
+    },
+    "BRUMADINHO_DAM_1_CREST": {
+        "site_id": "BRUMADINHO_DAM_1_CREST",
+        "name": "Córrego do Feijão Dam I Crest Benchmark, Brazil",
+        "dam_type": "Upstream Raise Tailings Embankment",
+        "hazard_rating": "Critical Catastrophic Failure Case",
+        "lat": -20.1197,
+        "lng": -44.1198,
+        "crest_elevation_m": 860.0,
+        "crest_length_m": 720.0,
+        "default_sensor": "Pre-Failure Drone & High-Res Satellite Composite",
+        "primary_defect_hazard": "Internal creep deformation, shear cracking, and toe liquefaction",
+        "recommended_algorithm": "deep_feature_unet",
+        "sample_crack_count": 14,
+        "max_recorded_crack_width_mm": 115.0
+    },
+    "MOUNT_POLLEY_PERIMETER": {
+        "site_id": "MOUNT_POLLEY_PERIMETER",
+        "name": "Mount Polley Perimeter Embankment, BC, Canada",
+        "dam_type": "Zoned Earthfill / Rockfill Tailings Dam",
+        "hazard_rating": "Historical Glacial Till Shearing",
+        "lat": 52.5492,
+        "lng": -121.6033,
+        "crest_elevation_m": 966.0,
+        "crest_length_m": 1200.0,
+        "default_sensor": "Drone Photogrammetry & InSAR Fusion",
+        "primary_defect_hazard": "Foundation glaciolacustrine shear sliding and crest settlement fissuring",
+        "recommended_algorithm": "hough_crest_line",
+        "sample_crack_count": 6,
+        "max_recorded_crack_width_mm": 48.0
+    },
+    "BINGHAM_CANYON_EAST_DUMP": {
+        "site_id": "BINGHAM_CANYON_EAST_DUMP",
+        "name": "Bingham Canyon East Waste Rock Dump Crest, UT",
+        "dam_type": "Overburden Waste Rock Embankment",
+        "hazard_rating": "High Consequence",
+        "lat": 40.5283,
+        "lng": -112.1481,
+        "crest_elevation_m": 1980.0,
+        "crest_length_m": 2100.0,
+        "default_sensor": "UAV Drone 3cm GSD Orthomosaic",
+        "primary_defect_hazard": "Progressive crest tension fissures and crest face ravelling",
+        "recommended_algorithm": "canny",
+        "sample_crack_count": 11,
+        "max_recorded_crack_width_mm": 85.0
+    }
+}
+
+
+def classify_crack_severity(mean_width_mm: float, length_m: float = 0.0) -> DefectSeverityTier:
+    """
+    Classifies tension/shear crack severity in accordance with ICOLD Bulletin 139 / USBR guidelines.
+    Escalates severity by 1 tier if crack length exceeds 50 meters (longitudinal embankment compromise).
+    """
+    w = max(0.0, float(mean_width_mm))
+    if w < 10.0:
+        base = DefectSeverityTier.NEGLIGIBLE
+    elif w < 25.0:
+        base = DefectSeverityTier.LOW
+    elif w < 50.0:
+        base = DefectSeverityTier.MODERATE
+    elif w < 100.0:
+        base = DefectSeverityTier.HIGH
+    else:
+        base = DefectSeverityTier.CRITICAL
+        
+    if length_m > 50.0:
+        if base == DefectSeverityTier.NEGLIGIBLE:
+            return DefectSeverityTier.LOW
+        elif base == DefectSeverityTier.LOW:
+            return DefectSeverityTier.MODERATE
+        elif base == DefectSeverityTier.MODERATE:
+            return DefectSeverityTier.HIGH
+        elif base in (DefectSeverityTier.HIGH, DefectSeverityTier.CRITICAL):
+            return DefectSeverityTier.CRITICAL
+            
+    return base
+
+
+def calculate_crack_orientation(coords: List[List[float]]) -> float:
+    """
+    Computes forward geographic azimuth bearing [0.0, 360.0) in degrees from start to end vertex of LineString.
+    coords is [[lng1, lat1], ..., [lngN, latN]]
+    """
+    if not coords or len(coords) < 2:
+        return 0.0
+    lon1, lat1 = coords[0][0], coords[0][1]
+    lon2, lat2 = coords[-1][0], coords[-1][1]
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_lambda = math.radians(lon2 - lon1)
+    
+    y = math.sin(delta_lambda) * math.cos(phi2)
+    x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(delta_lambda)
+    bearing_rad = math.atan2(y, x)
+    bearing_deg = (math.degrees(bearing_rad) + 360.0) % 360.0
+    return round(bearing_deg, 2)
+
+
+def verify_polygon_closure(coords: List[List[float]], tol: float = 1e-6) -> bool:
+    """
+    Verifies that a polygon ring is closed (first vertex matches last vertex within geographic tolerance).
+    """
+    if not coords or len(coords) < 4:
+        return False
+    first = coords[0]
+    last = coords[-1]
+    return abs(first[0] - last[0]) <= tol and abs(first[1] - last[1]) <= tol
+
+
+def calculate_polygon_enclosed_area(coords: List[List[float]]) -> float:
+    """
+    Computes enclosed surface area in square meters using Shoelace formula with metric degree scaling.
+    Guarantees non-negative area invariant (Area >= 0.0 m^2).
+    """
+    if not coords or len(coords) < 3:
+        return 0.0
+    
+    mean_lat = sum(c[1] for c in coords) / len(coords)
+    lat_rad = math.radians(mean_lat)
+    m_per_deg_lat = 111320.0
+    m_per_deg_lon = 111320.0 * math.cos(lat_rad)
+    
+    xy = [[c[0] * m_per_deg_lon, c[1] * m_per_deg_lat] for c in coords]
+    
+    n = len(xy)
+    area = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        area += xy[i][0] * xy[j][1]
+        area -= xy[j][0] * xy[i][1]
+    return round(max(0.0, abs(area) / 2.0), 2)
+
+
+def build_defect_tile_url(
+    metric: Union[str, DefectTileMetric] = DefectTileMetric.CRACK_HEATMAP,
+    z: Union[int, str] = "{z}",
+    x: Union[int, str] = "{x}",
+    y: Union[int, str] = "{y}",
+    algorithm: Optional[Union[str, EdgeDetectionAlgorithm]] = None,
+    min_confidence: Optional[float] = None,
+    colormap: Optional[str] = None,
+    rescale: Optional[str] = None,
+) -> str:
+    """Builds dynamic XYZ tile streaming URL for crest crack and defect segmentation tiles."""
+    met_str = metric.value if isinstance(metric, DefectTileMetric) else str(metric).lower()
+    url = f"/api/v1/tiles/defects/{met_str}/{z}/{x}/{y}.png"
+    params = []
+    if algorithm:
+        alg_str = algorithm.value if isinstance(algorithm, EdgeDetectionAlgorithm) else str(algorithm).lower()
+        params.append(f"algorithm={urllib.parse.quote(alg_str)}")
+    if min_confidence is not None:
+        params.append(f"min_confidence={min_confidence}")
+    if colormap:
+        params.append(f"colormap={urllib.parse.quote(str(colormap))}")
+    if rescale:
+        params.append(f"rescale={urllib.parse.quote(str(rescale))}")
+    if params:
+        url += "?" + "&".join(params)
+    return url
+
+
+def build_defect_tile_url_template(
+    metric: Union[str, DefectTileMetric] = DefectTileMetric.CRACK_HEATMAP
+) -> str:
+    """Builds template URL string for dynamic XYZ crest defect tiles."""
+    met_str = metric.value if isinstance(metric, DefectTileMetric) else str(metric).lower()
+    return f"/api/v1/tiles/defects/{met_str}/{{z}}/{{x}}/{{y}}.png"
+
+
+class CrestCrackFeature(BaseModel):
+    """Individual georeferenced crest crack or tension fracture geometry."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    crack_id: str = Field(..., description="Unique crack identifier (e.g. CRK-001)")
+    defect_type: DefectType = Field(default=DefectType.CREST_TENSION_CRACK, description="Defect classification")
+    severity: DefectSeverityTier = Field(..., description="Geotechnical severity tier")
+    length_m: float = Field(..., gt=0.0, description="Crack centerline length in meters (strictly positive)")
+    mean_width_mm: float = Field(..., gt=0.0, description="Mean aperture crack width in millimeters (strictly positive)")
+    max_width_mm: float = Field(..., description="Peak aperture crack width in millimeters")
+    orientation_deg: float = Field(..., ge=0.0, lt=360.0, description="Geographic azimuth orientation [0.0, 360.0)")
+    depth_estimated_cm: Optional[float] = Field(default=None, ge=0.0, description="Estimated crack depth in centimeters")
+    propagation_rate_mm_day: Optional[float] = Field(default=0.0, description="Observed or inverted expansion rate in mm/day")
+    confidence: float = Field(default=0.85, ge=0.0, le=1.0, description="Detection confidence probability [0.0, 1.0]")
+    coordinates: List[List[float]] = Field(..., min_length=2, description="LineString coordinates [[lng, lat], ...] in WGS84")
+    elevation_m: Optional[float] = Field(default=None, description="Average crest elevation along crack in meters")
+
+    @field_validator("defect_type", mode="before")
+    @classmethod
+    def validate_defect_type(cls, v: Any) -> DefectType:
+        return normalize_defect_type(v)
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def validate_severity(cls, v: Any) -> DefectSeverityTier:
+        return normalize_defect_severity_tier(v)
+
+    @model_validator(mode="after")
+    def validate_crack_invariants(self) -> "CrestCrackFeature":
+        if self.max_width_mm < self.mean_width_mm:
+            self.max_width_mm = self.mean_width_mm
+        return self
+
+
+class SeepageZoneFeature(BaseModel):
+    """Georeferenced saturated seepage zone or phreatic breakout anomaly polygon."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    seepage_id: str = Field(..., description="Unique seepage zone identifier (e.g. SEP-001)")
+    defect_type: DefectType = Field(default=DefectType.SEEPAGE_SATURATION_ZONE, description="Defect classification")
+    severity: DefectSeverityTier = Field(..., description="Moisture severity rating")
+    area_m2: float = Field(..., ge=0.0, description="Enclosed surface area in square meters (non-negative)")
+    perimeter_m: float = Field(..., gt=0.0, description="Contour perimeter length in meters")
+    mean_moisture_index: float = Field(default=0.45, ge=-1.0, le=1.0, description="Normalized moisture index (e.g. NDWI/MNDWI anomaly)")
+    phreatic_outflow_est_lps: Optional[float] = Field(default=0.0, ge=0.0, description="Estimated phreatic daylighting outflow (L/s)")
+    confidence: float = Field(default=0.80, ge=0.0, le=1.0, description="Detection confidence probability [0.0, 1.0]")
+    polygon_coordinates: List[List[List[float]]] = Field(..., min_length=1, description="GeoJSON Polygon rings [[[lng, lat], ...]]]")
+
+    @field_validator("defect_type", mode="before")
+    @classmethod
+    def validate_defect_type(cls, v: Any) -> DefectType:
+        return normalize_defect_type(v)
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def validate_severity(cls, v: Any) -> DefectSeverityTier:
+        return normalize_defect_severity_tier(v)
+
+    @model_validator(mode="after")
+    def validate_polygon_closure_invariant(self) -> "SeepageZoneFeature":
+        if self.polygon_coordinates and len(self.polygon_coordinates) > 0:
+            exterior = self.polygon_coordinates[0]
+            if len(exterior) >= 3:
+                first = exterior[0]
+                last = exterior[-1]
+                if abs(first[0] - last[0]) > 1e-6 or abs(first[1] - last[1]) > 1e-6:
+                    exterior.append(list(first))
+        return self
+
+
+class CrestDeformationSummary(BaseModel):
+    """Consolidated quantitative engineering summary of dam crest defects."""
+    total_cracks_detected: int = Field(..., ge=0, description="Total count of linear cracks identified")
+    total_seepage_zones_detected: int = Field(..., ge=0, description="Total count of seepage breakout zones identified")
+    cumulative_crack_length_m: float = Field(..., ge=0.0, description="Sum of crack lengths across crest")
+    max_crack_width_mm: float = Field(..., ge=0.0, description="Worst-case crack aperture across crest")
+    total_seepage_area_m2: float = Field(..., ge=0.0, description="Total saturated seepage area in square meters")
+    overall_crest_condition: str = Field(..., description="Status assessment (STABLE, MONITORING_REQUIRED, ELEVATED_RISK, CRITICAL_ALERT)")
+    highest_severity: DefectSeverityTier = Field(..., description="Peak severity tier observed")
+    dam_crest_id: Optional[str] = Field(default="MORENCI-MAIN-CREST", description="Monitored embankment ID")
+    evaluation_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp")
+
+    @field_validator("highest_severity", mode="before")
+    @classmethod
+    def validate_highest_severity(cls, v: Any) -> DefectSeverityTier:
+        return normalize_defect_severity_tier(v)
+
+
+class CrestCrackDetectionRequest(BaseModel):
+    """Request payload for automated drone/satellite crest crack & seepage detection."""
+    collection: Optional[str] = Field(default="drone-orthomosaic", description="Raster data collection")
+    item_id: Optional[str] = Field(default=None, description="Raster scene identifier")
+    dam_name: Optional[str] = Field(default="Morenci Tailings Dam Crest", description="Name of tailings facility")
+    algorithm: EdgeDetectionAlgorithm = Field(default=EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL, description="Edge detection method")
+    min_confidence: float = Field(default=0.50, ge=0.0, le=1.0, description="Minimum confidence threshold")
+    min_crack_length_m: float = Field(default=0.50, gt=0.0, description="Minimum crack length to report (m)")
+    min_crack_width_mm: float = Field(default=5.0, gt=0.0, description="Minimum aperture crack width (mm)")
+    spatial_resolution_m: Optional[float] = Field(default=0.05, gt=0.0, description="Ground sampling distance (GSD) in meters")
+    include_seepage: bool = Field(default=True, description="Whether to include seepage saturation zone extraction")
+    aoi_polygon: Optional[List[List[float]]] = Field(default=None, description="Optional bounding polygon coordinates")
+
+    @field_validator("algorithm", mode="before")
+    @classmethod
+    def validate_algorithm(cls, v: Any) -> EdgeDetectionAlgorithm:
+        return normalize_edge_detection_algorithm(v)
+
+
+class CrestCrackDetectionResponse(BaseModel):
+    """Response payload containing detected crest cracks, seepage zones, and GeoJSON vectors."""
+    request_id: str = Field(..., description="Unique analysis request ID")
+    dam_name: str = Field(..., description="Target embankment name")
+    algorithm: EdgeDetectionAlgorithm = Field(..., description="Applied segmentation algorithm")
+    summary: CrestDeformationSummary = Field(..., description="Consolidated engineering summary")
+    cracks: List[CrestCrackFeature] = Field(default_factory=list, description="Extracted crest crack LineString features")
+    seepage_zones: List[SeepageZoneFeature] = Field(default_factory=list, description="Extracted seepage saturation Polygon features")
+    geojson: Dict[str, Any] = Field(default_factory=dict, description="Standard GeoJSON FeatureCollection of all detected defects")
+    tile_url_template: str = Field(..., description="Dynamic XYZ tile URL template for Leaflet defect raster streaming")
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="Timestamp")
+    status: str = Field(default="success", description="Execution status")
+
+    @field_validator("algorithm", mode="before")
+    @classmethod
+    def validate_algorithm(cls, v: Any) -> EdgeDetectionAlgorithm:
+        return normalize_edge_detection_algorithm(v)
+
+
+class DefectTileRequestParams(BaseModel):
+    """Query parameters for dynamic XYZ crest defect heatmap and vector mask tiles."""
+    metric: DefectTileMetric = Field(default=DefectTileMetric.CRACK_HEATMAP, description="Defect tile visualization metric")
+    algorithm: EdgeDetectionAlgorithm = Field(default=EdgeDetectionAlgorithm.BILATERAL_MORPHOLOGICAL, description="Edge filter algorithm")
+    min_confidence: Optional[float] = Field(default=0.50, ge=0.0, le=1.0, description="Confidence threshold filter")
+    min_severity: Optional[DefectSeverityTier] = Field(default=None, description="Minimum severity filter")
+    colormap: Optional[str] = Field(default="magma", description="Colormap name")
+    rescale: Optional[str] = Field(default="0.0,1.0", description="Min,max rescale range")
+    z: Optional[int] = Field(default=None, ge=0, le=24, description="Zoom level")
+    x: Optional[int] = Field(default=None, ge=0, description="X tile index")
+    y: Optional[int] = Field(default=None, ge=0, description="Y tile index")
+
+    @field_validator("metric", mode="before")
+    @classmethod
+    def validate_metric(cls, v: Any) -> DefectTileMetric:
+        return normalize_defect_tile_metric(v)
+
+    @field_validator("algorithm", mode="before")
+    @classmethod
+    def validate_algorithm(cls, v: Any) -> EdgeDetectionAlgorithm:
+        return normalize_edge_detection_algorithm(v)
+
+    @field_validator("min_severity", mode="before")
+    @classmethod
+    def validate_severity(cls, v: Any) -> Optional[DefectSeverityTier]:
+        if v is None:
+            return None
+        return normalize_defect_severity_tier(v)
+
+
+class DefectCapabilitiesResponse(BaseModel):
+    """Capabilities model describing supported edge detection filters, metrics, and benchmark dam sites."""
+    algorithms: Dict[str, Any] = Field(..., description="Supported edge detection algorithms and descriptions")
+    metrics: List[str] = Field(default_factory=list, description="Supported tile metrics")
+    severity_tiers: Dict[str, Any] = Field(..., description="ICOLD severity tier definitions and actions")
+    defect_types: Dict[str, Any] = Field(..., description="Structural defect categories")
+    benchmark_sites: Dict[str, Any] = Field(..., description="Curated tailings dam crest benchmark sites")
+    default_algorithm: str = Field(default="bilateral_morphological")
+    default_metric: str = Field(default="crack_heatmap")
+    default_colormap: str = Field(default="magma")
