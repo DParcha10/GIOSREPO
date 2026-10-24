@@ -748,7 +748,7 @@ class PreprocessingService:
             denom = np.maximum(ci_floor, ci_arr)
             ratio = np.maximum(0.0, cos_sz / denom)
             factor = np.power(ratio, k_val)
-        elif m_lower in ("scs_c", "scs_plus_c"):
+        elif m_lower in ("scs_c", "scs_plus_c", "sun_canopy_sensor", "sun-canopy-sensor"):
             if c_val <= 1e-7:
                 denom = np.maximum(ci_floor, ci_arr)
                 factor = (cos_sz * cos_slope) / denom
