@@ -6972,29 +6972,29 @@ export default function MapExplorer() {
             {showFlownetLayer && internalErosionSimulation?.flownet_seepage?.exit_stations?.map((st) => {
               const hCfg = INTERNAL_EROSION_HAZARD_CONFIGS[st.hazard_tier] || INTERNAL_EROSION_HAZARD_CONFIGS.moderate_risk;
               const damCoords = internalErosionSimulation.coordinates || [-111.5383, 43.9083];
-              const latOffset = (st.x_offset_m || 0) * 0.000009;
+              const latOffset = (st.x_m || 0) * 0.000009;
               const markerPos = [damCoords[1] + latOffset, damCoords[0]];
               return (
                 <CircleMarker
                   key={`flownet-st-${st.station_id}`}
                   center={markerPos}
-                  radius={st.sand_boiling_risk ? 7 : 5}
+                  radius={st.boil_risk_detected ? 7 : 5}
                   pathOptions={{
                     fillColor: hCfg.color,
                     fillOpacity: 0.9,
-                    color: st.sand_boiling_risk ? '#ff0000' : '#ffffff',
-                    weight: st.sand_boiling_risk ? 2.5 : 1.5
+                    color: st.boil_risk_detected ? '#ff0000' : '#ffffff',
+                    weight: st.boil_risk_detected ? 2.5 : 1.5
                   }}
                 >
                   <Popup className="custom-popup">
                     <div className="p-1 space-y-1 font-mono text-xs">
                       <div className="font-bold text-amber-400">Toe Exit Station: {st.station_id}</div>
-                      <div>Offset: <strong>+{st.x_offset_m.toFixed(1)} m</strong></div>
-                      <div>Total Head: <strong>{st.total_head_m.toFixed(2)} m</strong></div>
+                      <div>From upstream toe: <strong>{st.x_m.toFixed(1)} m</strong></div>
+                      <div>Critical Gradient: <strong>{st.critical_gradient.toFixed(3)}</strong></div>
                       <div>Exit Gradient: <strong>{st.exit_gradient.toFixed(3)}</strong></div>
                       <div>Factor of Safety: <strong>{st.factor_of_safety.toFixed(2)}</strong></div>
                       <div>Hazard: <span className="font-bold uppercase" style={{ color: hCfg.color }}>{hCfg.label}</span></div>
-                      {st.sand_boiling_risk && (
+                      {st.boil_risk_detected && (
                         <div className="text-red-400 font-bold animate-pulse">⚠️ HEAVE / SAND BOILING DETECTED</div>
                       )}
                     </div>

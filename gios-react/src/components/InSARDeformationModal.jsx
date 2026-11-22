@@ -281,8 +281,22 @@ export default function InSARDeformationModal({
 
   // SBAS Small Baseline Graph Connectivity Network
   const baselineGraph = useMemo(() => {
-    if (inversionResult && inversionResult.baseline_graph) {
-      return inversionResult.baseline_graph;
+    const graph = inversionResult?.baseline_graph;
+    // The offline fallback stores a graph that is already in this component's shape.
+    if (graph?.connectivity) return graph;
+    if (graph) {
+      // The API reports network totals and pair separations, but no per-date
+      // perpendicular baselines, so there are no node positions to draw.
+      return {
+        numAcquisitions: graph.num_acquisitions,
+        numInterferograms: graph.num_interferograms,
+        acquisitions: [],
+        interferogramPairs: [],
+        connectivity: {
+          networkStatus: graph.network_status,
+          redundancyRatio: graph.redundancy_ratio
+        }
+      };
     }
 
     const numAcq = 12;
@@ -1060,6 +1074,12 @@ export default function InSARDeformationModal({
                     <line x1="40" y1="140" x2="560" y2="140" stroke="#374151" strokeWidth="1" strokeDasharray="3 3" />
                     <text x="565" y="143" fill="#6b7280" fontSize="9">Time (days)</text>
                     <text x="45" y="25" fill="#6b7280" fontSize="9">B_perp (m)</text>
+
+                    {baselineGraph.acquisitions.length === 0 && (
+                      <text x="300" y="120" textAnchor="middle" fill="#9ca3af" fontSize="11">
+                        Diagram unavailable: the API does not report a baseline position for each date
+                      </text>
+                    )}
 
                     {/* Edge Lines connecting interferometric pairs */}
                     {baselineGraph.interferogramPairs.map(([u, v], idx) => {
