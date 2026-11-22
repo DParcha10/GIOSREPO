@@ -82,7 +82,7 @@ export const useJarvisStore = create((set, get) => ({
   // Initialize Server-Sent Events listener for Proactive Alerts
   initSSE: () => {
     if (get().sseConnected) return; // already connected
-    const sse = new EventSource(getAlertStreamUrl());
+    const sse = new EventSource(getAlertStreamUrl(), { withCredentials: true });
     
     sse.onmessage = (event) => {
       try {

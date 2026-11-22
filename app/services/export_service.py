@@ -24,6 +24,7 @@ from shapely.geometry import shape, box, mapping
 import geopandas as gpd
 
 from app.config import settings
+from app.security import safe_join
 from app.models.schemas import (
     ExportFormat,
     ExportJobStatus,
@@ -185,7 +186,7 @@ class ExportService:
         if not job or job.status != ExportJobStatus.COMPLETED or not job.artifact:
             return None
 
-        filepath = os.path.join(EXPORT_DIR, job.artifact.filename)
+        filepath = safe_join(EXPORT_DIR, job.artifact.filename)
         if os.path.exists(filepath):
             return filepath, job.artifact.filename, job.artifact.mime_type
         return None
@@ -353,7 +354,7 @@ class ExportService:
             # 5. Format-Specific Generation
             fmt = normalize_export_format(req.format)
             filename = format_export_job_filename(req.collection, req.layer_type, fmt, item_id=req.item_id)
-            filepath = os.path.join(EXPORT_DIR, filename)
+            filepath = safe_join(EXPORT_DIR, filename)
 
             out_width = nx
             out_height = ny

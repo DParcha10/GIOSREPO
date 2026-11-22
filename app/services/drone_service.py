@@ -13,6 +13,7 @@ from rasterio.windows import from_bounds
 import pyproj
 from shapely.geometry import box
 from app.config import settings
+from app.security import resolve_geotiff, validate_ortho_id
 from datetime import datetime, timezone
 from app.models.schemas import (
     BoundingBox,
@@ -53,6 +54,8 @@ from app.models.schemas import (
 logger = logging.getLogger(__name__)
 
 ORTHOS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "drone_orthos")
+UPLOADS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "uploads")
+ALLOWED_RASTER_DIRS = (ORTHOS_DIR, UPLOADS_DIR)
 MISSIONS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "drone_missions.json")
 ORTHOS_META_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "drone_orthos_meta.json")
 ODM_TASKS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "drone_odm_tasks.json")
@@ -229,14 +232,15 @@ class DroneService:
         ortho_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Validates georeferencing, computes metric GSD, builds COG pyramids, and registers orthomosaic."""
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Orthomosaic file not found: {file_path}")
+        file_path = resolve_geotiff(file_path, ALLOWED_RASTER_DIRS)
+        if ortho_id:
+            validate_ortho_id(ortho_id)
 
         import uuid
         oid = ortho_id or f"DRN-{str(uuid.uuid4())[:8].upper()}"
         cog_path = os.path.join(ORTHOS_DIR, f"{oid}_cog.tif")
 
-        with rasterio.open(file_path) as src:
+        with rasterio.open(file_path, driver="GTiff") as src:
             bounds = src.bounds
             crs_str = str(src.crs) if src.crs else "EPSG:4326"
             metric_gsd_cm = self.calculate_metric_gsd(src)
@@ -329,7 +333,9 @@ class DroneService:
 
         if meta and os.path.exists(meta.get("file_path", "")):
             try:
-                with rasterio.open(meta["file_path"]) as src:
+                # Re-check: records saved by older versions may point anywhere.
+                raster_path = resolve_geotiff(meta["file_path"], ALLOWED_RASTER_DIRS)
+                with rasterio.open(raster_path, driver="GTiff") as src:
                     # Check intersection with raster bounds
                     rb = src.bounds
                     raster_box = box(rb.left, rb.bottom, rb.right, rb.top)

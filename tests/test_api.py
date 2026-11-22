@@ -2,20 +2,37 @@
 Tests all core APIs: Health, Auth, Events, Analysis, Time-Series, Reports, Spatial, IoT.
 Also tests the JARVIS AI Agent: identity, memory, map marking, tab routing, web search, data analysis.
 """
+import secrets
 import unittest
 import warnings
 warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed database.*")
 from fastapi.testclient import TestClient
 from main import app
+from app.database import SessionLocal
+from app.models.user import User
+from app.api.routes.auth import get_password_hash
 
 class TestGIOSApi(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
+        # A throwaway account, so running the tests never resets a developer's admin password.
+        cls.username = f"test-{secrets.token_hex(8)}"
+        cls.password = secrets.token_urlsafe(24)
+        db = SessionLocal()
+        db.add(User(username=cls.username, hashed_password=get_password_hash(cls.password), role="admin"))
+        db.commit()
+        db.close()
+        login = cls.client.post("/api/v1/auth/token", data={"username": cls.username, "password": cls.password})
+        cls.client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
 
     @classmethod
     def tearDownClass(cls):
         cls.client.close()
+        db = SessionLocal()
+        db.query(User).filter(User.username == cls.username).delete()
+        db.commit()
+        db.close()
         from app.database import engine
         engine.dispose()
         from app.utils.cache import cache_manager
@@ -29,10 +46,10 @@ class TestGIOSApi(unittest.TestCase):
         self.assertIn("platform", data)
 
     def test_auth_token_and_me(self):
-        # 1. Login with default admin credentials
+        # 1. Login with the throwaway test account
         login_res = self.client.post(
             "/api/v1/auth/token",
-            data={"username": "admin", "password": "admin123"},
+            data={"username": self.username, "password": self.password},
             headers={"Content-Type": "application/x-www-form-urlencoded"}
         )
         self.assertEqual(login_res.status_code, 200)
@@ -47,7 +64,7 @@ class TestGIOSApi(unittest.TestCase):
         )
         self.assertEqual(me_res.status_code, 200)
         user_info = me_res.json()
-        self.assertEqual(user_info["username"], "admin")
+        self.assertEqual(user_info["username"], self.username)
         self.assertEqual(user_info["role"], "admin")
 
     def test_hazard_events_list_and_get(self):

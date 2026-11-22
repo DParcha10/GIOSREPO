@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import giosApi, { loginUser } from '../api/giosApi';
+import giosApi, { loginUser, logoutUser } from '../api/giosApi';
 
 const useAuthStore = create((set) => ({
   token: localStorage.getItem('gios_token') || null,
@@ -29,13 +29,22 @@ const useAuthStore = create((set) => ({
       const response = await giosApi.post('/api/v1/auth/register', { username: username.trim(), password });
       return response.data;
     } catch (err) {
-      const detail = err.response?.data?.detail || 'Registration failed or backend offline';
+      const raw = err.response?.data?.detail;
+      const detail = Array.isArray(raw)
+        ? raw.map((item) => `${item.loc?.slice(-1)[0]}: ${item.msg}`).join('; ')
+        : raw || 'Registration failed or backend offline';
+      set({ error: detail });
       throw new Error(detail);
     }
   },
-  logout: () => {
+  logout: async () => {
     localStorage.removeItem('gios_token');
     set({ token: null, isAuthenticated: false, error: null });
+    try {
+      await logoutUser();
+    } catch (err) {
+      console.warn('Could not clear the server session cookie', err);
+    }
   }
 }));
 

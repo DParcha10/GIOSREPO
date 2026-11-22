@@ -8,6 +8,10 @@ services:
       - "8000:8000"
     environment:
       - GIOS_DEBUG=True
+      - JWT_SECRET=${JWT_SECRET:-}
+      - GIOS_ADMIN_PASSWORD=${GIOS_ADMIN_PASSWORD:-}
+      - GIOS_ALLOW_REGISTRATION=${GIOS_ALLOW_REGISTRATION:-false}
+      - GIOS_COOKIE_SECURE=${GIOS_COOKIE_SECURE:-false}
       - GIOS_MAX_CLOUD_COVER=30.0
     volumes:
       - .:/app

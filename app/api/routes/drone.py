@@ -1,11 +1,13 @@
 """Drone fleet, mission management, and centimeter-scale orthomosaic tile endpoints."""
 import os
 import json
+import logging
 import shutil
+import uuid
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime, timezone
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Response
-from app.services.drone_service import drone_service
+from app.services.drone_service import UPLOADS_DIR, drone_service
 from app.models.schemas import (
     DroneMissionResponse,
     DroneUploadMetadata,
@@ -62,6 +64,7 @@ from app.models.schemas import (
     DRONE_PHOTOGRAMMETRY_TILE_METRIC_CONFIGS
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/drone", tags=["Drone Fleet"])
 
 DEFAULT_CAMERA_CALIBRATIONS: Dict[str, CameraInteriorOrientation] = {
@@ -220,8 +223,9 @@ async def register_orthomosaic(req: DroneRegisterRequest):
             is_cog=meta["is_cog"],
             status=meta["status"]
         )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        logger.exception("Drone registration rejected")
+        raise HTTPException(status_code=400, detail="Could not register that file as a drone GeoTIFF")
 
 @router.post("/upload", response_model=DroneUploadResponse)
 async def upload_drone_ortho(
@@ -230,17 +234,25 @@ async def upload_drone_ortho(
     sensor_payload: str = Form("RGB")
 ):
     """Upload a drone orthomosaic GeoTIFF file and register it into the COG catalog."""
-    upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "uploads")
-    os.makedirs(upload_dir, exist_ok=True)
-    target_path = os.path.join(upload_dir, file.filename)
-    with open(target_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    meta = drone_service.register_orthomosaic(
-        file_path=target_path,
-        mission_name=mission_name,
-        payload=sensor_payload
-    )
+    extension = os.path.splitext(file.filename or "")[1].lower()
+    if extension not in (".tif", ".tiff"):
+        raise HTTPException(status_code=400, detail="Only .tif and .tiff files are accepted")
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    # The client's filename is never used as a path.
+    target_path = os.path.join(UPLOADS_DIR, f"{uuid.uuid4().hex}{extension}")
+    try:
+        with open(target_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        meta = drone_service.register_orthomosaic(
+            file_path=target_path,
+            mission_name=mission_name,
+            payload=sensor_payload
+        )
+    except Exception:
+        logger.exception("Drone upload rejected")
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        raise HTTPException(status_code=400, detail="Upload is not a readable GeoTIFF")
     return {"status": "success", "orthomosaic": meta}
 
 @router.get("/{ortho_id}/tiles/{z}/{x}/{y}.png")

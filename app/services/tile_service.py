@@ -13,6 +13,7 @@ from PIL import Image
 import matplotlib
 import matplotlib.cm as cm
 from app.config import settings
+from app.security import safe_join
 from app.services.drone_service import drone_service
 from app.services.indices import index_service
 from app.models.schemas import (
@@ -54,7 +55,7 @@ def apply_cumulative_cut_contrast_stretch(
     return stretched
 
 
-TILE_CACHE_DIR = os.path.join(settings.cache_dir, "tiles")
+TILE_CACHE_DIR = safe_join(settings.cache_dir, "tiles")
 os.makedirs(TILE_CACHE_DIR, exist_ok=True)
 
 DEFAULT_INDEX_RANGES = {
@@ -478,14 +479,14 @@ class TileService:
                 idx_clean = "dnbr"
 
         # 2. Check disk cache with deterministic key alignment
-        cache_subdir = os.path.join(TILE_CACHE_DIR, col_clean, item_id, str(z), str(x))
+        cache_subdir = safe_join(TILE_CACHE_DIR, col_clean, item_id, str(z), str(x))
         os.makedirs(cache_subdir, exist_ok=True)
         date_tag = f"_{pre or 'nopre'}_{post or 'nopost'}" if (pre or post) else ""
-        cache_file = os.path.join(cache_subdir, f"{y}_{idx_clean}_{cmap_clean}_{rescale_clean}{date_tag}.png")
+        cache_file = safe_join(cache_subdir, f"{y}_{idx_clean}_{cmap_clean}_{rescale_clean}{date_tag}.png")
         det_cache_key = generate_tile_cache_key(
             col_clean, item_id, z, x, y, idx_clean, rescale_clean, cmap_clean, pre, post
         )
-        det_cache_file = os.path.join(cache_subdir, f"{det_cache_key}.png")
+        det_cache_file = safe_join(cache_subdir, f"{det_cache_key}.png")
 
         for f_cand in (det_cache_file, cache_file):
             if os.path.exists(f_cand):
@@ -1888,8 +1889,8 @@ class TileService:
         # 1. Check disk cache under .cache/tiles/thermal/ and TILE_CACHE_DIR/thermal/
         cache_key = f"thermal_lst_{col_clean}_{item_clean}_{m_clean}_{met_clean}_{cmap_str}_{rescale_str}_{base_str}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        thermal_cache_dir = os.path.join(TILE_CACHE_DIR, "thermal")
-        dot_cache_dir = os.path.join(".cache", "tiles", "thermal")
+        thermal_cache_dir = safe_join(TILE_CACHE_DIR, "thermal")
+        dot_cache_dir = safe_join(".cache", "tiles", "thermal")
         for d in (thermal_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
@@ -1897,7 +1898,7 @@ class TileService:
                 pass
 
         for d in (thermal_cache_dir, dot_cache_dir):
-            cf = os.path.join(d, f"{cache_hash}.png")
+            cf = safe_join(d, f"{cache_hash}.png")
             if os.path.exists(cf) and os.path.getsize(cf) > 100:
                 try:
                     with open(cf, "rb") as f:
@@ -2011,7 +2012,7 @@ class TileService:
 
         for d in (thermal_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception as e:
@@ -2189,13 +2190,13 @@ class TileService:
         # 1. Disk caching check
         cache_key = f"true_ortho_{norm_model}_{norm_metric}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        cache_dir = os.path.join(TILE_CACHE_DIR, "true_ortho", norm_model, norm_metric)
-        dot_cache_dir = os.path.join(".cache", "tiles", "true_ortho", norm_model, norm_metric)
+        cache_dir = safe_join(TILE_CACHE_DIR, "true_ortho", norm_model, norm_metric)
+        dot_cache_dir = safe_join(".cache", "tiles", "true_ortho", norm_model, norm_metric)
 
         for d in (cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -2240,7 +2241,7 @@ class TileService:
         # 5. Write to cache
         for d in (cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception as e:
@@ -2398,13 +2399,13 @@ class TileService:
         # 1. Disk caching check
         cache_key = f"cva_{norm_metric.value}_{norm_method.value}_{actual_threshold}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        cva_cache_dir = os.path.join(TILE_CACHE_DIR, "cva", norm_metric.value)
-        dot_cache_dir = os.path.join(".cache", "tiles", "cva", norm_metric.value)
+        cva_cache_dir = safe_join(TILE_CACHE_DIR, "cva", norm_metric.value)
+        dot_cache_dir = safe_join(".cache", "tiles", "cva", norm_metric.value)
 
         for d in (cva_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -2471,7 +2472,7 @@ class TileService:
         # Cache on disk
         for d in (cva_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception:
@@ -2920,13 +2921,13 @@ class TileService:
         # 1. Disk Caching check
         cache_key = f"sdb_{norm_model.value}_{norm_metric.value}_{chosen_cmap}_{chosen_rescale}_{asset_id}_{col_clean}_{z}_{x}_{y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        sdb_cache_dir = os.path.join(TILE_CACHE_DIR, "bathymetry", norm_model.value, norm_metric.value)
-        dot_cache_dir = os.path.join(".cache", "tiles", "bathymetry", norm_model.value, norm_metric.value)
+        sdb_cache_dir = safe_join(TILE_CACHE_DIR, "bathymetry", norm_model.value, norm_metric.value)
+        dot_cache_dir = safe_join(".cache", "tiles", "bathymetry", norm_model.value, norm_metric.value)
 
         for d in (sdb_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -2999,7 +3000,7 @@ class TileService:
         # 5. Write to cache
         for d in (sdb_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception:
@@ -3079,14 +3080,14 @@ class TileService:
         # 1. Disk Caching check
         cache_key = f"et_{norm_model.value}_{norm_metric.value}_{chosen_cmap}_{chosen_rescale}_{asset_id}_{col_clean}_{z}_{x}_{y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        gios_cache_dir = os.path.join(".gios_cache", "tiles", "evapotranspiration", norm_model.value, norm_metric.value)
-        et_cache_dir = os.path.join(TILE_CACHE_DIR, "evapotranspiration", norm_model.value, norm_metric.value)
-        dot_cache_dir = os.path.join(".cache", "tiles", "evapotranspiration", norm_model.value, norm_metric.value)
+        gios_cache_dir = safe_join(".gios_cache", "tiles", "evapotranspiration", norm_model.value, norm_metric.value)
+        et_cache_dir = safe_join(TILE_CACHE_DIR, "evapotranspiration", norm_model.value, norm_metric.value)
+        dot_cache_dir = safe_join(".cache", "tiles", "evapotranspiration", norm_model.value, norm_metric.value)
 
         for d in (gios_cache_dir, et_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -3174,7 +3175,7 @@ class TileService:
         # 5. Write to cache (.gios_cache, TILE_CACHE_DIR, .cache)
         for d in (gios_cache_dir, et_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception:
@@ -4440,10 +4441,10 @@ class TileService:
 
         # Disk cache check
         expr_hash = hashlib.md5(clean_expr.encode("utf-8")).hexdigest()[:12]
-        cache_subdir = os.path.join(TILE_CACHE_DIR, "custom_expression", col_clean, item_clean, str(actual_z), str(actual_x))
+        cache_subdir = safe_join(TILE_CACHE_DIR, "custom_expression", col_clean, item_clean, str(actual_z), str(actual_x))
         os.makedirs(cache_subdir, exist_ok=True)
         rescale_key = chosen_rescale.replace(",", "_").replace(" ", "")
-        cache_file = os.path.join(cache_subdir, f"{actual_y}_{expr_hash}_{chosen_cmap}_{rescale_key}.png")
+        cache_file = safe_join(cache_subdir, f"{actual_y}_{expr_hash}_{chosen_cmap}_{rescale_key}.png")
 
         if os.path.exists(cache_file):
             try:
@@ -4573,9 +4574,9 @@ class TileService:
 
         cache_params = f"{metric_clean}_{chosen_cmap}_{rmin}_{rmax}_{sun_azimuth}_{sun_altitude}_{z_factor}"
         param_hash = hashlib.md5(cache_params.encode("utf-8")).hexdigest()[:10]
-        cache_subdir = os.path.join(TILE_CACHE_DIR, "dem", col_clean, str(actual_z), str(actual_x))
+        cache_subdir = safe_join(TILE_CACHE_DIR, "dem", col_clean, str(actual_z), str(actual_x))
         os.makedirs(cache_subdir, exist_ok=True)
-        cache_file = os.path.join(cache_subdir, f"{actual_y}_{param_hash}.png")
+        cache_file = safe_join(cache_subdir, f"{actual_y}_{param_hash}.png")
 
         if os.path.exists(cache_file):
             try:
@@ -4782,9 +4783,9 @@ class TileService:
             rmax = rmin + 1e-4
 
         rescale_key = f"{round(rmin, 2)}_{round(rmax, 2)}"
-        cache_subdir = os.path.join(TILE_CACHE_DIR, "dem", col_clean, metric_clean, str(actual_z), str(actual_x))
+        cache_subdir = safe_join(TILE_CACHE_DIR, "dem", col_clean, metric_clean, str(actual_z), str(actual_x))
         os.makedirs(cache_subdir, exist_ok=True)
-        cache_file = os.path.join(
+        cache_file = safe_join(
             cache_subdir,
             f"{actual_y}_{chosen_cmap}_{rescale_key}_{int(sun_az)}_{int(sun_alt)}_{round(zf, 2)}.png"
         )
@@ -4932,9 +4933,9 @@ class TileService:
 
         cache_key = f"{col_clean}_{blend_clean}_{chosen_cmap}_{round(rmin, 2)}_{round(rmax, 2)}_{int(fw_m)}"
         param_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()[:10]
-        cache_subdir = os.path.join(TILE_CACHE_DIR, "mosaic", col_clean, blend_clean, str(actual_z), str(actual_x))
+        cache_subdir = safe_join(TILE_CACHE_DIR, "mosaic", col_clean, blend_clean, str(actual_z), str(actual_x))
         os.makedirs(cache_subdir, exist_ok=True)
-        cache_file = os.path.join(cache_subdir, f"{actual_y}_{param_hash}.png")
+        cache_file = safe_join(cache_subdir, f"{actual_y}_{param_hash}.png")
 
         if os.path.exists(cache_file):
             try:
@@ -5115,9 +5116,9 @@ class TileService:
 
         cache_key = f"{col_clean}_{red_clean}_{s_date}_{e_date}_{bands}_{chosen_cmap}_{round(rmin, 2)}_{round(rmax, 2)}"
         param_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()[:10]
-        cache_subdir = os.path.join(TILE_CACHE_DIR, "temporal", col_clean, red_clean, str(actual_z), str(actual_x))
+        cache_subdir = safe_join(TILE_CACHE_DIR, "temporal", col_clean, red_clean, str(actual_z), str(actual_x))
         os.makedirs(cache_subdir, exist_ok=True)
-        cache_file = os.path.join(cache_subdir, f"{actual_y}_{param_hash}.png")
+        cache_file = safe_join(cache_subdir, f"{actual_y}_{param_hash}.png")
 
         if os.path.exists(cache_file):
             try:
@@ -5365,9 +5366,9 @@ class TileService:
         # Check cache
         cache_key = f"sar_{collection}_{pol_clean}_{filter_clean}_{kernel_size}_{cal_clean}_{cmap_clean}_{rescale_str}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        sar_cache_dir = os.path.join(TILE_CACHE_DIR, "sar")
+        sar_cache_dir = safe_join(TILE_CACHE_DIR, "sar")
         os.makedirs(sar_cache_dir, exist_ok=True)
-        cache_file = os.path.join(sar_cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(sar_cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -5559,9 +5560,9 @@ class TileService:
 
         cache_key = f"sar_flood_{collection}_{thresh_val}_{filter_clean}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        sar_cache_dir = os.path.join(TILE_CACHE_DIR, "sar")
+        sar_cache_dir = safe_join(TILE_CACHE_DIR, "sar")
         os.makedirs(sar_cache_dir, exist_ok=True)
-        cache_file = os.path.join(sar_cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(sar_cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -5669,9 +5670,9 @@ class TileService:
 
         cache_key = f"coreg_{reference_scene_id}_{target_scene_id}_{m_clean}_{k_clean}_{cmap_name}_{rescale_str}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        coreg_cache_dir = os.path.join(TILE_CACHE_DIR, "coregistration")
+        coreg_cache_dir = safe_join(TILE_CACHE_DIR, "coregistration")
         os.makedirs(coreg_cache_dir, exist_ok=True)
-        cache_file = os.path.join(coreg_cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(coreg_cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -5807,9 +5808,9 @@ class TileService:
 
         cache_key = f"coreg_vf_{analysis_id}_{scale_val}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        coreg_cache_dir = os.path.join(TILE_CACHE_DIR, "coregistration")
+        coreg_cache_dir = safe_join(TILE_CACHE_DIR, "coregistration")
         os.makedirs(coreg_cache_dir, exist_ok=True)
-        cache_file = os.path.join(coreg_cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(coreg_cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -5917,9 +5918,9 @@ class TileService:
 
         cache_key = f"aquatic_{col_clean}_{item_clean}_{m_clean}_{cmap_name}_{rescale_str}_{mndwi_thresh}_{mask_land}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        aquatic_cache_dir = os.path.join(TILE_CACHE_DIR, "aquatic")
+        aquatic_cache_dir = safe_join(TILE_CACHE_DIR, "aquatic")
         os.makedirs(aquatic_cache_dir, exist_ok=True)
-        cache_file = os.path.join(aquatic_cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(aquatic_cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -6026,9 +6027,9 @@ class TileService:
 
         cache_key = f"aquatic_hab_{col_clean}_{item_clean}_{mndwi_thresh}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        hab_cache_dir = os.path.join(TILE_CACHE_DIR, "aquatic_hab")
+        hab_cache_dir = safe_join(TILE_CACHE_DIR, "aquatic_hab")
         os.makedirs(hab_cache_dir, exist_ok=True)
-        cache_file = os.path.join(hab_cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(hab_cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -6164,9 +6165,9 @@ class TileService:
 
         cache_key = f"topov2_{m_clean}_{met_clean}_{item_clean}_{col_clean}_{sz_str}_{sa_str}_{c_str}_{k_str}_{cmap_str}_{rescale_str}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        topo_cache_dir = os.path.join(TILE_CACHE_DIR, "topographic")
+        topo_cache_dir = safe_join(TILE_CACHE_DIR, "topographic")
         os.makedirs(topo_cache_dir, exist_ok=True)
-        cache_file = os.path.join(topo_cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(topo_cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -6513,9 +6514,9 @@ class TileService:
 
         cache_key = f"hls_{col_clean}_{item_clean}_{sens_clean}_{stg_clean}_{met_clean}_{sz_str}_{vz_str}_{cmap_str}_{rescale_str}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        hls_cache_dir = os.path.join(TILE_CACHE_DIR, "hls")
+        hls_cache_dir = safe_join(TILE_CACHE_DIR, "hls")
         os.makedirs(hls_cache_dir, exist_ok=True)
-        cache_file = os.path.join(hls_cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(hls_cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -6778,14 +6779,14 @@ class TileService:
         import os, hashlib
         cache_key = f"phenology_{norm_metric}_{clean_cm}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        pheno_cache_dir = os.path.join(TILE_CACHE_DIR, "phenology", norm_metric)
-        dot_cache_dir = os.path.join(".cache", "tiles", "phenology", norm_metric)
+        pheno_cache_dir = safe_join(TILE_CACHE_DIR, "phenology", norm_metric)
+        dot_cache_dir = safe_join(".cache", "tiles", "phenology", norm_metric)
         for d in (pheno_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
             except Exception:
                 pass
-            cf = os.path.join(d, f"{cache_hash}.png")
+            cf = safe_join(d, f"{cache_hash}.png")
             if os.path.exists(cf) and os.path.getsize(cf) > 100:
                 try:
                     with open(cf, "rb") as f:
@@ -6806,7 +6807,7 @@ class TileService:
 
         for d in (pheno_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception as e:
@@ -6935,13 +6936,13 @@ class TileService:
         # 1. Disk caching check
         cache_key = f"sharpened_{norm_method}_{norm_target}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        sharp_cache_dir = os.path.join(TILE_CACHE_DIR, "sharpened", norm_method, norm_target)
-        dot_cache_dir = os.path.join(".cache", "tiles", "sharpened", norm_method, norm_target)
-        data_cache_dir = os.path.join("data", "tiles", "sharpened", norm_method, norm_target)
+        sharp_cache_dir = safe_join(TILE_CACHE_DIR, "sharpened", norm_method, norm_target)
+        dot_cache_dir = safe_join(".cache", "tiles", "sharpened", norm_method, norm_target)
+        data_cache_dir = safe_join("data", "tiles", "sharpened", norm_method, norm_target)
         for d in (sharp_cache_dir, dot_cache_dir, data_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -7024,7 +7025,7 @@ class TileService:
         # 6. Cache write
         for d in (sharp_cache_dir, dot_cache_dir, data_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception as e:
@@ -7138,13 +7139,13 @@ class TileService:
         # 1. Disk caching check
         cache_key = f"cross_calibrated_{norm_model}_{norm_metric}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        cal_cache_dir = os.path.join(TILE_CACHE_DIR, "cross_calibrated", norm_model, norm_metric)
-        dot_cache_dir = os.path.join(".cache", "tiles", "cross_calibrated", norm_model, norm_metric)
+        cal_cache_dir = safe_join(TILE_CACHE_DIR, "cross_calibrated", norm_model, norm_metric)
+        dot_cache_dir = safe_join(".cache", "tiles", "cross_calibrated", norm_model, norm_metric)
 
         for d in (cal_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -7199,7 +7200,7 @@ class TileService:
         # 7. Write to cache
         for d in (cal_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception as e:
@@ -7322,13 +7323,13 @@ class TileService:
         # 1. Disk caching check
         cache_key = f"trend_{norm_model}_{norm_metric}_{norm_idx}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        trend_cache_dir = os.path.join(TILE_CACHE_DIR, "trend", norm_model, norm_metric)
-        dot_cache_dir = os.path.join(".cache", "tiles", "trend", norm_model, norm_metric)
+        trend_cache_dir = safe_join(TILE_CACHE_DIR, "trend", norm_model, norm_metric)
+        dot_cache_dir = safe_join(".cache", "tiles", "trend", norm_model, norm_metric)
 
         for d in (trend_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -7369,7 +7370,7 @@ class TileService:
         # 5. Write to cache
         for d in (trend_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception as e:
@@ -7492,13 +7493,13 @@ class TileService:
         # 1. Disk caching check
         cache_key = f"multimodal_{norm_model}_{norm_metric}_{norm_pair}_{chosen_cmap}_{chosen_rescale}_{min_snr}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        mm_cache_dir = os.path.join(TILE_CACHE_DIR, "multimodal", norm_model, norm_metric)
-        dot_cache_dir = os.path.join(".cache", "tiles", "multimodal", norm_model, norm_metric)
+        mm_cache_dir = safe_join(TILE_CACHE_DIR, "multimodal", norm_model, norm_metric)
+        dot_cache_dir = safe_join(".cache", "tiles", "multimodal", norm_model, norm_metric)
 
         for d in (mm_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -7540,7 +7541,7 @@ class TileService:
         # 5. Write to cache
         for d in (mm_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception as e:
@@ -7651,13 +7652,13 @@ class TileService:
         # 1. Disk caching check
         cache_key = f"insar_sbas_{norm_model}_{norm_metric}_{chosen_cmap}_{chosen_rescale}_{min_coherence}_{max_da}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        insar_cache_dir = os.path.join(TILE_CACHE_DIR, "insar_sbas", norm_model, norm_metric)
-        dot_cache_dir = os.path.join(".cache", "tiles", "insar_sbas", norm_model, norm_metric)
+        insar_cache_dir = safe_join(TILE_CACHE_DIR, "insar_sbas", norm_model, norm_metric)
+        dot_cache_dir = safe_join(".cache", "tiles", "insar_sbas", norm_model, norm_metric)
 
         for d in (insar_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -7699,7 +7700,7 @@ class TileService:
         # 5. Write to cache
         for d in (insar_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception as e:
@@ -7818,13 +7819,13 @@ class TileService:
         # 1. Disk caching check
         cache_key = f"unmixing_{norm_model}_{norm_metric}_{chosen_cmap}_{chosen_rescale}_{min_fvc}_{max_rmse}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        unmixing_cache_dir = os.path.join(TILE_CACHE_DIR, "unmixing", norm_model, norm_metric)
-        dot_cache_dir = os.path.join(".cache", "tiles", "unmixing", norm_model, norm_metric)
+        unmixing_cache_dir = safe_join(TILE_CACHE_DIR, "unmixing", norm_model, norm_metric)
+        dot_cache_dir = safe_join(".cache", "tiles", "unmixing", norm_model, norm_metric)
 
         for d in (unmixing_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -7871,7 +7872,7 @@ class TileService:
         # 5. Write to cache
         for d in (unmixing_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception as e:
@@ -7948,9 +7949,9 @@ class TileService:
         # Multi-tier cache check
         cache_key = f"mosaic_v2547_{m_clean}_{met_clean}_{scene_clean}_{levels_i}_{cmap_str}_{rescale_str}_{z_i}_{x_i}_{y_i}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        mosaic_cache_dir = os.path.join(TILE_CACHE_DIR, "mosaic")
+        mosaic_cache_dir = safe_join(TILE_CACHE_DIR, "mosaic")
         os.makedirs(mosaic_cache_dir, exist_ok=True)
-        cache_file = os.path.join(mosaic_cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(mosaic_cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -8096,11 +8097,11 @@ class TileService:
         actual_y = int(y)
         met_clean = str(metric or "mad_anomaly_zscore").lower().replace("-", "_")
 
-        cache_dir = os.path.join("data", "tiles", "climatology")
+        cache_dir = safe_join("data", "tiles", "climatology")
         os.makedirs(cache_dir, exist_ok=True)
         cmap_name = str(colormap or "rdylbu").lower().replace("_r", "")
         rescale_str = str(rescale or "-3.0,3.0")
-        cache_file = os.path.join(
+        cache_file = safe_join(
             cache_dir, f"tile_{site_id}_{met_clean}_{actual_z}_{actual_x}_{actual_y}_{cmap_name}.png"
         )
 
@@ -8163,10 +8164,10 @@ class TileService:
         if p1 <= p0:
             p1 = p0 + 1.0
 
-        cache_dir = os.path.join(settings.cache_dir, "tiles", "contrast")
+        cache_dir = safe_join(settings.cache_dir, "tiles", "contrast")
         os.makedirs(cache_dir, exist_ok=True)
         cache_key = f"tile_contrast_{collection}_{item_id}_{met_clean}_{z}_{x}_{y}_{p0:.1f}_{p1:.1f}_{cmap_name}.png"
-        cache_file = os.path.join(cache_dir, cache_key)
+        cache_file = safe_join(cache_dir, cache_key)
 
         if os.path.exists(cache_file):
             try:
@@ -8260,11 +8261,11 @@ class TileService:
         chosen_cmap = (colormap or default_cmap).strip()
         chosen_rescale = (rescale or default_rescale).strip()
 
-        cache_dir = os.path.join("data", "tiles", "wdi", met_str)
+        cache_dir = safe_join("data", "tiles", "wdi", met_str)
         os.makedirs(cache_dir, exist_ok=True)
         cache_key = f"wdi_{sc_id}_{met_str}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        cache_file = os.path.join(cache_dir, f"{cache_hash}.png")
+        cache_file = safe_join(cache_dir, f"{cache_hash}.png")
 
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 100:
             try:
@@ -8370,9 +8371,9 @@ class TileService:
         norm_met = normalize_mineralogy_tile_metric(actual_metric)
         met_str = norm_met.value
 
-        cache_dir = os.path.join("data", "tiles", "mineralogy", met_str)
+        cache_dir = safe_join("data", "tiles", "mineralogy", met_str)
         os.makedirs(cache_dir, exist_ok=True)
-        cache_file = os.path.join(cache_dir, f"{int(actual_z)}_{int(actual_x)}_{int(actual_y)}.png")
+        cache_file = safe_join(cache_dir, f"{int(actual_z)}_{int(actual_x)}_{int(actual_y)}.png")
 
         if os.path.exists(cache_file) and colormap is None and rescale is None:
             try:
@@ -8526,13 +8527,13 @@ class TileService:
         # 1. Disk caching check
         cache_key = f"defects_{norm_metric.value}_{norm_algo.value}_{min_confidence}_{chosen_cmap}_{chosen_rescale}_{actual_z}_{actual_x}_{actual_y}"
         cache_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
-        defect_cache_dir = os.path.join(TILE_CACHE_DIR, "defects", norm_metric.value)
-        dot_cache_dir = os.path.join(".cache", "tiles", "defects", norm_metric.value)
+        defect_cache_dir = safe_join(TILE_CACHE_DIR, "defects", norm_metric.value)
+        dot_cache_dir = safe_join(".cache", "tiles", "defects", norm_metric.value)
 
         for d in (defect_cache_dir, dot_cache_dir):
             try:
                 os.makedirs(d, exist_ok=True)
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 if os.path.exists(cf) and os.path.getsize(cf) > 100:
                     with open(cf, "rb") as f:
                         return f.read()
@@ -8581,7 +8582,7 @@ class TileService:
         # Cache on disk
         for d in (defect_cache_dir, dot_cache_dir):
             try:
-                cf = os.path.join(d, f"{cache_hash}.png")
+                cf = safe_join(d, f"{cache_hash}.png")
                 with open(cf, "wb") as f:
                     f.write(png_bytes)
             except Exception:

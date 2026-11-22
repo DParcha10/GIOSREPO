@@ -137,7 +137,7 @@ export default function HazardAlertDrawer({
   useEffect(() => {
     const sseUrl = getHazardAlertStreamUrl();
     try {
-      const es = new EventSource(sseUrl);
+      const es = new EventSource(sseUrl, { withCredentials: true });
       eventSourceRef.current = es;
 
       es.onopen = () => {

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import asyncio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -17,6 +18,7 @@ from app.database import engine, Base, seed_default_users
 from app.api.routes import auth, iot
 from app.services import reporting
 from app.api.routes import spatial, drone, wildfire
+from app.security import RequireLoginMiddleware
 
 # Initialize DB tables
 Base.metadata.create_all(bind=engine)
@@ -105,10 +107,15 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+async def authenticate_request(token: str) -> bool:
+    return await run_in_threadpool(auth.is_valid_session, token)
+
+# Order matters: CORS is added last so it is outermost and also decorates 401 responses.
+app.add_middleware(RequireLoginMiddleware, authenticate=authenticate_request)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials="*" not in settings.cors_origins,  # never share cookies with any origin
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )

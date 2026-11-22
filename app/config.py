@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     default_bbox: Tuple[float, float, float, float] = (-121.2, 36.95, -120.95, 37.15)
     
     # CORS Origins
-    cors_origins: List[str] = ["*"]
+    cors_origins: List[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 settings = Settings()
 os.makedirs(settings.cache_dir, exist_ok=True)

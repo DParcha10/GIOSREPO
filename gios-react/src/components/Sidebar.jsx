@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Satellite, Activity, LayoutDashboard, Map, LineChart, Bot, Database, Settings } from 'lucide-react';
 import SystemStatus from './SystemStatus';
+import useAuthStore from '../store/authStore';
 
 export default function FlowingMenu() {
   const [hoverIndex, setHoverIndex] = useState(null);
@@ -96,8 +97,8 @@ export default function FlowingMenu() {
         </div>
 
         <button 
-          onClick={() => {
-            localStorage.removeItem('gios_token');
+          onClick={async () => {
+            await useAuthStore.getState().logout();
             window.location.href = '/login';
           }}
           className="glass-button w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold text-red-400 hover:text-red-300 uppercase tracking-wider font-['Rajdhani']"

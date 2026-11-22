@@ -4598,6 +4598,21 @@ giosApi.interceptors.request.use((config) => {
   return config;
 });
 
+// An expired session must send the user to login, not fall through to mock data.
+giosApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const url = error.config?.url || '';
+    if (error.response?.status === 401 && !url.includes('/auth/token')) {
+      localStorage.removeItem('gios_token');
+      if (window.location.pathname !== '/login' && window.location.pathname !== '/') {
+        window.location.assign('/login');
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 /**
  * ============================================================================
  * HELPER API FUNCTIONS (EXPORTS)
@@ -4963,10 +4978,18 @@ export const loginUser = async (username, password) => {
   params.append('username', username);
   params.append('password', password);
   const response = await giosApi.post('/api/v1/auth/token', params, {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    // Stores the HttpOnly cookie used by map tiles, event streams and downloads.
+    withCredentials: true
   });
   return response.data;
 };
+
+/**
+ * Clears the HttpOnly session cookie, which scripts cannot remove themselves.
+ */
+export const logoutUser = () =>
+  giosApi.post('/api/v1/auth/logout', null, { withCredentials: true, timeout: 3000 });
 
 /**
  * Retrieves the currently authenticated user profile.
