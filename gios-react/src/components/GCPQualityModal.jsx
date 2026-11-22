@@ -275,7 +275,7 @@ export default function GCPQualityModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
       <div className="bg-gray-900 border border-gray-700/80 rounded-xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden text-gray-100 animate-in fade-in zoom-in-95 duration-200">
         
         {/* Modal Header */}

@@ -794,7 +794,7 @@ export default function SlopeStabilityModal({
   const currentTier = simulationResult ? classifySlopeHazardTier(simulationResult.factor_of_safety) : SLOPE_HAZARD_TIER_CONFIGS.stable;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-hidden font-sans">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-hidden font-sans">
       <div className="bg-slate-900/95 border border-slate-700/80 rounded-2xl shadow-2xl max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden text-slate-100">
         
         {/* Top Header Bar */}
