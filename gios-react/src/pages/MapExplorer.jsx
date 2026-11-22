@@ -70,7 +70,7 @@ import giosApi, {
   normalizeGeojsonPolygon,
   classifyZScore,
   getAutoStretch,
-  SPATIAL_LAYERS,
+  SPATIAL_LAYER_TYPES,
   getSpatialLayerMetadata,
   listSpatialLayerTypes,
   getBandSpec,
@@ -208,13 +208,12 @@ import GeotechnicalSensorModal from '../components/GeotechnicalSensorModal';
 import TilePreloadModal from '../components/TilePreloadModal';
 import GCPQualityModal from '../components/GCPQualityModal';
 import InSarDisplacementModal from '../components/InSarDisplacementModal';
-import ThermalLstModal from '../components/ThermalLstModal';
+import ThermalLstModal from '../components/ThermalLSTModal';
 import ExportDatasetModal from '../components/ExportDatasetModal';
 import PhenologySeasonalityModal from '../components/PhenologySeasonalityModal';
 import SpectralSharpeningModal from '../components/SpectralSharpeningModal';
 import PanSharpeningModal from '../components/PanSharpeningModal';
 import ChangeVectorAnalysisModal from '../components/ChangeVectorAnalysisModal';
-import CrestDeformationModal from '../components/CrestDeformationModal';
 import CrossSensorCalibrationModal from '../components/CrossSensorCalibrationModal';
 import TrendAnalysisModal from '../components/TrendAnalysisModal';
 import MultimodalFusionModal from '../components/MultimodalFusionModal';
@@ -1908,7 +1907,7 @@ export default function MapExplorer() {
   const [loadingTrend, setLoadingTrend] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [vectorLayers, setVectorLayers] = useState([]);
-  const [activeSpatialLayer, setActiveSpatialLayer] = useState(SPATIAL_LAYERS.CRITICAL_INFRASTRUCTURE);
+  const [activeSpatialLayer, setActiveSpatialLayer] = useState(SPATIAL_LAYER_TYPES.CRITICAL_INFRASTRUCTURE);
   const [spatialLayerVisible, setSpatialLayerVisible] = useState(true);
   const [droneMissions, setDroneMissions] = useState([]);
 
@@ -7377,7 +7376,7 @@ export default function MapExplorer() {
             ))}
 
             {/* Drone Mission Flight Paths */}
-            {droneMissions.map((mission) => (
+            {droneMissions.filter((mission) => mission.flight_path?.length > 1).map((mission) => (
               <Polyline 
                 key={mission.id} 
                 positions={mission.flight_path} 
@@ -7771,6 +7770,24 @@ export default function MapExplorer() {
                   </Polygon>
                 );
               }
+              if (geomType === 'LineString') {
+                return (
+                  <Polyline
+                    key={`vec-line-${idx}`}
+                    positions={coords.map(([lng, lat]) => [lat, lng])}
+                    pathOptions={{ color: layerColor, weight: 2 }}
+                  >
+                    <Popup>
+                      <div className="text-black font-sans text-xs">
+                        <strong>{feat.properties?.name || 'Spatial Path'}</strong><br/>
+                        Layer: {meta?.label || activeSpatialLayer}
+                        {feat.properties?.status && <span><br/>Status: {feat.properties.status}</span>}
+                      </div>
+                    </Popup>
+                  </Polyline>
+                );
+              }
+              if (geomType !== 'Point') return null;
               return (
                 <CircleMarker
                   key={`vec-pt-${idx}`}
@@ -13011,14 +13028,11 @@ export default function MapExplorer() {
                   className="bg-transparent text-[10px] font-mono font-bold uppercase text-gray-300 focus:outline-none cursor-pointer"
                   title="Select Spatial GIS Vector Layer"
                 >
-                  {listSpatialLayerTypes().map(type => {
-                    const meta = getSpatialLayerMetadata(type);
-                    return (
-                      <option key={type} value={type} className="bg-black text-gray-200">
-                        {meta?.label || type}
-                      </option>
-                    );
-                  })}
+                  {listSpatialLayerTypes().map(({ layerId, label }) => (
+                    <option key={layerId} value={layerId} className="bg-black text-gray-200">
+                      {label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
