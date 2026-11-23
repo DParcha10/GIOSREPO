@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import TiepointMark from '../components/TiepointMark';
+import MapLegend from '../components/MapLegend';
+import NorthArrow from '../components/NorthArrow';
 import { 
-  MapContainer, TileLayer, Polygon, CircleMarker, Popup, useMap, Polyline, useMapEvents 
+  MapContainer, TileLayer, Polygon, CircleMarker, Popup, useMap, Polyline, useMapEvents, ScaleControl 
 } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { 
@@ -483,13 +485,19 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarEleme
 // Map controller for animated fly-to transitions and macro/micro zoom levels
 function MapFlyTo({ center, zoom, flyToTarget }) {
   const map = useMap();
+  // Only move the map when the destination itself changes (a new site or a new
+  // fly-to request). The parent re-renders constantly (mouse coordinates,
+  // polling), and re-flying on every render undid the user's own zooming.
+  const lat = center?.[0];
+  const lng = center?.[1];
+  useEffect(() => {
+    if (lat && lng) map.flyTo([lat, lng], zoom || 14, { duration: 1.2 });
+  }, [lat, lng, zoom, map]);
   useEffect(() => {
     if (flyToTarget && flyToTarget.lat && flyToTarget.lng) {
       map.flyTo([flyToTarget.lat, flyToTarget.lng], flyToTarget.zoom || 14, { duration: 1.4 });
-    } else if (center && center[0] && center[1]) {
-      map.flyTo(center, zoom || 14, { duration: 1.2 });
     }
-  }, [center, zoom, flyToTarget, map]);
+  }, [flyToTarget, map]);
   return null;
 }
 
@@ -4907,6 +4915,7 @@ export default function MapExplorer() {
               onZoomChange={setCurrentZoom}
             />
 
+            <ScaleControl position="bottomleft" imperial={false} maxWidth={140} />
             {/* 1. Base Tile Layer */}
             <TileLayer key={baseLayer} url={tileLayers[baseLayer]} attribution={tileAttributions[baseLayer]} keepBuffer={8} />
 
@@ -13062,23 +13071,11 @@ export default function MapExplorer() {
             )}
           </div>
 
-          {/* Floating Legend Bottom Right */}
-          <div className="absolute bottom-16 right-4 z-[900] glass-panel p-3 w-64 shadow-2xl bg-black/75 backdrop-blur-md">
-            <div className="flex justify-between items-center mb-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-white font-mono">
-                {activeSpectralIndex.toUpperCase()} ({activeColormap})
-              </span>
-              <span className="text-[9px] text-gray-400 font-mono">
-                [{rescaleMin.toFixed(2)}, {rescaleMax.toFixed(2)}]
-              </span>
-            </div>
-            <div className="h-2 w-full rounded bg-gradient-to-r from-blue-600 via-green-400 via-yellow-400 to-red-600 mb-1 shadow-inner"></div>
-            <div className="flex justify-between text-[8px] text-gray-400 uppercase font-mono">
-              <span>{rescaleMin.toFixed(2)} (Min)</span>
-              <span>Nominal</span>
-              <span className="text-primary font-bold">{rescaleMax.toFixed(2)} (Max)</span>
-            </div>
-          </div>
+          {/* Map legend: real scene, colour ramp, formula and source */}
+          {layerMode === 'spectral' && selectedEvent && (
+            <MapLegend index={activeSpectralIndex} site={selectedEvent} />
+          )}
+          <NorthArrow />
 
           {/* Assistant Active Pins Floating Indicator */}
           {markedLocations.length > 0 && (

@@ -8,7 +8,7 @@ from sqlalchemy.pool import NullPool
 
 logger = logging.getLogger(__name__)
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./gios.db"
+SQLALCHEMY_DATABASE_URL = os.getenv("TIEPOINT_DATABASE_URL", "sqlite:///./gios.db")
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}, poolclass=NullPool

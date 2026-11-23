@@ -1467,6 +1467,37 @@ def _handle_xyz_tile(
         }
     )
 
+def _real_index_tile(collection, z, x, y, index, rescale, colormap, pre, post):
+    """Real Sentinel-2 tile for supported indices; None means use the old renderer."""
+    from app.services import real_tiles
+    if not real_tiles.supports(collection, index):
+        return None
+    out = real_tiles.render(z, x, y, index, rescale, colormap, pre, post)
+    if out is None:
+        return None
+    png, scene = out
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Tiepoint-Source": f"sentinel-2-l2a:{scene['item_id']}",
+        },
+    )
+
+
+@router.get("/imagery/scene")
+def get_imagery_scene(lat: float, lon: float, index: Optional[str] = "mndwi",
+                      pre: Optional[str] = None, post: Optional[str] = None):
+    """Which real scene the map shows at a location, plus legend details."""
+    from app.services import real_tiles
+    if not real_tiles.enabled():
+        return {"real": False, "scene": None, "legend": real_tiles.legend(index or "")}
+    scene = real_tiles.find_scene(lon, lat, pre, post)
+    return {"real": scene is not None and (index or "").lower() in real_tiles.INDICES,
+            "scene": scene, "legend": real_tiles.legend(index or "")}
+
+
 @router.get("/tiles/{collection}/{item_id}/{z}/{x}/{y}.png")
 def get_analysis_tile(
     collection: str,
@@ -1480,6 +1511,9 @@ def get_analysis_tile(
     pre: Optional[str] = Query(None, description="Pre-event baseline date for differenced tiles"),
     post: Optional[str] = Query(None, description="Post-event assessment date for differenced tiles")
 ):
+    real = _real_index_tile(collection, z, x, y, index, rescale, colormap, pre, post)
+    if real is not None:
+        return real
     return _handle_xyz_tile(collection, item_id, z, x, y, index, rescale, colormap, pre, post)
 
 @tiles_router.get("/{collection}/{item_id}/{z}/{x}/{y}.png")
@@ -1495,6 +1529,9 @@ def get_xyz_tile(
     pre: Optional[str] = Query(None, description="Pre-event baseline date for differenced tiles"),
     post: Optional[str] = Query(None, description="Post-event assessment date for differenced tiles")
 ):
+    real = _real_index_tile(collection, z, x, y, index, rescale, colormap, pre, post)
+    if real is not None:
+        return real
     return _handle_xyz_tile(collection, item_id, z, x, y, index, rescale, colormap, pre, post)
 
 @router.post("/terrain", response_model=TerrainAnalysisResponse)
