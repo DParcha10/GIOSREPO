@@ -2857,6 +2857,10 @@ class DroneOrthomosaicMetadata(BaseModel):
 
 class DroneMissionResponse(BaseModel):
     """Active or registered drone mission response."""
+    # Every field is optional, so unions match this model for any mission dict.
+    # Without extra="allow" that silently drops id, flight_path and radius_km.
+    model_config = ConfigDict(extra="allow")
+
     mission_id: Optional[str] = None
     ortho_id: Optional[str] = None
     filename: Optional[str] = None

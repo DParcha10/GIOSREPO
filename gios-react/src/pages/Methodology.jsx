@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'framer-motion';
 import { Database, Satellite, Map, Activity, Layers, Cpu } from 'lucide-react';
 import MetallicPaintText from '../components/ReactBits/MetallicPaintText';
 import AntigravityCard from '../components/ReactBits/AntigravityCard';

@@ -323,7 +323,7 @@ export default function ChangeVectorAnalysisModal({
   const currentSectorMeta = CVA_SECTOR_METADATA[mathEvaluation.sector] || CVA_SECTOR_METADATA[CVADisturbanceSector.STABLE_UNMODIFIED];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto font-sans">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto font-sans">
       <div className="relative w-full max-w-6xl bg-gray-950 border border-cyan-500/30 rounded-2xl shadow-[0_0_50px_rgba(6,182,212,0.15)] flex flex-col max-h-[92vh] overflow-hidden">
         
         {/* Header */}

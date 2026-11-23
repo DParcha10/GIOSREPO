@@ -423,7 +423,7 @@ export default function DamBreakSimulationModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-md animate-fade-in">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center p-3 bg-black/80 backdrop-blur-md animate-fade-in">
       <div className="relative w-full max-w-7xl h-[92vh] flex flex-col bg-slate-900/95 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden font-sans text-slate-100">
         
         {/* MODAL HEADER */}

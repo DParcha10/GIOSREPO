@@ -70,7 +70,7 @@ import giosApi, {
   normalizeGeojsonPolygon,
   classifyZScore,
   getAutoStretch,
-  SPATIAL_LAYERS,
+  SPATIAL_LAYER_TYPES,
   getSpatialLayerMetadata,
   listSpatialLayerTypes,
   getBandSpec,
@@ -208,13 +208,12 @@ import GeotechnicalSensorModal from '../components/GeotechnicalSensorModal';
 import TilePreloadModal from '../components/TilePreloadModal';
 import GCPQualityModal from '../components/GCPQualityModal';
 import InSarDisplacementModal from '../components/InSarDisplacementModal';
-import ThermalLstModal from '../components/ThermalLstModal';
+import ThermalLstModal from '../components/ThermalLSTModal';
 import ExportDatasetModal from '../components/ExportDatasetModal';
 import PhenologySeasonalityModal from '../components/PhenologySeasonalityModal';
 import SpectralSharpeningModal from '../components/SpectralSharpeningModal';
 import PanSharpeningModal from '../components/PanSharpeningModal';
 import ChangeVectorAnalysisModal from '../components/ChangeVectorAnalysisModal';
-import CrestDeformationModal from '../components/CrestDeformationModal';
 import CrossSensorCalibrationModal from '../components/CrossSensorCalibrationModal';
 import TrendAnalysisModal from '../components/TrendAnalysisModal';
 import MultimodalFusionModal from '../components/MultimodalFusionModal';
@@ -1908,7 +1907,7 @@ export default function MapExplorer() {
   const [loadingTrend, setLoadingTrend] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [vectorLayers, setVectorLayers] = useState([]);
-  const [activeSpatialLayer, setActiveSpatialLayer] = useState(SPATIAL_LAYERS.CRITICAL_INFRASTRUCTURE);
+  const [activeSpatialLayer, setActiveSpatialLayer] = useState(SPATIAL_LAYER_TYPES.CRITICAL_INFRASTRUCTURE);
   const [spatialLayerVisible, setSpatialLayerVisible] = useState(true);
   const [droneMissions, setDroneMissions] = useState([]);
 
@@ -6973,29 +6972,29 @@ export default function MapExplorer() {
             {showFlownetLayer && internalErosionSimulation?.flownet_seepage?.exit_stations?.map((st) => {
               const hCfg = INTERNAL_EROSION_HAZARD_CONFIGS[st.hazard_tier] || INTERNAL_EROSION_HAZARD_CONFIGS.moderate_risk;
               const damCoords = internalErosionSimulation.coordinates || [-111.5383, 43.9083];
-              const latOffset = (st.x_offset_m || 0) * 0.000009;
+              const latOffset = (st.x_m || 0) * 0.000009;
               const markerPos = [damCoords[1] + latOffset, damCoords[0]];
               return (
                 <CircleMarker
                   key={`flownet-st-${st.station_id}`}
                   center={markerPos}
-                  radius={st.sand_boiling_risk ? 7 : 5}
+                  radius={st.boil_risk_detected ? 7 : 5}
                   pathOptions={{
                     fillColor: hCfg.color,
                     fillOpacity: 0.9,
-                    color: st.sand_boiling_risk ? '#ff0000' : '#ffffff',
-                    weight: st.sand_boiling_risk ? 2.5 : 1.5
+                    color: st.boil_risk_detected ? '#ff0000' : '#ffffff',
+                    weight: st.boil_risk_detected ? 2.5 : 1.5
                   }}
                 >
                   <Popup className="custom-popup">
                     <div className="p-1 space-y-1 font-mono text-xs">
                       <div className="font-bold text-amber-400">Toe Exit Station: {st.station_id}</div>
-                      <div>Offset: <strong>+{st.x_offset_m.toFixed(1)} m</strong></div>
-                      <div>Total Head: <strong>{st.total_head_m.toFixed(2)} m</strong></div>
+                      <div>From upstream toe: <strong>{st.x_m.toFixed(1)} m</strong></div>
+                      <div>Critical Gradient: <strong>{st.critical_gradient.toFixed(3)}</strong></div>
                       <div>Exit Gradient: <strong>{st.exit_gradient.toFixed(3)}</strong></div>
                       <div>Factor of Safety: <strong>{st.factor_of_safety.toFixed(2)}</strong></div>
                       <div>Hazard: <span className="font-bold uppercase" style={{ color: hCfg.color }}>{hCfg.label}</span></div>
-                      {st.sand_boiling_risk && (
+                      {st.boil_risk_detected && (
                         <div className="text-red-400 font-bold animate-pulse">⚠️ HEAVE / SAND BOILING DETECTED</div>
                       )}
                     </div>
@@ -7377,7 +7376,7 @@ export default function MapExplorer() {
             ))}
 
             {/* Drone Mission Flight Paths */}
-            {droneMissions.map((mission) => (
+            {droneMissions.filter((mission) => mission.flight_path?.length > 1).map((mission) => (
               <Polyline 
                 key={mission.id} 
                 positions={mission.flight_path} 
@@ -7771,6 +7770,24 @@ export default function MapExplorer() {
                   </Polygon>
                 );
               }
+              if (geomType === 'LineString') {
+                return (
+                  <Polyline
+                    key={`vec-line-${idx}`}
+                    positions={coords.map(([lng, lat]) => [lat, lng])}
+                    pathOptions={{ color: layerColor, weight: 2 }}
+                  >
+                    <Popup>
+                      <div className="text-black font-sans text-xs">
+                        <strong>{feat.properties?.name || 'Spatial Path'}</strong><br/>
+                        Layer: {meta?.label || activeSpatialLayer}
+                        {feat.properties?.status && <span><br/>Status: {feat.properties.status}</span>}
+                      </div>
+                    </Popup>
+                  </Polyline>
+                );
+              }
+              if (geomType !== 'Point') return null;
               return (
                 <CircleMarker
                   key={`vec-pt-${idx}`}
@@ -13011,14 +13028,11 @@ export default function MapExplorer() {
                   className="bg-transparent text-[10px] font-mono font-bold uppercase text-gray-300 focus:outline-none cursor-pointer"
                   title="Select Spatial GIS Vector Layer"
                 >
-                  {listSpatialLayerTypes().map(type => {
-                    const meta = getSpatialLayerMetadata(type);
-                    return (
-                      <option key={type} value={type} className="bg-black text-gray-200">
-                        {meta?.label || type}
-                      </option>
-                    );
-                  })}
+                  {listSpatialLayerTypes().map(({ layerId, label }) => (
+                    <option key={layerId} value={layerId} className="bg-black text-gray-200">
+                      {label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

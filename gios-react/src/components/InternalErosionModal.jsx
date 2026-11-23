@@ -282,8 +282,8 @@ export const InternalErosionModal = ({
       }
 
       setSimulation(result);
-      if (result.sellmeijer_bep?.pipe_progression_m) {
-        setPipeProgressionM(result.sellmeijer_bep.pipe_progression_m);
+      if (result.sellmeijer_bep?.pipe_progression_length_m) {
+        setPipeProgressionM(result.sellmeijer_bep.pipe_progression_length_m);
       }
     } catch (err) {
       setSimError(err.message || 'Simulation execution failed');
@@ -333,10 +333,21 @@ export const InternalErosionModal = ({
     const flownet = simulation?.flownet_seepage;
     if (!flownet) return null;
 
-    const streamDatasets = (flownet.streamlines || []).map((st, idx) => ({
+    // The API and offline solver both return flat node lists, tagged with a line index.
+    const groupByLine = (nodes, indexKey) => {
+      const lines = new Map();
+      (nodes || []).forEach(node => {
+        if (!lines.has(node[indexKey])) lines.set(node[indexKey], []);
+        lines.get(node[indexKey]).push({ x: node.x_m, y: node.z_m });
+      });
+      return [...lines.values()];
+    };
+    const streamlines = groupByLine(flownet.streamlines, 'streamline_index');
+
+    const streamDatasets = streamlines.map((points, idx) => ({
       label: `Streamline Ψ_${idx + 1}`,
-      data: (st.nodes || []).map(node => ({ x: node.x_m, y: -node.z_depth_m })),
-      borderColor: idx === 0 ? '#38bdf8' : idx === (flownet.streamlines.length - 1) ? '#0284c7' : '#0ea5e9',
+      data: points,
+      borderColor: idx === 0 ? '#38bdf8' : idx === (streamlines.length - 1) ? '#0284c7' : '#0ea5e9',
       borderWidth: 2,
       borderDash: [4, 4],
       pointRadius: 0,
@@ -344,9 +355,9 @@ export const InternalErosionModal = ({
       tension: 0.3
     }));
 
-    const equipotentialDatasets = (flownet.equipotentials || []).map((eq, idx) => ({
+    const equipotentialDatasets = groupByLine(flownet.equipotentials, 'equipotential_index').map((points, idx) => ({
       label: `Equipotential Φ_${idx + 1}`,
-      data: (eq.nodes || []).map(node => ({ x: node.x_m, y: -node.z_depth_m })),
+      data: points,
       borderColor: '#f59e0b',
       borderWidth: 1.5,
       pointRadius: 0,
@@ -383,7 +394,7 @@ export const InternalErosionModal = ({
     const stations = simulation?.flownet_seepage?.exit_stations;
     if (!stations || stations.length === 0) return null;
 
-    const labels = stations.map(s => s.station_id || `${s.x_offset_m.toFixed(1)}m`);
+    const labels = stations.map(s => s.station_id || `${s.x_m.toFixed(1)}m`);
     const iExitData = stations.map(s => s.exit_gradient);
     const iCritData = stations.map(() => livePreview.terzaghi.critical_gradient);
     const fsData = stations.map(s => s.factor_of_safety);
@@ -436,7 +447,7 @@ export const InternalErosionModal = ({
       const progRatio = l / lTot;
       // Parabolic softening curve where resistance drops as pipe advances
       const decay = 1.0 - 0.65 * Math.pow(progRatio, 1.4);
-      return Number((livePreview.sellmeijer.critical_differential_head_m * decay).toFixed(2));
+      return Number((livePreview.sellmeijer.critical_head_m * decay).toFixed(2));
     });
 
     const appliedHeads = lengths.map(() => deltaH);
@@ -468,7 +479,7 @@ export const InternalErosionModal = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
       <div className="relative w-full max-w-6xl max-h-[92vh] flex flex-col bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden">
         
         {/* Modal Header */}
@@ -522,7 +533,7 @@ export const InternalErosionModal = ({
             <div className="flex items-center space-x-1.5">
               <span className="text-slate-400">Sellmeijer ΔH_c:</span>
               <span className="font-mono font-bold text-emerald-400">
-                {livePreview.sellmeijer.critical_differential_head_m.toFixed(1)} m
+                {livePreview.sellmeijer.critical_head_m.toFixed(1)} m
               </span>
             </div>
             <div className="w-px h-3 bg-slate-700" />
@@ -922,7 +933,7 @@ export const InternalErosionModal = ({
                     <div className="flex justify-between">
                       <span className="text-slate-400">Critical Head ΔH_c:</span>
                       <span className="font-mono font-bold text-white">
-                        {livePreview.sellmeijer.critical_differential_head_m.toFixed(2)} m
+                        {livePreview.sellmeijer.critical_head_m.toFixed(2)} m
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -1000,7 +1011,7 @@ export const InternalErosionModal = ({
                     <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-xs">
                       <span className="text-slate-400 block text-[11px]">Unit Seepage Rate q:</span>
                       <span className="text-base font-bold font-mono text-emerald-400">
-                        {(simulation.flownet_seepage.seepage_flow_rate_m3_s_m * 1000).toFixed(3)} L/s/m
+                        {(simulation.flownet_seepage.unit_seepage_flow_rate_m3s_m * 1000).toFixed(3)} L/s/m
                       </span>
                       <span className="text-[10px] text-slate-500 block">Darcy flow per linear meter</span>
                     </div>
@@ -1162,8 +1173,8 @@ export const InternalErosionModal = ({
                         <thead className="bg-slate-950/70 text-slate-400 border-b border-slate-800">
                           <tr>
                             <th className="py-2.5 px-3">Station ID</th>
-                            <th className="py-2.5 px-3">Offset (m)</th>
-                            <th className="py-2.5 px-3">Total Head Φ (m)</th>
+                            <th className="py-2.5 px-3">From Upstream Toe (m)</th>
+                            <th className="py-2.5 px-3">Critical Gradient i_crit</th>
                             <th className="py-2.5 px-3">Exit Gradient i_exit</th>
                             <th className="py-2.5 px-3">Factor of Safety</th>
                             <th className="py-2.5 px-3">Sand Boiling Risk</th>
@@ -1174,8 +1185,8 @@ export const InternalErosionModal = ({
                           {simulation.flownet_seepage.exit_stations.map((st) => (
                             <tr key={st.station_id} className="hover:bg-slate-800/30">
                               <td className="py-2 px-3 font-bold text-white">{st.station_id}</td>
-                              <td className="py-2 px-3 text-slate-300">+{st.x_offset_m.toFixed(1)}m</td>
-                              <td className="py-2 px-3 text-cyan-400">{st.total_head_m.toFixed(2)}m</td>
+                              <td className="py-2 px-3 text-slate-300">{st.x_m.toFixed(1)}m</td>
+                              <td className="py-2 px-3 text-cyan-400">{st.critical_gradient.toFixed(3)}</td>
                               <td className="py-2 px-3 text-amber-400 font-bold">{st.exit_gradient.toFixed(3)}</td>
                               <td className="py-2 px-3">
                                 <span className={
@@ -1186,7 +1197,7 @@ export const InternalErosionModal = ({
                                 </span>
                               </td>
                               <td className="py-2 px-3">
-                                {st.sand_boiling_risk ? (
+                                {st.boil_risk_detected ? (
                                   <span className="px-1.5 py-0.5 rounded bg-rose-950 text-rose-400 border border-rose-800 text-[10px] font-bold">
                                     HEAVE / BOIL
                                   </span>

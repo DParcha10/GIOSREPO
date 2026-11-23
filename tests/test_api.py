@@ -67,6 +67,15 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(user_info["username"], self.username)
         self.assertEqual(user_info["role"], "admin")
 
+    def test_drone_missions_keep_flight_path(self):
+        res = self.client.get("/api/v1/drone/missions")
+        self.assertEqual(res.status_code, 200)
+        missions = res.json()["missions"]
+        self.assertTrue(missions)
+        for mission in missions:
+            self.assertTrue(mission.get("id"))
+            self.assertGreaterEqual(len(mission.get("flight_path") or []), 2)
+
     def test_hazard_events_list_and_get(self):
         # List all events
         res = self.client.get("/api/v1/events")

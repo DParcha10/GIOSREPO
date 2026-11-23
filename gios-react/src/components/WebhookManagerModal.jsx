@@ -3,7 +3,8 @@ import {
   X, Bell, BellRing, Shield, ShieldAlert, CheckCircle2, AlertTriangle,
   AlertCircle, RefreshCw, Play, Copy, Check, Send, Activity, Terminal,
   Key, Lock, Globe, Plus, Trash2, Sliders, Layers, MapPin, Eye, Clock,
-  Filter, Sparkles, Database, RotateCcw, ShieldCheck, Info, CheckSquare
+  Filter, Sparkles, Database, RotateCcw, ShieldCheck, Info, CheckSquare,
+  Crosshair
 } from 'lucide-react';
 import {
   createHarvesterSubscription,

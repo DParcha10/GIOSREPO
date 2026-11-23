@@ -4,7 +4,7 @@ import {
   AlertTriangle, Info, Play, RefreshCw, BarChart3,
   TrendingUp, Search, Sliders, MapPin, Download,
   Activity, ShieldCheck, CheckCircle2, ChevronRight,
-  TrendingDown, Minus, Filter, Sparkles
+  TrendingDown, Minus, Filter, Sparkles, LineChart
 } from 'lucide-react';
 import { 
   simulatePhenologyDecomposition,
@@ -622,7 +622,7 @@ export default function PhenologyStudioModal({
             <div className="px-6 pt-3 border-b border-slate-800 flex gap-2 font-mono text-xs">
               {[
                 { id: 'summary', label: 'Summary & Insights', icon: Activity },
-                { id: 'timeseries', label: 'Harmonic Seasonal Chart', icon: LineElement },
+                { id: 'timeseries', label: 'Harmonic Seasonal Chart', icon: LineChart },
                 { id: 'theilsen', label: 'Theil-Sen Trend Vector', icon: TrendingUp },
                 { id: 'climatology', label: 'Monthly Climatology (MAD)', icon: BarChart3 },
                 { id: 'ledger', label: 'Observation Ledger', icon: Calendar },

@@ -431,7 +431,7 @@ export default function EnvironmentalDiagnosticsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="relative w-full max-w-6xl max-h-[92vh] flex flex-col bg-gray-950 border border-emerald-500/30 rounded-2xl shadow-2xl overflow-hidden font-sans text-gray-200">
         
         {/* Header */}
