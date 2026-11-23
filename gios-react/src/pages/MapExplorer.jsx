@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import TiepointMark from '../components/TiepointMark';
+import { fmtLatLng } from '../utils/coords';
 import MapLegend from '../components/MapLegend';
 import NorthArrow from '../components/NorthArrow';
 import { 
@@ -7637,7 +7638,7 @@ export default function MapExplorer() {
                         <div><strong>East X:</strong> {gcp.x_east?.toFixed(2)}m</div>
                         <div><strong>North Y:</strong> {gcp.y_north?.toFixed(2)}m</div>
                         <div><strong>Elev Z:</strong> {gcp.z_elev?.toFixed(2)}m</div>
-                        <div><strong>Coord:</strong> {gLat.toFixed(5)}°N, {gLng.toFixed(5)}°W</div>
+                        <div><strong>Coord:</strong> {fmtLatLng(gLat, gLng, 5)}</div>
                         <div><strong>CRS:</strong> {gcp.crs || 'EPSG:32610'}</div>
                       </div>
                       <div className="mt-2 pt-1 border-t border-gray-200">
@@ -7757,7 +7758,7 @@ export default function MapExplorer() {
                 <Popup>
                   <div className="p-1 text-black font-sans text-xs">
                     <strong>📍 Probed Coordinate</strong><br/>
-                    {probedCoord.lat.toFixed(5)}° N, {probedCoord.lng.toFixed(5)}° W<br/>
+                    {fmtLatLng(probedCoord.lat, probedCoord.lng, 5)}<br/>
                     Status: Calibrated BOA Surface Reflectance
                   </div>
                 </Popup>
@@ -7841,7 +7842,7 @@ export default function MapExplorer() {
                     <div className="p-1 text-black font-sans text-xs">
                       <strong className="text-teal-700 flex items-center gap-1 font-bold">🤖 Assistant Marked Location</strong>
                       <div className="font-bold text-sm text-gray-900 mt-1">{mark.label}</div>
-                      <div className="text-[11px] text-gray-600 mt-0.5 font-mono">{mark.lat.toFixed(4)}° N, {mark.lng.toFixed(4)}° W</div>
+                      <div className="text-[11px] text-gray-600 mt-0.5 font-mono">{fmtLatLng(mark.lat, mark.lng)}</div>
                       <div className="text-[10px] text-gray-500 mt-1">Autonomous Pin: {mark.timestamp}</div>
                     </div>
                   </Popup>
@@ -7924,7 +7925,7 @@ export default function MapExplorer() {
                   <div className="flex justify-between items-center text-[10px] font-mono text-gray-400 bg-black/40 p-2 rounded border border-gray-800">
                     <div>
                       <span className="text-gray-500 block">PROBE COORD</span>
-                      <span className="text-white font-bold">{pixelProbeData.coordinates.latitude.toFixed(4)}°N, {pixelProbeData.coordinates.longitude.toFixed(4)}°W</span>
+                      <span className="text-white font-bold">{fmtLatLng(pixelProbeData.coordinates.latitude, pixelProbeData.coordinates.longitude)}</span>
                     </div>
                     <div className="text-right">
                       <span className="text-gray-500 block">TIMESTAMP</span>
@@ -14885,7 +14886,7 @@ export default function MapExplorer() {
                             <div className="p-2.5 bg-black/40 border border-gray-800 rounded-lg flex flex-col justify-between col-span-1">
                               <span className="text-[10px] text-gray-500 uppercase block">Polygon Centroid</span>
                               <span className="text-[11px] font-bold text-purple-300 font-mono">
-                                {zonalStatsResult.centroid[0].toFixed(4)}°N, {zonalStatsResult.centroid[1].toFixed(4)}°W
+                                {fmtLatLng(zonalStatsResult.centroid[0], zonalStatsResult.centroid[1])}
                               </span>
                             </div>
                           )}
@@ -15597,7 +15598,7 @@ export default function MapExplorer() {
 
                         <div className="flex items-center justify-between pt-2 border-t border-gray-800 mt-2">
                           <span className="text-[10px] text-gray-400">
-                            Target Envelope: {selectedEvent ? `${selectedEvent.lat.toFixed(3)}°N, ${selectedEvent.lng.toFixed(3)}°W` : 'Active Scene'}
+                            Target Envelope: {selectedEvent ? fmtLatLng(selectedEvent.lat, selectedEvent.lng, 3) : 'Active Scene'}
                           </span>
                           <button
                             onClick={handleExecuteDataExport}
@@ -24141,7 +24142,7 @@ export default function MapExplorer() {
         <div className="absolute bottom-0 left-0 right-0 h-10 glass-panel !rounded-none !border-t !border-primary/30 !border-x-0 !border-b-0 flex items-center justify-between px-4 z-[1000] text-[10px] text-gray-400 uppercase tracking-widest font-mono">
           <div className="flex items-center gap-2">
             <Crosshair className="w-3.5 h-3.5 text-primary" />
-            Lat: {selectedEvent?.lat?.toFixed(4) || '37.0582'}° N, Lon: {selectedEvent?.lng?.toFixed(4) || '-121.0744'}° W
+            {selectedEvent ? fmtLatLng(selectedEvent.lat, selectedEvent.lng) : '—'}
           </div>
           
           <div className="flex items-center gap-2">
