@@ -37,6 +37,15 @@ def get_hazard_event(event_id: str):
         raise HTTPException(status_code=404, detail="Hazard event not found")
     return evt
 
+@router.get("/{event_id}/assessment")
+def get_event_assessment(event_id: str):
+    """Measured comparison from real Sentinel-2 imagery (replaces invented ratings)."""
+    from app.services.site_assessment import assess
+    evt = event_service.get_event(event_id)
+    if not evt:
+        raise HTTPException(status_code=404, detail="Hazard event not found")
+    return assess(evt)
+
 @router.get("/{event_id}/geojson", response_model=GeoJSONFeature)
 def get_hazard_event_geojson(event_id: str):
     """Returns a specific hazard event formatted as a GeoJSON Feature."""

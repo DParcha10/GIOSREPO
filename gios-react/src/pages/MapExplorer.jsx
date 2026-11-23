@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import TiepointMark from '../components/TiepointMark';
 import { fmtLatLng } from '../utils/coords';
 import MapLegend from '../components/MapLegend';
+import ToolBrowser from '../components/ToolBrowser';
+import { useSiteAssessments, AssessmentBadge, AssessmentDetail } from '../components/SiteAssessment';
 import NorthArrow from '../components/NorthArrow';
 import { 
   MapContainer, TileLayer, Polygon, CircleMarker, Popup, useMap, Polyline, useMapEvents, ScaleControl 
@@ -580,6 +582,18 @@ export default function MapExplorer() {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'seepage' | 'flood' | 'hab'
   const [baseLayer, setBaseLayer] = useState('dark');
   const [toolsOpen, setToolsOpen] = useState(false);
+  const toolWallRef = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => {
+      const typing = /input|textarea|select/i.test(e.target?.tagName || '') || e.target?.isContentEditable;
+      if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !typing)) {
+        e.preventDefault();
+        setToolsOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const [terrainRange, setTerrainRange] = useState(null);
   const [showSimOverlays, setShowSimOverlays] = useState(false);
   useEffect(() => {
@@ -4388,6 +4402,7 @@ export default function MapExplorer() {
   };
 
   // Filtered Events
+  const siteAssessments = useSiteAssessments(events);
   const filteredEvents = events.filter(evt => {
     if (activeFilter === 'all') return true;
     return evt.category === activeFilter;
@@ -4631,11 +4646,13 @@ export default function MapExplorer() {
   };
 
   // Dynamic Polygon coordinates around active event (fallback if no custom polygon drawn)
+  // The outline is exactly the box the measured assessment uses.
+  const aoiHalf = siteAssessments[selectedEvent?.id]?.aoi?.half_size_deg || 0.0045;
   const defaultAOIPolygon = selectedEvent ? [
-    [selectedEvent.lat + 0.008, selectedEvent.lng - 0.012],
-    [selectedEvent.lat + 0.008, selectedEvent.lng + 0.012],
-    [selectedEvent.lat - 0.008, selectedEvent.lng + 0.012],
-    [selectedEvent.lat - 0.008, selectedEvent.lng - 0.012]
+    [selectedEvent.lat + aoiHalf, selectedEvent.lng - aoiHalf],
+    [selectedEvent.lat + aoiHalf, selectedEvent.lng + aoiHalf],
+    [selectedEvent.lat - aoiHalf, selectedEvent.lng + aoiHalf],
+    [selectedEvent.lat - aoiHalf, selectedEvent.lng - aoiHalf]
   ] : [];
 
   const spectralColor = selectedEvent?.category === 'hab' 
@@ -4740,14 +4757,10 @@ export default function MapExplorer() {
         <aside className="w-80 flex flex-col glass-panel !border-y-0 !border-l-0 !border-r !border-primary/20 !rounded-none z-40 shrink-0">
           <div className="p-4 border-b border-gray-800">
             <div className="flex items-center justify-between mb-1">
-              <h2 className="text-xs font-bold text-white flex items-center gap-2 uppercase tracking-wider font-serif">
-                <AlertTriangle className="w-4 h-4 text-amber-400" /> Active Hazard Feed
-              </h2>
-              <span className="bg-primary/15 text-primary text-[10px] px-2 py-0.5 rounded border border-primary/30 font-mono">
-                {filteredEvents.length} Active
-              </span>
+              <h2 className="font-serif text-[17px] text-stone-50">Monitored sites</h2>
+              <span className="text-[12px] text-stone-500">{filteredEvents.length}</span>
             </div>
-            <p className="text-[10px] text-gray-400">Select an event to fly map & load COG streaming layers</p>
+            <p className="text-[12px] text-stone-400 leading-snug">Each site is compared with the same season last year, using real Sentinel-2 imagery.</p>
             
             {/* Filter Buttons */}
             <div className="flex gap-1.5 mt-3">
@@ -4788,82 +4801,30 @@ export default function MapExplorer() {
           <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2.5">
             {filteredEvents.map(evt => {
               const isSelected = selectedEvent?.id === evt.id;
-              const badgeClass = evt.severity === 'critical' ? 'text-red-400 border-red-500/40 bg-red-500/10' : 'text-amber-400 border-amber-500/40 bg-amber-500/10';
               return (
-                <div 
-                  key={evt.id} 
+                <div
+                  key={evt.id}
                   onClick={() => {
                     setSelectedEvent(evt);
                     setCustomFlyTarget(null);
                   }}
-                  className={`p-3 glass-panel cursor-pointer ${isSelected ? '!border-primary shadow-[0_0_15px_rgba(0,255,170,0.3)]' : ''}`}
+                  className={`p-3 cursor-pointer bg-stone-900 border rounded-[3px] ${isSelected ? 'border-stone-400' : 'border-stone-800 hover:border-stone-600'}`}
                 >
-                  <div className="flex justify-between items-center text-[10px] text-gray-400 mb-1.5 font-mono">
-                    <span className="font-bold text-gray-300">{evt.id}</span>
-                    <span className="uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/40 border border-gray-700">{evt.metric || 'NDMI'}</span>
+                  <div className="flex justify-between items-center text-[11px] text-stone-500 mb-1">
+                    <span>{evt.subtitle?.split('|')[0]?.trim()}</span>
+                    <span className="font-mono">{(evt.metric || 'ndmi').toUpperCase()}</span>
                   </div>
-                  <div className="font-semibold text-sm text-white mb-1 leading-snug">{evt.title}</div>
-                  <div className="flex justify-between items-center text-xs mt-2">
-                    <span className="text-gray-400 text-[11px] truncate max-w-[150px]">{evt.subtitle}</span>
-                    <span className={`text-[9px] px-2 py-0.5 rounded border uppercase font-mono font-bold ${badgeClass}`}>
-                      {evt.severity_label || evt.severity}
-                    </span>
-                  </div>
+                  <div className="font-serif text-[15px] text-stone-50 mb-1.5 leading-snug">{evt.title}</div>
+                  <p className="text-stone-400 text-[12px] mb-1.5">{evt.subtitle?.split('|')[1]?.trim()}</p>
+                  <AssessmentBadge a={siteAssessments[evt.id]} />
                 </div>
               );
             })}
           </div>
 
-          {/* Active Event Summary Bottom Card */}
+          {/* Selected site: measured comparison from real imagery */}
           {selectedEvent && (
-            <div className="p-4 border-t border-primary/20 glass-panel !rounded-none flex flex-col gap-2.5">
-              <div className="flex justify-between items-start">
-                <span className="font-bold text-xs text-white uppercase tracking-wider">{selectedEvent.title}</span>
-                <span className="text-[9px] px-1.5 py-0.5 rounded border text-red-400 border-red-500/40 bg-red-500/10 uppercase font-mono">
-                  {selectedEvent.severity_label || 'High Hazard'}
-                </span>
-              </div>
-              {(() => {
-                const meta = getIndexMetadata(selectedEvent.metric);
-                if (!meta) return null;
-                return (
-                  <div className="flex flex-wrap gap-1">
-                    {meta.isDifferenced && (
-                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono font-bold">
-                        Δ Differenced
-                      </span>
-                    )}
-                    {meta.requiresThermal && (
-                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 font-mono font-bold">
-                        Thermal IR ($T_C$)
-                      </span>
-                    )}
-                    {meta.requiresRedEdge && (
-                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-bold">
-                        Red-Edge (B05)
-                      </span>
-                    )}
-                  </div>
-                );
-              })()}
-              <p className="text-[10px] text-gray-400 leading-relaxed line-clamp-3">
-                {selectedEvent.description}
-              </p>
-              <div className="grid grid-cols-3 gap-2 text-[9px] uppercase font-mono pt-1 border-t border-gray-800">
-                <div className="flex flex-col">
-                  <span className="text-gray-500">Impact</span>
-                  <span className="text-primary font-bold">{selectedEvent.impact_area || '34.2 Ha'}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-gray-500">Peak Anomaly</span>
-                  <span className="text-primary font-bold">{selectedEvent.peak_zscore || '+2.8 σ'}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-gray-500">Sensor</span>
-                  <span className="text-primary font-bold truncate">{selectedEvent.sensor || 'Sentinel-2'}</span>
-                </div>
-              </div>
-            </div>
+            <AssessmentDetail site={selectedEvent} a={siteAssessments[selectedEvent.id]} />
           )}
         </aside>
 
@@ -7707,8 +7668,9 @@ export default function MapExplorer() {
             ) : defaultAOIPolygon.length > 0 && selectedEvent && (
               <Polygon 
                 positions={defaultAOIPolygon}
-                pathOptions={{ 
-                  className: 'tp-keep',
+                className="tp-keep"
+                pathOptions={{
+                  
                   color: '#1d1b18', 
                   weight: 1.5, 
                   fill: false,
@@ -7718,8 +7680,7 @@ export default function MapExplorer() {
                 <Popup>
                   <div className="p-1 text-black">
                     <strong>{selectedEvent.title}</strong><br/>
-                    Metric: {selectedEvent.metric?.toUpperCase()}<br/>
-                    Impact: {selectedEvent.impact_area}
+                    Index: {selectedEvent.metric?.toUpperCase()}
                   </div>
                 </Popup>
               </Polygon>
@@ -7730,13 +7691,13 @@ export default function MapExplorer() {
               <CircleMarker 
                 center={[selectedEvent.lat, selectedEvent.lng]}
                 radius={7}
-                pathOptions={{ className: 'tp-keep', color: '#fbf9f4', weight: 2, fillColor: '#1d1b18', fillOpacity: 1 }}
+                className="tp-keep" pathOptions={{ color: '#fbf9f4', weight: 2, fillColor: '#1d1b18', fillOpacity: 1 }}
               >
                 <Popup>
                   <div className="p-1 text-black font-sans">
                     <strong>{selectedEvent.hazard_type || selectedEvent.title}</strong><br/>
                     {selectedEvent.station_name && <span>USGS: {selectedEvent.station_name}<br/></span>}
-                    Anomaly: {selectedEvent.peak_zscore}
+                    {siteAssessments[selectedEvent.id]?.label || ''}
                   </div>
                 </Popup>
               </CircleMarker>
@@ -7747,8 +7708,9 @@ export default function MapExplorer() {
               <CircleMarker
                 center={[probedCoord.lat, probedCoord.lng]}
                 radius={9}
-                pathOptions={{ 
-                  className: 'tp-keep',
+                className="tp-keep"
+                pathOptions={{
+                  
                   color: '#fff', 
                   weight: 2.5, 
                   fillColor: 'var(--color-primary)', 
@@ -7836,7 +7798,7 @@ export default function MapExplorer() {
                 <CircleMarker 
                   center={[mark.lat, mark.lng]}
                   radius={10}
-                  pathOptions={{ className: 'tp-keep', color: '#fff', weight: 2.5, fillColor: mark.color || 'var(--color-primary)', fillOpacity: 0.9 }}
+                  className="tp-keep" pathOptions={{ color: '#fff', weight: 2.5, fillColor: mark.color || 'var(--color-primary)', fillOpacity: 0.9 }}
                 >
                   <Popup>
                     <div className="p-1 text-black font-sans text-xs">
@@ -11992,15 +11954,12 @@ export default function MapExplorer() {
               Simulated overlays
             </label>
             <button onClick={() => setToolsOpen((v) => !v)} className="px-3 py-1.5 text-sm bg-stone-900 border border-stone-700 rounded-[3px] text-stone-100 hover:bg-stone-950">
-              {toolsOpen ? 'Hide tools' : 'Tools'}
+              Tools <kbd className="ml-1.5 text-[10px] font-mono text-stone-500 border border-stone-700 rounded px-1">/</kbd>
             </button>
             </div>
-            {toolsOpen && (
-            <div className="flex flex-wrap gap-1.5 p-2 bg-stone-900 border border-stone-700 rounded-[4px] max-h-[60vh] overflow-y-auto">
-              <p className="w-full text-[12px] leading-snug text-stone-300 px-1 pb-1.5 mb-1 border-b border-stone-800">
-                <span className="sim-stamp mr-1.5">Simulated</span>
-                Most of these tools run placeholder models. Their map overlays are stamped SIMULATED and their numbers are not measurements.
-              </p>
+            {/* The original tool buttons stay mounted (hidden) so every tool keeps its
+                own handler; ToolBrowser lists, groups and searches them. */}
+            <div ref={toolWallRef} aria-hidden="true" className="hidden">
               
               {/* T-12 Multi-Temporal Swipe Curtain Toggle */}
               <button
@@ -12497,7 +12456,7 @@ export default function MapExplorer() {
                 title="Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamics Studio (Cycle v2.5.11)"
               >
                 <Waves className="w-3.5 h-3.5 text-rose-400" />
-                <span>Dam Breach</span>
+                <span>Dam Inundation</span>
               </button>
 
               {/* T-132/T-134 Phreatic Surface Seepage & SWRC Studio Shortcut (Cycle v2.5.12) */}
@@ -13073,7 +13032,7 @@ export default function MapExplorer() {
                 </select>
               </div>
             </div>
-            )}
+            <ToolBrowser open={toolsOpen} onClose={() => setToolsOpen(false)} sourceRef={toolWallRef} />
 
             {/* T-14: Floating Symbology Controls Drawer */}
             {symbologyPanelOpen && (
@@ -24169,7 +24128,7 @@ export default function MapExplorer() {
               Zoom {currentZoom} ({lodMetadata.range})
             </span>
             <span className="flex items-center gap-2 text-white">
-              <MapIcon className="w-3.5 h-3.5 text-primary"/> Active AOI: {zonalStatsResult ? `${zonalStatsResult.area_hectares} Ha (Custom Polygon)` : (selectedEvent?.impact_area || '34.2 Hectares')}
+              <MapIcon className="w-3.5 h-3.5 text-primary"/> Assessment area: {zonalStatsResult ? `${zonalStatsResult.area_hectares} ha (custom polygon)` : (siteAssessments[selectedEvent?.id]?.aoi ? `${siteAssessments[selectedEvent.id].aoi.area_km2} km²` : '—')}
             </span>
           </div>
         </div>
