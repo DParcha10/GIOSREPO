@@ -62,6 +62,7 @@ export default function Map3D({ site, initialLayer = 'none', onClose }) {
       pitch: 62,
       bearing: -20,
       maxPitch: 80,
+      minZoom: 8,
       attributionControl: false,
       transformRequest: (url) => (url.startsWith(`${origin}/api/`) && token
         ? { url, headers: { Authorization: `Bearer ${token}` } } : { url }),
@@ -74,12 +75,12 @@ export default function Map3D({ site, initialLayer = 'none', onClose }) {
             attribution: 'Imagery © Esri, Maxar',
           },
           dem: {
-            type: 'raster-dem', encoding: 'terrarium', tileSize: 256, maxzoom: 13,
+            type: 'raster-dem', encoding: 'terrarium', tileSize: 256, minzoom: 8, maxzoom: 13,
             tiles: [`${origin}/api/v1/tiles/terrain/terrarium/{z}/{x}/{y}.png?v=${V}`],
             attribution: 'Copernicus DEM © DLR, Airbus (EU/ESA)',
           },
           demShade: {
-            type: 'raster-dem', encoding: 'terrarium', tileSize: 256, maxzoom: 13,
+            type: 'raster-dem', encoding: 'terrarium', tileSize: 256, minzoom: 8, maxzoom: 13,
             tiles: [`${origin}/api/v1/tiles/terrain/terrarium/{z}/{x}/{y}.png?v=${V}`],
           },
         },
@@ -115,7 +116,7 @@ export default function Map3D({ site, initialLayer = 'none', onClose }) {
     if (m.getSource('overlay')) m.removeSource('overlay');
     const url = layer && overlayUrl(layer, site, demRange);
     if (url) {
-      m.addSource('overlay', { type: 'raster', tiles: [url], tileSize: 256, maxzoom: layer.kind === 'terrain' ? 13 : 15 });
+      m.addSource('overlay', { type: 'raster', tiles: [url], tileSize: 256, minzoom: 8, maxzoom: layer.kind === 'terrain' ? 13 : 15 });
       m.addLayer({ id: 'overlay', type: 'raster', source: 'overlay', paint: { 'raster-opacity': opacity } }, 'shade');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

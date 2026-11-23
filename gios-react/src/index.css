@@ -375,7 +375,7 @@ h1, h2, h3 { font-family: var(--font-serif); letter-spacing: -0.01em; }
 .uppercase:not(.sim-stamp) { text-transform: none !important; letter-spacing: normal !important; }
 
 /* Scale bar, styled like a printed map. */
-.leaflet-control-scale { margin-left: 12px !important; margin-bottom: 64px !important; }
+.leaflet-control-scale { margin-left: 12px !important; margin-bottom: 84px !important; }
 .leaflet-control-scale-line {
   background: rgba(251, 249, 244, 0.92) !important;
   border: 1.5px solid #1d1b18 !important;

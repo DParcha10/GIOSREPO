@@ -6,7 +6,7 @@ import {
   MapPin, CheckCircle2, ShieldCheck, RefreshCw, Cpu, User, FileText,
   BrainCircuit, Compass, Globe, Search, ExternalLink, BarChart3, Lightbulb, AlertTriangle
 } from 'lucide-react';
-import { downloadPdfReport, triggerMockAlert } from '../api/giosApi';
+import { downloadPdfReport } from '../api/giosApi';
 import { useNavigate } from 'react-router-dom';
 import useJarvisStore from '../store/jarvisStore';
 import MetallicPaintText from '../components/ReactBits/MetallicPaintText';
@@ -87,55 +87,22 @@ export default function AIAgent() {
     <div className="p-8 h-full flex flex-col gap-6 text-gray-200 w-full relative z-10 overflow-hidden font-sans">
       
       {/* Sleek Frosted Glass Header */}
-      <header className="flex justify-between items-center bg-white/[0.03] backdrop-blur-xl border border-white/10 px-6 py-4 rounded-2xl shrink-0 shadow-[0_8px_32px_rgba(0,0,0,0.2)]">
-        <div className="flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary/30 to-secondary/20 border border-primary/40 flex items-center justify-center text-primary shadow-[0_0_18px_rgba(0,255,170,0.3)]">
-            <Bot size={22} className="animate-pulse" />
-          </div>
-          <div>
-            <h1 className="text-xl font-serif font-bold text-white tracking-wider flex items-center gap-2">
-              <MetallicPaintText text="Assistant" glow='var(--color-primary)' />
-              <span className="text-xs text-primary font-mono font-normal tracking-widest px-2 py-0.5 rounded bg-primary/10 border border-primary/30">
-                AUTONOMOUS COPILOT
-              </span>
-            </h1>
-            <p className="text-xs text-gray-400 font-medium mt-0.5">
-              Persistent Memory Active • Autonomous Map Pinning & Tab Navigation
-            </p>
-          </div>
+      <header className="flex justify-between items-end shrink-0">
+        <div>
+          <h1 className="font-serif text-3xl text-stone-50">Assistant</h1>
+          <p className="text-stone-400 mt-1">
+            Ask about a site, a gauge or a dataset. It can pin places on the map. It needs a language model on the server (Ollama by default).
+          </p>
         </div>
-
         <div className="flex items-center gap-3">
           {markedLocations.length > 0 && (
-            <div className="flex items-center gap-2 text-xs bg-teal-500/10 border border-teal-500/30 text-teal-300 px-3 py-1.5 rounded-full font-mono">
-              <MapPin size={12} className="animate-bounce" />
-              <span>{markedLocations.length} Pinned</span>
-            </div>
+            <span className="text-[13px] text-stone-400">{markedLocations.length} pinned on the map</span>
           )}
-
-          <div className="flex items-center gap-2 text-xs bg-black/40 border border-white/10 px-3 py-1.5 rounded-full">
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-            <span className="text-gray-300 font-mono">Assistant Core Online</span>
-          </div>
-
-          <button 
+          <button
             onClick={clearChat}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/10 hover:border-red-400/40 text-gray-400 hover:text-red-400 text-xs bg-white/[0.02] hover:bg-red-500/10 transition-all"
+            className="px-3 py-1.5 text-[13px] border border-stone-700 rounded-[3px] text-stone-200 hover:bg-stone-900"
           >
-            <Trash2 size={13} /> Clear Chat
-          </button>
-
-          <button 
-            onClick={async () => {
-              try {
-                await triggerMockAlert();
-              } catch (e) {
-                console.error('Mock alert failed', e);
-              }
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-500/30 hover:border-amber-400/60 text-amber-400 hover:text-amber-300 text-xs bg-amber-500/10 hover:bg-amber-500/20 transition-all"
-          >
-            <AlertTriangle size={13} /> Simulate Alert
+            Clear conversation
           </button>
         </div>
       </header>
@@ -149,7 +116,7 @@ export default function AIAgent() {
           {/* Memory Section */}
           <div className="border-b border-white/10 pb-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-teal-400 font-mono flex items-center gap-2">
-              <BrainCircuit size={14} /> Assistant Memory Bank
+              <BrainCircuit size={14} /> Remembered context
             </h3>
             <p className="text-[11px] text-gray-400 mt-1">
               Conversations, user facts, and pinned sites are automatically retained across sessions.
@@ -237,7 +204,7 @@ export default function AIAgent() {
               onClick={() => navigate('/map')}
               className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/30 text-teal-300 text-xs font-semibold transition-all"
             >
-              <MapPin size={13} /> Switch to Map Explorer
+              <MapPin size={13} /> Open the map
             </button>
             <button 
               onClick={() => handleExportPDF('ndmi')}

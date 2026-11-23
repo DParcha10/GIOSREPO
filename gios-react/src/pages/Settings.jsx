@@ -22,7 +22,7 @@ export default function Settings() {
       <header className="px-8 py-6 border-b border-primary/20 shrink-0 relative z-10 glass-panel !rounded-none !border-t-0 !border-x-0">
         <div className="flex items-center gap-3">
           <SettingsIcon className="w-6 h-6 text-primary" />
-          <h1 className="text-2xl font-bold font-serif tracking-wider text-white">System <span className="text-primary">Settings</span></h1>
+          <h1 className="font-serif text-3xl text-stone-50">Settings</h1>
         </div>
         <p className="text-gray-400 mt-1 text-sm">Manage your workspace preferences, authentication, and application theme.</p>
       </header>

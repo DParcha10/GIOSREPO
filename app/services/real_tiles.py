@@ -387,6 +387,8 @@ def fetch_mosaic_tile(collection: str, z: int, x: int, y: int, params: dict, pre
         return None
     if r.status_code in (204, 404):
         return TRANSPARENT_PNG  # no scenes cover this tile in the window
+    if r.status_code == 400 and "minimum zoom" in r.text:
+        return TRANSPARENT_PNG  # zoomed out further than the collection serves
     if r.status_code != 200 or not r.headers.get("content-type", "").startswith("image/"):
         logger.warning("Mosaic tile service returned %s: %s", r.status_code, r.text[:200])
         return None
@@ -430,15 +432,19 @@ def render_layer_mosaic(kind, key, z, x, y, pre=None, post=None, rescale=None) -
                 lo, hi = _dem_range(item["item_id"])
         params["rescale"] = f"{lo},{hi}"
         params.pop("colormap_name", None)
-        grey = fetch_mosaic_tile(spec["collection"], z, x, y, params, pre, post)
+        # Fetch the elevation and its hillshade at the same time; each is a separate upstream request.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_grey = pool.submit(fetch_mosaic_tile, spec["collection"], z, x, y, params, pre, post)
+            f_shade = pool.submit(fetch_mosaic_tile, spec["collection"], z, x, y,
+                                  {"assets": "data", "algorithm": "hillshade", "buffer": "3"})
+            grey, shade = f_grey.result(), f_shade.result()
         if grey is None:
             return None
         if grey is TRANSPARENT_PNG:
             png = grey
         else:
-            shade = fetch_mosaic_tile(spec["collection"], z, x, y,
-                                      {"assets": "data", "algorithm": "hillshade", "buffer": "3"})
-            png = shaded_relief(grey, shade if shade is not TRANSPARENT_PNG else None)
+            png = shaded_relief(grey, shade if shade not in (None, TRANSPARENT_PNG) else None)
         return png, {"item_id": f"mosaic:{mosaic_id(spec['collection'])}", "collection": spec["collection"]}
     png = fetch_mosaic_tile(spec["collection"], z, x, y, params, pre, post)
     if png is None:

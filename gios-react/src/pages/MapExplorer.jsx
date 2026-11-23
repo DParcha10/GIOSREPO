@@ -623,7 +623,7 @@ export default function MapExplorer() {
   const [tileLoading, setTileLoading] = useState(false);
   const [symbologyPanelOpen, setSymbologyPanelOpen] = useState(false);
 
-  // T-11 Drone Centimeter-Zoom & Upload Modal State
+  // T-11 Drone-Zoom & Upload Modal State
   const [droneModalOpen, setDroneModalOpen] = useState(false);
   const [registeredDroneOrtho, setRegisteredDroneOrtho] = useState({
     ortho_id: 'ORTHO-SLD-202609-01',
@@ -4666,16 +4666,12 @@ export default function MapExplorer() {
     : 'var(--color-danger)';
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-transparent text-gray-200 font-sans select-none">
+    <div className="flex flex-col flex-1 min-h-0 w-full overflow-hidden text-stone-200 font-sans select-none">
       
       {/* Top Navbar */}
       <header className="flex items-center justify-between px-5 h-12 border-b border-stone-800 bg-stone-900 shrink-0 z-50">
         <div className="flex items-center gap-4">
-          <Link to="/" className="flex items-center gap-2.5 text-stone-50">
-            <TiepointMark size={22} />
-            <span className="font-serif text-lg font-semibold">Tiepoint</span>
-            <span className="sim-stamp ml-1">Prototype</span>
-          </Link>
+          <span className="font-serif text-[16px] text-stone-50">Map</span>
         </div>
 
         {/* Sub-view Navigation Ribbon */}
@@ -4684,7 +4680,7 @@ export default function MapExplorer() {
             className={`h-full px-4 flex items-center gap-2 text-xs uppercase tracking-wider font-semibold border-b-2 transition-all ${activeTab === 'live' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`} 
             onClick={() => setActiveTab('live')}
           >
-            <AlertTriangle className="w-3.5 h-3.5" /> Live Hazards
+            <AlertTriangle className="w-3.5 h-3.5" /> Sites
           </button>
           <button 
             className={`h-full px-4 flex items-center gap-2 text-xs uppercase tracking-wider font-semibold border-b-2 transition-all ${activeTab === 'studio' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`} 
@@ -4696,58 +4692,31 @@ export default function MapExplorer() {
             className={`h-full px-4 flex items-center gap-2 text-xs uppercase tracking-wider font-semibold border-b-2 transition-all ${activeTab === 'drone' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`} 
             onClick={() => setActiveTab('drone')}
           >
-            <Radio className="w-3.5 h-3.5 text-purple-400" /> Drone Centimeter
+            <Radio className="w-3.5 h-3.5 text-purple-400" /> Drone
           </button>
           <button 
             className={`h-full px-4 flex items-center gap-2 text-xs uppercase tracking-wider font-semibold border-b-2 transition-all ${activeTab === 'catalog' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`} 
             onClick={() => setActiveTab('catalog')}
           >
-            <Database className="w-3.5 h-3.5" /> Event Catalog
+            <Database className="w-3.5 h-3.5" /> Catalog
           </button>
           <button 
             className={`h-full px-4 flex items-center gap-2 text-xs uppercase tracking-wider font-semibold border-b-2 transition-all ${activeTab === 'acquisition' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`} 
             onClick={() => setActiveTab('acquisition')}
           >
-            <Search className="w-3.5 h-3.5" /> Data Acquisition
+            <Search className="w-3.5 h-3.5" /> Acquisition
           </button>
         </nav>
 
         {/* Global Page Switchers & Controls */}
         <div className="flex items-center gap-3">
-          <div className="hidden xl:flex items-center gap-2 border-r border-gray-800 pr-3 mr-1">
-            <Link to="/dashboard" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-sans uppercase tracking-wider">
-              <LayoutDashboard className="w-3.5 h-3.5" /> Telemetry
-            </Link>
-            <Link to="/analytics" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-sans uppercase tracking-wider">
-              <LineChart className="w-3.5 h-3.5" /> Analytics
-            </Link>
-            <Link to="/methodology" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-sans uppercase tracking-wider">
-              <BookOpen className="w-3.5 h-3.5" /> Methodology
-            </Link>
-            <Link to="/ai-agent" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-sans uppercase tracking-wider">
-              <Bot className="w-3.5 h-3.5 text-primary" /> Assistant
-            </Link>
-          </div>
-
-          <div className="flex items-center gap-2 text-[11px] text-gray-400 font-mono bg-black/40 border border-gray-800 px-2.5 py-1 rounded">
-            <span className={`w-2 h-2 rounded-full ${tileLoading ? 'bg-amber-400 animate-ping' : 'bg-primary animate-pulse'}`}></span>
-            <span>{tileLoading ? 'STREAMING COG TILES' : 'COG TILES ONLINE'}</span>
-          </div>
-
           <button 
             onClick={handleExportDossier}
             disabled={exporting}
-            className="glass-button px-3 py-1.5 text-teal-300 text-xs font-semibold uppercase tracking-wider disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] border border-stone-700 rounded-[3px] text-stone-100 hover:bg-stone-950 disabled:opacity-50"
           >
             {exporting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
             <span>{exporting ? 'Generating...' : 'Export Briefing'}</span>
-          </button>
-
-          <button 
-            onClick={handleLogout} 
-            className="glass-button text-[11px] text-red-400 px-2.5 py-1 uppercase tracking-widest font-mono"
-          >
-            LOGOUT
           </button>
         </div>
       </header>
@@ -4790,13 +4759,7 @@ export default function MapExplorer() {
               >
                 <Flame className="w-3 h-3 text-emerald-400"/> HAB
               </button>
-              <button 
-                className={`flex-1 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border flex items-center justify-center gap-1 transition-all ${activeFilter === 'wildfire' ? 'border-primary bg-primary/20 text-primary' : 'border-gray-800 text-gray-400 hover:bg-gray-800'}`} 
-                onClick={() => setActiveFilter('wildfire')}
-              >
-                <Flame className="w-3 h-3 text-orange-400"/> Fire
-              </button>
-            </div>
+                          </div>
           </div>
 
           {/* Event Items List */}
@@ -4998,7 +4961,7 @@ export default function MapExplorer() {
               </>
             )}
 
-            {/* 4. T-11: Drone Centimeter-Scale COG Tile Layer */}
+            {/* 4. T-11: Drone-Scale COG Tile Layer */}
             {layerMode === 'drone' && !curtainActive && (
               <>
                 <TileLayer 
@@ -11907,27 +11870,27 @@ export default function MapExplorer() {
                   onClick={() => { setLayerMode('spectral'); setCurtainActive(false); }}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${layerMode === 'spectral' && !curtainActive ? 'bg-danger/20 text-danger' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                 >
-                  <Flame className="w-3 h-3"/> Spectral ({activeSpectralIndex.toUpperCase()})
+                  <Flame className="w-3 h-3"/> Spectral · {activeSpectralIndex.toUpperCase()}
                 </button>
                 <button 
                   onClick={() => { setLayerMode('drone'); setCurtainActive(false); }}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${layerMode === 'drone' ? 'bg-purple-500/20 text-purple-400' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                 >
-                  <Radio className="w-3 h-3"/> Drone ({formatGsdDisplay(registeredDroneOrtho?.metric_gsd_cm || 2.85)})
+                  <Radio className="w-3 h-3"/> Drone
                 </button>
                 <button 
                   onClick={() => { setLayerMode('terrain'); setCurtainActive(false); }}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${layerMode === 'terrain' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                   title="Copernicus DEM 30m Global Digital Surface Model"
                 >
-                  <Mountain className="w-3 h-3"/> Terrain ({activeTerrainMetric.toUpperCase()})
+                  <Mountain className="w-3 h-3"/> Terrain · {activeTerrainMetric.charAt(0).toUpperCase() + activeTerrainMetric.slice(1)}
                 </button>
                 <button 
                   onClick={() => { setLayerMode('sar'); setCurtainActive(false); }}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${layerMode === 'sar' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                   title="Sentinel-1 SAR C-Band Radar Backscatter"
                 >
-                  <Radar className="w-3 h-3"/> SAR ({activeSarPolarization.toUpperCase()})
+                  <Radar className="w-3 h-3"/> Radar · {activeSarPolarization === 'ratio_vh_vv' ? 'VH/VV' : activeSarPolarization === 'dual_pol_rgb' ? 'Dual-pol' : activeSarPolarization.toUpperCase()}
                 </button>
               </div>
 
@@ -13324,14 +13287,14 @@ export default function MapExplorer() {
             </div>
           )}
 
-          {/* Data Acquisition Sub-Modal */}
+          {/* Acquisition Sub-Modal */}
           {activeTab === 'acquisition' && (
             <div className="absolute inset-x-8 top-8 bottom-16 z-[950] glass-panel p-6 flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
               <div className="flex justify-between items-center border-b border-gray-800 pb-4 mb-4">
                 <div className="flex items-center gap-3">
                   <Search className="w-6 h-6 text-primary" />
                   <div>
-                    <h3 className="font-serif font-bold text-lg text-white">Planetary Computer Data Acquisition</h3>
+                    <h3 className="font-serif font-bold text-lg text-white">Planetary Computer Acquisition</h3>
                     <p className="text-xs text-gray-400">Search STAC collections for satellite imagery</p>
                   </div>
                 </div>
@@ -13363,7 +13326,7 @@ export default function MapExplorer() {
             </div>
           )}
 
-          {/* Event Catalog Sub-Modal */}
+          {/* Catalog Sub-Modal */}
           {activeTab === 'catalog' && (
             <div className="absolute inset-x-8 top-8 bottom-16 z-[950] glass-panel p-6 flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
               <div className="flex justify-between items-center border-b border-gray-800 pb-4 mb-4">
@@ -24102,7 +24065,7 @@ export default function MapExplorer() {
           className="absolute bottom-10 left-80 right-0 h-8 glass-panel !border-t !border-primary/30 !rounded-none !border-x-0 !border-b-0 flex items-center justify-between px-4 z-[940] text-[10px] uppercase font-bold tracking-widest text-primary cursor-pointer"
         >
           <div className="flex items-center gap-2">
-            <Settings className="w-3.5 h-3.5" /> Integrated Hazard Analytics & Ground-Truth Sensors
+            <Settings className="w-3.5 h-3.5" /> Site analytics drawer <span className="sim-stamp ml-2">Simulated</span>
           </div>
           <div className="flex items-center gap-4 text-gray-400 font-normal">
             <span>Event: <strong className="text-white font-mono">{selectedEvent?.title}</strong></span>
@@ -24114,37 +24077,32 @@ export default function MapExplorer() {
         </div>
 
         {/* Bottom Bar handles (over map and sidebar) */}
-        <div className="absolute bottom-0 left-0 right-0 h-10 glass-panel !rounded-none !border-t !border-primary/30 !border-x-0 !border-b-0 flex items-center justify-between px-4 z-[1000] text-[10px] text-gray-400 uppercase tracking-widest font-mono">
+        <div className="absolute bottom-0 left-0 right-0 h-9 bg-stone-900 border-t border-stone-800 flex items-center justify-between px-4 z-[1000] text-[12px] text-stone-400">
           <div className="flex items-center gap-2">
-            <Crosshair className="w-3.5 h-3.5 text-primary" />
+            <Crosshair className="w-3.5 h-3.5 text-stone-500" />
             {selectedEvent ? fmtLatLng(selectedEvent.lat, selectedEvent.lng) : '—'}
           </div>
           
           <div className="flex items-center gap-2">
-            <Layers className="w-3.5 h-3.5 text-primary" />
-            {layerMode === 'drone' || zoomScaleMode === 'micro' ? (
-              <span className="text-purple-300 font-bold">
-                Centimeter Survey: {formatGsdDisplay(registeredDroneOrtho?.metric_gsd_cm || 2.85)} (Micro Zoom Level 20)
-              </span>
-            ) : layerMode === 'terrain' ? (
-              <span className="text-emerald-300 font-bold">
-                Copernicus DEM 30m ({activeTerrainMetric.toUpperCase()}) — {lodMetadata.name}
-              </span>
-            ) : layerMode === 'sar' ? (
-              <span className="text-cyan-300 font-bold">
-                Sentinel-1 SAR C-Band ({activeSarPolarization.toUpperCase()}) — {lodMetadata.name}
-              </span>
-            ) : (
-              <span>Spatial Res: 10m Ground Sample ({selectedEvent?.sensor || 'Sentinel-2 L2A'}) — {lodMetadata.name}</span>
-            )}
+            <Layers className="w-3.5 h-3.5 text-stone-500" />
+            <span>
+              {layerMode === 'spectral' ? `Sentinel-2 L2A mosaic · 10 m · ${activeSpectralIndex.toUpperCase()}`
+                : layerMode === 'terrain' ? `Copernicus DEM GLO-30 · 30 m · ${activeTerrainMetric}`
+                : layerMode === 'sar' ? `Sentinel-1 RTC · 10 m · ${activeSarPolarization.toUpperCase()}`
+                : layerMode === 'drone' ? 'Drone survey · uploaded orthomosaics only'
+                : `Basemap · ${baseLayer === 'satellite' ? 'Esri World Imagery' : baseLayer === 'street' ? 'Esri World Topographic' : 'Esri Light Gray'}`}
+            </span>
           </div>
 
           <div className="flex items-center gap-4 border-l border-gray-800 pl-4">
-            <span className={`px-2 py-0.5 rounded border text-[9px] font-bold ${lodMetadata.badge}`}>
-              Zoom {currentZoom} ({lodMetadata.range})
+            <span className="font-mono">
+              Zoom {currentZoom} · 1 px ≈ {(() => {
+                const m = 156543.03 * Math.cos(((selectedEvent?.lat || 0) * Math.PI) / 180) / 2 ** currentZoom;
+                return m >= 1 ? `${m.toFixed(m < 10 ? 1 : 0)} m` : `${(m * 100).toFixed(0)} cm`;
+              })()}
             </span>
-            <span className="flex items-center gap-2 text-white">
-              <MapIcon className="w-3.5 h-3.5 text-primary"/> Assessment area: {zonalStatsResult ? `${zonalStatsResult.area_hectares} ha (custom polygon)` : (siteAssessments[selectedEvent?.id]?.aoi ? `${siteAssessments[selectedEvent.id].aoi.area_km2} km²` : '—')}
+            <span className="flex items-center gap-2 text-stone-300">
+              <MapIcon className="w-3.5 h-3.5 text-stone-500"/> Assessment area: {zonalStatsResult ? `${zonalStatsResult.area_hectares} ha (custom polygon)` : (siteAssessments[selectedEvent?.id]?.aoi ? `${siteAssessments[selectedEvent.id].aoi.area_km2} km²` : '—')}
             </span>
           </div>
         </div>
