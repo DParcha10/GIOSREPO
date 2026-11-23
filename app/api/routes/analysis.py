@@ -1472,7 +1472,7 @@ def _real_index_tile(collection, z, x, y, index, rescale, colormap, pre, post):
     from app.services import real_tiles
     if not real_tiles.supports(collection, index):
         return None
-    out = real_tiles.render(z, x, y, index, rescale, colormap, pre, post)
+    out = real_tiles.render_index_mosaic(z, x, y, index, colormap, pre, post) or real_tiles.render(z, x, y, index, rescale, colormap, pre, post)
     if out is None:
         return None
     png, scene = out
@@ -1480,10 +1480,36 @@ def _real_index_tile(collection, z, x, y, index, rescale, colormap, pre, post):
         content=png,
         media_type="image/png",
         headers={
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": "public, max-age=3600",
             "X-Tiepoint-Source": f"sentinel-2-l2a:{scene['item_id']}",
         },
     )
+
+
+def _real_layer_tile(kind, key, z, x, y, pre=None, post=None, rescale=None):
+    """Real Copernicus DEM / Sentinel-1 tile; None means use the old renderer."""
+    from app.services import real_tiles
+    if not real_tiles.layer_supported(kind, key):
+        return None
+    out = real_tiles.render_layer_mosaic(kind, key, z, x, y, pre, post, rescale) or real_tiles.render_layer(kind, key, z, x, y, pre, post, rescale)
+    if out is None:
+        return None
+    png, item = out
+    return Response(content=png, media_type="image/png", headers={
+        "Cache-Control": "public, max-age=3600",
+        "X-Tiepoint-Source": f"{item['collection']}:{item['item_id']}",
+    })
+
+
+@router.get("/imagery/layer")
+def get_imagery_layer(kind: str, key: str, lat: float, lon: float,
+                      pre: Optional[str] = None, post: Optional[str] = None):
+    """Legend and source for a terrain or radar layer at a location."""
+    from app.services import real_tiles
+    if not real_tiles.layer_supported(kind, key):
+        return {"real": False}
+    info = real_tiles.layer_info(kind, key, lon, lat, pre, post)
+    return {"real": info is not None, **(info or {})}
 
 
 @router.get("/imagery/scene")
@@ -1511,6 +1537,11 @@ def get_analysis_tile(
     pre: Optional[str] = Query(None, description="Pre-event baseline date for differenced tiles"),
     post: Optional[str] = Query(None, description="Post-event assessment date for differenced tiles")
 ):
+    if collection in ("terrain", "sar"):
+        # /tiles/terrain/<metric>/... and /tiles/sar/<pol>/... also match this route.
+        real = _real_layer_tile(collection, item_id, z, x, y, rescale=rescale)
+        if real is not None:
+            return real
     real = _real_index_tile(collection, z, x, y, index, rescale, colormap, pre, post)
     if real is not None:
         return real
@@ -1529,6 +1560,11 @@ def get_xyz_tile(
     pre: Optional[str] = Query(None, description="Pre-event baseline date for differenced tiles"),
     post: Optional[str] = Query(None, description="Post-event assessment date for differenced tiles")
 ):
+    if collection in ("terrain", "sar"):
+        # /tiles/terrain/<metric>/... and /tiles/sar/<pol>/... also match this route.
+        real = _real_layer_tile(collection, item_id, z, x, y, rescale=rescale)
+        if real is not None:
+            return real
     real = _real_index_tile(collection, z, x, y, index, rescale, colormap, pre, post)
     if real is not None:
         return real
@@ -1695,6 +1731,9 @@ def get_terrain_tile(
     colormap: Optional[str] = "terrain",
     rescale: Optional[str] = None
 ):
+    real = _real_layer_tile("terrain", metric, z, x, y, rescale=rescale)
+    if real is not None:
+        return real
     png_bytes = tile_service.render_terrain_tile(
         metric=metric,
         z=z,
@@ -1725,6 +1764,9 @@ def get_sar_tile(
     cal: Optional[str] = Query(None, alias="calibration"),
     threshold_db: Optional[float] = Query(None, alias="water_threshold_db")
 ):
+    real = _real_layer_tile("sar", polarization, z, x, y)
+    if real is not None:
+        return real
     pol_str = str(polarization).lower().strip()
     if pol_str == "flood":
         png_bytes = tile_service.render_sar_flood_inundation_tile(

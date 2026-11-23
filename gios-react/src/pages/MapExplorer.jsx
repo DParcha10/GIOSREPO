@@ -579,6 +579,12 @@ export default function MapExplorer() {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'seepage' | 'flood' | 'hab'
   const [baseLayer, setBaseLayer] = useState('dark');
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [terrainRange, setTerrainRange] = useState(null);
+  const [showSimOverlays, setShowSimOverlays] = useState(false);
+  useEffect(() => {
+    document.body.classList.toggle('tp-hide-sim', !showSimOverlays);
+    return () => document.body.classList.remove('tp-hide-sim');
+  }, [showSimOverlays]);
   const [layerMode, setLayerMode] = useState('optical'); // 'optical' | 'spectral' | 'drone' | 'terrain' | 'sar'
   const [activeTerrainMetric, setActiveTerrainMetric] = useState(TERRAIN_METRICS.ELEVATION);
   const [activeSarPolarization, setActiveSarPolarization] = useState(SAR_POLARIZATIONS.VV);
@@ -4447,8 +4453,12 @@ export default function MapExplorer() {
   const droneLeafletBounds = registeredDroneOrtho?.bounds ? bboxToLeafletBounds(registeredDroneOrtho.bounds) : null;
 
   // T-45 & T-49: Dynamic Terrain DEM & Sentinel-1 SAR Tile URLs
-  const dynamicTerrainTileUrl = buildTerrainTileUrl(activeTerrainMetric, '{z}', '{x}', '{y}');
-  const dynamicSarTileUrl = buildSarTileUrl(activeSarPolarization, '{z}', '{x}', '{y}');
+  // v=: bump when tile content changes so browsers drop old cached tiles.
+  const TILE_VERSION = 'm3';
+  const dynamicTerrainTileUrl = buildTerrainTileUrl(activeTerrainMetric, '{z}', '{x}', '{y}')
+    + `?v=${TILE_VERSION}`
+    + (activeTerrainMetric === 'elevation' && terrainRange ? `&rescale=${terrainRange[0]},${terrainRange[1]}` : '');
+  const dynamicSarTileUrl = buildSarTileUrl(activeSarPolarization, '{z}', '{x}', '{y}') + `?v=${TILE_VERSION}`;
 
   // Multi-Scale Spatial LOD Tier metadata calculation
   const currentLodTierKey = getSpatialLodTier(currentZoom);
@@ -4923,7 +4933,7 @@ export default function MapExplorer() {
             {layerMode === 'spectral' && !curtainActive && (
               <TileLayer 
                 key={`spectral-live-${activeSpectralIndex}-${activeColormap}-${rescaleMin}-${rescaleMax}`}
-                url={dynamicSpectralTileUrl}
+                url={`${dynamicSpectralTileUrl}${dynamicSpectralTileUrl.includes('?') ? '&' : '?'}v=${TILE_VERSION}`}
                 opacity={layerOpacity}
                 maxNativeZoom={18}
                 maxZoom={22}
@@ -4938,7 +4948,7 @@ export default function MapExplorer() {
             {/* 2b. T-45 & T-49: Digital Terrain DEM & Morphology Tile Layer */}
             {layerMode === 'terrain' && !curtainActive && (
               <TileLayer 
-                key={`terrain-live-${activeTerrainMetric}`}
+                key={`terrain-live-${activeTerrainMetric}-${terrainRange ? terrainRange.join("_") : "auto"}`}
                 url={dynamicTerrainTileUrl}
                 opacity={layerOpacity}
                 maxNativeZoom={18}
@@ -7697,11 +7707,11 @@ export default function MapExplorer() {
               <Polygon 
                 positions={defaultAOIPolygon}
                 pathOptions={{ 
-                  color: spectralColor, 
-                  weight: layerMode === 'spectral' ? 2 : 1.5, 
-                  fillColor: layerMode === 'spectral' ? spectralColor : '#000', 
-                  fillOpacity: layerMode === 'spectral' ? 0.35 : 0.2,
-                  dashArray: layerMode === 'drone' ? '6, 6' : undefined
+                  className: 'tp-keep',
+                  color: '#1d1b18', 
+                  weight: 1.5, 
+                  fill: false,
+                  dashArray: '6, 4'
                 }}
               >
                 <Popup>
@@ -7719,7 +7729,7 @@ export default function MapExplorer() {
               <CircleMarker 
                 center={[selectedEvent.lat, selectedEvent.lng]}
                 radius={7}
-                pathOptions={{ color: '#fff', weight: 2, fillColor: spectralColor, fillOpacity: 1 }}
+                pathOptions={{ className: 'tp-keep', color: '#fbf9f4', weight: 2, fillColor: '#1d1b18', fillOpacity: 1 }}
               >
                 <Popup>
                   <div className="p-1 text-black font-sans">
@@ -7737,6 +7747,7 @@ export default function MapExplorer() {
                 center={[probedCoord.lat, probedCoord.lng]}
                 radius={9}
                 pathOptions={{ 
+                  className: 'tp-keep',
                   color: '#fff', 
                   weight: 2.5, 
                   fillColor: 'var(--color-primary)', 
@@ -7824,7 +7835,7 @@ export default function MapExplorer() {
                 <CircleMarker 
                   center={[mark.lat, mark.lng]}
                   radius={10}
-                  pathOptions={{ color: '#fff', weight: 2.5, fillColor: mark.color || 'var(--color-primary)', fillOpacity: 0.9 }}
+                  pathOptions={{ className: 'tp-keep', color: '#fff', weight: 2.5, fillColor: mark.color || 'var(--color-primary)', fillOpacity: 0.9 }}
                 >
                   <Popup>
                     <div className="p-1 text-black font-sans text-xs">
@@ -11959,13 +11970,14 @@ export default function MapExplorer() {
               {/* Sub-Pill for SAR Polarization Selection */}
               {layerMode === 'sar' && (
                 <div className="flex glass-panel !rounded-lg p-0.5 gap-1 bg-black/70 border border-cyan-500/30 text-[9px] font-mono">
-                  {Object.values(SAR_POLARIZATIONS).map(pol => (
+                  {[['vv', 'VV'], ['vh', 'VH'], ['ratio_vh_vv', 'VH/VV'], ['dual_pol_rgb', 'Dual-pol RGB']].map(([pol, polLabel]) => (
                     <button
                       key={pol}
+                      title={polLabel}
                       onClick={() => setActiveSarPolarization(pol)}
                       className={`px-2 py-0.5 rounded uppercase font-bold transition-all ${activeSarPolarization === pol ? 'bg-cyan-500 text-black' : 'text-gray-400 hover:text-white'}`}
                     >
-                      {pol}
+                      {polLabel}
                     </button>
                   ))}
                 </div>
@@ -11973,11 +11985,21 @@ export default function MapExplorer() {
             </div>
 
             {/* Second Row: Professional Remote Sensing Diagnostic Tools (T-11, T-12, T-13b, T-14, T-15b, T-45, T-49) */}
-            <button onClick={() => setToolsOpen((v) => !v)} className="self-end px-3 py-1.5 text-sm bg-stone-900 border border-stone-700 rounded-[3px] text-stone-100 hover:bg-stone-950">
+            <div className="self-end flex gap-2">
+            <label className="flex items-center gap-2 px-3 py-1.5 text-sm bg-stone-900 border border-stone-700 rounded-[3px] text-stone-200 cursor-pointer select-none">
+              <input type="checkbox" checked={showSimOverlays} onChange={(e) => setShowSimOverlays(e.target.checked)} className="accent-[var(--primary)]" />
+              Simulated overlays
+            </label>
+            <button onClick={() => setToolsOpen((v) => !v)} className="px-3 py-1.5 text-sm bg-stone-900 border border-stone-700 rounded-[3px] text-stone-100 hover:bg-stone-950">
               {toolsOpen ? 'Hide tools' : 'Tools'}
             </button>
+            </div>
             {toolsOpen && (
             <div className="flex flex-wrap gap-1.5 p-2 bg-stone-900 border border-stone-700 rounded-[4px] max-h-[60vh] overflow-y-auto">
+              <p className="w-full text-[12px] leading-snug text-stone-300 px-1 pb-1.5 mb-1 border-b border-stone-800">
+                <span className="sim-stamp mr-1.5">Simulated</span>
+                Most of these tools run placeholder models. Their map overlays are stamped SIMULATED and their numbers are not measurements.
+              </p>
               
               {/* T-12 Multi-Temporal Swipe Curtain Toggle */}
               <button
@@ -13072,8 +13094,15 @@ export default function MapExplorer() {
           </div>
 
           {/* Map legend: real scene, colour ramp, formula and source */}
-          {layerMode === 'spectral' && selectedEvent && (
-            <MapLegend index={activeSpectralIndex} site={selectedEvent} />
+          {['spectral', 'terrain', 'sar', 'drone'].includes(layerMode) && selectedEvent && (
+            <MapLegend
+              mode={layerMode}
+              index={activeSpectralIndex}
+              terrainMetric={activeTerrainMetric}
+              sarPol={activeSarPolarization}
+              site={selectedEvent}
+              onRange={layerMode === 'terrain' ? setTerrainRange : undefined}
+            />
           )}
           <NorthArrow />
 

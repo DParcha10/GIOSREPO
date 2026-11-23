@@ -384,3 +384,8 @@ h1, h2, h3 { font-family: var(--font-serif); letter-spacing: -0.01em; }
   font: 500 11px/1.4 var(--font-mono) !important;
   padding: 1px 6px 0 !important;
 }
+
+/* Simulated tool overlays are hidden unless the user turns them on. */
+body.tp-hide-sim .leaflet-overlay-pane path.leaflet-interactive:not(.tp-keep),
+body.tp-hide-sim .leaflet-marker-pane .leaflet-marker-icon:not(.tp-keep),
+body.tp-hide-sim .leaflet-shadow-pane img { display: none !important; }

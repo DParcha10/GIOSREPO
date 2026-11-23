@@ -272,12 +272,17 @@ async def upload_drone_ortho(
 @router.get("/{ortho_id}/tiles/{z}/{x}/{y}.png")
 async def get_drone_tile(ortho_id: str, z: int, x: int, y: int):
     """Serve dynamic centimeter-scale drone COG tiles up to Zoom 22."""
+    meta = drone_service.registered_orthos.get(ortho_id) or {}
+    uploads = os.path.realpath(UPLOADS_DIR) + os.sep
+    if not os.path.realpath(meta.get("file_path", "") or "/nonexistent").startswith(uploads):
+        # Only surveys a user uploaded are real; the bundled demo raster is synthetic,
+        # so show nothing rather than fake imagery.
+        from app.services.real_tiles import TRANSPARENT_PNG
+        return Response(content=TRANSPARENT_PNG, media_type="image/png",
+                        headers={"Cache-Control": "no-cache", "X-Tiepoint-Source": "none"})
     png_bytes = drone_service.get_tile(ortho_id, z, x, y)
-    return Response(
-        content=png_bytes,
-        media_type="image/png",
-        headers={"Cache-Control": "public, max-age=86400"}
-    )
+    return Response(content=png_bytes, media_type="image/png", headers={
+        "Cache-Control": "public, max-age=86400", "X-Tiepoint-Source": f"drone-upload:{ortho_id}"})
 
 
 # ============================================================================

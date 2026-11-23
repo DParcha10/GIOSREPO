@@ -113,6 +113,8 @@ async def authenticate_request(token: str) -> bool:
 # Order matters: CORS is added last so it is outermost and also decorates 401 responses.
 app.add_middleware(RequireLoginMiddleware, authenticate=authenticate_request)
 # Serves the built web app (if present) before the login check; API calls stay protected.
+from app.sim_watermark import SimulatedTileMiddleware
+app.add_middleware(SimulatedTileMiddleware)
 from app.frontend import FrontendMiddleware
 app.add_middleware(FrontendMiddleware)
 app.add_middleware(
