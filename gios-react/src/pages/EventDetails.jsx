@@ -31,16 +31,16 @@ export default function EventDetails() {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center pointer-events-none z-10 relative">
          <div className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
-         <p className="mt-4 text-primary font-['Roboto_Mono'] animate-pulse text-sm uppercase tracking-widest">Acquiring detailed telemetry...</p>
+         <p className="mt-4 text-primary font-mono animate-pulse text-sm uppercase tracking-widest">Acquiring detailed telemetry...</p>
       </div>
     );
   }
 
   if (!eventData) {
     return (
-      <div className="p-8 h-full flex flex-col text-[#e0e6ed] w-full relative z-10">
-         <h1 className="text-3xl font-['Orbitron'] text-danger">Data Corrupted or Not Found</h1>
-         <button onClick={() => navigate('/dashboard')} className="mt-4 text-primary flex items-center gap-2 hover:underline font-['Roboto_Mono']">
+      <div className="p-8 h-full flex flex-col text-stone-200 w-full relative z-10">
+         <h1 className="text-3xl font-serif text-danger">Data Corrupted or Not Found</h1>
+         <button onClick={() => navigate('/dashboard')} className="mt-4 text-primary flex items-center gap-2 hover:underline font-mono">
             <ArrowLeft size={16} /> Return to Dashboard
          </button>
       </div>
@@ -55,20 +55,20 @@ export default function EventDetails() {
     <motion.div
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
-      className="p-8 h-full flex flex-col gap-6 text-[#e0e6ed] w-full relative z-10 overflow-y-auto"
+      className="p-8 h-full flex flex-col gap-6 text-stone-200 w-full relative z-10 overflow-y-auto"
     >
       <header className="flex justify-between items-center border-b border-primary/20 pb-4">
         <div>
-          <button onClick={() => navigate('/dashboard')} className="text-[#8b9bb4] hover:text-primary flex items-center gap-2 mb-2 font-['Roboto_Mono'] text-sm transition-colors">
+          <button onClick={() => navigate('/dashboard')} className="text-stone-400 hover:text-primary flex items-center gap-2 mb-2 font-mono text-sm transition-colors">
             <ArrowLeft size={16} /> Return to Telemetry
           </button>
-          <h1 className="text-4xl font-['Orbitron'] font-bold text-white tracking-widest uppercase">
+          <h1 className="text-4xl font-serif font-bold text-white tracking-widest uppercase">
             Singular <MetallicPaintText text="Event Analysis" glow={color} />
           </h1>
         </div>
         <div className="text-right">
-            <p className="text-[#8b9bb4] font-['Rajdhani'] text-lg">{props.place}</p>
-            <p className="text-primary font-['Roboto_Mono'] text-sm">{new Date(props.time).toLocaleString()}</p>
+            <p className="text-stone-400 font-sans text-lg">{props.place}</p>
+            <p className="text-primary font-mono text-sm">{new Date(props.time).toLocaleString()}</p>
         </div>
       </header>
 
@@ -78,8 +78,8 @@ export default function EventDetails() {
             <AntigravityCard intensity={10}>
                 <div className="glass-panel p-6 bg-accent/80 backdrop-blur-xl border border-white/5 rounded-xl flex items-center justify-between">
                     <div>
-                        <h3 className="text-[#8b9bb4] font-['Rajdhani'] uppercase tracking-widest text-sm mb-1">Magnitude (M)</h3>
-                        <div className="text-5xl font-['Orbitron'] font-bold" style={{ color: color }}>
+                        <h3 className="text-stone-400 font-sans uppercase tracking-widest text-sm mb-1">Magnitude (M)</h3>
+                        <div className="text-5xl font-serif font-bold" style={{ color: color }}>
                             {props.mag?.toFixed(1)}
                         </div>
                     </div>
@@ -90,34 +90,34 @@ export default function EventDetails() {
             <AntigravityCard intensity={10}>
                 <div className="glass-panel p-6 bg-accent/80 backdrop-blur-xl border border-white/5 rounded-xl flex items-center justify-between">
                     <div>
-                        <h3 className="text-[#8b9bb4] font-['Rajdhani'] uppercase tracking-widest text-sm mb-1">Hypocenter Depth</h3>
-                        <div className="text-4xl font-['Orbitron'] font-bold text-secondary">
-                            {coords[2]?.toFixed(1)} <span className="text-lg text-[#8b9bb4]">km</span>
+                        <h3 className="text-stone-400 font-sans uppercase tracking-widest text-sm mb-1">Hypocenter Depth</h3>
+                        <div className="text-4xl font-serif font-bold text-secondary">
+                            {coords[2]?.toFixed(1)} <span className="text-lg text-stone-400">km</span>
                         </div>
                     </div>
                     <MapPin size={48} className="text-secondary opacity-20" />
                 </div>
             </AntigravityCard>
             
-            <div className="glass-panel p-6 bg-accent/80 backdrop-blur-xl border border-white/5 rounded-xl space-y-4 font-['Roboto_Mono'] text-sm">
-                <h3 className="text-primary font-['Orbitron'] uppercase tracking-widest text-sm border-b border-primary/20 pb-2 mb-3">Event Metadata</h3>
+            <div className="glass-panel p-6 bg-accent/80 backdrop-blur-xl border border-white/5 rounded-xl space-y-4 font-mono text-sm">
+                <h3 className="text-primary font-serif uppercase tracking-widest text-sm border-b border-primary/20 pb-2 mb-3">Event Metadata</h3>
                 <div className="flex justify-between">
-                    <span className="text-[#8b9bb4] flex items-center gap-2"><AlertCircle size={14}/> Status</span>
+                    <span className="text-stone-400 flex items-center gap-2"><AlertCircle size={14}/> Status</span>
                     <span className="text-white uppercase">{props.status}</span>
                 </div>
                 <div className="flex justify-between">
-                    <span className="text-[#8b9bb4] flex items-center gap-2"><Waves size={14}/> Tsunami Warning</span>
+                    <span className="text-stone-400 flex items-center gap-2"><Waves size={14}/> Tsunami Warning</span>
                     <span className={props.tsunami ? "text-danger animate-pulse font-bold" : "text-white"}>{props.tsunami ? "YES" : "NO"}</span>
                 </div>
                 <div className="flex justify-between">
-                    <span className="text-[#8b9bb4] flex items-center gap-2"><Users size={14}/> Felt Reports</span>
+                    <span className="text-stone-400 flex items-center gap-2"><Users size={14}/> Felt Reports</span>
                     <span className="text-white">{props.felt || 0}</span>
                 </div>
                 <div className="flex justify-between">
-                    <span className="text-[#8b9bb4] flex items-center gap-2"><AlertTriangle size={14}/> Significance Index</span>
+                    <span className="text-stone-400 flex items-center gap-2"><AlertTriangle size={14}/> Significance Index</span>
                     <span className="text-warning">{props.sig}</span>
                 </div>
-                <div className="mt-4 text-xs text-[#8b9bb4] leading-relaxed">
+                <div className="mt-4 text-xs text-stone-400 leading-relaxed">
                    Source: <a href={props.url} target="_blank" rel="noopener noreferrer" className="text-secondary hover:underline">USGS Official Event Page</a>
                 </div>
             </div>
@@ -133,8 +133,8 @@ export default function EventDetails() {
               zoomControl={false}
             >
               <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+                url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+                attribution='Basemap &copy; Esri, HERE, Garmin, &copy; OpenStreetMap contributors'
               />
               
               {/* Epicenter target rings */}
@@ -149,8 +149,8 @@ export default function EventDetails() {
                   pathOptions={{ color: color, fillColor: color, fillOpacity: 0.4, weight: 2 }}
               >
                   <Popup className="tech-popup">
-                      <div className="font-['Orbitron'] text-white">Epicenter</div>
-                      <div className="text-[#8b9bb4] text-xs font-['Roboto_Mono']">
+                      <div className="font-serif text-white">Epicenter</div>
+                      <div className="text-stone-400 text-xs font-mono">
                           Lat: {coords[1].toFixed(4)}<br/>
                           Lon: {coords[0].toFixed(4)}
                       </div>
@@ -160,8 +160,8 @@ export default function EventDetails() {
             
             <div className="absolute top-4 left-4 z-[900] pointer-events-none">
                 <div className="bg-black/60 border border-secondary/30 p-3 rounded backdrop-blur-md">
-                    <h4 className="text-secondary font-['Orbitron'] text-xs tracking-widest uppercase mb-1">Spatial Targeting System</h4>
-                    <p className="font-['Roboto_Mono'] text-[10px] text-[#e0e6ed]">Lat: {coords[1].toFixed(4)} | Lon: {coords[0].toFixed(4)}</p>
+                    <h4 className="text-secondary font-serif text-xs tracking-widest uppercase mb-1">Spatial Targeting System</h4>
+                    <p className="font-mono text-[10px] text-stone-200">Lat: {coords[1].toFixed(4)} | Lon: {coords[0].toFixed(4)}</p>
                 </div>
             </div>
         </div>

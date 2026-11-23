@@ -272,7 +272,7 @@ export default function BYOCStorageModal({
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Connect external cloud object storage buckets to stream centimeter drone orthomosaics and high-res COGs directly into GIOS
+                Connect external cloud object storage buckets to stream centimeter drone orthomosaics and high-res COGs directly into Tiepoint
               </p>
             </div>
           </div>
@@ -503,7 +503,7 @@ export default function BYOCStorageModal({
                 <div>
                   <h4 className="font-semibold text-slate-200">Zero-Egress Direct Cloud Streaming</h4>
                   <p className="mt-1 text-slate-400">
-                    GIOS reads Cloud-Optimized GeoTIFF byte ranges via HTTP GET Range headers directly from your cloud bucket. Data never leaves your storage boundary unless requested by the browser.
+                    Tiepoint reads Cloud-Optimized GeoTIFF byte ranges via HTTP GET Range headers directly from your cloud bucket. Data never leaves your storage boundary unless requested by the browser.
                   </p>
                 </div>
               </div>
@@ -624,7 +624,7 @@ export default function BYOCStorageModal({
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
                   />
                   <p className="mt-1 text-[11px] text-slate-500">
-                    Provide a read-only role ARN for cross-account S3 or GCS access. GIOS will assume this role when issuing range requests.
+                    Provide a read-only role ARN for cross-account S3 or GCS access. Tiepoint will assume this role when issuing range requests.
                   </p>
                 </div>
               )}

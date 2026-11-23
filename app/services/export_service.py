@@ -416,7 +416,7 @@ class ExportService:
                             dst.set_band_description(b_idx + 1, band_names[b_idx])
 
                     dst.update_tags(
-                        PROJECT="GIOS",
+                        PROJECT="Tiepoint",
                         VERSION="v2.5.35",
                         COLLECTION=str(req.collection),
                         LAYER_TYPE=str(req.layer_type.value if hasattr(req.layer_type, "value") else req.layer_type),

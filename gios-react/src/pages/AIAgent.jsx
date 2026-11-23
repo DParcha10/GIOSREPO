@@ -93,8 +93,8 @@ export default function AIAgent() {
             <Bot size={22} className="animate-pulse" />
           </div>
           <div>
-            <h1 className="text-xl font-['Orbitron'] font-bold text-white tracking-wider flex items-center gap-2">
-              <MetallicPaintText text="JARVIS" glow='var(--color-primary)' />
+            <h1 className="text-xl font-serif font-bold text-white tracking-wider flex items-center gap-2">
+              <MetallicPaintText text="Assistant" glow='var(--color-primary)' />
               <span className="text-xs text-primary font-mono font-normal tracking-widest px-2 py-0.5 rounded bg-primary/10 border border-primary/30">
                 AUTONOMOUS COPILOT
               </span>
@@ -115,7 +115,7 @@ export default function AIAgent() {
 
           <div className="flex items-center gap-2 text-xs bg-black/40 border border-white/10 px-3 py-1.5 rounded-full">
             <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-            <span className="text-gray-300 font-mono">JARVIS Core Online</span>
+            <span className="text-gray-300 font-mono">Assistant Core Online</span>
           </div>
 
           <button 
@@ -149,7 +149,7 @@ export default function AIAgent() {
           {/* Memory Section */}
           <div className="border-b border-white/10 pb-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-teal-400 font-mono flex items-center gap-2">
-              <BrainCircuit size={14} /> JARVIS Memory Bank
+              <BrainCircuit size={14} /> Assistant Memory Bank
             </h3>
             <p className="text-[11px] text-gray-400 mt-1">
               Conversations, user facts, and pinned sites are automatically retained across sessions.
@@ -165,7 +165,7 @@ export default function AIAgent() {
               </div>
             ) : (
               <div className="text-[10px] text-gray-500 font-mono mt-2 italic">
-                No personal notes saved yet. Tell JARVIS your name or what to remember!
+                No personal notes saved yet. Tell Assistant your name or what to remember!
               </div>
             )}
           </div>
@@ -272,7 +272,7 @@ export default function AIAgent() {
 
                   <div className={`max-w-2xl flex flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}>
                     
-                    {/* Thinking Trace (shows what tools JARVIS called) */}
+                    {/* Thinking Trace (shows what tools Assistant called) */}
                     {!isUser && msg.thinking && (
                       <div className="flex items-center gap-1.5 mb-1 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[10px] font-mono">
                         <Lightbulb size={10} className="shrink-0" />
@@ -318,7 +318,7 @@ export default function AIAgent() {
                           ? 'bg-gradient-to-r from-teal-500/25 to-teal-600/20 backdrop-blur-xl border border-teal-400/35 text-teal-50 rounded-2xl rounded-br-sm' 
                           : msg.isProactiveAlert
                             ? 'bg-red-950/60 backdrop-blur-3xl border-2 border-red-500/60 shadow-[0_0_40px_rgba(239,68,68,0.3)] text-red-50 rounded-2xl rounded-bl-sm animate-pulse-slow'
-                            : 'bg-[#121A26]/80 backdrop-blur-2xl border border-white/10 text-gray-100 rounded-2xl rounded-bl-sm shadow-[0_4px_24px_rgba(0,0,0,0.25)]'
+                            : 'bg-stone-900/80 backdrop-blur-2xl border border-white/10 text-gray-100 rounded-2xl rounded-bl-sm shadow-[0_4px_24px_rgba(0,0,0,0.25)]'
                       }`}
                     >
                       <div className="whitespace-pre-wrap font-sans font-normal selection:bg-teal-500/30">
@@ -412,12 +412,12 @@ export default function AIAgent() {
                 <div className="w-8 h-8 rounded-full bg-teal-500/20 border border-teal-400/30 flex items-center justify-center text-teal-300 shrink-0">
                   <Bot size={16} />
                 </div>
-                <div className="px-4 py-3 rounded-2xl rounded-bl-sm bg-[#121A26]/80 backdrop-blur-xl border border-white/10 flex flex-col gap-1.5 shadow-md">
+                <div className="px-4 py-3 rounded-2xl rounded-bl-sm bg-stone-900/80 backdrop-blur-xl border border-white/10 flex flex-col gap-1.5 shadow-md">
                   <div className="flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-bounce [animation-delay:-0.3s]"></span>
                     <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-bounce [animation-delay:-0.15s]"></span>
                     <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-bounce"></span>
-                    <span className="text-xs text-gray-400 ml-2 font-mono">JARVIS is reasoning, searching & analyzing...</span>
+                    <span className="text-xs text-gray-400 ml-2 font-mono">Assistant is reasoning, searching & analyzing...</span>
                   </div>
                   <div className="text-[10px] text-gray-500 font-mono flex items-center gap-1">
                     <BrainCircuit size={10} className="text-amber-400 animate-pulse" />
@@ -458,7 +458,7 @@ export default function AIAgent() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask JARVIS... (e.g. 'Show me the seepage at San Luis Dam and mark it on the map')"
+                placeholder="Ask Assistant... (e.g. 'Show me the seepage at San Luis Dam and mark it on the map')"
                 className="flex-1 bg-transparent text-sm text-gray-100 placeholder-gray-400 outline-none font-sans py-1 leading-normal"
                 disabled={loading}
               />

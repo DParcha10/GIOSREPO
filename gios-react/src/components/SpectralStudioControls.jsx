@@ -87,7 +87,7 @@ export default function SpectralStudioControls({
       <div className="flex items-center justify-between border-b border-gray-800/80 pb-2.5">
         <div className="flex items-center gap-2">
           <Sliders className="w-4 h-4 text-primary" />
-          <span className="font-['Orbitron'] font-bold text-xs uppercase tracking-wider text-white">
+          <span className="font-serif font-bold text-xs uppercase tracking-wider text-white">
             Spectral Symbology Studio
           </span>
         </div>

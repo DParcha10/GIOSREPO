@@ -147,7 +147,7 @@ export default function SwipeCurtain({
       {/* Top Floating Control Toolbar */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-auto z-[870]">
         <div className="glass-panel !rounded-full px-4 py-1.5 border-primary/30 flex items-center gap-3 shadow-2xl bg-black/75 backdrop-blur-lg">
-          <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-white font-['Orbitron']">
+          <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-white font-serif">
             <Columns className="w-4 h-4 text-primary" />
             <span>Multi-Temporal Swipe</span>
           </div>

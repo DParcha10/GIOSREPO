@@ -1,4 +1,4 @@
-"""Scientific Rigor & Mathematical Verification Test Suite for GIOS v2.5.
+"""Scientific Rigor & Mathematical Verification Test Suite for Tiepoint v2.5.
 
 Assigned to: Agent 9 - Scientific QA & Test Engineer (@debugger)
 Task: T-18 (End-to-End Scientific Verification Suite)
@@ -3291,7 +3291,7 @@ class TestScientificRigor(unittest.TestCase):
             img_tgt = ndshift(img_ref, [true_dy, true_dx], order=3)
             shift_res = calculate_fft_phase_correlation_shift(img_ref, img_tgt, subpixel=True)
 
-            # In GIOS phase correlation convention:
+            # In Tiepoint phase correlation convention:
             # Shift reflects displacement vector between reference and target
             err_x = abs(abs(shift_res["shift_x"]) - abs(true_dx))
             err_y = abs(abs(shift_res["shift_y"]) - abs(true_dy))

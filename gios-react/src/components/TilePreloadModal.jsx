@@ -17,11 +17,11 @@ export default function TilePreloadModal({
   isOpen,
   onClose,
   currentBbox = null,
-  activeItemId = 'S2A_MSIL2A_20260820_T10SEH',
+  activeItemId = 'S2A_MSIL2A_20260820_T10SFG',
   activeCollection = 'sentinel-2-l2a'
 }) {
   const [collection, setCollection] = useState(activeCollection || 'sentinel-2-l2a');
-  const [itemId, setItemId] = useState(activeItemId || 'S2A_MSIL2A_20260820_T10SEH');
+  const [itemId, setItemId] = useState(activeItemId || 'S2A_MSIL2A_20260820_T10SFG');
   const [bboxInput, setBboxInput] = useState(() => {
     if (currentBbox) return formatBbox(currentBbox);
     return '-121.1500, 37.0000, -121.0000, 37.1000';
@@ -96,7 +96,7 @@ export default function TilePreloadModal({
       const parsedBbox = parseBbox(bboxInput, [-121.15, 37.0, -121.0, 37.1]);
       const payload = {
         collection,
-        item_id: itemId || 'S2A_MSIL2A_20260820_T10SEH',
+        item_id: itemId || 'S2A_MSIL2A_20260820_T10SFG',
         bbox: parsedBbox,
         min_zoom: Number(minZoom),
         max_zoom: Number(maxZoom),
@@ -175,11 +175,9 @@ export default function TilePreloadModal({
                 onChange={(e) => setCollection(e.target.value)}
                 className="w-full bg-slate-950/70 border border-slate-700 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-indigo-500"
               >
-                <option value={SATELLITE_COLLECTIONS.SENTINEL_2}>Sentinel-2 L2A (10m Optical/SWIR)</option>
-                <option value={SATELLITE_COLLECTIONS.LANDSAT}>Landsat C2 L2 (30m Optical/Thermal)</option>
-                <option value={SATELLITE_COLLECTIONS.DRONE}>Drone Orthomosaic (2.8cm Micro-GSD)</option>
-                <option value={SATELLITE_COLLECTIONS.SENTINEL_1}>Sentinel-1 RTC (C-Band SAR Radar)</option>
-                <option value={SATELLITE_COLLECTIONS.COP_DEM}>Copernicus DEM (30m Elevation)</option>
+                {SATELLITE_COLLECTIONS.map((c) => (
+                  <option key={c.id} value={c.id}>{c.label}</option>
+                ))}
               </select>
             </div>
 

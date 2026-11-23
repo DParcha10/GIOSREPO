@@ -1,4 +1,4 @@
-"""Security primitives for GIOS: default-deny authentication and safe file paths.
+"""Security primitives for Tiepoint: default-deny authentication and safe file paths.
 
 Standard library only, so it can be tested without the geospatial stack.
 """
@@ -130,7 +130,7 @@ def resolve_geotiff(path: str, allowed_roots: Iterable[str]) -> str:
     The magic-byte check stops GDAL virtual formats (which can reference other
     files or URLs) being smuggled in under a .tif name.
     """
-    error = ValueError("file_path must be a GeoTIFF inside a GIOS drone data directory")
+    error = ValueError("file_path must be a GeoTIFF inside a Tiepoint drone data directory")
     if not path or "\x00" in path or not path.lower().endswith((".tif", ".tiff")):
         raise error
     resolved = os.path.realpath(path)

@@ -36,7 +36,7 @@ function App() {
           path="/map" 
           element={
             <ProtectedRoute>
-              <div className="flex flex-col h-screen w-screen overflow-hidden text-gray-200 bg-gray-900 font-['Inter']">
+              <div className="flex flex-col h-screen w-screen overflow-hidden text-gray-200 bg-gray-900 font-sans">
                 <MapExplorer />
               </div>
             </ProtectedRoute>

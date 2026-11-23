@@ -52,14 +52,14 @@ export default function Dashboard() {
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="p-8 h-full flex flex-col gap-8 text-[#e0e6ed] w-full relative z-10"
+      className="p-8 h-full flex flex-col gap-8 text-stone-200 w-full relative z-10"
     >
       <header className="glass-panel p-6 flex justify-between items-end shrink-0 mb-4 bg-white/5">
         <div>
-          <h1 className="text-4xl font-['Orbitron'] font-bold text-white tracking-widest uppercase">
+          <h1 className="text-4xl font-serif font-bold text-white tracking-widest uppercase">
             Platform <MetallicPaintText text="Telemetry" />
           </h1>
-          <p className="text-[#8b9bb4] mt-2 font-['Rajdhani'] text-lg">
+          <p className="text-stone-400 mt-2 font-sans text-lg">
             Real-time Environmental Risk & Seismic Data Streaming Feed
           </p>
         </div>
@@ -112,16 +112,16 @@ export default function Dashboard() {
         <div className="md:col-span-4 md:row-span-2">
             <AntigravityCard intensity={5} className="h-full w-full">
                 <div className="h-full glass-panel p-6 flex flex-col bg-white/5">
-                    <h2 className="text-xl font-['Orbitron'] border-b border-primary/20 pb-3 mb-4 flex items-center gap-3 text-primary">
+                    <h2 className="text-xl font-serif border-b border-primary/20 pb-3 mb-4 flex items-center gap-3 text-primary">
                     <Activity size={20} />
                     Live Event Log
                     </h2>
                     
-                    <div className="flex-1 overflow-y-auto pr-2 grid grid-cols-2 gap-4 font-['Roboto_Mono'] text-sm">
+                    <div className="flex-1 overflow-y-auto pr-2 grid grid-cols-2 gap-4 font-mono text-sm">
                     {loading ? (
-                        <div className="col-span-2 text-center text-[#8b9bb4] mt-10 animate-pulse">Establishing secure link... downloading telemetry...</div>
+                        <div className="col-span-2 text-center text-stone-400 mt-10 animate-pulse">Establishing secure link... downloading telemetry...</div>
                     ) : stats.recent.length === 0 ? (
-                        <div className="col-span-2 text-center text-[#8b9bb4] mt-10">No significant events detected in the past hour.</div>
+                        <div className="col-span-2 text-center text-stone-400 mt-10">No significant events detected in the past hour.</div>
                     ) : (
                         stats.recent.map((quake, i) => (
                         <motion.div 
@@ -133,7 +133,7 @@ export default function Dashboard() {
                             className="glass-panel cursor-pointer !border-l-4 !border-l-danger !border-y-0 !border-r-0 hover:!border-l-primary flex justify-between items-center group bg-white/5 p-4"
                         >
                             <div className="truncate pr-4">
-                            <span className="text-[#8b9bb4] block text-xs mb-1">
+                            <span className="text-stone-400 block text-xs mb-1">
                                 {new Date(quake.properties.time).toLocaleTimeString()}
                             </span>
                             <span className="text-white text-base truncate block">{quake.properties.place}</span>
@@ -167,14 +167,14 @@ function StatCard({ title, value, icon, color }) {
       >
         {React.cloneElement(icon, { size: 120 })}
       </div>
-      <h3 className="text-[#8b9bb4] font-['Rajdhani'] uppercase tracking-widest text-sm mb-4 font-bold relative z-10 w-full border-b border-white/10 pb-2">
+      <h3 className="text-stone-400 font-sans uppercase tracking-widest text-sm mb-4 font-bold relative z-10 w-full border-b border-white/10 pb-2">
         {title}
       </h3>
       <div className="relative z-10 flex items-center justify-between mt-6">
         <MetallicPaintText 
             text={value} 
             glow={color} 
-            className="text-6xl font-['Orbitron'] font-bold" 
+            className="text-6xl font-serif font-bold" 
         />
         <div className="p-3 rounded-full bg-white/5 border border-white/10" style={{ color: color }}>
             {React.cloneElement(icon, { size: 24 })}

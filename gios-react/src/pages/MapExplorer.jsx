@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import TiepointMark from '../components/TiepointMark';
 import { 
   MapContainer, TileLayer, Polygon, CircleMarker, Popup, useMap, Polyline, useMapEvents 
 } from 'react-leaflet';
@@ -568,8 +569,9 @@ export default function MapExplorer() {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [activeTab, setActiveTab] = useState('live'); // 'live' | 'studio' | 'drone' | 'catalog' | 'acquisition'
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'seepage' | 'flood' | 'hab'
-  const [baseLayer, setBaseLayer] = useState('satellite'); // 'satellite' | 'dark' | 'street'
-  const [layerMode, setLayerMode] = useState('spectral'); // 'optical' | 'spectral' | 'drone' | 'terrain' | 'sar'
+  const [baseLayer, setBaseLayer] = useState('dark');
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [layerMode, setLayerMode] = useState('optical'); // 'optical' | 'spectral' | 'drone' | 'terrain' | 'sar'
   const [activeTerrainMetric, setActiveTerrainMetric] = useState(TERRAIN_METRICS.ELEVATION);
   const [activeSarPolarization, setActiveSarPolarization] = useState(SAR_POLARIZATIONS.VV);
   const [currentZoom, setCurrentZoom] = useState(14);
@@ -668,8 +670,8 @@ export default function MapExplorer() {
   const [loadingVrt, setLoadingVrt] = useState(false);
 
   // T-62 & T-63 Bitemporal Change Detection & Differencing Matrix State
-  const [changePreSceneId, setChangePreSceneId] = useState('S2A_MSIL2A_20260515_T10SEH');
-  const [changePostSceneId, setChangePostSceneId] = useState('S2A_MSIL2A_20260820_T10SEH');
+  const [changePreSceneId, setChangePreSceneId] = useState('S2A_MSIL2A_20260515_T10SFG');
+  const [changePostSceneId, setChangePostSceneId] = useState('S2A_MSIL2A_20260820_T10SFG');
   const [changeMetric, setChangeMetric] = useState(CHANGE_DETECTION_METRICS.NDMI_DIFF);
   const [changeCollection, setChangeCollection] = useState('sentinel-2-l2a');
   const [changeRescale, setChangeRescale] = useState('-0.3,0.3');
@@ -1911,7 +1913,7 @@ export default function MapExplorer() {
   const [spatialLayerVisible, setSpatialLayerVisible] = useState(true);
   const [droneMissions, setDroneMissions] = useState([]);
 
-  // JARVIS Autonomous Integration
+  // Assistant Autonomous Integration
   const { 
     markedLocations, 
     flyToTarget, 
@@ -1923,7 +1925,7 @@ export default function MapExplorer() {
   } = useJarvisStore();
   const [jarvisInput, setJarvisInput] = useState('');
 
-  // Sync selectedEvent when JARVIS marks an event or activeEventId changes
+  // Sync selectedEvent when Assistant marks an event or activeEventId changes
   useEffect(() => {
     if (flyToTarget && events.length > 0 && flyToTarget.eventId) {
       const match = events.find(e => e.id === flyToTarget.eventId);
@@ -2376,7 +2378,7 @@ export default function MapExplorer() {
       const payload = {
         asset_id: waterQualityAsset,
         collection: 'sentinel-2-l2a',
-        item_id: selectedEvent?.item_id || 'S2A_MSIL2A_20260820_T10SEH',
+        item_id: selectedEvent?.item_id || selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SFG',
         metric: waterQualityMetric
       };
       const res = await calculateWaterQualityAnalysis(payload);
@@ -2391,7 +2393,7 @@ export default function MapExplorer() {
 
       setWaterQualityResult({
         asset_id: waterQualityAsset,
-        item_id: selectedEvent?.item_id || 'S2A_MSIL2A_20260820_T10SEH',
+        item_id: selectedEvent?.item_id || selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SFG',
         primary_metric: waterQualityMetric,
         mean_value: ndci,
         ndti_value: ndti,
@@ -3922,7 +3924,7 @@ export default function MapExplorer() {
     setProbingPixel(true);
     try {
       const collection = selectedEvent?.sensor?.toLowerCase().includes('landsat') ? 'landsat-c2-l2' : 'sentinel-2-l2a';
-      const itemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SEH';
+      const itemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SFG';
       const result = await probePixel(latlng.lat, latlng.lng, collection, itemId);
       setPixelProbeData(result);
     } catch (err) {
@@ -3976,7 +3978,7 @@ export default function MapExplorer() {
 
     try {
       const collection = selectedEvent?.sensor?.toLowerCase().includes('landsat') ? 'landsat-c2-l2' : 'sentinel-2-l2a';
-      const itemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SEH';
+      const itemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SFG';
 
       const response = await calculateZonalStats({
         geometry: geojsonGeometry,
@@ -4342,7 +4344,7 @@ export default function MapExplorer() {
       });
     } else {
       setZoomScaleMode('macro');
-      setLayerMode('spectral');
+      // Keep whatever overlay the user picked; don't force the simulated index layer on.
       setCustomFlyTarget({
         lat: selectedEvent.lat,
         lng: selectedEvent.lng,
@@ -4379,13 +4381,18 @@ export default function MapExplorer() {
   // Base tile configurations
   const tileLayers = {
     satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    street: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+    dark: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    street: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+  };
+  const tileAttributions = {
+    satellite: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+    dark: 'Basemap &copy; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
+    street: 'Topographic basemap &copy; Esri and its data contributors',
   };
 
   // Dynamic COG Tile URLs using Contract 1 & Contract helpers
   const activeCollection = selectedEvent?.sensor?.toLowerCase().includes('landsat') ? 'landsat-c2-l2' : 'sentinel-2-l2a';
-  const activeItemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SEH';
+  const activeItemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SFG';
   const validatedColormap = validateColormap(activeColormap, 'spectral');
   const apiBase = (import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000') + '/api/v1';
 
@@ -4624,18 +4631,12 @@ export default function MapExplorer() {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-transparent text-gray-200 font-sans select-none">
       
       {/* Top Navbar */}
-      <header className="flex items-center justify-between px-6 h-14 border-b border-primary/20 glass-panel !rounded-none shrink-0 z-50">
+      <header className="flex items-center justify-between px-5 h-12 border-b border-stone-800 bg-stone-900 shrink-0 z-50">
         <div className="flex items-center gap-4">
-          <Link to="/" className="flex items-center gap-3 hover:opacity-90 transition-opacity">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-accent font-bold shadow-[0_0_12px_rgba(0,255,170,0.4)]">
-              <Layers className="w-5 h-5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="font-bold text-lg leading-tight tracking-widest font-['Orbitron'] text-white">
-                GIOS <span className="text-primary text-xs font-mono">v2.5</span>
-              </span>
-              <span className="text-[9px] text-gray-400 tracking-widest uppercase font-mono">Geospatial Intelligence Engine</span>
-            </div>
+          <Link to="/" className="flex items-center gap-2.5 text-stone-50">
+            <TiepointMark size={22} />
+            <span className="font-serif text-lg font-semibold">Tiepoint</span>
+            <span className="sim-stamp ml-1">Prototype</span>
           </Link>
         </div>
 
@@ -4676,17 +4677,17 @@ export default function MapExplorer() {
         {/* Global Page Switchers & Controls */}
         <div className="flex items-center gap-3">
           <div className="hidden xl:flex items-center gap-2 border-r border-gray-800 pr-3 mr-1">
-            <Link to="/dashboard" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-['Rajdhani'] uppercase tracking-wider">
+            <Link to="/dashboard" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-sans uppercase tracking-wider">
               <LayoutDashboard className="w-3.5 h-3.5" /> Telemetry
             </Link>
-            <Link to="/analytics" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-['Rajdhani'] uppercase tracking-wider">
+            <Link to="/analytics" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-sans uppercase tracking-wider">
               <LineChart className="w-3.5 h-3.5" /> Analytics
             </Link>
-            <Link to="/methodology" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-['Rajdhani'] uppercase tracking-wider">
+            <Link to="/methodology" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-sans uppercase tracking-wider">
               <BookOpen className="w-3.5 h-3.5" /> Methodology
             </Link>
-            <Link to="/ai-agent" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-['Rajdhani'] uppercase tracking-wider">
-              <Bot className="w-3.5 h-3.5 text-primary" /> JARVIS Copilot
+            <Link to="/ai-agent" className="px-2.5 py-1 text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-gray-800/60 rounded transition-colors flex items-center gap-1.5 font-sans uppercase tracking-wider">
+              <Bot className="w-3.5 h-3.5 text-primary" /> Assistant
             </Link>
           </div>
 
@@ -4720,7 +4721,7 @@ export default function MapExplorer() {
         <aside className="w-80 flex flex-col glass-panel !border-y-0 !border-l-0 !border-r !border-primary/20 !rounded-none z-40 shrink-0">
           <div className="p-4 border-b border-gray-800">
             <div className="flex items-center justify-between mb-1">
-              <h2 className="text-xs font-bold text-white flex items-center gap-2 uppercase tracking-wider font-['Orbitron']">
+              <h2 className="text-xs font-bold text-white flex items-center gap-2 uppercase tracking-wider font-serif">
                 <AlertTriangle className="w-4 h-4 text-amber-400" /> Active Hazard Feed
               </h2>
               <span className="bg-primary/15 text-primary text-[10px] px-2 py-0.5 rounded border border-primary/30 font-mono">
@@ -4907,7 +4908,7 @@ export default function MapExplorer() {
             />
 
             {/* 1. Base Tile Layer */}
-            <TileLayer url={tileLayers[baseLayer]} attribution="" keepBuffer={8} />
+            <TileLayer key={baseLayer} url={tileLayers[baseLayer]} attribution={tileAttributions[baseLayer]} keepBuffer={8} />
 
             {/* 2. T-09: Live Dynamic COG Spectral Tile Layer */}
             {layerMode === 'spectral' && !curtainActive && (
@@ -7808,7 +7809,7 @@ export default function MapExplorer() {
               );
             })}
 
-            {/* JARVIS Autonomous Marked Pins */}
+            {/* Assistant Autonomous Marked Pins */}
             {markedLocations.map((mark) => (
               <React.Fragment key={mark.id}>
                 <CircleMarker 
@@ -7818,7 +7819,7 @@ export default function MapExplorer() {
                 >
                   <Popup>
                     <div className="p-1 text-black font-sans text-xs">
-                      <strong className="text-teal-700 flex items-center gap-1 font-bold">🤖 JARVIS Marked Location</strong>
+                      <strong className="text-teal-700 flex items-center gap-1 font-bold">🤖 Assistant Marked Location</strong>
                       <div className="font-bold text-sm text-gray-900 mt-1">{mark.label}</div>
                       <div className="text-[11px] text-gray-600 mt-0.5 font-mono">{mark.lat.toFixed(4)}° N, {mark.lng.toFixed(4)}° W</div>
                       <div className="text-[10px] text-gray-500 mt-1">Autonomous Pin: {mark.timestamp}</div>
@@ -7881,7 +7882,7 @@ export default function MapExplorer() {
               <div className="flex items-center justify-between border-b border-gray-800 pb-2 mb-2.5">
                 <div className="flex items-center gap-2">
                   <Crosshair className="w-4 h-4 text-primary animate-pulse" />
-                  <span className="font-['Orbitron'] font-bold text-xs text-white uppercase tracking-wider">
+                  <span className="font-serif font-bold text-xs text-white uppercase tracking-wider">
                     Pixel Probe Inspector
                   </span>
                 </div>
@@ -8017,7 +8018,7 @@ export default function MapExplorer() {
                         </div>
                         <div className="text-right">
                           <span className="text-[9px] text-gray-400 uppercase block">Z-SCORE</span>
-                          <span className="text-base font-['Orbitron'] font-bold">
+                          <span className="text-base font-serif font-bold">
                             {zScore >= 0 ? `+${zScore.toFixed(2)}` : zScore.toFixed(2)} σ
                           </span>
                         </div>
@@ -11885,13 +11886,13 @@ export default function MapExplorer() {
                   onClick={() => setBaseLayer('dark')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${baseLayer === 'dark' ? 'bg-primary/20 text-primary' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                 >
-                  <MapIcon className="w-3 h-3"/> Dark GIS
+                  <MapIcon className="w-3 h-3"/> Map
                 </button>
                 <button 
                   onClick={() => setBaseLayer('street')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${baseLayer === 'street' ? 'bg-primary/20 text-primary' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                 >
-                  <MapIcon className="w-3 h-3"/> Street
+                  <MapIcon className="w-3 h-3"/> Topo
                 </button>
               </div>
               
@@ -11901,7 +11902,7 @@ export default function MapExplorer() {
                   onClick={() => { setLayerMode('optical'); setCurtainActive(false); }}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${layerMode === 'optical' && !curtainActive ? 'bg-secondary/20 text-secondary' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                 >
-                  <ImageIcon className="w-3 h-3"/> Optical
+                  <ImageIcon className="w-3 h-3"/> None
                 </button>
                 <button 
                   onClick={() => { setLayerMode('spectral'); setCurtainActive(false); }}
@@ -11963,7 +11964,11 @@ export default function MapExplorer() {
             </div>
 
             {/* Second Row: Professional Remote Sensing Diagnostic Tools (T-11, T-12, T-13b, T-14, T-15b, T-45, T-49) */}
-            <div className="flex flex-wrap gap-1.5 glass-panel !rounded-xl p-1 bg-black/60 backdrop-blur-md border-primary/30">
+            <button onClick={() => setToolsOpen((v) => !v)} className="self-end px-3 py-1.5 text-sm bg-stone-900 border border-stone-700 rounded-[3px] text-stone-100 hover:bg-stone-950">
+              {toolsOpen ? 'Hide tools' : 'Tools'}
+            </button>
+            {toolsOpen && (
+            <div className="flex flex-wrap gap-1.5 p-2 bg-stone-900 border border-stone-700 rounded-[4px] max-h-[60vh] overflow-y-auto">
               
               {/* T-12 Multi-Temporal Swipe Curtain Toggle */}
               <button
@@ -12460,7 +12465,7 @@ export default function MapExplorer() {
                 title="Geotechnical Tailings Dam Inundation & Dam-Break Hydrodynamics Studio (Cycle v2.5.11)"
               >
                 <Waves className="w-3.5 h-3.5 text-rose-400" />
-                <span>Dam Breach (v2.5.11)</span>
+                <span>Dam Breach</span>
               </button>
 
               {/* T-132/T-134 Phreatic Surface Seepage & SWRC Studio Shortcut (Cycle v2.5.12) */}
@@ -12472,7 +12477,7 @@ export default function MapExplorer() {
                 title="Geotechnical Embankment Phreatic Surface Seepage, Van Genuchten SWRC & Piezometer Fusion Studio (Cycle v2.5.12)"
               >
                 <Droplets className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Phreatic Seepage (v2.5.12)</span>
+                <span>Phreatic Seepage</span>
               </button>
 
               {/* T-138/T-140 Slope Stability Limit Equilibrium Studio Shortcut (Cycle v2.5.13) */}
@@ -12484,7 +12489,7 @@ export default function MapExplorer() {
                 title="Geotechnical Embankment Circular & Non-Circular Slope Stability Limit Equilibrium Studio (Cycle v2.5.13)"
               >
                 <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Slope Stability (v2.5.13)</span>
+                <span>Slope Stability</span>
               </button>
 
               {/* T-144/T-146 Transient Rainfall Infiltration, Wetting Front & ATI Studio Shortcut (Cycle v2.5.14) */}
@@ -12496,7 +12501,7 @@ export default function MapExplorer() {
                 title="Transient Rainfall Infiltration, Wetting Front Suction Loss & Apparent Thermal Inertia (ATI) Studio (Cycle v2.5.14)"
               >
                 <CloudRain className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Rainfall & Infiltration (v2.5.14)</span>
+                <span>Rainfall & Infiltration</span>
               </button>
 
               {/* T-150/T-152 Dynamic Seismic Liquefaction & Flow Slide Studio Shortcut (Cycle v2.5.15) */}
@@ -12508,7 +12513,7 @@ export default function MapExplorer() {
                 title="Dynamic Seismic Liquefaction (Seed-Idriss), Vs30 Proxy & Flow Slide Runout Studio (Cycle v2.5.15)"
               >
                 <Activity className="w-3.5 h-3.5 text-amber-400" />
-                <span>Liquefaction (v2.5.15)</span>
+                <span>Liquefaction</span>
               </button>
 
               {/* T-156/T-158 Post-Seismic Crest Settlement Studio Shortcut (Cycle v2.5.16) */}
@@ -12520,7 +12525,7 @@ export default function MapExplorer() {
                 title="Post-Seismic Crest Settlement (Ishihara-Yoshimine / Tokimatsu-Seed), Stratigraphic Profiler & Angular Distortion Radar (Cycle v2.5.16)"
               >
                 <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Settlement (v2.5.16)</span>
+                <span>Settlement</span>
               </button>
 
               {/* T-162/T-164 3D Topographic Elevation Differential & Cut-and-Fill Studio Shortcut (Cycle v2.5.17) */}
@@ -12532,7 +12537,7 @@ export default function MapExplorer() {
                 title="3D Topographic Elevation Differential, Embankment Cut & Fill Prisms, LiDAR Profile Transect & CSF Studio (Cycle v2.5.17)"
               >
                 <Mountain className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Topo Delta (v2.5.17)</span>
+                <span>Topo Delta</span>
               </button>
 
               {/* T-168/T-170 Tailings Dam Breach Hydrodynamic Studio Shortcut (Cycle v2.5.18) */}
@@ -12544,7 +12549,7 @@ export default function MapExplorer() {
                 title="Tailings Dam Breach Hydrodynamic Studio, Froehlich (2008) Peak Discharge, 2D Shallow Water Wave Routing & Flood Inundation Hazards (Cycle v2.5.18)"
               >
                 <Waves className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Dam Breach (v2.5.18)</span>
+                <span>Dam Breach</span>
               </button>
 
               {/* T-174/T-176 Internal Erosion & Seepage Flownet Studio Shortcut (Cycle v2.5.19) */}
@@ -12556,7 +12561,7 @@ export default function MapExplorer() {
                 title="Internal Erosion & Seepage Flownet Studio, Terzaghi Critical Gradient, Sellmeijer (1988) Backward Piping Inversion & Piezometric Hazard Tiles (Cycle v2.5.19)"
               >
                 <Waves className="w-3.5 h-3.5 text-amber-400" />
-                <span>Piping & Flownet (v2.5.19)</span>
+                <span>Piping & Flownet</span>
               </button>
 
               {/* T-180/T-182 InSAR PS Velocity Studio Shortcut (Cycle v2.5.20) */}
@@ -12568,7 +12573,7 @@ export default function MapExplorer() {
                 title="InSAR Persistent Scatterer Velocity Studio, StaMPS Millimeter Creep Inversion, 3D Orbit Decomposition & Deformation Tiles (Cycle v2.5.20)"
               >
                 <Radio className="w-3.5 h-3.5 text-violet-400" />
-                <span>InSAR PS (v2.5.20)</span>
+                <span>InSAR PS</span>
               </button>
 
               {/* T-186/T-188 SAR Damage Proxy Mapping Studio Shortcut (Cycle v2.5.21) */}
@@ -12580,7 +12585,7 @@ export default function MapExplorer() {
                 title="SAR Damage Proxy Mapping Studio, ARIA Interferometric Coherence Loss (Δγ) & Structural Damage Tiles (Cycle v2.5.21)"
               >
                 <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-                <span>SAR DPM (v2.5.21)</span>
+                <span>SAR DPM</span>
               </button>
 
               {/* T-192/T-194 Phenology & Climatological Seasonality Studio Shortcut (Cycle v2.5.22) */}
@@ -12592,7 +12597,7 @@ export default function MapExplorer() {
                 title="Phenology Seasonality Studio, Multi-Harmonic Fourier Regression, Theil-Sen Robust Trend & Climatological MAD Anomaly Tiles (Cycle v2.5.22)"
               >
                 <Sprout className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Phenology (v2.5.22)</span>
+                <span>Phenology</span>
               </button>
 
               {/* T-198/T-200 Automated STAC Harvester & Webhook Dispatcher Studio Shortcut (Cycle v2.5.23) */}
@@ -12604,7 +12609,7 @@ export default function MapExplorer() {
                 title="Automated STAC Ingestion Watchdog, Perimeter Geo-Fencing, Real-Time Webhook Engine & DLQ Replay Console (Cycle v2.5.23)"
               >
                 <BellRing className="w-3.5 h-3.5 text-cyan-400" />
-                <span>STAC Alerts (v2.5.23)</span>
+                <span>STAC Alerts</span>
               </button>
 
               {/* T-204/T-206 Drone Photogrammetry Studio Shortcut (Cycle v2.5.24) */}
@@ -12616,7 +12621,7 @@ export default function MapExplorer() {
                 title="Decoupled NodeODM Drone Photogrammetry Mission Studio, Multi-Image Dropzone, Interactive GCP Pinning & Centimeter COG Tiling (Cycle v2.5.24)"
               >
                 <Camera className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Drone Photogrammetry (v2.5.24)</span>
+                <span>Drone Photogrammetry</span>
               </button>
 
               {/* T-210/T-212 Custom Band Math Studio Shortcut (Cycle v2.5.25) */}
@@ -12628,7 +12633,7 @@ export default function MapExplorer() {
                 title="Interactive Custom Spectral Formula Studio, AST Equation Editor, Live Preview & Custom Math TileLayer (Cycle v2.5.25)"
               >
                 <Calculator className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Band Math (v2.5.25)</span>
+                <span>Band Math</span>
               </button>
 
               {/* T-216/T-218 Topographic Relief & Hillshade Studio Shortcut (Cycle v2.5.26) */}
@@ -12640,7 +12645,7 @@ export default function MapExplorer() {
                 title="Topographic Relief & Hillshade Studio, Interactive Solar Illumination Sliders, Slope Hazards & Dynamic DEM TileLayer (Cycle v2.5.26)"
               >
                 <Mountain className="w-3.5 h-3.5 text-emerald-400" />
-                <span>DEM Relief (v2.5.26)</span>
+                <span>DEM Relief</span>
               </button>
 
               {/* T-222/T-224 Virtual Raster (VRT) Mosaic & Seamline Feathering Studio Shortcut (Cycle v2.5.27) */}
@@ -12652,7 +12657,7 @@ export default function MapExplorer() {
                 title="Virtual Raster Mosaic Studio, MGRS Granule Seamline Visualizer, Dynamic Overlap Blending & TileLayer (Cycle v2.5.27)"
               >
                 <Grid className="w-3.5 h-3.5 text-emerald-400" />
-                <span>VRT Mosaic (v2.5.27)</span>
+                <span>VRT Mosaic</span>
               </button>
 
               {/* T-228/T-230 Multi-Temporal Composite Studio Shortcut (Cycle v2.5.28) */}
@@ -12664,7 +12669,7 @@ export default function MapExplorer() {
                 title="Multi-Temporal Composite Studio, Scene Stacking Scrubber, Statistical Reducers & Quality Mosaics (Cycle v2.5.28)"
               >
                 <Layers className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Temporal Composite (v2.5.28)</span>
+                <span>Temporal Composite</span>
               </button>
 
               {/* T-234/T-236 SAR All-Weather Radar Studio Shortcut (Cycle v2.5.29) */}
@@ -12676,7 +12681,7 @@ export default function MapExplorer() {
                 title="SAR All-Weather Radar Studio, Sentinel-1 Dual-Pol Backscatter, Refined Lee Speckle Filtering & Inundation Mapping (Cycle v2.5.29)"
               >
                 <Radio className="w-3.5 h-3.5 text-violet-400" />
-                <span>SAR Radar (v2.5.29)</span>
+                <span>SAR Radar</span>
               </button>
 
               {/* T-240/T-242 Automated Sub-Pixel Co-Registration Studio Shortcut (Cycle v2.5.30) */}
@@ -12688,7 +12693,7 @@ export default function MapExplorer() {
                 title="Automated Sub-Pixel Co-Registration Studio, FFT Phase Correlation, Tie-Point Vector Field & Resampling Warper (Cycle v2.5.30)"
               >
                 <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Co-Registration (v2.5.30)</span>
+                <span>Co-Registration</span>
               </button>
 
               {/* Cycle v2.5.31 Aquatic Quality & Harmful Algal Bloom Studio Shortcut (Task T-248) */}
@@ -12700,7 +12705,7 @@ export default function MapExplorer() {
                 title="Aquatic Quality & Harmful Algal Bloom Studio, Bio-Optical Inversion (NDCI/FAI/Turbidity) & WHO Health Hazards (Cycle v2.5.31)"
               >
                 <Waves className="w-3.5 h-3.5 text-teal-400" />
-                <span>Aquatic Quality (v2.5.31)</span>
+                <span>Aquatic Quality</span>
               </button>
 
               {/* Cycle v2.5.32 Topographic Solar Illumination & SCS+C Studio Shortcut (Task T-254) */}
@@ -12712,7 +12717,7 @@ export default function MapExplorer() {
                 title="Topographic Solar Illumination Studio, SCS+C Inversion, Slope-Aspect Hillshade & Empirical C-Correction (Cycle v2.5.32)"
               >
                 <Sun className="w-3.5 h-3.5 text-amber-400" />
-                <span>Topographic SCS+C (v2.5.32)</span>
+                <span>Topographic SCS+C</span>
               </button>
 
               {/* Cycle v2.5.33 Harmonized Landsat Sentinel-2 (HLS) Harmonization Studio Shortcut (Task T-260) */}
@@ -12724,7 +12729,7 @@ export default function MapExplorer() {
                 title="Harmonized Landsat Sentinel-2 (HLS) Studio, Nadir BRDF-Adjusted Reflectance (RossThick-LiSparse-R NBAR) & Cross-Sensor Spectral Harmonization (Cycle v2.5.33)"
               >
                 <Satellite className="w-3.5 h-3.5 text-indigo-400" />
-                <span>HLS Harmonization (v2.5.33)</span>
+                <span>HLS Harmonization</span>
               </button>
 
               {/* Cycle v2.5.34 Land Surface Temperature (LST) & Thermal Anomaly Studio Shortcut (Task T-266) */}
@@ -12736,7 +12741,7 @@ export default function MapExplorer() {
                 title="Land Surface Temperature (LST) & Thermal Anomaly Studio, Radiative Transfer Equation (RTE), Sobrino Emissivity & Heat Island Hazard Tiers (Cycle v2.5.34)"
               >
                 <Flame className="w-3.5 h-3.5 text-rose-400" />
-                <span>Thermal LST (v2.5.34)</span>
+                <span>Thermal LST</span>
               </button>
 
               {/* Cycle v2.5.35 Cloud-Native GeoTIFF & GeoPackage Export Studio Shortcut (Task T-272) */}
@@ -12748,7 +12753,7 @@ export default function MapExplorer() {
                 title="Geospatial Export Studio: Cloud-Native GeoTIFF (COG), OGC GeoPackage, Multi-Spectral Subsetting & Enterprise GIS Interoperability (Cycle v2.5.35)"
               >
                 <Download className="w-3.5 h-3.5 text-teal-400" />
-                <span>Export Studio (v2.5.35)</span>
+                <span>Export Studio</span>
               </button>
 
               {/* Cycle v2.5.36 Land Surface Phenology & Harmonic Seasonality Studio Shortcut (Task T-278) */}
@@ -12760,7 +12765,7 @@ export default function MapExplorer() {
                 title="Land Surface Phenology & Harmonic Seasonality Studio, Multi-Harmonic Fourier Decomposition, Transition Milestones (SOS/POS/EOS/LOS) & Seasonality Tiles (Cycle v2.5.36)"
               >
                 <Sprout className="w-3.5 h-3.5 text-lime-400" />
-                <span>Phenology Studio (v2.5.36)</span>
+                <span>Phenology Studio</span>
               </button>
 
               {/* Cycle v2.5.37 Multi-Band Super-Resolution Sharpening Studio Shortcut (Task T-284) */}
@@ -12772,7 +12777,7 @@ export default function MapExplorer() {
                 title="Multi-Band Super-Resolution Studio, Gram-Schmidt Orthogonalization, 20m vs 10m Split-Screen Comparison HUD & Dynamic Sharpened Tiles (Cycle v2.5.37)"
               >
                 <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Super-Resolution (v2.5.37)</span>
+                <span>Super-Resolution</span>
               </button>
 
               {/* Cycle v2.5.38 Multi-Sensor Cross-Calibration Studio Shortcut (Task T-290) */}
@@ -12784,7 +12789,7 @@ export default function MapExplorer() {
                 title="Multi-Sensor Cross-Calibration Studio, Scatter Plot & Orthogonal Regression Line Inspector, Sensor Blend Ratio Slider & Dynamic Harmonized TileLayer (Cycle v2.5.38)"
               >
                 <GitCompare className="w-3.5 h-3.5 text-amber-400" />
-                <span>Cross-Calibration (v2.5.38)</span>
+                <span>Cross-Calibration</span>
               </button>
 
               {/* Cycle v2.5.39 Non-Parametric Trend Studio Shortcut (Task T-296) */}
@@ -12796,7 +12801,7 @@ export default function MapExplorer() {
                 title="Non-Parametric Trend Studio, Multi-Decadal Pixel Trajectory Inspector, Theil-Sen Confidence Envelope, Mann-Kendall Significance & Dynamic Trend Tiles (Cycle v2.5.39)"
               >
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Trend Studio (v2.5.39)</span>
+                <span>Trend Studio</span>
               </button>
 
               {/* Cycle v2.5.40 Multimodal Sensor Fusion Studio Shortcut (Task T-302) */}
@@ -12808,7 +12813,7 @@ export default function MapExplorer() {
                 title="Multimodal SAR-Optical Sensor Fusion Studio, Sub-Pixel Displacement Vectors, Velocity Heatmap & Dynamic Tiles (Cycle v2.5.40)"
               >
                 <Compass className="w-3.5 h-3.5 text-teal-400" />
-                <span>Multimodal Studio (v2.5.40)</span>
+                <span>Multimodal Studio</span>
               </button>
 
               {/* Cycle v2.5.41 InSAR SBAS Ground Deformation Studio Shortcut (Task T-308) */}
@@ -12820,7 +12825,7 @@ export default function MapExplorer() {
                 title="InSAR SBAS Ground Deformation Studio, Persistent Scatterer Point Cloud, Multi-Year Millimeter Subsidence & SVD Inversion (Cycle v2.5.41)"
               >
                 <Activity className="w-3.5 h-3.5 text-blue-400" />
-                <span>InSAR SBAS (v2.5.41)</span>
+                <span>InSAR SBAS</span>
               </button>
 
               {/* Cycle v2.5.42 Spectral Unmixing (LSMA / FCLS) Studio Shortcut (Task T-314) */}
@@ -12832,7 +12837,7 @@ export default function MapExplorer() {
                 title="Linear Spectral Mixture Analysis (LSMA) & FCLS Sub-Pixel Endmember Fraction Inversion Studio (Cycle v2.5.42)"
               >
                 <PieChart className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Spectral Unmixing (v2.5.42)</span>
+                <span>Spectral Unmixing</span>
               </button>
 
               {/* Cycle v2.5.44 Satellite-Derived Bathymetry (SDB) Studio Shortcut (Task T-326) */}
@@ -12844,7 +12849,7 @@ export default function MapExplorer() {
                 title="Satellite-Derived Bathymetry (SDB) Studio, Stumpf Log-Ratio Depth, 3D Sub-Surface Contour Visualizer, EAC Storage Capacity & Dynamic Bathymetry Tiles (Cycle v2.5.44)"
               >
                 <Waves className="w-3.5 h-3.5 text-sky-400" />
-                <span>Bathymetry Studio (v2.5.44)</span>
+                <span>Bathymetry Studio</span>
               </button>
 
               {/* Cycle v2.5.45 Evapotranspiration & Water Consumption Studio Shortcut (Task T-332) */}
@@ -12856,7 +12861,7 @@ export default function MapExplorer() {
                 title="Satellite-Derived Evapotranspiration & Energy Balance Studio, SEBAL/METRIC Inversion, CIMEC Anchor Pixels, CWSI Stress & Dynamic ET Tiles (Cycle v2.5.45)"
               >
                 <Droplets className="w-3.5 h-3.5 text-cyan-400" />
-                <span>ET Studio (v2.5.45)</span>
+                <span>ET Studio</span>
               </button>
 
               {/* Cycle v2.5.46 Topographic Solar Illumination Normalization & Mountain Shadow Studio Shortcut (Task T-338) */}
@@ -12868,7 +12873,7 @@ export default function MapExplorer() {
                 title="Topographic Solar Illumination Normalization & Mountain Shadow Correction Studio (Cycle v2.5.46)"
               >
                 <Mountain className="w-3.5 h-3.5 text-amber-400" />
-                <span>Topo Normalization (v2.5.46)</span>
+                <span>Topo Normalization</span>
               </button>
 
               {/* Cycle v2.5.53 Multi-Temporal Change Vector Analysis & SAM Studio Shortcut (Task T-380) */}
@@ -12880,7 +12885,7 @@ export default function MapExplorer() {
                 title="Multi-Temporal Change Vector Analysis Studio, 2D Polar Vector Field, 8-Sector Disturbance Wheel & Dynamic Leaflet Tiles (Cycle v2.5.53)"
               >
                 <Compass className="w-3.5 h-3.5 text-cyan-400" />
-                <span>CVA & SAM (v2.5.53)</span>
+                <span>CVA & SAM</span>
               </button>
 
               {/* Cycle v2.5.52 High-Resolution Pan-Sharpening & Wavelet Fusion Studio Shortcut (Task T-374) */}
@@ -12892,7 +12897,7 @@ export default function MapExplorer() {
                 title="High-Resolution Pan-Sharpening Studio, Gram-Schmidt vs Wavelet Fusion, MTF Inspector & Dynamic Sub-Meter Orthomosaic Tiles (Cycle v2.5.52)"
               >
                 <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Pan-Sharpening (v2.5.52)</span>
+                <span>Pan-Sharpening</span>
               </button>
 
               {/* T-67/T-68 Slope Stability (FS) & TWI Shortcut */}
@@ -13036,6 +13041,7 @@ export default function MapExplorer() {
                 </select>
               </div>
             </div>
+            )}
 
             {/* T-14: Floating Symbology Controls Drawer */}
             {symbologyPanelOpen && (
@@ -13074,13 +13080,13 @@ export default function MapExplorer() {
             </div>
           </div>
 
-          {/* JARVIS Active Pins Floating Indicator */}
+          {/* Assistant Active Pins Floating Indicator */}
           {markedLocations.length > 0 && (
             <div className="absolute top-4 left-4 z-[900] bg-accent/90 backdrop-blur-md border border-primary/40 px-3.5 py-2 rounded-xl shadow-2xl flex items-center gap-3 animate-in fade-in">
               <div className="w-2.5 h-2.5 rounded-full bg-primary animate-ping"></div>
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-teal-300 font-mono flex items-center gap-1">
-                  🤖 JARVIS Pins Active ({markedLocations.length})
+                  🤖 Assistant Pins Active ({markedLocations.length})
                 </span>
                 <span className="text-[9px] text-gray-400 font-mono truncate max-w-[200px]">
                   {markedLocations[markedLocations.length - 1].label}
@@ -13095,7 +13101,7 @@ export default function MapExplorer() {
             </div>
           )}
 
-          {/* Floating JARVIS Interactive Command Bar on Map */}
+          {/* Floating Assistant Interactive Command Bar on Map */}
           <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-[900] w-full max-w-lg px-4 pointer-events-auto">
             {jarvisMessages.length > 1 && jarvisMessages[jarvisMessages.length - 1].role === 'assistant' && (
               <div className="mb-2 p-3 glass-panel text-xs text-gray-200 flex items-start gap-2.5 animate-in fade-in slide-in-from-bottom-2">
@@ -13117,7 +13123,7 @@ export default function MapExplorer() {
                 type="text"
                 value={jarvisInput}
                 onChange={(e) => setJarvisInput(e.target.value)}
-                placeholder="Ask JARVIS... (e.g. 'Mark Austin', 'Take me to Telemetry')"
+                placeholder="Ask Assistant... (e.g. 'Mark Austin', 'Take me to Telemetry')"
                 className="flex-1 bg-transparent text-xs text-gray-100 placeholder-gray-400 outline-none font-sans py-0.5"
                 disabled={jarvisLoading}
               />
@@ -13138,7 +13144,7 @@ export default function MapExplorer() {
                 <div className="flex items-center gap-3">
                   <Settings className="w-6 h-6 text-primary" />
                   <div>
-                    <h3 className="font-['Orbitron'] font-bold text-lg text-white">Orthomosaic Spectral Studio</h3>
+                    <h3 className="font-serif font-bold text-lg text-white">Orthomosaic Spectral Studio</h3>
                     <p className="text-xs text-gray-400">On-the-fly multi-spectral index calculation and dynamic contrast stretch</p>
                   </div>
                 </div>
@@ -13182,19 +13188,19 @@ export default function MapExplorer() {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                           <div className="p-3 bg-black/40 border border-gray-800 rounded">
                             <span className="text-[10px] text-gray-500 font-mono uppercase block">Mean Value</span>
-                            <span className="text-2xl font-bold font-['Orbitron'] text-primary">{studioResult.mean}</span>
+                            <span className="text-2xl font-bold font-serif text-primary">{studioResult.mean}</span>
                           </div>
                           <div className="p-3 bg-black/40 border border-gray-800 rounded">
                             <span className="text-[10px] text-gray-500 font-mono uppercase block">Median</span>
-                            <span className="text-2xl font-bold font-['Orbitron'] text-white">{studioResult.median}</span>
+                            <span className="text-2xl font-bold font-serif text-white">{studioResult.median}</span>
                           </div>
                           <div className="p-3 bg-black/40 border border-gray-800 rounded">
                             <span className="text-[10px] text-gray-500 font-mono uppercase block">Min / Max</span>
-                            <span className="text-sm font-bold font-['Orbitron'] text-amber-400 mt-1 block">{studioResult.min} / {studioResult.max}</span>
+                            <span className="text-sm font-bold font-serif text-amber-400 mt-1 block">{studioResult.min} / {studioResult.max}</span>
                           </div>
                           <div className="p-3 bg-black/40 border border-gray-800 rounded">
                             <span className="text-[10px] text-gray-500 font-mono uppercase block">Pixels Processed</span>
-                            <span className="text-2xl font-bold font-['Orbitron'] text-teal-300">{(studioResult.valid_pixels || 452000).toLocaleString()}</span>
+                            <span className="text-2xl font-bold font-serif text-teal-300">{(studioResult.valid_pixels || 452000).toLocaleString()}</span>
                           </div>
                         </div>
 
@@ -13251,7 +13257,7 @@ export default function MapExplorer() {
                 <div className="flex items-center gap-3">
                   <Radio className="w-6 h-6 text-purple-400" />
                   <div>
-                    <h3 className="font-['Orbitron'] font-bold text-lg text-white">Drone Micro-Survey Integration</h3>
+                    <h3 className="font-serif font-bold text-lg text-white">Drone Micro-Survey Integration</h3>
                     <p className="text-xs text-gray-400">Hierarchical multi-scale fusion: 10m satellite screening → 2.8cm drone inspection</p>
                   </div>
                 </div>
@@ -13266,17 +13272,17 @@ export default function MapExplorer() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="p-3 bg-black/40 border border-gray-800 rounded">
                       <span className="text-[10px] text-gray-500 font-mono block">Satellite Resolution</span>
-                      <span className="text-xl font-bold font-['Orbitron'] text-gray-300">10.0 m / px</span>
+                      <span className="text-xl font-bold font-serif text-gray-300">10.0 m / px</span>
                     </div>
                     <div className="p-3 bg-black/40 border border-purple-500/30 rounded bg-purple-500/5">
                       <span className="text-[10px] text-purple-400 font-mono block">Drone Ortho Resolution</span>
-                      <span className="text-xl font-bold font-['Orbitron'] text-purple-300">{formatGsdDisplay(registeredDroneOrtho?.metric_gsd_cm || 2.85)}</span>
+                      <span className="text-xl font-bold font-serif text-purple-300">{formatGsdDisplay(registeredDroneOrtho?.metric_gsd_cm || 2.85)}</span>
                     </div>
                   </div>
                   <div className="p-4 bg-black/40 border border-gray-800 rounded-lg text-xs leading-relaxed text-gray-300 space-y-2">
                     <p>
                       <strong>Macro-to-Micro Pipeline:</strong> The satellite layer detects regional seepage anomalies across embankments. 
-                      GIOS automatically directs autonomous drone missions to inspect toe saturation cracks with 357x higher spatial detail.
+                      Tiepoint automatically directs autonomous drone missions to inspect toe saturation cracks with 357x higher spatial detail.
                     </p>
                     <p className="font-mono text-purple-300 text-[11px]">
                       Active Drone Asset: {registeredDroneOrtho?.filename} ({registeredDroneOrtho?.ortho_id})
@@ -13323,7 +13329,7 @@ export default function MapExplorer() {
                 <div className="flex items-center gap-3">
                   <Search className="w-6 h-6 text-primary" />
                   <div>
-                    <h3 className="font-['Orbitron'] font-bold text-lg text-white">Planetary Computer Data Acquisition</h3>
+                    <h3 className="font-serif font-bold text-lg text-white">Planetary Computer Data Acquisition</h3>
                     <p className="text-xs text-gray-400">Search STAC collections for satellite imagery</p>
                   </div>
                 </div>
@@ -13362,7 +13368,7 @@ export default function MapExplorer() {
                 <div className="flex items-center gap-3">
                   <Database className="w-6 h-6 text-primary" />
                   <div>
-                    <h3 className="font-['Orbitron'] font-bold text-lg text-white">Geotechnical & Environmental Hazard Catalog</h3>
+                    <h3 className="font-serif font-bold text-lg text-white">Geotechnical & Environmental Hazard Catalog</h3>
                     <p className="text-xs text-gray-400">Curated database of active seepage, flood pulses, and microcystin blooms</p>
                   </div>
                 </div>
@@ -13439,7 +13445,7 @@ export default function MapExplorer() {
                     <div className="flex items-center gap-2">
                       <Activity className="w-5 h-5 text-primary animate-pulse" />
                       <div>
-                        <h4 className="font-['Orbitron'] font-bold text-white text-sm">
+                        <h4 className="font-serif font-bold text-white text-sm">
                           {selectedEvent?.title} — Geospatial Analytics & Distribution
                         </h4>
                         <p className="text-[10px] text-gray-400 font-mono">
@@ -14743,19 +14749,19 @@ export default function MapExplorer() {
                       <span className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Ground-Truth In-Situ</span>
                       <div>
                         <span className="text-[10px] text-gray-500 block">Stream Discharge</span>
-                        <span className="text-lg font-bold text-teal-400 font-['Orbitron']">
+                        <span className="text-lg font-bold text-teal-400 font-serif">
                           {usgsData?.discharge_cfs ? `${usgsData.discharge_cfs} cfs` : '1,420 cfs'}
                         </span>
                       </div>
                       <div>
                         <span className="text-[10px] text-gray-500 block">Gage Height</span>
-                        <span className="text-base font-bold text-white font-['Orbitron']">
+                        <span className="text-base font-bold text-white font-serif">
                           {usgsData?.gage_height_ft ? `${usgsData.gage_height_ft} ft` : '14.82 ft'}
                         </span>
                       </div>
                       <div>
                         <span className="text-[10px] text-gray-500 block">Water Temperature</span>
-                        <span className="text-base font-bold text-amber-400 font-['Orbitron']">
+                        <span className="text-base font-bold text-amber-400 font-serif">
                           {usgsData?.water_temp_c ? `${usgsData.water_temp_c} °C` : '17.5 °C'}
                         </span>
                       </div>
@@ -14815,19 +14821,19 @@ export default function MapExplorer() {
                         <div className="md:col-span-2 grid grid-cols-3 gap-2 text-xs font-mono">
                           <div className="p-2.5 bg-black/40 border border-gray-800 rounded-lg flex flex-col justify-between">
                             <span className="text-[10px] text-gray-500 uppercase block">Polygon Area</span>
-                            <span className="text-lg font-bold font-['Orbitron'] text-teal-300">
+                            <span className="text-lg font-bold font-serif text-teal-300">
                               {zonalStatsResult.area_hectares} Ha
                             </span>
                           </div>
                           <div className="p-2.5 bg-black/40 border border-gray-800 rounded-lg flex flex-col justify-between">
                             <span className="text-[10px] text-gray-500 uppercase block">Mean / Median</span>
-                            <span className="text-sm font-bold font-['Orbitron'] text-white">
+                            <span className="text-sm font-bold font-serif text-white">
                               {zonalStatsResult.statistics?.mean} / {zonalStatsResult.statistics?.median}
                             </span>
                           </div>
                           <div className="p-2.5 bg-black/40 border border-gray-800 rounded-lg flex flex-col justify-between">
                             <span className="text-[10px] text-gray-500 uppercase block">Std Deviation</span>
-                            <span className="text-sm font-bold font-['Orbitron'] text-amber-400">
+                            <span className="text-sm font-bold font-serif text-amber-400">
                               ±{zonalStatsResult.statistics?.std_dev}
                             </span>
                           </div>
@@ -14920,19 +14926,19 @@ export default function MapExplorer() {
                             <div className="grid grid-cols-3 gap-2 text-xs font-mono">
                               <div className="p-2 bg-black/50 border border-gray-800/80 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Elevation Range</span>
-                                <span className="text-sm font-bold text-white font-['Orbitron']">
+                                <span className="text-sm font-bold text-white font-serif">
                                   {terrainData.elevation_min_m?.toFixed(1)}m – {terrainData.elevation_max_m?.toFixed(1)}m
                                 </span>
                               </div>
                               <div className="p-2 bg-black/50 border border-gray-800/80 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Mean / Median Elevation</span>
-                                <span className="text-sm font-bold text-emerald-300 font-['Orbitron']">
+                                <span className="text-sm font-bold text-emerald-300 font-serif">
                                   {terrainData.elevation_mean_m?.toFixed(1)}m / {terrainData.elevation_median_m?.toFixed(1)}m
                                 </span>
                               </div>
                               <div className="p-2 bg-black/50 border border-gray-800/80 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Elevation Std Dev</span>
-                                <span className="text-sm font-bold text-amber-400 font-['Orbitron']">
+                                <span className="text-sm font-bold text-amber-400 font-serif">
                                   ±{terrainData.elevation_std_m?.toFixed(1)}m
                                 </span>
                               </div>
@@ -14940,19 +14946,19 @@ export default function MapExplorer() {
                             <div className="grid grid-cols-3 gap-2 text-xs font-mono mt-2">
                               <div className="p-2 bg-black/50 border border-gray-800/80 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Mean Slope</span>
-                                <span className="text-sm font-bold text-cyan-300 font-['Orbitron']">
+                                <span className="text-sm font-bold text-cyan-300 font-serif">
                                   {terrainData.slope_mean_deg?.toFixed(1)}° (Max: {terrainData.slope_max_deg?.toFixed(1)}°)
                                 </span>
                               </div>
                               <div className="p-2 bg-black/50 border border-gray-800/80 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Mean Aspect</span>
-                                <span className="text-sm font-bold text-purple-300 font-['Orbitron']">
+                                <span className="text-sm font-bold text-purple-300 font-serif">
                                   {terrainData.aspect_mean_deg?.toFixed(1)}°
                                 </span>
                               </div>
                               <div className="p-2 bg-black/50 border border-gray-800/80 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Sun Hillshade</span>
-                                <span className="text-sm font-bold text-teal-300 font-['Orbitron']">
+                                <span className="text-sm font-bold text-teal-300 font-serif">
                                   {terrainData.hillshade_mean?.toFixed(1)} / 255
                                 </span>
                               </div>
@@ -14979,14 +14985,14 @@ export default function MapExplorer() {
                             <div className="grid grid-cols-2 gap-2">
                               <div className="p-2 bg-black/60 border border-gray-800 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Terrain Ruggedness Index</span>
-                                <span className="text-base font-bold font-['Orbitron'] text-amber-300">
+                                <span className="text-base font-bold font-serif text-amber-300">
                                   {terrainData.tri_mean !== undefined ? terrainData.tri_mean.toFixed(2) : '14.82 m'}
                                 </span>
                                 <span className="text-[8px] text-gray-400 block mt-0.5">Topographic variability</span>
                               </div>
                               <div className="p-2 bg-black/60 border border-gray-800 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Surface Roughness</span>
-                                <span className="text-base font-bold font-['Orbitron'] text-emerald-300">
+                                <span className="text-base font-bold font-serif text-emerald-300">
                                   {terrainData.roughness_mean !== undefined ? terrainData.roughness_mean.toFixed(2) : '1.18'}
                                 </span>
                                 <span className="text-[8px] text-gray-400 block mt-0.5">Planar deviation ratio</span>
@@ -15047,19 +15053,19 @@ export default function MapExplorer() {
                             <div className="grid grid-cols-3 gap-2 text-xs font-mono">
                               <div className="p-2 bg-black/50 border border-gray-800/80 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Mean Backscatter</span>
-                                <span className="text-base font-bold font-['Orbitron'] text-cyan-300">
+                                <span className="text-base font-bold font-serif text-cyan-300">
                                   {sarData.mean_backscatter_db !== undefined ? `${sarData.mean_backscatter_db.toFixed(1)} dB` : '-14.2 dB'}
                                 </span>
                               </div>
                               <div className="p-2 bg-black/50 border border-gray-800/80 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Min Backscatter</span>
-                                <span className="text-base font-bold font-['Orbitron'] text-blue-300">
+                                <span className="text-base font-bold font-serif text-blue-300">
                                   {sarData.min_backscatter_db !== undefined ? `${sarData.min_backscatter_db.toFixed(1)} dB` : '-26.8 dB'}
                                 </span>
                               </div>
                               <div className="p-2 bg-black/50 border border-gray-800/80 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Max Backscatter</span>
-                                <span className="text-base font-bold font-['Orbitron'] text-amber-300">
+                                <span className="text-base font-bold font-serif text-amber-300">
                                   {sarData.max_backscatter_db !== undefined ? `${sarData.max_backscatter_db.toFixed(1)} dB` : '-2.4 dB'}
                                 </span>
                               </div>
@@ -15097,14 +15103,14 @@ export default function MapExplorer() {
                             <div className="grid grid-cols-2 gap-2">
                               <div className="p-2.5 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
                                 <span className="text-[9px] text-cyan-400 uppercase block font-bold">Flood Inundation Area</span>
-                                <span className="text-2xl font-bold font-['Orbitron'] text-white">
+                                <span className="text-2xl font-bold font-serif text-white">
                                   {sarData.inundation_area_hectares !== undefined ? `${sarData.inundation_area_hectares.toFixed(1)} Ha` : '42.8 Ha'}
                                 </span>
                                 <span className="text-[9px] text-gray-400 block mt-0.5">Calibrated dark water surface</span>
                               </div>
                               <div className="p-2.5 bg-black/60 border border-gray-800 rounded-lg">
                                 <span className="text-[9px] text-gray-500 uppercase block">Inundation Coverage</span>
-                                <span className="text-2xl font-bold font-['Orbitron'] text-cyan-300">
+                                <span className="text-2xl font-bold font-serif text-cyan-300">
                                   {sarData.inundation_percentage !== undefined ? `${sarData.inundation_percentage.toFixed(1)}%` : '18.4%'}
                                 </span>
                                 <span className="text-[9px] text-gray-400 block mt-0.5">Fraction of surveyed AOI</span>
@@ -15230,13 +15236,13 @@ export default function MapExplorer() {
                             <div className="space-y-1.5 mt-2">
                               <div className="p-2 bg-black/50 border border-gray-800 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Total Distance</span>
-                                <span className="text-lg font-bold font-['Orbitron'] text-white">
+                                <span className="text-lg font-bold font-serif text-white">
                                   {transectResult.summary?.total_distance_m !== undefined ? `${transectResult.summary.total_distance_m.toFixed(1)} m` : '1250.0 m'}
                                 </span>
                               </div>
                               <div className="p-2 bg-black/50 border border-gray-800 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Elevation Range</span>
-                                <span className="text-sm font-bold font-['Orbitron'] text-purple-300">
+                                <span className="text-sm font-bold font-serif text-purple-300">
                                   {transectResult.summary?.min_elevation_m !== undefined ? `${transectResult.summary.min_elevation_m.toFixed(1)}m – ${transectResult.summary.max_elevation_m.toFixed(1)}m` : '145m – 230m'}
                                 </span>
                                 <span className="text-[8px] text-gray-400 block mt-0.5">
@@ -15245,7 +15251,7 @@ export default function MapExplorer() {
                               </div>
                               <div className="p-2 bg-black/50 border border-gray-800 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Slope Gradient</span>
-                                <span className="text-sm font-bold font-['Orbitron'] text-amber-300">
+                                <span className="text-sm font-bold font-serif text-amber-300">
                                   Mean: {transectResult.summary?.mean_slope_deg !== undefined ? `${transectResult.summary.mean_slope_deg.toFixed(1)}°` : '4.8°'} | Max: {transectResult.summary?.max_slope_deg !== undefined ? `${transectResult.summary.max_slope_deg.toFixed(1)}°` : '14.2°'}
                                 </span>
                               </div>
@@ -15342,21 +15348,21 @@ export default function MapExplorer() {
                             <div className="grid grid-cols-3 gap-2 text-xs font-mono">
                               <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">
                                 <span className="text-[9px] text-amber-400 uppercase block font-bold">Cut Volume (Excavation)</span>
-                                <span className="text-xl font-bold font-['Orbitron'] text-white">
+                                <span className="text-xl font-bold font-serif text-white">
                                   {volumetricResult.cut_volume_m3 !== undefined ? `${volumetricResult.cut_volume_m3.toLocaleString()} m³` : '45,000 m³'}
                                 </span>
                                 <span className="text-[8px] text-gray-400 block mt-0.5">Material above datum</span>
                               </div>
                               <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
                                 <span className="text-[9px] text-emerald-400 uppercase block font-bold">Fill Volume (Compacted)</span>
-                                <span className="text-xl font-bold font-['Orbitron'] text-white">
+                                <span className="text-xl font-bold font-serif text-white">
                                   {volumetricResult.fill_volume_m3 !== undefined ? `${volumetricResult.fill_volume_m3.toLocaleString()} m³` : '12,000 m³'}
                                 </span>
                                 <span className="text-[8px] text-gray-400 block mt-0.5">Void below datum</span>
                               </div>
                               <div className="p-2.5 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
                                 <span className="text-[9px] text-cyan-400 uppercase block font-bold">Net Volume</span>
-                                <span className="text-xl font-bold font-['Orbitron'] text-cyan-300">
+                                <span className="text-xl font-bold font-serif text-cyan-300">
                                   {volumetricResult.net_volume_m3 !== undefined ? `${volumetricResult.net_volume_m3 > 0 ? '+' : ''}${volumetricResult.net_volume_m3.toLocaleString()} m³` : '+33,000 m³'}
                                 </span>
                                 <span className="text-[8px] text-gray-400 block mt-0.5">{volumetricResult.net_volume_m3 >= 0 ? 'Surplus Cut Material' : 'Deficit (Import Required)'}</span>
@@ -15401,14 +15407,14 @@ export default function MapExplorer() {
                             <div className="grid grid-cols-2 gap-2 mt-2">
                               <div className="p-2 bg-black/50 border border-gray-800 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Surface Area</span>
-                                <span className="text-base font-bold font-['Orbitron'] text-white">
+                                <span className="text-base font-bold font-serif text-white">
                                   {volumetricResult.surface_area_hectares !== undefined ? `${volumetricResult.surface_area_hectares.toFixed(2)} Ha` : '12.5 Ha'}
                                 </span>
                                 <span className="text-[8px] text-gray-400 block mt-0.5">{volumetricResult.surface_area_m2?.toLocaleString()} m²</span>
                               </div>
                               <div className="p-2 bg-black/50 border border-gray-800 rounded">
                                 <span className="text-[9px] text-gray-500 uppercase block">Depth & Thickness</span>
-                                <span className="text-base font-bold font-['Orbitron'] text-amber-300">
+                                <span className="text-base font-bold font-serif text-amber-300">
                                   Mean: {volumetricResult.mean_depth_m !== undefined ? `${volumetricResult.mean_depth_m.toFixed(1)}m` : '6.8m'}
                                 </span>
                                 <span className="text-[8px] text-gray-400 block mt-0.5">Max Depth: {volumetricResult.max_depth_m?.toFixed(1) || '35.0'}m</span>
@@ -15711,7 +15717,7 @@ export default function MapExplorer() {
                               <div className="space-y-2 mt-2">
                                 <div className="p-2.5 bg-black/60 border border-gray-800 rounded">
                                   <span className="text-[9px] text-gray-500 uppercase block">Acquisition Date</span>
-                                  <span className="text-base font-bold font-['Orbitron'] text-white">
+                                  <span className="text-base font-bold font-serif text-white">
                                     {animationKeyframes[currentFrameIndex].timestamp}
                                   </span>
                                   <span className="text-[9px] text-teal-400 block mt-0.5">
@@ -16374,7 +16380,7 @@ export default function MapExplorer() {
                             type="text"
                             value={changePreSceneId}
                             onChange={(e) => setChangePreSceneId(e.target.value)}
-                            placeholder="e.g. S2A_MSIL2A_20260515_T10SEH"
+                            placeholder="e.g. S2A_MSIL2A_20260515_T10SFG"
                             className="w-full px-2.5 py-1.5 rounded bg-black/60 border border-gray-700 text-white font-mono text-[11px] focus:border-amber-400 outline-none"
                           />
                         </div>
@@ -16387,7 +16393,7 @@ export default function MapExplorer() {
                             type="text"
                             value={changePostSceneId}
                             onChange={(e) => setChangePostSceneId(e.target.value)}
-                            placeholder="e.g. S2A_MSIL2A_20260820_T10SEH"
+                            placeholder="e.g. S2A_MSIL2A_20260820_T10SFG"
                             className="w-full px-2.5 py-1.5 rounded bg-black/60 border border-gray-700 text-white font-mono text-[11px] focus:border-amber-400 outline-none"
                           />
                         </div>
@@ -16401,8 +16407,8 @@ export default function MapExplorer() {
                             <button
                               type="button"
                               onClick={() => {
-                                setChangePreSceneId('S2A_MSIL2A_20260515_T10SEH');
-                                setChangePostSceneId('S2A_MSIL2A_20260820_T10SEH');
+                                setChangePreSceneId('S2A_MSIL2A_20260515_T10SFG');
+                                setChangePostSceneId('S2A_MSIL2A_20260820_T10SFG');
                                 setChangeMetric(CHANGE_DETECTION_METRICS.NDMI_DIFF);
                               }}
                               className="px-2 py-1 rounded bg-gray-800/70 hover:bg-gray-700 text-[10px] text-gray-300 hover:text-white truncate text-left"
@@ -23113,7 +23119,7 @@ export default function MapExplorer() {
                             <span className="text-base font-bold font-mono text-emerald-400">
                               {crestResult?.overall_metadata?.label || 'Normal (< 0.05m)'}
                             </span>
-                            <span className="text-[9px] text-gray-500 block">Status: COMPLIANT</span>
+                            <span className="text-[9px] text-gray-500 block">Screening value, not a compliance check</span>
                           </div>
                         </div>
 
@@ -24220,7 +24226,7 @@ export default function MapExplorer() {
             ? bboxFromPoints(customPolygonVertices) 
             : (selectedEvent ? [selectedEvent.lng - 0.04, selectedEvent.lat - 0.04, selectedEvent.lng + 0.04, selectedEvent.lat + 0.04] : null)
         }
-        activeItemId={selectedEvent?.item_id || 'S2A_MSIL2A_20260820_T10SEH'}
+        activeItemId={selectedEvent?.item_id || selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SFG'}
         activeCollection={selectedEvent?.sensor || 'sentinel-2-l2a'}
       />
 

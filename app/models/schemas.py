@@ -1,6 +1,6 @@
-"""GIOS Data Models, Enums, and Pydantic Schemas.
+"""Tiepoint Data Models, Enums, and Pydantic Schemas.
 
-Comprehensive shared contracts for GIOS v2.5:
+Comprehensive shared contracts for Tiepoint v2.5:
 - Dynamic XYZ COG Tile Server (Section 4 Contract 1)
 - USGS FIREMON Two-Scene Differenced Burn Severity (Section 4 Contract 2)
 - Interactive Pixel Probe & BOA Reflectance (Section 4 Contract 3)
@@ -95,7 +95,7 @@ class DroneStatus(str, Enum):
 
 class ProactiveAlertType(str, Enum):
     """Proactive alert types streamed by backend over SSE (/api/v1/agent/stream-alerts)."""
-    JARVIS = "jarvis_proactive_alert"
+    Assistant = "jarvis_proactive_alert"
     SATELLITE = "satellite_anomaly_alert"
 
 # ============================================================================
@@ -2960,8 +2960,8 @@ class AlertWebhookPayload(BaseModel):
     sent_at: str = Field(..., description="Dispatch timestamp (ISO 8601)")
 
 class ProactiveJarvisAlert(BaseModel):
-    """Proactive emergency briefing dispatched by JARVIS LLM over SSE stream."""
-    type: Union[ProactiveAlertType, str] = Field(default=ProactiveAlertType.JARVIS, description="Proactive alert event type")
+    """Proactive emergency briefing dispatched by Assistant LLM over SSE stream."""
+    type: Union[ProactiveAlertType, str] = Field(default=ProactiveAlertType.Assistant, description="Proactive alert event type")
     message: str = Field(..., description="Emergency briefing narrative")
     site: str = Field(..., description="Monitored site or infrastructure asset name")
     data: Dict[str, Any] = Field(default_factory=dict, description="Associated sensor or telemetry payload")
@@ -3017,6 +3017,7 @@ class HazardEventDetail(BaseModel):
     end_date: str = Field(..., description="End date (YYYY-MM-DD)")
     usgs_station: Optional[str] = Field(default=None, description="Associated USGS streamgage station")
     station_name: Optional[str] = Field(default=None, description="USGS streamgage station name")
+    scene_id: Optional[str] = Field(default=None, description="Sentinel-2 scene covering the site (tile is real, date is a placeholder)")
     impact_area: str = Field(..., description="Estimated impact area")
     peak_zscore: str = Field(..., description="Peak anomaly z-score")
     hazard_type: str = Field(..., description="Specific hazard classification")
@@ -3052,7 +3053,7 @@ class EventCreateRequest(BaseModel):
 class HealthResponse(BaseModel):
     """Platform health and service availability response."""
     status: str = Field(default="healthy", description="System health status")
-    platform: Optional[str] = Field(default="GIOS", description="Platform identifier name")
+    platform: Optional[str] = Field(default="Tiepoint", description="Platform identifier name")
     version: str = Field(default="2.5.0", description="Semantic platform release version")
     active_services: Optional[List[str]] = Field(default_factory=list, description="Active microservices")
     active_modules: Optional[List[str]] = Field(default_factory=list, description="Active backend processing modules")
@@ -20906,7 +20907,7 @@ BREACH_METHOD_CONFIGS: Dict[str, Dict[str, Any]] = {
     "hybrid_ensemble": {
         "id": "hybrid_ensemble",
         "name": "Hybrid Multi-Model Ensemble",
-        "reference": "GIOS Hydrodynamic Synthesis (Froehlich 2008 + MacDonald-Langridge-Monopolis 1984 + USBR envelope)",
+        "reference": "Tiepoint Hydrodynamic Synthesis (Froehlich 2008 + MacDonald-Langridge-Monopolis 1984 + USBR envelope)",
         "description": "Ensemble weighting delivering deterministic median and 95% upper confidence bound for engineering conservatism.",
         "equations": {
             "peak_discharge": "Q_p = 0.65 * Q_p_froehlich + 0.35 * Q_p_mlm"
@@ -25381,7 +25382,7 @@ def format_channel_notification_payload(
             
         return {
             "channel": "#gios-alerts",
-            "text": f"🚨 GIOS STAC Alert [{severity.upper()}]: {event_type} on {sub_id}",
+            "text": f"🚨 Tiepoint STAC Alert [{severity.upper()}]: {event_type} on {sub_id}",
             "attachments": [
                 {
                     "color": hex_color,
@@ -25393,7 +25394,7 @@ def format_channel_notification_payload(
                         {"title": "Cloud Cover", "value": f"{cloud_cover:.1f}%", "short": True},
                         {"title": "Timestamp", "value": ts, "short": False}
                     ],
-                    "footer": "GIOS Automated Watchdog",
+                    "footer": "Tiepoint Automated Watchdog",
                     "ts": parsed_ts
                 }
             ]
@@ -25413,7 +25414,7 @@ def format_channel_notification_payload(
                                 "type": "TextBlock",
                                 "size": "Medium",
                                 "weight": "Bolder",
-                                "text": f"🚨 GIOS Harvester Alert: {event_type}",
+                                "text": f"🚨 Tiepoint Harvester Alert: {event_type}",
                                 "color": "Attention" if severity in ("critical", "emergency") else "Warning"
                             },
                             {
@@ -25439,8 +25440,8 @@ def format_channel_notification_payload(
             "event_action": "trigger",
             "dedup_key": f"{sub_id}:{event_id}",
             "payload": {
-                "summary": f"GIOS Harvester [{severity.upper()}]: {event_type} on {sub_id} (z={z_score})",
-                "source": "GIOS Automated Harvester",
+                "summary": f"Tiepoint Harvester [{severity.upper()}]: {event_type} on {sub_id} (z={z_score})",
+                "source": "Tiepoint Automated Harvester",
                 "severity": pd_severity,
                 "timestamp": ts,
                 "component": "stac_harvester",
@@ -25451,10 +25452,10 @@ def format_channel_notification_payload(
     elif ch == WebhookChannelType.EMAIL_SMTP.value:
         target = webhook_url if (webhook_url and "@" in webhook_url) else "alerts@gios-monitoring.internal"
         return {
-            "subject": f"[GIOS {severity.upper()}] STAC Harvester: {event_type} ({sub_id})",
+            "subject": f"[Tiepoint {severity.upper()}] STAC Harvester: {event_type} ({sub_id})",
             "to": [target],
-            "body_text": f"GIOS STAC Harvester Alert\nSeverity: {severity}\nSubscription: {sub_id}\nEvent: {event_id}\nZ-Score: {z_score}\nTimestamp: {ts}",
-            "body_html": f"<h2>GIOS STAC Harvester Alert</h2><p><strong>Severity:</strong> {severity}</p><p><strong>Subscription:</strong> {sub_id}</p><p><strong>Z-Score:</strong> {z_score}</p><p><strong>Timestamp:</strong> {ts}</p>"
+            "body_text": f"Tiepoint STAC Harvester Alert\nSeverity: {severity}\nSubscription: {sub_id}\nEvent: {event_id}\nZ-Score: {z_score}\nTimestamp: {ts}",
+            "body_html": f"<h2>Tiepoint STAC Harvester Alert</h2><p><strong>Severity:</strong> {severity}</p><p><strong>Subscription:</strong> {sub_id}</p><p><strong>Z-Score:</strong> {z_score}</p><p><strong>Timestamp:</strong> {ts}</p>"
         }
     else:  # custom_webhook
         return {
@@ -25804,7 +25805,7 @@ class WebhookTestDispatchPayloadRequest(BaseModel):
 
     endpoint_id: str = Field(default="EP-001", alias="endpointId")
     test_severity: HarvesterAlertSeverity = Field(default=HarvesterAlertSeverity.WARNING, alias="testSeverity")
-    custom_message: Optional[str] = Field(default="Test notification dispatch from GIOS Watchdog.", alias="customMessage")
+    custom_message: Optional[str] = Field(default="Test notification dispatch from Tiepoint Watchdog.", alias="customMessage")
 
 
 class WebhookTestDispatchPayloadResponse(BaseModel):
@@ -27730,7 +27731,7 @@ DEM_COLLECTIONS_METADATA: Dict[str, Dict[str, Any]] = {
     "drone-dsm": {
         "collection_id": "drone-dsm",
         "name": "Drone Photogrammetry Centimeter DSM",
-        "provider": "GIOS NodeODM Bridge",
+        "provider": "Tiepoint NodeODM Bridge",
         "spatial_resolution_m": 0.05,
         "horizontal_crs": "EPSG:3857 / UTM",
         "vertical_datum": "Ellipsoidal WGS84",
@@ -28185,7 +28186,7 @@ def calculate_lambertian_hillshade(
     # Clamping bounds: [-1.0, 1.0]
     cos_i_clamped = max(-1.0, min(1.0, cos_i))
     illumination = max(0.0, min(255.0, 255.0 * max(0.0, cos_i_clamped)))
-    is_shadow = cos_i <= 0.0
+    is_shadow = cos_i <= 1e-9  # grazing light (cos i ~ 0 from rounding) counts as shadow
 
     return LambertianHillshadeResult(
         illumination=round(illumination, 2),

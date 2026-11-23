@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 INITIAL_EVENTS = [
     {
         "id": "SEEPAGE-01",
+        # Sentinel-2 tile that covers this site; the scene date is a placeholder.
+        "scene_id": "S2A_MSIL2A_20260820_T10SFG",
         "title": "San Luis Dam Embankment",
         "subtitle": "Santa Nella, CA | Subsurface Seepage Anomaly",
         "category": "seepage",
@@ -23,7 +25,7 @@ INITIAL_EVENTS = [
         "start_date": "2026-06-01",
         "end_date": "2026-08-30",
         "usgs_station": "11262900",
-        "station_name": "USGS #11262900 (San Luis Creek)",
+        "station_name": "USGS #11262900 (Mud Slough near Gustine, about 27 km from the dam)",
         "impact_area": "34.2 Hectares",
         "peak_zscore": "+2.84 σ",
         "hazard_type": "Subsurface Embankment Seepage",
@@ -32,6 +34,8 @@ INITIAL_EVENTS = [
     },
     {
         "id": "HAB-02",
+        # Sentinel-2 tile that covers this site; the scene date is a placeholder.
+        "scene_id": "S2A_MSIL2A_20260820_T17TLG",
         "title": "Lake Erie Western Basin",
         "subtitle": "Toledo, OH | Microcystin Cyanobacteria Bloom",
         "category": "hab",
@@ -54,6 +58,8 @@ INITIAL_EVENTS = [
     },
     {
         "id": "INUNDATION-03",
+        # Sentinel-2 tile that covers this site; the scene date is a placeholder.
+        "scene_id": "S2A_MSIL2A_20260820_T15RTN",
         "title": "Lower Brazos River Basin",
         "subtitle": "Richmond, TX | Flash Flood Inundation",
         "category": "inundation",
@@ -76,6 +82,8 @@ INITIAL_EVENTS = [
     },
     {
         "id": "TAILINGS-04",
+        # Sentinel-2 tile that covers this site; the scene date is a placeholder.
+        "scene_id": "S2A_MSIL2A_20260820_T12SVA",
         "title": "Silver Bell Mine Impoundment",
         "subtitle": "Pima County, AZ | Embankment Stability & Moisture",
         "category": "seepage",
@@ -89,7 +97,7 @@ INITIAL_EVENTS = [
         "start_date": "2026-04-01",
         "end_date": "2026-07-20",
         "usgs_station": "09486000",
-        "station_name": "USGS #09486000 (Brawley Basin)",
+        "station_name": "USGS #09486000 (Rillito Creek, Tucson AZ: not at the mine site)",
         "impact_area": "18.6 Hectares",
         "peak_zscore": "+1.95 σ",
         "hazard_type": "Tailings Dam Toe Saturation",
@@ -111,6 +119,14 @@ class EventService:
             try:
                 with open(self.db_path, "r", encoding="utf-8") as f:
                     self.events = json.load(f)
+                # Built-in sites: refresh reference fields that were corrected in code
+                # (gauge names, scene tiles) so old saved copies don't keep wrong labels.
+                for base in INITIAL_EVENTS:
+                    saved = self.events.get(base["id"])
+                    if saved is not None:
+                        for key in ("station_name", "scene_id"):
+                            if key in base:
+                                saved[key] = base[key]
             except Exception as e:
                 logger.error("Error loading events DB: %s", e)
                 self.events = {e["id"]: e for e in INITIAL_EVENTS}

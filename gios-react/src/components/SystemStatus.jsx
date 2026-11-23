@@ -30,7 +30,7 @@ export default function SystemStatus() {
       case 'ONLINE': return 'text-primary';
       case 'UNSTABLE': return 'text-warning';
       case 'OFFLINE': return 'text-danger';
-      default: return 'text-[#8b9bb4]';
+      default: return 'text-stone-400';
     }
   };
 
@@ -45,11 +45,11 @@ export default function SystemStatus() {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2 text-[10px] font-['Roboto_Mono'] text-[#8b9bb4] uppercase tracking-[0.2em] mb-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono text-stone-400 uppercase tracking-[0.2em] mb-1">
         <Cpu size={12} />
         System Core
       </div>
-      <div className={`flex items-center gap-2 text-xs font-['Roboto_Mono'] ${getStatusColor()} border border-current/20 bg-current/5 px-3 py-1.5 rounded-md`}>
+      <div className={`flex items-center gap-2 text-xs font-mono ${getStatusColor()} border border-current/20 bg-current/5 px-3 py-1.5 rounded-md`}>
         {getStatusIcon()}
         <DecryptedText text={status} speed={80} animateOnLoad={true} />
       </div>

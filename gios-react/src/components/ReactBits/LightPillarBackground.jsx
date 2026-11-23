@@ -66,8 +66,8 @@ export function PillarPlane() {
   
   const uniforms = useMemo(() => ({
     uTime: { value: 0 },
-    uColor1: { value: new THREE.Color('var(--color-primary)') }, // GIOS Green
-    uColor2: { value: new THREE.Color("#00d2ff") }, // GIOS Blue Accent
+    uColor1: { value: new THREE.Color('var(--color-primary)') }, // Tiepoint Green
+    uColor2: { value: new THREE.Color("#00d2ff") }, // Tiepoint Blue Accent
   }), []);
 
   useFrame((state) => {

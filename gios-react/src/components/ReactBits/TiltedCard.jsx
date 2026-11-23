@@ -55,7 +55,7 @@ export default function TiltedCard({
         
         {showCaption && caption && (
           <div style={{ transform: "translateZ(50px)" }} className="absolute bottom-4 left-4 pointer-events-none">
-             <p className="text-primary font-['Orbitron'] text-xs tracking-tighter bg-black/80 px-2 py-1 rounded">
+             <p className="text-primary font-serif text-xs tracking-tighter bg-black/80 px-2 py-1 rounded">
                 {caption}
              </p>
           </div>

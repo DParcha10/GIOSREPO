@@ -59,13 +59,15 @@ class DataIntegrationService:
                                 except (ValueError, TypeError):
                                     pass
 
-                        # Calibrated fallback for parameters missing from live stream
-                        if result["discharge_cfs"] is None and "discharge_cfs" in base:
-                            result["discharge_cfs"] = base["discharge_cfs"]
-                        if result["gage_height_ft"] is None and "gage_height_ft" in base:
-                            result["gage_height_ft"] = base["gage_height_ft"]
-                        if result["water_temp_c"] is None and "water_temp_c" in base:
-                            result["water_temp_c"] = base["water_temp_c"]
+                        # Parameters the gauge did not report are filled with fixed
+                        # placeholder values and listed so the UI can label them.
+                        estimated = []
+                        for key in ("discharge_cfs", "gage_height_ft", "water_temp_c"):
+                            if result[key] is None and key in base:
+                                result[key] = base[key]
+                                estimated.append(key)
+                        result["data_source"] = "usgs_live" if not estimated else "usgs_live_partial"
+                        result["placeholder_fields"] = estimated
 
                         self._cache[site_id] = result
                         self._cache_time[site_id] = time.time()
@@ -89,7 +91,8 @@ class DataIntegrationService:
             return dict(self._cache[site_id])
 
         # Station-calibrated baseline return on timeout, 503, or offline
-        fallback = {"site_id": site_id, **base}
+        fallback = {"site_id": site_id, **base, "data_source": "placeholder",
+                    "placeholder_fields": list(base.keys())}
         self._cache[site_id] = fallback
         self._cache_time[site_id] = time.time()
         return dict(fallback)

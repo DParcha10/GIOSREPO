@@ -1765,7 +1765,7 @@ export default function GeotechnicalHazardsModal({
         <div className="px-6 py-3 border-t border-gray-800 bg-gray-900/50 flex items-center justify-between text-xs font-mono text-gray-500">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>GIOS v2.5 Geotechnical Hazard Subsystem Online</span>
+            <span>Tiepoint v2.5 Geotechnical Hazard Subsystem Online</span>
           </div>
           <span>Froehlich (2008) · Kruse SAM (1993) · Kogan VHI (1995) · GeoParquet</span>
         </div>

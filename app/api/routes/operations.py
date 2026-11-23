@@ -382,6 +382,11 @@ def list_webhook_endpoints():
 @operations_router.post("/webhooks", response_model=WebhookEndpointConfig)
 def create_webhook_endpoint(ep: WebhookEndpointConfig):
     """Registers a new outbound webhook endpoint."""
+    from app.core.netguard import BlockedURL, check_public_url
+    try:
+        check_public_url(ep.target_url)
+    except BlockedURL as blocked:
+        raise HTTPException(status_code=400, detail=f"Webhook URL rejected: {blocked}")
     return stac_harvester_service.create_endpoint(ep)
 
 @operations_router.get("/webhooks/{webhook_id}", response_model=WebhookEndpointConfig)

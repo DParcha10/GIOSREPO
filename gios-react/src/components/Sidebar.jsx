@@ -1,111 +1,86 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { Satellite, Activity, LayoutDashboard, Map, LineChart, Bot, Database, Settings } from 'lucide-react';
-import SystemStatus from './SystemStatus';
 import useAuthStore from '../store/authStore';
+import { getHealthStatus } from '../api/giosApi';
+import TiepointMark from './TiepointMark';
 
-export default function FlowingMenu() {
-  const [hoverIndex, setHoverIndex] = useState(null);
-  const menuRef = useRef(null);
+const NAV = [
+  { name: 'Overview', path: '/dashboard' },
+  { name: 'Map', path: '/map' },
+  { name: 'Analysis', path: '/analytics' },
+  { name: 'Assistant', path: '/ai-agent' },
+  { name: 'Methods', path: '/methodology' },
+  { name: 'Settings', path: '/settings' },
+];
 
-  const menuItems = [
-    { name: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/dashboard' },
-    { name: 'Map Explorer', icon: <Map size={20} />, path: '/map' },
-    { name: 'Analytics', icon: <LineChart size={20} />, path: '/analytics' },
-    { name: 'Methodology', icon: <Database size={20} />, path: '/methodology' },
-    { name: 'JARVIS Copilot', icon: <Bot size={20} />, path: '/ai-agent' },
-    { name: 'Settings', icon: <Settings size={20} />, path: '/settings' },
-  ];
-
+function ServerLine() {
+  const [ok, setOk] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const check = () =>
+      getHealthStatus()
+        .then((d) => alive && setOk(d?.status === 'ok' || d?.status === 'healthy'))
+        .catch(() => alive && setOk(false));
+    check();
+    const t = setInterval(check, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  const label = ok === null ? 'Checking server…' : ok ? 'Server reachable' : 'Server not reachable';
+  const dot = ok === null ? 'bg-stone-600' : ok ? 'bg-emerald-400' : 'bg-red-400';
   return (
-    <motion.div
-      initial={{ x: -250 }}
-      animate={{ x: 0 }}
-      className="w-72 h-full glass-panel border-y-0 border-l-0 border-r border-primary/20 flex flex-col pt-6 rounded-none z-50 relative overflow-hidden"
-    >
-      {/* Brand */}
-      <div className="flex items-center gap-3 px-8 mb-12 relative z-10">
-        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-accent shadow-[0_0_15px_var(--color-primary-50)]">
-          <Satellite size={24} />
-        </div>
-        <h1 className="text-2xl font-['Orbitron'] font-bold tracking-wider text-white">
-          <span className="text-primary">GIOS</span>
-        </h1>
+    <p className="flex items-center gap-2 text-xs text-stone-400">
+      <span className={`inline-block w-2 h-2 rounded-full ${dot}`} /> {label}
+    </p>
+  );
+}
+
+export default function Sidebar() {
+  const username = useAuthStore((s) => s.username);
+  return (
+    <aside className="w-56 shrink-0 h-full flex flex-col border-r border-stone-800 bg-stone-900">
+      <div className="px-5 pt-6 pb-8">
+        <NavLink to="/" className="flex items-center gap-2.5 text-stone-50 no-underline">
+          <TiepointMark size={26} />
+          <span className="font-serif text-xl font-semibold">Tiepoint</span>
+        </NavLink>
+        <p className="mt-1.5 text-[11px] leading-snug text-stone-500">Research prototype</p>
       </div>
 
-      {/* Navigation Container */}
-      <nav 
-        ref={menuRef}
-        className="flex-1 px-4 flex flex-col gap-1 relative z-10"
-        onMouseLeave={() => setHoverIndex(null)}
-      >
-        {menuItems.map((item, index) => {
-          const isHovered = hoverIndex === index;
-          
-          return (
-            <NavLink
-              key={item.name}
-              to={item.path}
-              onMouseEnter={() => setHoverIndex(index)}
-              className={({ isActive }) => `
-                relative group flex items-center gap-4 px-6 py-4 rounded-xl transition-all duration-300 overflow-hidden
-                ${isActive ? 'text-primary' : 'text-[#8b9bb4] hover:text-white'}
-              `}
-            >
-              {({ isActive }) => (
-                <>
-                  {/* The Flowing Hover Background */}
-                  {(isHovered || isActive) && (
-                    <motion.div 
-                      layoutId="flowing-bg"
-                      className="absolute inset-0 bg-primary/10 border border-primary/30 rounded-xl"
-                      initial={false}
-                      transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                      style={{ zIndex: -1 }}
-                    />
-                  )}
-                  
-                  {/* Glowing line indicator */}
-                  <div className={`absolute left-0 w-1 h-1/2 bg-secondary rounded-r-md transition-all duration-300 ${isActive ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-0 group-hover:opacity-100 group-hover:scale-y-50'}`} />
-
-                  {/* Icon and Text */}
-                  <div className={`relative z-10 transition-transform duration-300 ${isHovered ? 'scale-110 text-primary' : ''}`}>
-                    {item.icon}
-                  </div>
-                  <span className={`relative z-10 font-['Rajdhani'] text-lg uppercase tracking-wider font-bold transition-transform duration-300 ${isHovered ? 'translate-x-2' : ''}`}>
-                    {item.name}
-                  </span>
-                </>
-              )}
-            </NavLink>
-          );
-        })}
+      <nav className="flex-1 px-3 flex flex-col gap-0.5">
+        {NAV.map((item) => (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            className={({ isActive }) =>
+              `block px-3 py-2 text-[15px] rounded-[3px] border-l-2 ${
+                isActive
+                  ? 'border-primary bg-stone-950 text-stone-50 font-medium'
+                  : 'border-transparent text-stone-400 hover:text-stone-100 hover:bg-stone-950'
+              }`
+            }
+          >
+            {item.name}
+          </NavLink>
+        ))}
       </nav>
 
-      {/* Footer */}
-      <div className="p-6 border-t border-primary/20 relative z-10 mt-auto flex flex-col gap-4">
-        <SystemStatus />
-        <div className="flex items-center justify-between text-xs font-['Roboto_Mono']">
-          <div className="flex items-center gap-2 text-primary">
-            <Activity size={14} className="animate-pulse" />
-            <span className="tracking-wider">LINK SECURED</span>
-          </div>
-          <div className="text-[10px] text-gray-400 bg-teal-500/10 border border-teal-500/30 px-2 py-0.5 rounded uppercase">
-            Admin
-          </div>
-        </div>
-
-        <button 
+      <div className="px-5 py-5 border-t border-stone-800 flex flex-col gap-3">
+        <ServerLine />
+        {username && (
+          <p className="text-xs text-stone-500">
+            Signed in as <span className="text-stone-200">{username}</span>
+          </p>
+        )}
+        <button
           onClick={async () => {
             await useAuthStore.getState().logout();
             window.location.href = '/login';
           }}
-          className="glass-button w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold text-red-400 hover:text-red-300 uppercase tracking-wider font-['Rajdhani']"
+          className="self-start text-sm text-stone-300 underline underline-offset-4 decoration-stone-600 hover:text-red-400"
         >
-          Sign Out Console
+          Sign out
         </button>
       </div>
-    </motion.div>
+    </aside>
   );
 }

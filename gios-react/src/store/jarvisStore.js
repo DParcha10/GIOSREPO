@@ -8,7 +8,7 @@ const STORAGE_KEY_MARKS = 'gios_jarvis_marked_locations';
 const DEFAULT_WELCOME = {
   id: 'jarvis-welcome',
   role: 'assistant',
-  content: "Hello, my name is JARVIS. I am your GIOS Autonomous Intelligence Copilot.\n\nI remember everything from our conversations and have autonomous control over your console. Whenever you ask about a hazard or location, I will mark it on your map and automatically switch you to the Map view. You can also ask me to jump to Telemetry, Analytics, or Methodology at any time.\n\nWhat would you like me to inspect or mark for you?",
+  content: "Ask about a site, a gauge or a measurement. I can pin places on the map and open other pages for you.\n\nI need a language model running on the server (Ollama by default). Without one, I can't answer.",
   toolCalls: [],
   timestamp: 'Just now'
 };
@@ -71,7 +71,7 @@ export const useJarvisStore = create((set, get) => ({
     const reset = [{
       id: `reset-${Date.now()}`,
       role: 'assistant',
-      content: "Hello, my name is JARVIS. I've cleared the active chat transcript, but I still retain my core memory notes. What would you like to inspect next?",
+      content: "Hello, my name is Assistant. I've cleared the active chat transcript, but I still retain my core memory notes. What would you like to inspect next?",
       toolCalls: [],
       timestamp: 'Just now'
     }];
@@ -115,7 +115,7 @@ export const useJarvisStore = create((set, get) => ({
     };
   },
 
-  // Send message to JARVIS with autonomous action execution
+  // Send message to Assistant with autonomous action execution
   sendMessage: async (queryText, navigateFn = null) => {
     const text = queryText.trim();
     if (!text || get().loading) return;
@@ -175,18 +175,18 @@ export const useJarvisStore = create((set, get) => ({
       // Autonomous Navigation Switch
       if (data.navigation && data.navigation.auto_switch && navigateFn) {
         const target = data.navigation.target_path;
-        // Smooth auto-switch after a brief delay so the user sees JARVIS respond
+        // Smooth auto-switch after a brief delay so the user sees Assistant respond
         setTimeout(() => {
           navigateFn(target);
         }, 1200);
       }
 
     } catch (err) {
-      console.error('JARVIS chat error:', err);
+      console.error('Assistant chat error:', err);
       const errMsg = {
         id: `jarvis-err-${Date.now()}`,
         role: 'assistant',
-        content: "Hello, my name is JARVIS. I apologize, but I encountered an issue connecting to our telemetry services. Please ensure the backend is running.",
+        content: "Hello, my name is Assistant. I apologize, but I encountered an issue connecting to our telemetry services. Please ensure the backend is running.",
         toolCalls: [],
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };

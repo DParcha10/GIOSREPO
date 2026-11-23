@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GIOS_", case_sensitive=False, extra="ignore")
 
-    app_name: str = "GIOS - Geospatial Integrated Orthomosaic Systems"
+    app_name: str = "Tiepoint"
     app_version: str = "2.5.0"
     debug: bool = True
     

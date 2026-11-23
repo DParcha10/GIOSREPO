@@ -1,4 +1,4 @@
-"""GIOS Platform — Cloud-Native Spatial Data & Vector Tile Service.
+"""Tiepoint Platform — Cloud-Native Spatial Data & Vector Tile Service.
 Provides high-performance vector layer extraction, filtering, simplification,
 Mapbox Vector Tile (MVT / Protobuf) streaming, and multi-format geospatial
 serialization (GeoParquet, FlatGeobuf, GeoJSON, ESRI Shapefile ZIP, MVT PBF, CSV).
@@ -151,7 +151,7 @@ _DEFAULT_LAYER_FEATURES: Dict[str, List[Dict[str, Any]]] = {
             "id": "SENS-03",
             "properties": {
                 "id": "USGS-11262900",
-                "name": "USGS 11262900 San Luis Creek Streamgage",
+                "name": "USGS 11262900 Mud Slough near Gustine (about 27 km from the dam)",
                 "metric": "discharge_cfs",
                 "value": 124.5,
                 "unit": "cfs",
@@ -1122,7 +1122,7 @@ class PolygonZonalStatisticsEngine:
 
         # CSV Export
         csv_lines = [
-            f"# GIOS Platform - Polygon Zonal Statistics Analytical Summary",
+            f"# Tiepoint Platform - Polygon Zonal Statistics Analytical Summary",
             f"# Spectral Index: {resp.index}",
             f"# Surface Area (Hectares): {resp.area_hectares}",
             f"# Valid Pixels: {resp.valid_pixels}",

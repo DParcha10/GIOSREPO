@@ -295,7 +295,7 @@ class PreprocessingService:
         elif acquisition_date:
             has_offset = (acquisition_date >= "2022-01-25")
         else:
-            # Default to modern baseline >= 04.00 for GIOS v2.5
+            # Default to modern baseline >= 04.00 for Tiepoint v2.5
             has_offset = True
             
         if isinstance(dn, (int, float, np.number)):

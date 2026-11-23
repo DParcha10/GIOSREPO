@@ -7,7 +7,7 @@ export const useTheme = () => useContext(ThemeContext);
 
 export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState(() => {
-    return localStorage.getItem('gios-theme') || 'default';
+    return 'default';
   });
 
   useEffect(() => {
@@ -16,10 +16,7 @@ export const ThemeProvider = ({ children }) => {
   }, [theme]);
 
   const themes = [
-    { id: 'default', name: 'Neon Emerald', colors: ['var(--color-primary)', 'var(--color-secondary)'] },
-    { id: 'cyberpunk', name: 'Cyberpunk Void', colors: ['#ff00ff', '#00ffff'] },
-    { id: 'ocean', name: 'Deep Ocean', colors: ['#00bbff', '#00ffcc'] },
-    { id: 'crimson', name: 'Crimson Protocol', colors: ['#ff3333', '#ffaa00'] },
+    { id: 'default', name: 'Paper', colors: ['#a8501e', '#2a6380'] },
   ];
 
   return (

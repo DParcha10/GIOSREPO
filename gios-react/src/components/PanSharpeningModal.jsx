@@ -1556,7 +1556,7 @@ export default function PanSharpeningModal({
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1.5 text-zinc-400">
               <Activity className="w-3.5 h-3.5 text-emerald-400" />
-              Engine: <strong className="text-zinc-200">GIOS v2.5.52 PanSharpen</strong>
+              Engine: <strong className="text-zinc-200">Tiepoint v2.5.52 PanSharpen</strong>
             </span>
             <span className="text-zinc-600">|</span>
             <span className="text-zinc-400">

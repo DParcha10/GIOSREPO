@@ -1,6 +1,6 @@
 import math
 import re
-"""Tests for GIOS v2.5 Core Schemas, Data Models, and API Contracts.
+"""Tests for Tiepoint v2.5 Core Schemas, Data Models, and API Contracts.
 
 Verifies:
 1. Pydantic validation across all Section 4 contracts (Tiles, Burn Severity, Pixel Probe, Zonal Stats).
@@ -1399,7 +1399,7 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(payload.alert.id, "ALT-20260915-01")
 
         # Verify proactive SSE streaming alert models
-        self.assertEqual(ProactiveAlertType.JARVIS.value, "jarvis_proactive_alert")
+        self.assertEqual(ProactiveAlertType.Assistant.value, "jarvis_proactive_alert")
         self.assertEqual(ProactiveAlertType.SATELLITE.value, "satellite_anomaly_alert")
 
         jarvis_alert = ProactiveJarvisAlert(
@@ -1407,7 +1407,7 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             site="San Luis Dam",
             data={"discharge_cfs": 2450.0}
         )
-        self.assertEqual(jarvis_alert.type, ProactiveAlertType.JARVIS)
+        self.assertEqual(jarvis_alert.type, ProactiveAlertType.Assistant)
         self.assertEqual(jarvis_alert.type, "jarvis_proactive_alert")
         self.assertEqual(jarvis_alert.site, "San Luis Dam")
 
@@ -1524,7 +1524,7 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         self.assertEqual(tool_act.tool, "query_hazard")
 
         resp = AgentChatResponse(
-            response="Hello, my name is JARVIS",
+            response="Hello, my name is Assistant",
             tool_calls=[tool_act],
             map_action=map_act,
             navigation=nav_act,
@@ -1532,7 +1532,7 @@ class TestGIOSCoreSchemas(unittest.TestCase):
             suggested_prompts=["Calculate NDMI", "Inspect downstream toe"],
             thinking="Analyzing geotechnical telemetry."
         )
-        self.assertTrue(resp.response.startswith("Hello, my name is JARVIS"))
+        self.assertTrue(resp.response.startswith("Hello, my name is Assistant"))
         self.assertEqual(resp.navigation.target_path, "/analytics")
         self.assertEqual(len(resp.tool_calls), 1)
 
@@ -1798,7 +1798,7 @@ class TestGIOSCoreSchemas(unittest.TestCase):
         """Verify HealthResponse validates both basic and extended server health outputs."""
         health = HealthResponse(
             status="healthy",
-            platform="GIOS - Geospatial Integrated Orthomosaic Systems",
+            platform="Tiepoint - Geospatial Integrated Orthomosaic Systems",
             version="2.5.0",
             active_modules=["stac_acquisition", "indices", "timeseries", "usgs_nwis", "drone_cogs", "event_catalog"]
         )
@@ -10242,7 +10242,7 @@ class TestGIOSCoreSchemas(unittest.TestCase):
 
         # 4. Email SMTP
         email_payload = format_channel_notification_payload("email_smtp", envelope, webhook_url="ops@tailings-monitor.internal")
-        self.assertIn("[GIOS CRITICAL]", email_payload["subject"])
+        self.assertIn("[Tiepoint CRITICAL]", email_payload["subject"])
         self.assertEqual(email_payload["to"], ["ops@tailings-monitor.internal"])
         self.assertIn("EVT-STAC-999", email_payload["body_text"])
 

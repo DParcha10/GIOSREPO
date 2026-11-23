@@ -1,5 +1,5 @@
 /**
- * GIOS Shared Frontend Constants, Scientific Standards & Tile Symbology
+ * Tiepoint Shared Frontend Constants, Scientific Standards & Tile Symbology
  * 
  * Provides unified enums, color ramps, index configurations, and USGS FIREMON
  * standards across all frontend components (MapExplorer, SpectralStudio, SwipeCurtain, etc.)
@@ -686,12 +686,12 @@ export const DRONE_STATUSES = {
  * Proactive alert event types streamed by backend over SSE (/api/v1/agent/stream-alerts).
  */
 export const PROACTIVE_ALERT_TYPES = {
-  JARVIS: 'jarvis_proactive_alert',
+  Assistant: 'jarvis_proactive_alert',
   SATELLITE: 'satellite_anomaly_alert'
 };
 
 /**
- * Canonical GIOS API endpoint paths shared between frontend and backend.
+ * Canonical Tiepoint API endpoint paths shared between frontend and backend.
  */
 export const API_ENDPOINTS = {
   HEALTH: '/health',
@@ -13756,7 +13756,7 @@ export const BREACH_METHOD_CONFIGS = {
   hybrid_ensemble: {
     id: 'hybrid_ensemble',
     name: 'Hybrid Multi-Model Ensemble',
-    reference: 'GIOS Hydrodynamic Synthesis (Froehlich 2008 + MacDonald-Langridge-Monopolis 1984 + USBR envelope)',
+    reference: 'Tiepoint Hydrodynamic Synthesis (Froehlich 2008 + MacDonald-Langridge-Monopolis 1984 + USBR envelope)',
     description: 'Ensemble weighting delivering deterministic median and 95% upper confidence bound for engineering conservatism.',
     equations: {
       peak_discharge: 'Q_p = 0.65 * Q_p_froehlich + 0.35 * Q_p_mlm'
@@ -17193,7 +17193,7 @@ export const formatChannelNotificationPayload = (channelType, envelope, webhookU
   if (ch === 'slack') {
     return {
       channel: '#gios-alerts',
-      text: `🚨 GIOS STAC Alert [${severity.toUpperCase()}]: ${eventType} on ${subId}`,
+      text: `🚨 Tiepoint STAC Alert [${severity.toUpperCase()}]: ${eventType} on ${subId}`,
       attachments: [
         {
           color: hexColor,
@@ -17205,7 +17205,7 @@ export const formatChannelNotificationPayload = (channelType, envelope, webhookU
             { title: 'Cloud Cover', value: `${cloudCover.toFixed(1)}%`, short: true },
             { title: 'Timestamp', value: ts, short: false }
           ],
-          footer: 'GIOS Automated Watchdog',
+          footer: 'Tiepoint Automated Watchdog',
           ts: Math.floor(new Date(ts).getTime() / 1000)
         }
       ]
@@ -17225,7 +17225,7 @@ export const formatChannelNotificationPayload = (channelType, envelope, webhookU
                 type: 'TextBlock',
                 size: 'Medium',
                 weight: 'Bolder',
-                text: `🚨 GIOS Harvester Alert: ${eventType}`,
+                text: `🚨 Tiepoint Harvester Alert: ${eventType}`,
                 color: (severity === 'critical' || severity === 'emergency') ? 'Attention' : 'Warning'
               },
               {
@@ -17251,8 +17251,8 @@ export const formatChannelNotificationPayload = (channelType, envelope, webhookU
       event_action: 'trigger',
       dedup_key: `${subId}:${eventId}`,
       payload: {
-        summary: `GIOS Harvester [${severity.toUpperCase()}]: ${eventType} on ${subId} (z=${zScore})`,
-        source: 'GIOS Automated Harvester',
+        summary: `Tiepoint Harvester [${severity.toUpperCase()}]: ${eventType} on ${subId} (z=${zScore})`,
+        source: 'Tiepoint Automated Harvester',
         severity: pdSeverity,
         timestamp: ts,
         component: 'stac_harvester',
@@ -17263,10 +17263,10 @@ export const formatChannelNotificationPayload = (channelType, envelope, webhookU
   } else if (ch === 'email_smtp') {
     const target = (webhookUrl && webhookUrl.includes('@')) ? webhookUrl : 'alerts@gios-monitoring.internal';
     return {
-      subject: `[GIOS ${severity.toUpperCase()}] STAC Harvester: ${eventType} (${subId})`,
+      subject: `[Tiepoint ${severity.toUpperCase()}] STAC Harvester: ${eventType} (${subId})`,
       to: [target],
-      body_text: `GIOS STAC Harvester Alert\nSeverity: ${severity}\nSubscription: ${subId}\nEvent: ${eventId}\nZ-Score: ${zScore}\nTimestamp: ${ts}`,
-      body_html: `<h2>GIOS STAC Harvester Alert</h2><p><strong>Severity:</strong> ${severity}</p><p><strong>Subscription:</strong> ${subId}</p><p><strong>Z-Score:</strong> ${zScore}</p><p><strong>Timestamp:</strong> ${ts}</p>`
+      body_text: `Tiepoint STAC Harvester Alert\nSeverity: ${severity}\nSubscription: ${subId}\nEvent: ${eventId}\nZ-Score: ${zScore}\nTimestamp: ${ts}`,
+      body_html: `<h2>Tiepoint STAC Harvester Alert</h2><p><strong>Severity:</strong> ${severity}</p><p><strong>Subscription:</strong> ${subId}</p><p><strong>Z-Score:</strong> ${zScore}</p><p><strong>Timestamp:</strong> ${ts}</p>`
     };
   } else {
     return {
@@ -19067,7 +19067,7 @@ export const DEM_COLLECTIONS_METADATA = {
   'drone-dsm': {
     collection_id: 'drone-dsm',
     name: 'Drone Photogrammetry Centimeter DSM',
-    provider: 'GIOS NodeODM Bridge',
+    provider: 'Tiepoint NodeODM Bridge',
     spatial_resolution_m: 0.05,
     horizontal_crs: 'EPSG:3857 / UTM',
     vertical_datum: 'Ellipsoidal WGS84',

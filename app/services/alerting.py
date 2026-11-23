@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, List, Dict, Optional, Union
 import httpx
+from app.core.netguard import BlockedURL, check_public_url
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.database import SessionLocal
 from app.models.alert import Alert
@@ -235,7 +236,7 @@ class STACHarvesterService:
             raise KeyError(f"Webhook endpoint '{endpoint_id}' not found.")
 
         test_sev = HarvesterAlertSeverity.WARNING
-        custom_msg = "Test notification dispatch from GIOS Watchdog."
+        custom_msg = "Test notification dispatch from Tiepoint Watchdog."
         if req:
             if hasattr(req, "test_severity"):
                 test_sev = req.test_severity
@@ -293,7 +294,8 @@ class STACHarvesterService:
         )
         if not is_synthetic:
             try:
-                async with httpx.AsyncClient(timeout=4.0) as client:
+                check_public_url(ep.target_url)
+                async with httpx.AsyncClient(timeout=4.0, follow_redirects=False) as client:
                     resp = await client.post(ep.target_url, json=formatted_payload, headers=headers)
                     status_code = resp.status_code
                     delivery_status = WebhookDeliveryStatus.DELIVERED if (200 <= status_code < 300) else WebhookDeliveryStatus.FAILED
@@ -364,7 +366,8 @@ class STACHarvesterService:
                 attempt_num = attempt
                 backoff_delay = calculate_retry_backoff(attempt=attempt - 1, base_delay=0.1, max_delay=1.0, jitter_factor=0.1)
                 try:
-                    async with httpx.AsyncClient(timeout=4.0) as client:
+                    check_public_url(endpoint.target_url)
+                    async with httpx.AsyncClient(timeout=4.0, follow_redirects=False) as client:
                         resp = await client.post(endpoint.target_url, json=formatted_payload, headers=headers)
                         status_code = resp.status_code
                         if 200 <= resp.status_code < 300:
@@ -855,7 +858,7 @@ class AlertEngine:
                 logger.error("AlertEngine failed to poll %s: %s", site_id, e)
 
     async def trigger_jarvis_alert(self, site_name: str, data: dict):
-        logger.warning("ALERT: Threshold breached at %s. Triggering JARVIS LLM.", site_name)
+        logger.warning("ALERT: Threshold breached at %s. Triggering Assistant LLM.", site_name)
         provider = get_active_provider()
         if not provider:
             return

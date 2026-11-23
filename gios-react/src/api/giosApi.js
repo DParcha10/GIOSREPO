@@ -1098,7 +1098,7 @@ export {
 
 /**
  * @typedef {Object} AgentChatResponse
- * @property {string} response - JARVIS assistant textual response
+ * @property {string} response - Assistant assistant textual response
  * @property {AgentToolAction[]} [tool_calls] - Tool invocations executed
  * @property {MapAction|null} [map_action] - Map camera navigation or pinning action
  * @property {NavigationAction|null} [navigation] - Tab routing action
@@ -1284,7 +1284,7 @@ export {
 /**
  * @typedef {Object} HealthResponse
  * @property {string} status - System health status
- * @property {string} [platform='GIOS'] - Platform name
+ * @property {string} [platform='Tiepoint'] - Platform name
  * @property {string} version - Semantic version
  * @property {string[]} [active_services] - Active services
  * @property {string[]} [active_modules] - Active processing modules
@@ -4565,7 +4565,7 @@ const demoAdapter = async (config) => {
           r_squared: 0.92
         };
       }
-      else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. JARVIS is generating the briefing and will push via SSE.' };
+      else if (url.includes('/api/v1/agent/trigger-mock-alert')) data = { status: 'success', message: 'Mock alert triggered. Assistant is generating the briefing and will push via SSE.' };
       else if (url.includes('/api/v1/reports/pdf')) data = new Blob(['mock pdf content']);
       else if (url.includes('/health')) data = { status: 'healthy', version: '2.5.0', active_services: ['tiles', 'stac', 'drone'] };
       
@@ -4828,7 +4828,7 @@ export const fetchDroneMissions = async () => {
 };
 
 /**
- * Dispatches a prompt to the JARVIS Agentic AI assistant.
+ * Dispatches a prompt to the Assistant Agentic AI assistant.
  * 
  * @param {string} message - User query or intent
  * @param {Array} [history=[]] - Conversation history
@@ -5065,7 +5065,7 @@ export const createHazardEvent = async (eventData) => {
 };
 
 /**
- * Triggers an administrative mock sensor spike to test proactive JARVIS alert streaming.
+ * Triggers an administrative mock sensor spike to test proactive Assistant alert streaming.
  * 
  * @returns {Promise<{status: string, message: string}>} Mock alert trigger status
  */

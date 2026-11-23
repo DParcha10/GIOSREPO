@@ -218,11 +218,11 @@ export default function Analytics() {
     >
       <header className="glass-panel p-4 flex items-center justify-between shrink-0">
         <div>
-          <h1 className="text-3xl font-['Orbitron'] font-bold text-white flex items-center gap-3">
+          <h1 className="text-3xl font-serif font-bold text-white flex items-center gap-3">
             <Radar className="text-warning animate-[spin_4s_linear_infinite]" size={32} />
             Data <MetallicPaintText text="Analytics" glow='var(--color-warning)' />
           </h1>
-          <p className="text-[#8b9bb4] mt-2 font-['Rajdhani']">
+          <p className="text-stone-400 mt-2 font-sans">
             Comprehensive 30-Day Seismic Telemetry Models {backendData ? '• Processing Core Active' : ''}
           </p>
         </div>
@@ -293,9 +293,9 @@ export default function Analytics() {
             
             <TiltedCard>
               <div className="glass-panel p-6 h-full flex flex-col">
-                <h2 className="text-primary font-['Orbitron'] border-b border-primary/20 pb-2 mb-4 flex items-center justify-between">
+                <h2 className="text-primary font-serif border-b border-primary/20 pb-2 mb-4 flex items-center justify-between">
                     Temporal Magnitude Trend
-                    <span className="text-[10px] text-[#8b9bb4] font-['Roboto_Mono']">Live Feed</span>
+                    <span className="text-[10px] text-stone-400 font-mono">Live Feed</span>
                 </h2>
                 <div className="flex-1 relative w-full"><Line data={chartData} options={baseOptions} /></div>
               </div>
@@ -303,9 +303,9 @@ export default function Analytics() {
 
             <TiltedCard>
               <div className="glass-panel p-6 h-full flex flex-col">
-                <h2 className="text-danger font-['Orbitron'] border-b border-danger/20 pb-2 mb-4 flex items-center justify-between">
+                <h2 className="text-danger font-serif border-b border-danger/20 pb-2 mb-4 flex items-center justify-between">
                     Severity Distribution
-                    <span className="text-[10px] text-[#8b9bb4] font-['Roboto_Mono']">Classification</span>
+                    <span className="text-[10px] text-stone-400 font-mono">Classification</span>
                 </h2>
                 <div className="flex-1 relative w-full flex justify-center"><Doughnut data={doughnutData} options={{...baseOptions, plugins: { ...baseOptions.plugins, legend: { display: true, position: 'right', labels: { color: '#8b9bb4', boxWidth: 10, font: { size: 10 } } } } }} /></div>
               </div>
@@ -313,9 +313,9 @@ export default function Analytics() {
 
             <TiltedCard>
               <div className="glass-panel p-6 h-full flex flex-col">
-                <h2 className="text-secondary font-['Orbitron'] border-b border-secondary/20 pb-2 mb-4 flex items-center justify-between">
+                <h2 className="text-secondary font-serif border-b border-secondary/20 pb-2 mb-4 flex items-center justify-between">
                     Hypocenter Depth Profiles
-                    <span className="text-[10px] text-[#8b9bb4] font-['Roboto_Mono']">Sub-Surface</span>
+                    <span className="text-[10px] text-stone-400 font-mono">Sub-Surface</span>
                 </h2>
                 <div className="flex-1 relative w-full"><Bar data={barData} options={baseOptions} /></div>
               </div>
@@ -323,9 +323,9 @@ export default function Analytics() {
 
             <TiltedCard>
               <div className="glass-panel p-6 h-full flex flex-col">
-                <h2 className="text-warning font-['Orbitron'] border-b border-warning/20 pb-2 mb-4 flex items-center justify-between">
+                <h2 className="text-warning font-serif border-b border-warning/20 pb-2 mb-4 flex items-center justify-between">
                     Depth / Magnitude Correlation
-                    <span className="text-[10px] text-[#8b9bb4] font-['Roboto_Mono']">Statistical</span>
+                    <span className="text-[10px] text-stone-400 font-mono">Statistical</span>
                 </h2>
                 <div className="flex-1 relative w-full"><Scatter data={scatterData} options={{...baseOptions, scales: { ...baseOptions.scales, x: { display: true, grid: { display: false } } } }} /></div>
               </div>

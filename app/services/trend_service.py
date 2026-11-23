@@ -1122,6 +1122,8 @@ class TrendService:
 
         return {
             "magnitude": magnitude,
+            "sam_rad": sam_rad,
+            "sam_deg": sam_deg,
             "spectral_angle_deg": sam_deg,
             "direction_angle_deg": angle_deg,
             "delta_x": delta_x,

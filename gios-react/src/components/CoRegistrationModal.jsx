@@ -29,7 +29,7 @@ import {
  * Colormap ramp options for difference and error visualizers.
  */
 const DIFFERENCE_COLORMAP_OPTIONS = [
-  { id: 'spectral', label: 'Spectral (Divergent)', desc: 'Standard GIOS biophysical anomaly scale' },
+  { id: 'spectral', label: 'Spectral (Divergent)', desc: 'Standard Tiepoint biophysical anomaly scale' },
   { id: 'coolwarm', label: 'Cool-Warm (Zero-Centered)', desc: 'High visual distinction for ± displacement residuals' },
   { id: 'viridis', label: 'Viridis (Perceptual)', desc: 'Uniform luminescent ramp for continuous shift magnitudes' },
   { id: 'plasma', label: 'Plasma Radiance', desc: 'Saturated warning ramp for edge misregistration halos' },

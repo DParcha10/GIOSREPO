@@ -1,5 +1,5 @@
-"""GIOS JARVIS Autonomous AI Agent Route.
-Routes user messages through the JARVIS Brain (LLM-powered agent loop with tools).
+"""Tiepoint Assistant Autonomous AI Agent Route.
+Routes user messages through the Assistant Brain (LLM-powered agent loop with tools).
 Preserves the chat endpoint API contract for the frontend.
 """
 import logging
@@ -17,16 +17,16 @@ from app.services.alerting import alert_queue, alert_engine
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/agent", tags=["JARVIS AI Copilot"])
+router = APIRouter(prefix="/agent", tags=["Assistant AI Copilot"])
 
 
 @router.post("/chat", response_model=AgentChatResponse)
 async def chat_with_jarvis(req: AgentChatRequest):
     """
-    JARVIS Autonomous Agentic Endpoint.
-    Routes through the JARVIS Brain which:
+    Assistant Autonomous Agentic Endpoint.
+    Routes through the Assistant Brain which:
     1. Selects the best available LLM provider (Gemini → OpenAI → Anthropic → Ollama → template)
-    2. Runs a ReAct agent loop with tool calling (web search, data analysis, GIOS tools, map, nav)
+    2. Runs a ReAct agent loop with tool calling (web search, data analysis, Tiepoint tools, map, nav)
     3. Synthesizes a natural conversational response
     """
     # Build history from request
@@ -34,7 +34,7 @@ async def chat_with_jarvis(req: AgentChatRequest):
     if req.history:
         history = [{"role": h.role, "content": h.content} for h in req.history]
 
-    # Process through JARVIS Brain
+    # Process through Assistant Brain
     result = await process_message(
         message=req.message.strip(),
         history=history,
@@ -92,7 +92,7 @@ async def chat_with_jarvis(req: AgentChatRequest):
     ]
 
     return AgentChatResponse(
-        response=result.get("response", "Hello, my name is JARVIS. How can I help?"),
+        response=result.get("response", "Hello, my name is Assistant. How can I help?"),
         tool_calls=tool_calls if tool_calls else None,
         map_action=map_action,
         navigation=navigation,
@@ -106,7 +106,7 @@ async def chat_with_jarvis(req: AgentChatRequest):
 
 @router.get("/stream-alerts")
 async def stream_alerts():
-    """Server-Sent Events endpoint to stream proactive JARVIS alerts to the frontend."""
+    """Server-Sent Events endpoint to stream proactive Assistant alerts to the frontend."""
     async def event_generator():
         try:
             while True:
@@ -144,4 +144,4 @@ async def trigger_mock_alert():
     alert_engine.alert_state["11262900"] = "critical"
     # Create background task to avoid blocking the HTTP response while LLM generates alert
     asyncio.create_task(alert_engine.trigger_jarvis_alert("San Luis Dam", mock_data))
-    return {"status": "success", "message": "Mock alert triggered. JARVIS is generating the briefing and will push via SSE."}
+    return {"status": "success", "message": "Mock alert triggered. Assistant is generating the briefing and will push via SSE."}

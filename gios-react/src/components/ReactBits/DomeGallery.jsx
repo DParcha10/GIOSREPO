@@ -9,9 +9,9 @@ export default function DomeGallery({ images }) {
     <div className="w-full h-full relative bg-black rounded-xl overflow-hidden shadow-[0_0_30px_rgba(0,255,170,0.1)] border border-primary/20">
       
       {/* HUD Overlay */}
-      <div className="absolute top-4 left-4 z-10 pointer-events-none text-white font-['Orbitron']">
+      <div className="absolute top-4 left-4 z-10 pointer-events-none text-white font-serif">
          <h3 className="text-xl tracking-widest text-primary">Immersive Spatial Viewer</h3>
-         <p className="font-['Roboto_Mono'] text-xs text-[#8b9bb4]">Drag to rotate. Scroll to zoom.</p>
+         <p className="font-mono text-xs text-stone-400">Drag to rotate. Scroll to zoom.</p>
       </div>
 
       <Canvas camera={{ position: [0, 0, 0.1], fov: 60 }}>

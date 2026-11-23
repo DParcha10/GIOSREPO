@@ -14,7 +14,7 @@ def generate_pdf_report(bbox: str, index_type: str = "ndmi"):
     p = canvas.Canvas(buffer, pagesize=letter)
     
     p.setFont("Helvetica-Bold", 16)
-    p.drawString(100, 750, "GIOS Environmental Monitoring Report")
+    p.drawString(100, 750, "Tiepoint Environmental Monitoring Report")
     
     p.setFont("Helvetica", 12)
     p.drawString(100, 710, f"Analysis Type: {index_type.upper()}")

@@ -4,6 +4,7 @@ import giosApi, { loginUser, logoutUser } from '../api/giosApi';
 const useAuthStore = create((set) => ({
   token: localStorage.getItem('gios_token') || null,
   isAuthenticated: !!localStorage.getItem('gios_token'),
+  username: localStorage.getItem('tiepoint_user') || null,
   error: null,
   login: async (username, password) => {
     try {
@@ -11,11 +12,12 @@ const useAuthStore = create((set) => ({
       const data = await loginUser(username.trim(), password);
       const token = data.access_token;
       localStorage.setItem('gios_token', token);
-      set({ token, isAuthenticated: true, error: null });
+      localStorage.setItem('tiepoint_user', username.trim());
+      set({ token, username: username.trim(), isAuthenticated: true, error: null });
     } catch (err) {
-      let detail = 'Invalid credentials or backend offline';
+      let detail = 'Could not reach the server. Is the backend running?';
       if (err.response?.status === 401) {
-        detail = 'Incorrect ID or password. Access Denied.';
+        detail = 'That username and password don\u2019t match.';
       } else if (err.response?.data?.detail) {
         detail = err.response.data.detail;
       }
@@ -39,7 +41,8 @@ const useAuthStore = create((set) => ({
   },
   logout: async () => {
     localStorage.removeItem('gios_token');
-    set({ token: null, isAuthenticated: false, error: null });
+    localStorage.removeItem('tiepoint_user');
+    set({ token: null, username: null, isAuthenticated: false, error: null });
     try {
       await logoutUser();
     } catch (err) {

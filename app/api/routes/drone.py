@@ -8,6 +8,8 @@ from typing import Optional, Dict, Any, List, Union
 from datetime import datetime, timezone
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Response
 from app.services.drone_service import UPLOADS_DIR, drone_service
+
+MAX_UPLOAD_BYTES = int(os.environ.get("TIEPOINT_MAX_UPLOAD_MB", "500")) * 1024 * 1024
 from app.models.schemas import (
     DroneMissionResponse,
     DroneUploadMetadata,
@@ -241,13 +243,25 @@ async def upload_drone_ortho(
     # The client's filename is never used as a path.
     target_path = os.path.join(UPLOADS_DIR, f"{uuid.uuid4().hex}{extension}")
     try:
+        written = 0
         with open(target_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    raise OverflowError("upload too large")
+                f.write(chunk)
         meta = drone_service.register_orthomosaic(
             file_path=target_path,
             mission_name=mission_name,
             payload=sensor_payload
         )
+    except OverflowError:
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        raise HTTPException(status_code=413, detail=f"File is larger than the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit")
     except Exception:
         logger.exception("Drone upload rejected")
         if os.path.exists(target_path):

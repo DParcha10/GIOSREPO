@@ -1,4 +1,4 @@
-"""Tile Server & Dynamic Colormap Unit Tests for GIOS v2.5.
+"""Tile Server & Dynamic Colormap Unit Tests for Tiepoint v2.5.
 
 Assigned to: Agent 9 - Scientific QA & Test Engineer (@debugger)
 Task: T-18 / T-07 (Dynamic XYZ COG Tile Server & Verification)

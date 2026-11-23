@@ -109,7 +109,7 @@ def get_vector_layer_metadata(layer_id: str):
 @router.get("/layers/{layer_id}", response_model=GeoJSONFeatureCollection)
 def get_vector_layer(layer_id: str):
     """
-    Serves dynamic GeoJSON vector layers from the GIOS spatial database matching SpatialLayerType.
+    Serves dynamic GeoJSON vector layers from the Tiepoint spatial database matching SpatialLayerType.
     """
     col_clean = str(layer_id).lower().strip()
     if col_clean in {"critical_infrastructure", SpatialLayerType.CRITICAL_INFRASTRUCTURE.value}:
@@ -149,7 +149,7 @@ def get_vector_layer(layer_id: str):
                 },
                 {
                     "type": "Feature",
-                    "properties": {"id": "USGS-11262900", "name": "USGS 11262900 San Luis Creek", "type": "usgs_streamgage", "status": "active"},
+                    "properties": {"id": "USGS-11262900", "name": "USGS 11262900 Mud Slough near Gustine", "type": "usgs_streamgage", "status": "active"},
                     "geometry": {"type": "Point", "coordinates": [-121.0700, 37.0550]}
                 }
             ]

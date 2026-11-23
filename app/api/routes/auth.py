@@ -111,15 +111,45 @@ def require_admin(current_user: User = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return current_user
 
+LOGIN_MAX_FAILURES = 5
+LOGIN_WINDOW_SECONDS = 15 * 60
+_login_failures: dict = {}
+
+
+def _login_key(request: Request, username: str) -> str:
+    ip = request.client.host if request.client else "unknown"
+    return f"{ip}|{(username or '').lower()}"
+
+
+def _recent_failures(key: str) -> list:
+    import time as _time
+    cutoff = _time.time() - LOGIN_WINDOW_SECONDS
+    kept = [t for t in _login_failures.get(key, []) if t > cutoff]
+    if kept:
+        _login_failures[key] = kept
+    else:
+        _login_failures.pop(key, None)
+    return kept
+
+
 @router.post("/token", response_model=TokenResponse)
 def login_for_access_token(request: Request, response: Response, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    import time as _time
+    key = _login_key(request, form_data.username)
+    if len(_recent_failures(key)) >= LOGIN_MAX_FAILURES:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed sign-in attempts. Try again in 15 minutes.",
+        )
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or is_published_password(form_data.password) or not verify_password(form_data.password, user.hashed_password):
+        _login_failures.setdefault(key, []).append(_time.time())
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    _login_failures.pop(key, None)
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username, "role": user.role}, expires_delta=access_token_expires

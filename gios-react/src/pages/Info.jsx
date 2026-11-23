@@ -10,14 +10,14 @@ export default function Info() {
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="p-8 h-full flex flex-col gap-8 text-[#e0e6ed] w-full relative z-10"
+      className="p-8 h-full flex flex-col gap-8 text-stone-200 w-full relative z-10"
     >
       <header className="flex justify-between items-end border-b border-primary/20 pb-4">
         <div>
-          <h1 className="text-4xl font-['Orbitron'] font-bold text-white tracking-widest uppercase">
+          <h1 className="text-4xl font-serif font-bold text-white tracking-widest uppercase">
             Platform <MetallicPaintText text="Information" />
           </h1>
-          <p className="text-[#8b9bb4] mt-2 font-['Rajdhani'] text-lg">
+          <p className="text-stone-400 mt-2 font-sans text-lg">
             System Specifications & Immersive Project Imagery
           </p>
         </div>
@@ -26,7 +26,7 @@ export default function Info() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 flex-1">
           {/* Hardware / Architecture Specs */}
           <div className="glass-panel p-6 flex flex-col gap-6 bg-accent/80 backdrop-blur-md rounded-xl">
-             <h2 className="text-2xl font-['Orbitron'] border-b border-secondary/20 pb-2 text-secondary flex items-center gap-3">
+             <h2 className="text-2xl font-serif border-b border-secondary/20 pb-2 text-secondary flex items-center gap-3">
                 <InfoIcon />
                 Architecture
              </h2>
@@ -35,8 +35,8 @@ export default function Info() {
                 <div className="p-4 bg-black/40 border border-white/10 rounded-lg flex items-center gap-4 group">
                     <Database className="text-primary group-hover:scale-110 transition-transform" />
                     <div>
-                        <h4 className="text-white font-['Rajdhani'] uppercase tracking-widest text-sm">Data Ingestion</h4>
-                        <p className="text-[#8b9bb4] font-['Roboto_Mono'] text-xs mt-1">USGS REST APIs, Real-time WebSockets</p>
+                        <h4 className="text-white font-sans uppercase tracking-widest text-sm">Data Ingestion</h4>
+                        <p className="text-stone-400 font-mono text-xs mt-1">USGS REST APIs, Real-time WebSockets</p>
                     </div>
                 </div>
              </AntigravityCard>
@@ -45,8 +45,8 @@ export default function Info() {
              <div className="p-4 bg-black/40 border border-white/10 rounded-lg flex items-center gap-4 group">
                  <Cpu className="text-warning group-hover:scale-110 transition-transform" />
                  <div>
-                     <h4 className="text-white font-['Rajdhani'] uppercase tracking-widest text-sm">Processing Core</h4>
-                     <p className="text-[#8b9bb4] font-['Roboto_Mono'] text-xs mt-1">Vite + React 18, WebGL / Three.js Shaders</p>
+                     <h4 className="text-white font-sans uppercase tracking-widest text-sm">Processing Core</h4>
+                     <p className="text-stone-400 font-mono text-xs mt-1">Vite + React 18, WebGL / Three.js Shaders</p>
                  </div>
              </div>
              </AntigravityCard>
@@ -55,8 +55,8 @@ export default function Info() {
              <div className="p-4 bg-black/40 border border-white/10 rounded-lg flex items-center gap-4 group">
                  <HardDrive className="text-danger group-hover:scale-110 transition-transform" />
                  <div>
-                     <h4 className="text-white font-['Rajdhani'] uppercase tracking-widest text-sm">Graphics Engine</h4>
-                     <p className="text-[#8b9bb4] font-['Roboto_Mono'] text-xs mt-1">Framer Motion, React Spring, React Bits</p>
+                     <h4 className="text-white font-sans uppercase tracking-widest text-sm">Graphics Engine</h4>
+                     <p className="text-stone-400 font-mono text-xs mt-1">Framer Motion, React Spring, React Bits</p>
                  </div>
              </div>
              </AntigravityCard>

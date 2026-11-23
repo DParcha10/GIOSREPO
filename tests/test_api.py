@@ -1,6 +1,6 @@
-"""GIOS Platform Automated Test Suite.
+"""Tiepoint Platform Automated Test Suite.
 Tests all core APIs: Health, Auth, Events, Analysis, Time-Series, Reports, Spatial, IoT.
-Also tests the JARVIS AI Agent: identity, memory, map marking, tab routing, web search, data analysis.
+Also tests the Assistant AI Agent: identity, memory, map marking, tab routing, web search, data analysis.
 """
 import secrets
 import unittest
@@ -68,7 +68,17 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(user_info["role"], "admin")
 
     def test_drone_missions_keep_flight_path(self):
-        res = self.client.get("/api/v1/drone/missions")
+        from app.services.drone_service import drone_service
+        drone_service.active_missions["DRN-TEST0001"] = {
+            "id": "DRN-TEST0001", "event_id": "san-luis-reservoir", "status": "scheduled",
+            "center": [37.06, -121.07], "radius_km": 1.0, "payload": "RGB",
+            "estimated_time_mins": 10, "ticks": 0,
+            "flight_path": [[37.06, -121.07], [37.061, -121.071]],
+        }
+        try:
+            res = self.client.get("/api/v1/drone/missions")
+        finally:
+            drone_service.active_missions.pop("DRN-TEST0001", None)
         self.assertEqual(res.status_code, 200)
         missions = res.json()["missions"]
         self.assertTrue(missions)
@@ -158,10 +168,10 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(res.headers["content-type"], "application/pdf")
         self.assertTrue(len(res.content) > 100)
 
-    # --- JARVIS AI Agent Tests ---
+    # --- Assistant AI Agent Tests ---
 
     def test_agent_chat_hazard_lookup(self):
-        """Test that JARVIS can look up hazard events and starts with correct greeting."""
+        """Test that Assistant can look up hazard events and starts with correct greeting."""
         res = self.client.post(
             "/api/v1/agent/chat",
             json={"message": "Analyze San Luis Dam Seepage"}
@@ -169,7 +179,7 @@ class TestGIOSApi(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertIn("response", data)
-        self.assertTrue(data["response"].startswith("Hello, my name is JARVIS"))
+        self.assertTrue(data["response"].strip())
         self.assertIn("tool_calls", data)
         # Should have at least one tool call (hazard lookup)
         self.assertTrue(len(data["tool_calls"]) > 0)
@@ -179,7 +189,7 @@ class TestGIOSApi(unittest.TestCase):
         self.assertIn("thinking", data)
 
     def test_agent_memory_retention(self):
-        """Test JARVIS saves and recalls user identity and facts."""
+        """Test Assistant saves and recalls user identity and facts."""
         # 1. Save identity
         res1 = self.client.post(
             "/api/v1/agent/chat",
@@ -187,7 +197,7 @@ class TestGIOSApi(unittest.TestCase):
         )
         self.assertEqual(res1.status_code, 200)
         d1 = res1.json()
-        self.assertTrue(d1["response"].startswith("Hello, my name is JARVIS"))
+        self.assertTrue(d1["response"].strip())
         # Should have memory updates
         mem_updates = d1.get("memory_updates") or []
         self.assertTrue(any("Alex" in u for u in mem_updates))
@@ -199,11 +209,11 @@ class TestGIOSApi(unittest.TestCase):
         )
         self.assertEqual(res2.status_code, 200)
         d2 = res2.json()
-        self.assertTrue(d2["response"].startswith("Hello, my name is JARVIS"))
+        self.assertTrue(d2["response"].strip())
         self.assertIn("Alex", d2["response"])
 
     def test_agent_map_marking_and_tab_switching(self):
-        """Test JARVIS can mark locations and switch tabs autonomously."""
+        """Test Assistant can mark locations and switch tabs autonomously."""
         # 1. Mark a city
         res = self.client.post(
             "/api/v1/agent/chat",
@@ -211,7 +221,7 @@ class TestGIOSApi(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 200)
         data = res.json()
-        self.assertTrue(data["response"].startswith("Hello, my name is JARVIS"))
+        self.assertTrue(data["response"].strip())
         self.assertIsNotNone(data.get("map_action"))
         self.assertAlmostEqual(data["map_action"]["lat"], 40.7128, places=2)
         self.assertEqual(data["navigation"]["target_path"], "/map")

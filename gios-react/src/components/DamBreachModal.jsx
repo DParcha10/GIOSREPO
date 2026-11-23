@@ -638,7 +638,7 @@ export default function DamBreachModal({
 
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-7xl h-[92vh] bg-[#090d16] border border-cyan-500/30 rounded-2xl shadow-[0_0_50px_rgba(6,182,212,0.15)] flex flex-col overflow-hidden text-slate-200 font-sans">
+      <div className="relative w-full max-w-7xl h-[92vh] bg-stone-950 border border-cyan-500/30 rounded-2xl shadow-[0_0_50px_rgba(6,182,212,0.15)] flex flex-col overflow-hidden text-slate-200 font-sans">
         
         {/* Top Header */}
         <div className="px-6 py-4 bg-slate-900/90 border-b border-cyan-500/20 flex items-center justify-between">
@@ -739,7 +739,7 @@ export default function DamBreachModal({
         </div>
 
         {/* Modal Main Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 bg-[#0a0f1d]/90">
+        <div className="flex-1 overflow-y-auto p-6 bg-stone-950/90">
 
           {/* =========================================================================
               TAB 1: BREACH GEOMETRY & OUTFLOW HYDROGRAPH

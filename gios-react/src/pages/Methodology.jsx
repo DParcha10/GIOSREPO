@@ -10,13 +10,13 @@ export default function Methodology() {
       title: "1. Dataset Acquisition",
       icon: <Database size={24} />,
       color: 'var(--color-secondary)',
-      content: "The GIOS platform requires immense amounts of data. For live seismic tracking, we establish WebSocket or REST polling connections directly into the USGS National Water Information System and Earthquake APIs. For satellite intelligence, we query SpatioTemporal Asset Catalogs (STAC) from providers like Microsoft Planetary Computer or AWS Open Data to acquire Sentinel-2 and Landsat 8/9 imagery."
+      content: "The Tiepoint platform requires immense amounts of data. For live seismic tracking, we establish WebSocket or REST polling connections directly into the USGS National Water Information System and Earthquake APIs. For satellite intelligence, we query SpatioTemporal Asset Catalogs (STAC) from providers like Microsoft Planetary Computer or AWS Open Data to acquire Sentinel-2 and Landsat 8/9 imagery."
     },
     {
       title: "2. Real-Time Processing",
       icon: <Cpu size={24} />,
       color: 'var(--color-warning)',
-      content: "Once geospatial or tabular data is ingested, standardizing is required. GeoJSON feeds are parsed via our React Engine. For satellite data, the GIOS Backend (FastAPI, Python) leverages libraries like 'xarray' and 'rioxarray' to perform on-the-fly cloud masking, atmospheric correction, and bounding-box cropping."
+      content: "Once geospatial or tabular data is ingested, standardizing is required. GeoJSON feeds are parsed via our React Engine. For satellite data, the Tiepoint Backend (FastAPI, Python) leverages libraries like 'xarray' and 'rioxarray' to perform on-the-fly cloud masking, atmospheric correction, and bounding-box cropping."
     },
     {
       title: "3. Spatial Intelligence Analytics",
@@ -36,14 +36,14 @@ export default function Methodology() {
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="p-8 h-full flex flex-col gap-8 text-[#e0e6ed] w-full relative z-10 overflow-y-auto"
+      className="p-8 h-full flex flex-col gap-8 text-stone-200 w-full relative z-10 overflow-y-auto"
     >
       <header className="flex justify-between items-end border-b border-primary/20 pb-4 shrink-0">
         <div>
-          <h1 className="text-4xl font-['Orbitron'] font-bold text-white tracking-widest uppercase">
+          <h1 className="text-4xl font-serif font-bold text-white tracking-widest uppercase">
             Data <MetallicPaintText text="Methodology" />
           </h1>
-          <p className="text-[#8b9bb4] mt-2 font-['Rajdhani'] text-lg">
+          <p className="text-stone-400 mt-2 font-sans text-lg">
             Analytics Pipeline & Architectural Processes
           </p>
         </div>
@@ -52,10 +52,10 @@ export default function Methodology() {
       <div className="flex-1 max-w-5xl mx-auto space-y-8 pb-12 w-full">
          <div className="glass-panel p-6 bg-accent/80 backdrop-blur-xl border border-white/5 rounded-xl text-center">
             <Satellite size={48} className="mx-auto mb-4 text-primary animate-pulse" />
-            <p className="font-['Roboto_Mono'] text-sm leading-relaxed text-[#8b9bb4]">
-               The GIOS Platform does not rely on static sample files. It is a live-streaming, dynamic intelligence tool. 
-               The process of collecting, normalizing, and visualizing this data requires a robust pipeline connecting Earth Observation 
-               satellites and global ground-sensor networks into the UI you see before you.
+            <p className="font-mono text-sm leading-relaxed text-stone-400">
+               This is a research prototype. Some inputs are live (the USGS gauge feed and satellite catalogue search);
+               many map layers and tool outputs are simulated so the workflow can be shown end to end. Simulated values are
+               labelled where the app knows about them. Do not use any output here for safety decisions.
             </p>
          </div>
 
@@ -67,9 +67,9 @@ export default function Methodology() {
                             <div className="p-3 bg-black/40 rounded-lg border border-white/10 shadow-lg">
                                 {step.icon}
                             </div>
-                            <h2 className="text-xl font-['Orbitron'] font-bold tracking-widest text-white">{step.title}</h2>
+                            <h2 className="text-xl font-serif font-bold tracking-widest text-white">{step.title}</h2>
                         </div>
-                        <p className="font-['Rajdhani'] text-[#8b9bb4] leading-relaxed text-lg text-justify">
+                        <p className="font-sans text-stone-400 leading-relaxed text-lg text-justify">
                             {step.content}
                         </p>
                     </div>

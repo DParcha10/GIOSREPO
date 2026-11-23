@@ -1,4 +1,4 @@
-"""GIOS — Geospatial Integrated Orthomosaic Systems
+"""Tiepoint — Geospatial Integrated Orthomosaic Systems
 Main Application Server (FastAPI + Static Frontend Server).
 """
 import os
@@ -78,7 +78,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("GIOS Platform starting up...")
+    logger.info("Tiepoint Platform starting up...")
     seed_default_users()
     from app.services.alerting import alert_engine
     alert_engine.start()
@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
         pass
     from app.utils.cache import cache_manager
     cache_manager.close()
-    logger.info("GIOS Platform shutting down...")
+    logger.info("Tiepoint Platform shutting down...")
 
 app = FastAPI(
     title=settings.app_name,

@@ -1877,7 +1877,7 @@ export default function SlopeStabilityModal({
         <div className="px-6 py-4 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>ICOLD Bulletin 139 / USBR Slope Stability Regulations Compliant</span>
+            <span>Research estimate only. Not reviewed against ICOLD or USBR criteria and not for safety decisions.</span>
           </div>
 
           <div className="flex items-center gap-3">

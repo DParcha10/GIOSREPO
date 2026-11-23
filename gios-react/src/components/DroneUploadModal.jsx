@@ -119,7 +119,7 @@ export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered })
               <Radio className="w-5 h-5 animate-pulse" />
             </div>
             <div>
-              <h3 className="font-['Orbitron'] font-bold text-base text-white tracking-wider">
+              <h3 className="font-serif font-bold text-base text-white tracking-wider">
                 Drone Centimeter COG Ingestion
               </h3>
               <p className="text-xs text-gray-400 font-mono">
@@ -341,7 +341,7 @@ export default function DroneUploadModal({ isOpen, onClose, onDroneRegistered })
                 </div>
                 <div className="p-3 bg-black/40 border border-gray-800 rounded-lg">
                   <span className="text-[10px] text-gray-500 uppercase font-mono block">Metric GSD</span>
-                  <span className="text-sm font-bold text-white font-['Orbitron']">
+                  <span className="text-sm font-bold text-white font-serif">
                     {formatGsdDisplay(registeredMetadata.metric_gsd_cm || 2.85)}
                   </span>
                 </div>

@@ -1,8 +1,8 @@
-"""JARVIS Autonomous AI Brain — LLM Provider Chain, Tool System, and Agent Loop.
+"""Assistant Autonomous AI Brain — LLM Provider Chain, Tool System, and Agent Loop.
 
-This module is the core intelligence engine powering JARVIS. It routes user
+This module is the core intelligence engine powering Assistant. It routes user
 messages through real LLM providers (Gemini → OpenAI → Anthropic → Ollama → template),
-executes tool calls (web search, data analysis, GIOS hazard lookup, etc.), and
+executes tool calls (web search, data analysis, Tiepoint hazard lookup, etc.), and
 synthesizes natural conversational responses.
 """
 import os
@@ -19,13 +19,12 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 1. JARVIS SYSTEM PROMPT — Defines persona, expertise, behaviour rules
+# 1. Assistant SYSTEM PROMPT — Defines persona, expertise, behaviour rules
 # ═══════════════════════════════════════════════════════════════════════════════
 
-JARVIS_SYSTEM_PROMPT = """You are JARVIS, the Autonomous Intelligence Copilot for the GIOS (Geospatial Integrated Orthomosaic Systems) platform. You are a world-class expert in geospatial science, remote sensing, environmental hazard monitoring, hydrology, and data science.
+JARVIS_SYSTEM_PROMPT = """You are the research assistant inside Tiepoint, a prototype for checking satellite measurements against ground measurements. You know geospatial science, remote sensing, hazard monitoring and hydrology. Many Tiepoint layers are simulated; say so when an answer depends on them.
 
 ## Identity Rules
-- You MUST begin EVERY response with "Hello, my name is JARVIS."
 - You speak in a confident, professional, warm tone — like a trusted senior colleague briefing someone.
 - You NEVER output raw JSON, code blocks, or debug tables to the user. Always synthesize tool results into natural conversational prose.
 - You are conversational and helpful. Respond like a knowledgeable friend texting back, not a formal report.
@@ -36,12 +35,12 @@ You have access to the following tools. Use them proactively when they would hel
 
 1. **web_search** — Search the internet for current information, research papers, datasets, news, hazard reports, weather, or any topic.
 2. **read_webpage** — Fetch and read the content of a specific URL.
-3. **analyze_gios_data** — Analyze hazard event data from the GIOS platform (statistics, comparisons, trends).
+3. **analyze_gios_data** — Analyze hazard event data from the Tiepoint platform (statistics, comparisons, trends).
 4. **get_hazard_event** — Look up a specific monitored hazard event (San Luis Dam, Lake Erie HAB, Brazos River, Silver Bell Mine).
 5. **query_usgs_stream** — Query real-time USGS streamflow gauges for discharge, gage height, and water temperature.
 6. **compute_spectral_index** — Compute satellite spectral indices (NDMI, NDCI, MNDWI, NDVI, LST) for a region.
-7. **mark_map_location** — Pin a location on the GIOS Leaflet map. Use this whenever the user asks about a place.
-8. **navigate_to_tab** — Switch the GIOS console to a different tab (map, dashboard, analytics, methodology).
+7. **mark_map_location** — Pin a location on the Tiepoint Leaflet map. Use this whenever the user asks about a place.
+8. **navigate_to_tab** — Switch the Tiepoint console to a different tab (map, dashboard, analytics, methodology).
 9. **save_memory** — Store an important fact about the user or conversation for later recall.
 10. **recall_memory** — Retrieve all stored facts and user profile information.
 
@@ -54,8 +53,8 @@ You have access to the following tools. Use them proactively when they would hel
 - When the user asks "what do you remember" → call recall_memory.
 - When the user asks about current events, recent research, or anything you're unsure about → use web_search.
 
-## GIOS Domain Knowledge
-The GIOS platform monitors 4 active hazard complexes:
+## Tiepoint Domain Knowledge
+The Tiepoint platform monitors 4 active hazard complexes:
 1. SEEPAGE-01: San Luis Dam Embankment (37.0582°N, 121.0744°W) — Toe seepage anomaly, NDMI metric, +2.84σ departure
 2. HAB-02: Lake Erie Western Basin (41.745°N, 83.25°W) — Cyanobacterial bloom, NDCI metric, +3.12σ departure
 3. INUNDATION-03: Lower Brazos River Basin (29.5822°N, 95.7655°W) — Flash flood, MNDWI metric, +2.45σ departure
@@ -69,7 +68,7 @@ Always respond in natural conversational text. You may use line breaks for reada
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2. TOOL DEFINITIONS — Each tool JARVIS can call
+# 2. TOOL DEFINITIONS — Each tool Assistant can call
 # ═══════════════════════════════════════════════════════════════════════════════
 
 TOOL_DEFINITIONS = [
@@ -107,13 +106,13 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "analyze_gios_data",
-        "description": "Analyze the GIOS platform's hazard event data. Can compare events, compute statistics, find trends, or answer questions about the monitored sites.",
+        "description": "Analyze the Tiepoint platform's hazard event data. Can compare events, compute statistics, find trends, or answer questions about the monitored sites.",
         "parameters": {
             "type": "object",
             "properties": {
                 "question": {
                     "type": "string",
-                    "description": "The analysis question about GIOS data (e.g., 'which site has the highest anomaly?', 'compare NDMI across all sites')"
+                    "description": "The analysis question about Tiepoint data (e.g., 'which site has the highest anomaly?', 'compare NDMI across all sites')"
                 }
             },
             "required": ["question"]
@@ -121,7 +120,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "get_hazard_event",
-        "description": "Look up a specific hazard event from the GIOS monitoring database by event ID or name.",
+        "description": "Look up a specific hazard event from the Tiepoint monitoring database by event ID or name.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -177,7 +176,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "mark_map_location",
-        "description": "Pin a location on the GIOS map with a marker. Use this whenever a location, city, hazard site, or coordinates are mentioned.",
+        "description": "Pin a location on the Tiepoint map with a marker. Use this whenever a location, city, hazard site, or coordinates are mentioned.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -192,7 +191,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "navigate_to_tab",
-        "description": "Switch the GIOS console to a specific tab/view.",
+        "description": "Switch the Tiepoint console to a specific tab/view.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -254,7 +253,7 @@ _memory_lock = threading.Lock()
 
 def _load_memory() -> Dict[str, Any]:
     default = {
-        "facts": ["GIOS Platform v2.4 with 4 monitored hazard complexes."],
+        "facts": ["Tiepoint Platform v2.4 with 4 monitored hazard complexes."],
         "user_profile": {"name": None, "role": None, "organization": None, "preferences": []},
         "user_notes": [],
         "marked_locations": [],
@@ -327,30 +326,28 @@ async def tool_web_search(query: str, max_results: int = 5) -> Dict[str, Any]:
 
 
 async def tool_read_webpage(url: str) -> Dict[str, Any]:
-    """Fetch and extract text from a URL."""
-    import httpx
+    """Fetch and extract text from a public URL."""
+    from app.core.netguard import BlockedURL, safe_request
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            res = await client.get(url, headers={"User-Agent": "JARVIS-GIOS/2.4"})
-            if res.status_code == 200:
-                text = res.text
-                # Simple HTML stripping
-                text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
-                text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
-                text = re.sub(r'<[^>]+>', ' ', text)
-                text = re.sub(r'\s+', ' ', text).strip()
-                # Limit to 4000 chars
-                if len(text) > 4000:
-                    text = text[:4000] + "... [truncated]"
-                return {"status": "success", "url": url, "content": text}
-            else:
-                return {"status": "error", "message": f"HTTP {res.status_code}"}
+        res = await safe_request("GET", url, timeout=10.0, headers={"User-Agent": "Tiepoint/2.6"})
+    except BlockedURL as blocked:
+        return {"status": "error", "message": f"Blocked URL: {blocked}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    if res.status_code != 200:
+        return {"status": "error", "message": f"HTTP {res.status_code}"}
+    text = res.text
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text) > 4000:
+        text = text[:4000] + "... [truncated]"
+    return {"status": "success", "url": url, "content": text}
 
 
 async def tool_analyze_gios_data(question: str) -> Dict[str, Any]:
-    """Analyze GIOS hazard event data using pandas."""
+    """Analyze Tiepoint hazard event data using pandas."""
     from app.services.event_service import event_service
     all_events = event_service.list_events()
 
@@ -845,7 +842,7 @@ def get_active_provider() -> Optional[LLMProvider]:
     for p in PROVIDERS:
         try:
             if p.is_available():
-                logger.info("JARVIS using LLM provider: %s", p.name)
+                logger.info("Assistant using LLM provider: %s", p.name)
                 return p
         except Exception:
             continue
@@ -884,7 +881,7 @@ async def template_fallback(message: str, history: List[Dict]) -> Dict[str, Any]
         profile = mem.get("user_profile", {})
         notes = mem.get("notes", [])
         name = profile.get("name", "operator")
-        response = f"Hello, my name is JARVIS. I remember everything from our conversations."
+        response = f"I remember everything from our conversations."
         if profile.get("name"):
             response += f" Your name is {profile['name']}."
         if profile.get("role"):
@@ -916,7 +913,7 @@ async def template_fallback(message: str, history: List[Dict]) -> Dict[str, Any]
         }
         navigation = {"target_path": "/map", "reason": f"Displaying {target_event['title']}", "auto_switch": True}
         response = (
-            f"Hello, my name is JARVIS. I've located {target_event['title']} and marked it on your map.\n\n"
+            f"I've located {target_event['title']} and marked it on your map.\n\n"
             f"This is a confirmed {target_event.get('hazard_type', 'hazard')} with a peak departure of "
             f"{target_event['peak_zscore']} spanning {target_event.get('impact_area', 'the target area')}.\n\n"
             f"I am now switching your console to the Map Explorer."
@@ -931,27 +928,27 @@ async def template_fallback(message: str, history: List[Dict]) -> Dict[str, Any]
             mark_result = tool_mark_map_location(lat, lng, loc_key.title(), zoom)
             map_action = mark_result
             navigation = {"target_path": "/map", "reason": f"Marking {loc_key.title()}", "auto_switch": True}
-            response = f"Hello, my name is JARVIS. I have marked {loc_key.title()} at {lat:.4f}°N, {lng:.4f}°W on your map.\n\nSwitching to the Map Explorer now."
+            response = f"I have marked {loc_key.title()} at {lat:.4f}°N, {lng:.4f}°W on your map.\n\nSwitching to the Map Explorer now."
             return {"response": response, "tool_calls": [], "map_action": map_action, "navigation": navigation,
                     "memory_updates": memory_updates, "sources": [], "data_analysis": None, "thinking": None}
 
     # Tab navigation
     if any(k in msg for k in ["telemetry", "dashboard", "earthquake", "seismic", "sensor"]):
         navigation = {"target_path": "/dashboard", "reason": "Telemetry Dashboard", "auto_switch": True}
-        response = "Hello, my name is JARVIS. Switching you to the Platform Telemetry Dashboard now."
+        response = "Switching you to the Platform Telemetry Dashboard now."
     elif any(k in msg for k in ["analytics", "chart", "scatter", "regression", "plot"]):
         navigation = {"target_path": "/analytics", "reason": "Analytics Studio", "auto_switch": True}
-        response = "Hello, my name is JARVIS. Switching you to the Analytics Studio now."
+        response = "Switching you to the Analytics Studio now."
     elif any(k in msg for k in ["methodology", "pipeline", "stac", "architecture", "science"]):
         navigation = {"target_path": "/methodology", "reason": "Methodology", "auto_switch": True}
-        response = "Hello, my name is JARVIS. Switching you to the Methodology & Science documentation."
+        response = "Switching you to the Methodology & Science documentation."
     else:
         response = (
-            "Hello, my name is JARVIS. I am your GIOS Autonomous Intelligence Copilot.\n\n"
+            ""
             "I am currently running in template mode — no LLM provider is connected. "
             "To unlock my full AI capabilities (web search, research, open-ended conversation, data analysis), "
             "please set one of: GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY as an environment variable.\n\n"
-            "In the meantime, I can still help with GIOS hazard events, map marking, and tab navigation. "
+            "In the meantime, I can still help with Tiepoint hazard events, map marking, and tab navigation. "
             "What would you like me to inspect?"
         )
 
@@ -971,7 +968,7 @@ async def process_message(
     event_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Main entry point: processes a user message through the JARVIS agent loop.
+    Main entry point: processes a user message through the Assistant agent loop.
 
     Returns a dict with keys:
       response, tool_calls, map_action, navigation, memory_updates, sources, data_analysis, thinking
@@ -989,10 +986,10 @@ async def process_message(
     provider = get_active_provider()
 
     if not provider:
-        logger.info("JARVIS: No LLM provider available, using template fallback")
+        logger.info("Assistant: No LLM provider available, using template fallback")
         return await template_fallback(message, history)
 
-    logger.info("JARVIS: Using provider %s", provider.name)
+    logger.info("Assistant: Using provider %s", provider.name)
 
     # Build system prompt with current memory
     memory_ctx = _get_memory_context()
@@ -1026,7 +1023,7 @@ async def process_message(
                 try:
                     if p.is_available():
                         provider = p
-                        logger.info("JARVIS: Falling back to %s", p.name)
+                        logger.info("Assistant: Falling back to %s", p.name)
                         llm_result = await provider.chat(system_prompt, messages, TOOL_DEFINITIONS)
                         fallback_found = True
                         break
@@ -1038,8 +1035,6 @@ async def process_message(
         # If no tool calls, we have our final response
         if not llm_result.get("tool_calls"):
             response_text = llm_result.get("text", "")
-            if not response_text.startswith("Hello, my name is JARVIS"):
-                response_text = "Hello, my name is JARVIS. " + response_text
             break
         else:
             # Execute each tool call
@@ -1048,7 +1043,7 @@ async def process_message(
                 tool_name = tc["name"]
                 tool_args = tc.get("arguments", {})
                 thinking_parts.append(f"Calling {tool_name}({json.dumps(tool_args, default=str)[:100]})")
-                logger.info("JARVIS tool call: %s(%s)", tool_name, json.dumps(tool_args, default=str)[:200])
+                logger.info("Assistant tool call: %s(%s)", tool_name, json.dumps(tool_args, default=str)[:200])
 
                 tool_result = await execute_tool(tool_name, tool_args)
 
@@ -1082,13 +1077,11 @@ async def process_message(
             if partial_text:
                 messages.append({"role": "assistant", "content": partial_text})
 
-            messages.append({"role": "user", "content": f"[SYSTEM: Tool execution results]\n{tool_result_text}\n\nPlease synthesize these results into your response to the user. Remember to begin with 'Hello, my name is JARVIS.'"})
+            messages.append({"role": "user", "content": f"[SYSTEM: Tool execution results]\n{tool_result_text}\n\nPlease synthesize these results into your response to the user."})
 
     else:
         # Max iterations reached
-        response_text = llm_result.get("text", "Hello, my name is JARVIS. I've completed my analysis. Let me know if you need anything else.")
-        if not response_text.startswith("Hello, my name is JARVIS"):
-            response_text = "Hello, my name is JARVIS. " + response_text
+        response_text = llm_result.get("text", "I've completed my analysis. Let me know if you need anything else.")
 
     thinking = " → ".join(thinking_parts) if thinking_parts else None
 

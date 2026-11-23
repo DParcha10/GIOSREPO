@@ -1,4 +1,4 @@
-"""GIOS - Geospatial Integrated Orthomosaic Systems.
+"""Tiepoint - Geospatial Integrated Orthomosaic Systems.
 Core backend package.
 """
 import warnings

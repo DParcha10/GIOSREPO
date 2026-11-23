@@ -22,7 +22,7 @@ export default function Settings() {
       <header className="px-8 py-6 border-b border-primary/20 shrink-0 relative z-10 glass-panel !rounded-none !border-t-0 !border-x-0">
         <div className="flex items-center gap-3">
           <SettingsIcon className="w-6 h-6 text-primary" />
-          <h1 className="text-2xl font-bold font-['Orbitron'] tracking-wider text-white">System <span className="text-primary">Settings</span></h1>
+          <h1 className="text-2xl font-bold font-serif tracking-wider text-white">System <span className="text-primary">Settings</span></h1>
         </div>
         <p className="text-gray-400 mt-1 text-sm">Manage your workspace preferences, authentication, and application theme.</p>
       </header>
@@ -84,10 +84,10 @@ export default function Settings() {
             {/* ----------------- APPEARANCE TAB ----------------- */}
             {activeTab === 'appearance' && (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <h2 className="text-xl font-bold text-white mb-6 border-b border-primary/20 pb-4 font-['Rajdhani'] uppercase tracking-wider">Interface Theme</h2>
+                <h2 className="text-xl font-bold text-white mb-6 border-b border-primary/20 pb-4 font-sans uppercase tracking-wider">Interface Theme</h2>
                 
                 <p className="text-sm text-gray-400 mb-8">
-                  Select a color scheme for the GIOS operating environment. This dynamically adjusts global accents, map overlays, charts, and ambient background effects.
+                  Select a color scheme for the Tiepoint operating environment. This dynamically adjusts global accents, map overlays, charts, and ambient background effects.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -103,7 +103,7 @@ export default function Settings() {
                       }} />
                       
                       <div className="flex items-center justify-between relative z-10 mb-4">
-                        <span className="font-bold text-lg text-white font-['Rajdhani'] tracking-wider">{t.name}</span>
+                        <span className="font-bold text-lg text-white font-sans tracking-wider">{t.name}</span>
                         {theme === t.id && (
                           <span className="text-[10px] uppercase tracking-widest bg-primary/20 text-primary px-2 py-0.5 rounded border border-primary/50">Active</span>
                         )}
@@ -123,7 +123,7 @@ export default function Settings() {
             {/* ----------------- ACCOUNT TAB ----------------- */}
             {activeTab === 'account' && (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <h2 className="text-xl font-bold text-white mb-6 border-b border-primary/20 pb-4 font-['Rajdhani'] uppercase tracking-wider">Account Profile</h2>
+                <h2 className="text-xl font-bold text-white mb-6 border-b border-primary/20 pb-4 font-sans uppercase tracking-wider">Account Profile</h2>
                 
                 <div className="space-y-6">
                   <div className="flex gap-6">
@@ -167,12 +167,12 @@ export default function Settings() {
             {/* ----------------- SECURITY TAB ----------------- */}
             {activeTab === 'security' && (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <h2 className="text-xl font-bold text-white mb-6 border-b border-primary/20 pb-4 font-['Rajdhani'] uppercase tracking-wider">Security & Authentication</h2>
+                <h2 className="text-xl font-bold text-white mb-6 border-b border-primary/20 pb-4 font-sans uppercase tracking-wider">Security & Authentication</h2>
                 
                 <div className="space-y-8">
                   <div>
                     <h3 className="text-lg font-semibold text-white mb-2">Change Password</h3>
-                    <p className="text-sm text-gray-400 mb-4">Update the password associated with your GIOS console login.</p>
+                    <p className="text-sm text-gray-400 mb-4">Update the password associated with your Tiepoint console login.</p>
                     <div className="space-y-4 max-w-md">
                       <input type="password" placeholder="Current Password" className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:border-primary focus:outline-none transition-colors" />
                       <input type="password" placeholder="New Password" className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:border-primary focus:outline-none transition-colors" />
