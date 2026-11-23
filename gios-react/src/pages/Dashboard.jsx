@@ -1,184 +1,163 @@
 import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
-import { Activity, AlertTriangle, MapPin, Globe } from 'lucide-react';
-import axios from 'axios';
-import MetallicPaintText from '../components/ReactBits/MetallicPaintText';
-import AntigravityCard from '../components/ReactBits/AntigravityCard';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import giosApi from '../api/giosApi';
+import { useSiteAssessments, AssessmentBadge } from '../components/SiteAssessment';
 
-export default function Dashboard() {
-  const navigate = useNavigate();
-  const [stats, setStats] = useState({
-    totalQuakes: 0,
-    maxMag: 0,
-    recent: [],
-  });
-  const [loading, setLoading] = useState(true);
+const fmtDate = (iso) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—');
+const fmtTime = (ms) => new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-  useEffect(() => {
-    let isMounted = true;
-    const loadQuakeData = async () => {
-      try {
-        const res = await axios.get('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson');
-        const features = res.data.features;
-        const mags = features.map(f => f.properties.mag).filter(m => m !== null);
-        const maxMag = mags.length > 0 ? Math.max(...mags).toFixed(1) : 0;
-        
-        if (isMounted) {
-          setStats({
-            totalQuakes: features.length,
-            maxMag: maxMag,
-            recent: features.slice(0, 8),
-          });
-          setLoading(false);
-        }
-      } catch (e) {
-        console.error(e);
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    loadQuakeData();
-    const interval = setInterval(loadQuakeData, 60000);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, []);
-
+function Section({ title, note, children, right }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className="p-8 h-full flex flex-col gap-8 text-stone-200 w-full relative z-10"
-    >
-      <header className="glass-panel p-6 flex justify-between items-end shrink-0 mb-4 bg-white/5">
+    <section className="bg-stone-900 border border-stone-800 rounded-[4px]">
+      <header className="px-5 pt-4 pb-3 border-b border-stone-800 flex items-baseline justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-serif font-bold text-white tracking-widest uppercase">
-            Platform <MetallicPaintText text="Telemetry" />
-          </h1>
-          <p className="text-stone-400 mt-2 font-sans text-lg">
-            Real-time Environmental Risk & Seismic Data Streaming Feed
-          </p>
+          <h2 className="font-serif text-lg text-stone-50">{title}</h2>
+          {note && <p className="text-[12.5px] text-stone-400 mt-0.5">{note}</p>}
         </div>
-        <div className="glass-button px-4 py-2 text-secondary font-mono pointer-events-none">
-          <Globe size={18} className="animate-pulse" />
-          <span>Global Monitoring Active</span>
-        </div>
+        {right}
       </header>
-
-      {/* Magic Bento Grid Layout */}
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-4 md:grid-rows-3 gap-6">
-        
-        {/* Bento Box 1: Total Events (Large Span) */}
-        <div className="md:col-span-2 md:row-span-1">
-            <AntigravityCard intensity={15} className="h-full w-full">
-                <StatCard 
-                    title="Total Events (Past Hour)" 
-                    value={loading ? "--" : stats.totalQuakes} 
-                    icon={<Activity />} 
-                    color='var(--color-primary)' 
-                />
-            </AntigravityCard>
-        </div>
-
-        {/* Bento Box 2: Max Magnitude */}
-        <div className="md:col-span-1 md:row-span-1">
-            <AntigravityCard intensity={25} className="h-full w-full">
-                <StatCard 
-                    title="Highest Magnitude" 
-                    value={loading ? "--" : stats.maxMag} 
-                    icon={<AlertTriangle />} 
-                    color='var(--color-danger)' 
-                />
-            </AntigravityCard>
-        </div>
-
-        {/* Bento Box 3: Active Sensors */}
-        <div className="md:col-span-1 md:row-span-1">
-            <AntigravityCard intensity={25} className="h-full w-full">
-                <StatCard 
-                    title="Active Sensors" 
-                    value="9,400+" 
-                    icon={<MapPin />} 
-                    color="#00d2ff" 
-                />
-            </AntigravityCard>
-        </div>
-
-        {/* Bento Box 4: Live Event Log (Spans Bottom 2 rows) */}
-        <div className="md:col-span-4 md:row-span-2">
-            <AntigravityCard intensity={5} className="h-full w-full">
-                <div className="h-full glass-panel p-6 flex flex-col bg-white/5">
-                    <h2 className="text-xl font-serif border-b border-primary/20 pb-3 mb-4 flex items-center gap-3 text-primary">
-                    <Activity size={20} />
-                    Live Event Log
-                    </h2>
-                    
-                    <div className="flex-1 overflow-y-auto pr-2 grid grid-cols-2 gap-4 font-mono text-sm">
-                    {loading ? (
-                        <div className="col-span-2 text-center text-stone-400 mt-10 animate-pulse">Establishing secure link... downloading telemetry...</div>
-                    ) : stats.recent.length === 0 ? (
-                        <div className="col-span-2 text-center text-stone-400 mt-10">No significant events detected in the past hour.</div>
-                    ) : (
-                        stats.recent.map((quake, i) => (
-                        <motion.div 
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            transition={{ delay: i * 0.05 }}
-                            key={quake.id} 
-                            onClick={() => navigate(`/event/${quake.id}`)}
-                            className="glass-panel cursor-pointer !border-l-4 !border-l-danger !border-y-0 !border-r-0 hover:!border-l-primary flex justify-between items-center group bg-white/5 p-4"
-                        >
-                            <div className="truncate pr-4">
-                            <span className="text-stone-400 block text-xs mb-1">
-                                {new Date(quake.properties.time).toLocaleTimeString()}
-                            </span>
-                            <span className="text-white text-base truncate block">{quake.properties.place}</span>
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                            <MetallicPaintText 
-                                text={`M ${quake.properties.mag?.toFixed(1) || 'N/A'}`} 
-                                glow='var(--color-danger)' 
-                                className="text-3xl font-bold" 
-                            />
-                            </div>
-                        </motion.div>
-                        ))
-                    )}
-                    </div>
-                </div>
-            </AntigravityCard>
-        </div>
-
-      </div>
-    </motion.div>
+      {children}
+    </section>
   );
 }
 
-function StatCard({ title, value, icon, color }) {
+function SourceRow({ name, state, detail }) {
+  const dot = state === 'ok' ? 'bg-emerald-400' : state === 'down' ? 'bg-red-400' : 'bg-stone-600';
+  const word = state === 'ok' ? 'Responding' : state === 'down' ? 'Not responding' : 'Checking…';
   return (
-    <div className="h-full w-full glass-panel p-6 relative overflow-hidden group bg-white/5">
-      <div 
-        className="absolute -right-4 -top-4 opacity-10 group-hover:opacity-30 group-hover:scale-125 transition-all duration-700 blur-[2px]"
-        style={{ color: color }}
-      >
-        {React.cloneElement(icon, { size: 120 })}
+    <li className="flex items-start gap-3 px-5 py-2.5 border-t border-stone-800 first:border-t-0">
+      <span className={`mt-1.5 inline-block w-2 h-2 rounded-full ${dot}`} />
+      <div className="flex-1">
+        <p className="text-[14px] text-stone-100">{name}</p>
+        <p className="text-[12px] text-stone-500">{detail}</p>
       </div>
-      <h3 className="text-stone-400 font-sans uppercase tracking-widest text-sm mb-4 font-bold relative z-10 w-full border-b border-white/10 pb-2">
-        {title}
-      </h3>
-      <div className="relative z-10 flex items-center justify-between mt-6">
-        <MetallicPaintText 
-            text={value} 
-            glow={color} 
-            className="text-6xl font-serif font-bold" 
-        />
-        <div className="p-3 rounded-full bg-white/5 border border-white/10" style={{ color: color }}>
-            {React.cloneElement(icon, { size: 24 })}
+      <span className="text-[12px] text-stone-400">{word}</span>
+    </li>
+  );
+}
+
+export default function Dashboard() {
+  const [events, setEvents] = useState([]);
+  const [gauges, setGauges] = useState({});
+  const [quakes, setQuakes] = useState(null);
+  const [sources, setSources] = useState({ usgsWater: null, usgsQuake: null });
+  const assessments = useSiteAssessments(events);
+
+  useEffect(() => {
+    giosApi.get('/api/v1/events').then((r) => setEvents(r.data.events || [])).catch(() => setEvents([]));
+    fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson')
+      .then((r) => r.json())
+      .then((d) => { setQuakes(d.features || []); setSources((s) => ({ ...s, usgsQuake: 'ok' })); })
+      .catch(() => { setQuakes([]); setSources((s) => ({ ...s, usgsQuake: 'down' })); });
+  }, []);
+
+  useEffect(() => {
+    events.forEach((e) => {
+      giosApi.get(`/api/v1/events/${e.id}/gauge`, { params: { days: 30 } })
+        .then((r) => {
+          setGauges((g) => ({ ...g, [e.id]: r.data }));
+          if (r.data.status === 'ok') setSources((s) => ({ ...s, usgsWater: 'ok' }));
+        })
+        .catch(() => setGauges((g) => ({ ...g, [e.id]: { status: 'unavailable' } })));
+    });
+  }, [events]);
+
+  const assessVals = Object.values(assessments);
+  const s2State = assessVals.some((a) => a.status === 'ok') ? 'ok'
+    : events.length && assessVals.length === events.length ? 'down' : null;
+
+  const maxMag = quakes && quakes.length ? Math.max(...quakes.map((q) => q.properties.mag || 0)) : null;
+
+  return (
+    <div className="px-8 py-7 flex flex-col gap-6 max-w-6xl w-full">
+      <header>
+        <h1 className="font-serif text-3xl text-stone-50">Overview</h1>
+        <p className="text-stone-400 mt-1">
+          {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}. Everything on this page comes from live public data.
+        </p>
+      </header>
+
+      <Section
+        title="Monitored sites"
+        note="Same season this year against last year, from real Sentinel-2 imagery. Gauge values are the latest USGS daily mean."
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[14px]">
+            <thead>
+              <tr className="text-[12px] text-stone-500">
+                <th className="px-5 py-2 font-normal">Site</th>
+                <th className="px-3 py-2 font-normal">Result</th>
+                <th className="px-3 py-2 font-normal text-right">This year</th>
+                <th className="px-3 py-2 font-normal text-right">Last year</th>
+                <th className="px-3 py-2 font-normal">Nearest gauge</th>
+                <th className="px-5 py-2 font-normal" />
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((e) => {
+                const a = assessments[e.id];
+                const ok = a?.status === 'ok';
+                const water = a?.index === 'mndwi' || a?.index === 'ndwi';
+                const v = (sc) => (water ? `${sc.stats.water_pct}% water` : sc.stats.mean.toFixed(3));
+                const g = gauges[e.id];
+                const last = g?.status === 'ok' ? g.values[g.values.length - 1] : null;
+                return (
+                  <tr key={e.id} className="border-t border-stone-800 align-top">
+                    <td className="px-5 py-3">
+                      <p className="text-stone-50">{e.title}</p>
+                      <p className="text-[12px] text-stone-500">{e.subtitle?.split('|')[0]} · {(e.metric || '').toUpperCase()}</p>
+                    </td>
+                    <td className="px-3 py-3"><AssessmentBadge a={a} /></td>
+                    <td className="px-3 py-3 text-right font-mono text-[13px]">
+                      {ok ? <>{v(a.current)}<span className="block text-[11px] text-stone-500 font-sans">{fmtDate(a.current.date)}</span></> : '—'}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono text-[13px]">
+                      {ok ? <>{v(a.baseline)}<span className="block text-[11px] text-stone-500 font-sans">{fmtDate(a.baseline.date)}</span></> : '—'}
+                    </td>
+                    <td className="px-3 py-3 text-[13px]">
+                      {last ? (
+                        <>
+                          <span className="font-mono">{last.discharge_cfs.toLocaleString()} ft³/s</span>
+                          <span className="block text-[11px] text-stone-500">{g.site_name} · {fmtDate(last.date)}{last.provisional ? ' · provisional' : ''}</span>
+                        </>
+                      ) : g ? <span className="text-stone-500">No recent record</span> : <span className="text-stone-500">Loading…</span>}
+                    </td>
+                    <td className="px-5 py-3 text-right whitespace-nowrap">
+                      <Link to={`/analytics?site=${e.id}`} className="text-[13px] underline underline-offset-4 decoration-stone-600 text-stone-200">Time series</Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
+      </Section>
+
+      <div className="grid md:grid-cols-[1.4fr_1fr] gap-6">
+        <Section
+          title="Earthquakes, past 24 hours"
+          note="Magnitude 2.5 and above, worldwide. USGS Earthquake Hazards Program."
+          right={quakes && <p className="text-[13px] text-stone-400 whitespace-nowrap">{quakes.length} events · largest M {maxMag?.toFixed(1)}</p>}
+        >
+          <ul className="max-h-[320px] overflow-y-auto">
+            {quakes === null && <li className="px-5 py-3 text-stone-500">Loading…</li>}
+            {quakes && quakes.slice(0, 12).map((q) => (
+              <li key={q.id} className="px-5 py-2 border-t border-stone-800 first:border-t-0 flex items-baseline gap-4">
+                <span className="font-mono text-[14px] w-12 text-stone-50">M {q.properties.mag?.toFixed(1)}</span>
+                <span className="flex-1 text-[13.5px] text-stone-200 truncate">{q.properties.place}</span>
+                <span className="text-[12px] text-stone-500 whitespace-nowrap">{fmtTime(q.properties.time)}</span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+
+        <Section title="Data sources" note="What this page reads, and whether it answered just now.">
+          <ul>
+            <SourceRow name="Copernicus Sentinel-2 (Planetary Computer)" state={s2State} detail="Surface reflectance for site comparisons and map layers" />
+            <SourceRow name="USGS Water Data (NWIS)" state={sources.usgsWater} detail="Daily stream discharge. USGS retires this service in Feb 2027." />
+            <SourceRow name="USGS Earthquake feed" state={sources.usgsQuake} detail="GeoJSON summary feed, refreshed every minute by USGS" />
+          </ul>
+        </Section>
       </div>
     </div>
   );

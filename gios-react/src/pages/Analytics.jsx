@@ -1,338 +1,196 @@
-import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Title, Tooltip, Legend
+  Chart as ChartJS, LinearScale, LogarithmicScale, PointElement, LineElement, Tooltip, Filler,
 } from 'chart.js';
-import { Line, Bar, Doughnut, Scatter } from 'react-chartjs-2';
-import axios from 'axios';
-import { getHealthStatus, fetchTimeseriesTrend, parseBbox, formatApiError } from '../api/giosApi';
-import { SPECTRAL_INDICES } from '../config/constants';
-import { Radar, RefreshCw } from 'lucide-react';
-import MetallicPaintText from '../components/ReactBits/MetallicPaintText';
-import TiltedCard from '../components/ReactBits/TiltedCard';
-import DecryptedText from '../components/ReactBits/DecryptedText';
+import { Line } from 'react-chartjs-2';
+import giosApi from '../api/giosApi';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Title, Tooltip, Legend);
+ChartJS.register(LinearScale, LogarithmicScale, PointElement, LineElement, Tooltip, Filler);
 
-export default function Analytics() {
-  const [chartData, setChartData] = useState(null);
-  const [barData, setBarData] = useState(null);
-  const [doughnutData, setDoughnutData] = useState(null);
-  const [scatterData, setScatterData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [queryLoading, setQueryLoading] = useState(false);
-  const [backendData, setBackendData] = useState(null);
+const INK = '#1d1b18';
+const SAT = '#2a6380';
+const GND = '#a8501e';
+const RULE = '#e3dccd';
+const DAY = 86400000;
 
-  // Time-Series Query States
-  const [queryBbox, setQueryBbox] = useState('-121.10, 37.00, -121.05, 37.05');
-  const [queryStartDate, setQueryStartDate] = useState('2026-08-01');
-  const [queryEndDate, setQueryEndDate] = useState('2026-08-30');
-  const [queryIndex, setQueryIndex] = useState('ndmi');
+const ts = (iso) => Date.parse(`${iso.slice(0, 10)}T00:00:00Z`);
+const fmtMonth = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' });
+const fmtDay = (ms) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 
-  const handleQueryTrend = async () => {
-    try {
-      setQueryLoading(true);
-      const bbox = parseBbox(queryBbox, [-121.10, 37.00, -121.05, 37.05]);
-
-      const res = await fetchTimeseriesTrend({
-        bbox,
-        index: queryIndex,
-        start_date: queryStartDate,
-        end_date: queryEndDate
-      });
-
-      const pts = res.data_points || [];
-      if (pts.length > 0) {
-        const labels = pts.map(p => p.date ? p.date.split('-').slice(1).join('/') : '');
-        const values = pts.map(p => p.value);
-        const medians = pts.map(p => p.baseline_median || p.value * 0.9);
-
-        setChartData({
-          labels,
-          datasets: [
-            {
-              label: `${queryIndex.toUpperCase()} Value`,
-              data: values,
-              borderColor: 'var(--color-primary)',
-              backgroundColor: 'rgba(0, 255, 170, 0.2)',
-              tension: 0.35,
-              borderWidth: 2,
-              fill: true,
-              pointBackgroundColor: pts.map(p => p.is_anomaly ? 'var(--color-danger)' : 'var(--color-primary)'),
-              pointRadius: pts.map(p => p.is_anomaly ? 6 : 3)
-            },
-            {
-              label: 'Seasonal Climatological Baseline',
-              data: medians,
-              borderColor: 'rgba(255, 255, 255, 0.4)',
-              borderDash: [5, 5],
-              borderWidth: 1.5,
-              fill: false,
-              pointRadius: 0
-            }
-          ]
-        });
-      }
-    } catch (err) {
-      const apiErr = formatApiError(err);
-      console.error('Failed to query time-series trend:', apiErr.detail);
-    } finally {
-      setQueryLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    // 1. Fetch live seismic data for demo charts
-    axios.get('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_month.geojson')
-      .then(res => {
-        const features = res.data.features;
-        features.sort((a, b) => a.properties.time - b.properties.time);
-
-        const labels = features.map(f => new Date(f.properties.time).toLocaleDateString());
-        const magnitudes = features.map(f => f.properties.mag);
-        const depths = features.map(f => f.geometry.coordinates[2]);
-
-        setChartData({
-          labels,
-          datasets: [{
-              label: 'Magnitude (M)', data: magnitudes, borderColor: 'var(--color-primary)', backgroundColor: 'rgba(0, 255, 170, 0.2)',
-              tension: 0.4, borderWidth: 2, fill: true, pointBackgroundColor: 'var(--color-primary)',
-          }]
-        });
-
-        setBarData({
-          labels,
-          datasets: [{
-              label: 'Depth (km)', data: depths, backgroundColor: 'rgba(0, 170, 238, 0.7)', borderColor: 'var(--color-secondary)', borderWidth: 1,
-          }]
-        });
-
-        let mLevels = [0, 0, 0, 0];
-        magnitudes.forEach(m => {
-            if (m < 3.0) mLevels[0]++;
-            else if (m < 5.0) mLevels[1]++;
-            else if (m < 6.0) mLevels[2]++;
-            else mLevels[3]++;
-        });
-
-        setDoughnutData({
-            labels: ['Minor', 'Light', 'Moderate', 'Strong'],
-            datasets: [{
-                data: mLevels,
-                backgroundColor: ['var(--color-primary)', 'var(--color-secondary)', 'var(--color-warning)', 'var(--color-danger)'],
-                borderColor: 'var(--color-accent)',
-                borderWidth: 2,
-            }]
-        });
-
-        const scatterPoints = features.map(f => ({ x: f.properties.mag, y: f.geometry.coordinates[2] }));
-        setScatterData({
-            datasets: [{
-                label: 'Depth vs Magnitude',
-                data: scatterPoints,
-                backgroundColor: 'var(--color-warning)',
-                pointRadius: 6,
-            }]
-        });
-
-        setLoading(false);
-      })
-      .catch(err => {
-        console.warn('USGS earthquake feed unreachable, using calibrated fallback telemetry:', err);
-        const labels = ['08/01', '08/05', '08/10', '08/15', '08/20', '08/25'];
-        const magnitudes = [2.4, 3.1, 4.2, 5.0, 3.8, 4.6];
-        const depths = [12.4, 8.2, 15.6, 22.1, 9.4, 18.2];
-
-        setChartData({
-          labels,
-          datasets: [{
-            label: 'Magnitude (M)',
-            data: magnitudes,
-            borderColor: 'var(--color-primary)',
-            backgroundColor: 'rgba(0, 255, 170, 0.2)',
-            tension: 0.4,
-            borderWidth: 2,
-            fill: true,
-            pointBackgroundColor: 'var(--color-primary)',
-          }]
-        });
-
-        setBarData({
-          labels,
-          datasets: [{
-            label: 'Depth (km)',
-            data: depths,
-            backgroundColor: 'rgba(0, 170, 238, 0.7)',
-            borderColor: 'var(--color-secondary)',
-            borderWidth: 1,
-          }]
-        });
-
-        setDoughnutData({
-          labels: ['Minor', 'Light', 'Moderate', 'Strong'],
-          datasets: [{
-            data: [1, 2, 2, 1],
-            backgroundColor: ['var(--color-primary)', 'var(--color-secondary)', 'var(--color-warning)', 'var(--color-danger)'],
-            borderColor: 'var(--color-accent)',
-            borderWidth: 2,
-          }]
-        });
-
-        setScatterData({
-          datasets: [{
-            label: 'Depth vs Magnitude',
-            data: magnitudes.map((m, i) => ({ x: m, y: depths[i] })),
-            backgroundColor: 'var(--color-warning)',
-            pointRadius: 6,
-          }]
-        });
-
-        setLoading(false);
-      });
-
-    // 2. Initial backend handshake using Agent 5 getHealthStatus contract
-    getHealthStatus().then(data => {
-       setBackendData(data);
-    }).catch(() => console.log("Backend health query offline"));
-
-  }, []);
-
-  const baseOptions = {
+function axisOptions(xMin, xMax, yTitle, extra = {}) {
+  return {
     responsive: true,
     maintainAspectRatio: false,
+    animation: false,
+    interaction: { mode: 'nearest', intersect: false },
     plugins: {
       legend: { display: false },
-      tooltip: { backgroundColor: 'rgba(10, 14, 23, 0.9)', titleColor: '#fff', bodyColor: '#ccc', borderColor: 'var(--color-primary)', borderWidth: 1 }
+      tooltip: {
+        backgroundColor: '#fbf9f4', titleColor: INK, bodyColor: INK, borderColor: '#cfc7b6', borderWidth: 1,
+        callbacks: { title: (items) => fmtDay(items[0].parsed.x), ...extra.tooltip },
+      },
     },
     scales: {
-      x: { grid: { display: false }, ticks: { color: '#8b9bb4', font: { size: 10 } } },
-      y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8b9bb4', font: { size: 10 } } }
-    }
+      x: {
+        type: 'linear', min: xMin, max: xMax,
+        grid: { color: RULE }, border: { color: '#a39b8b' },
+        ticks: { color: '#5d574d', maxTicksLimit: 9, callback: (v) => fmtMonth(v), font: { family: 'IBM Plex Sans', size: 11 } },
+      },
+      y: {
+        title: { display: true, text: yTitle, color: '#5d574d', font: { family: 'IBM Plex Sans', size: 12 } },
+        grid: { color: RULE }, border: { color: '#a39b8b' },
+        ticks: { color: '#5d574d', font: { family: 'IBM Plex Mono', size: 11 } },
+        ...extra.y,
+      },
+    },
   };
+}
+
+function pearson(xs, ys) {
+  const n = xs.length;
+  if (n < 4) return null;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0; let sxx = 0; let syy = 0;
+  for (let i = 0; i < n; i += 1) {
+    sxy += (xs[i] - mx) * (ys[i] - my);
+    sxx += (xs[i] - mx) ** 2;
+    syy += (ys[i] - my) ** 2;
+  }
+  return sxx && syy ? sxy / Math.sqrt(sxx * syy) : null;
+}
+
+export default function Analytics() {
+  const [params, setParams] = useSearchParams();
+  const [events, setEvents] = useState([]);
+  const [series, setSeries] = useState(null);
+  const [gauge, setGauge] = useState(null);
+  const siteId = params.get('site') || events[0]?.id;
+  const site = events.find((e) => e.id === siteId);
+
+  useEffect(() => {
+    giosApi.get('/api/v1/events').then((r) => setEvents(r.data.events || [])).catch(() => setEvents([]));
+  }, []);
+
+  useEffect(() => {
+    if (!siteId) return;
+    setSeries(null);
+    setGauge(null);
+    giosApi.get(`/api/v1/events/${siteId}/timeseries`, { params: { months: 24 } })
+      .then((r) => setSeries(r.data)).catch(() => setSeries({ status: 'unavailable', reason: 'Request failed' }));
+    giosApi.get(`/api/v1/events/${siteId}/gauge`, { params: { days: 730 } })
+      .then((r) => setGauge(r.data)).catch(() => setGauge({ status: 'unavailable', reason: 'Request failed' }));
+  }, [siteId]);
+
+  const water = series?.index === 'mndwi' || series?.index === 'ndwi';
+  const xMax = Date.now();
+  const xMin = xMax - 730 * DAY;
+
+  const satPoints = useMemo(() => (series?.status === 'ok'
+    ? series.points.map((p) => ({ x: ts(p.date), y: water ? p.water_pct : p.mean, p })) : []), [series, water]);
+  const gaugePoints = useMemo(() => (gauge?.status === 'ok'
+    ? gauge.values.map((v) => ({ x: ts(v.date), y: v.discharge_cfs })) : []), [gauge]);
+
+  // Agreement: satellite value vs gauge discharge on the same day.
+  const agreement = useMemo(() => {
+    if (!satPoints.length || !gaugePoints.length) return null;
+    const byDay = new Map(gaugePoints.map((g) => [g.x, g.y]));
+    const pairs = satPoints.filter((s) => byDay.has(s.x)).map((s) => [s.y, byDay.get(s.x)]);
+    const r = pearson(pairs.map((p) => p[0]), pairs.map((p) => Math.log10(Math.max(p[1], 0.01))));
+    return { n: pairs.length, r };
+  }, [satPoints, gaugePoints]);
+
+  const yLabel = water ? 'Open water (% of box)' : `${(series?.index || '').toUpperCase()} (box mean)`;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, x: 20 }}
-      animate={{ opacity: 1, x: 0 }}
-      className="p-8 h-full flex flex-col gap-6 w-full overflow-y-auto z-10 relative"
-    >
-      <header className="glass-panel p-4 flex items-center justify-between shrink-0">
-        <div>
-          <h1 className="text-3xl font-serif font-bold text-white flex items-center gap-3">
-            <Radar className="text-warning animate-[spin_4s_linear_infinite]" size={32} />
-            Data <MetallicPaintText text="Analytics" glow='var(--color-warning)' />
-          </h1>
-          <p className="text-stone-400 mt-2 font-sans">
-            Comprehensive 30-Day Seismic Telemetry Models {backendData ? '• Processing Core Active' : ''}
-          </p>
-        </div>
-        <button className="glass-button px-4 py-2 text-[10px] uppercase tracking-widest font-mono text-primary">
-          <RefreshCw size={14} /> Recompute Indices
-        </button>
+    <div className="px-8 py-7 flex flex-col gap-6 max-w-6xl w-full">
+      <header>
+        <h1 className="font-serif text-3xl text-stone-50">Analysis</h1>
+        <p className="text-stone-400 mt-1">The satellite record over each site, set against the ground gauge on the same time axis.</p>
       </header>
 
-      {/* Time-Series Query Controls */}
-      <div className="glass-panel p-4 shrink-0 flex flex-wrap gap-4 items-end">
-        <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]">
-          <label className="text-[10px] text-gray-400 font-mono uppercase tracking-wider font-bold">Bounding Box / Location</label>
-          <input 
-            type="text" 
-            value={queryBbox} 
-            onChange={(e) => setQueryBbox(e.target.value)} 
-            placeholder="-121.10, 37.00, -121.05, 37.05" 
-            className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none" 
-          />
-        </div>
-        <div className="flex flex-col gap-1.5 w-36">
-          <label className="text-[10px] text-gray-400 font-mono uppercase tracking-wider font-bold">Start Date</label>
-          <input 
-            type="date" 
-            value={queryStartDate} 
-            onChange={(e) => setQueryStartDate(e.target.value)} 
-            className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none" 
-          />
-        </div>
-        <div className="flex flex-col gap-1.5 w-36">
-          <label className="text-[10px] text-gray-400 font-mono uppercase tracking-wider font-bold">End Date</label>
-          <input 
-            type="date" 
-            value={queryEndDate} 
-            onChange={(e) => setQueryEndDate(e.target.value)} 
-            className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none" 
-          />
-        </div>
-        <div className="flex flex-col gap-1.5 w-40">
-          <label className="text-[10px] text-gray-400 font-mono uppercase tracking-wider font-bold">Index</label>
-          <select 
-            value={queryIndex} 
-            onChange={(e) => setQueryIndex(e.target.value)} 
-            className="bg-accent/50 border border-gray-700/50 rounded px-3 py-1.5 text-white font-mono text-xs focus:border-primary outline-none"
+      <nav className="flex flex-wrap gap-2" aria-label="Site">
+        {events.map((e) => (
+          <button
+            key={e.id}
+            onClick={() => setParams({ site: e.id })}
+            className={`px-3 py-1.5 text-[14px] rounded-[3px] border ${e.id === siteId ? 'bg-[var(--ink)] text-[var(--paper)] border-[var(--ink)]' : 'border-stone-700 text-stone-200 hover:bg-stone-900'}`}
           >
-            {SPECTRAL_INDICES.filter(i => i.key !== 'rgb').map(idx => (
-              <option key={idx.key} value={idx.key}>{idx.name}</option>
-            ))}
-          </select>
-        </div>
-        <button 
-          onClick={handleQueryTrend} 
-          disabled={queryLoading} 
-          className="glass-button px-5 py-1.5 text-teal-300 font-bold uppercase tracking-wider text-[11px] font-mono flex items-center gap-1.5 disabled:opacity-50"
-        >
-          {queryLoading && <RefreshCw size={12} className="animate-spin" />}
-          {queryLoading ? 'Querying...' : 'Query Trend'}
-        </button>
-      </div>
+            {e.title}
+          </button>
+        ))}
+      </nav>
 
-      {loading ? (
-        <div className="flex-1 flex flex-col justify-center items-center gap-4">
-            <div className="w-16 h-16 border-4 border-warning/20 border-t-warning rounded-full animate-spin"></div>
-            <DecryptedText text="Processing Atmospheric Data..." className="text-xs tracking-widest text-warning" />
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pb-12 auto-rows-[42vh]">
-            
-            <TiltedCard>
-              <div className="glass-panel p-6 h-full flex flex-col">
-                <h2 className="text-primary font-serif border-b border-primary/20 pb-2 mb-4 flex items-center justify-between">
-                    Temporal Magnitude Trend
-                    <span className="text-[10px] text-stone-400 font-mono">Live Feed</span>
-                </h2>
-                <div className="flex-1 relative w-full"><Line data={chartData} options={baseOptions} /></div>
-              </div>
-            </TiltedCard>
-
-            <TiltedCard>
-              <div className="glass-panel p-6 h-full flex flex-col">
-                <h2 className="text-danger font-serif border-b border-danger/20 pb-2 mb-4 flex items-center justify-between">
-                    Severity Distribution
-                    <span className="text-[10px] text-stone-400 font-mono">Classification</span>
-                </h2>
-                <div className="flex-1 relative w-full flex justify-center"><Doughnut data={doughnutData} options={{...baseOptions, plugins: { ...baseOptions.plugins, legend: { display: true, position: 'right', labels: { color: '#8b9bb4', boxWidth: 10, font: { size: 10 } } } } }} /></div>
-              </div>
-            </TiltedCard>
-
-            <TiltedCard>
-              <div className="glass-panel p-6 h-full flex flex-col">
-                <h2 className="text-secondary font-serif border-b border-secondary/20 pb-2 mb-4 flex items-center justify-between">
-                    Hypocenter Depth Profiles
-                    <span className="text-[10px] text-stone-400 font-mono">Sub-Surface</span>
-                </h2>
-                <div className="flex-1 relative w-full"><Bar data={barData} options={baseOptions} /></div>
-              </div>
-            </TiltedCard>
-
-            <TiltedCard>
-              <div className="glass-panel p-6 h-full flex flex-col">
-                <h2 className="text-warning font-serif border-b border-warning/20 pb-2 mb-4 flex items-center justify-between">
-                    Depth / Magnitude Correlation
-                    <span className="text-[10px] text-stone-400 font-mono">Statistical</span>
-                </h2>
-                <div className="flex-1 relative w-full"><Scatter data={scatterData} options={{...baseOptions, scales: { ...baseOptions.scales, x: { display: true, grid: { display: false } } } }} /></div>
-              </div>
-            </TiltedCard>
-
-        </div>
+      {site && (
+        <section className="bg-stone-900 border border-stone-800 rounded-[4px]">
+          <header className="px-5 pt-4 pb-3 border-b border-stone-800">
+            <h2 className="font-serif text-lg text-stone-50">Satellite: {water ? 'open water' : (series?.index || site.metric || '').toUpperCase()} over the site</h2>
+            <p className="text-[12.5px] text-stone-400 mt-0.5">{series?.method || 'Copernicus Sentinel-2 L2A via Microsoft Planetary Computer.'}</p>
+          </header>
+          <div className="h-[260px] px-4 py-3">
+            {series === null && <p className="text-stone-500 p-2">Measuring up to 24 monthly scenes… this takes a few seconds the first time.</p>}
+            {series?.status === 'unavailable' && <p className="text-stone-400 p-2">Not available: {series.reason}.</p>}
+            {series?.status === 'ok' && (
+              <Line
+                data={{ datasets: [{ data: satPoints, borderColor: SAT, backgroundColor: SAT, pointRadius: 3.5, pointHoverRadius: 5, borderWidth: 1.5, tension: 0 }] }}
+                options={axisOptions(xMin, xMax, yLabel, {
+                  tooltip: {
+                    label: (it) => {
+                      const p = it.raw.p;
+                      return water ? `${p.water_pct}% open water · ${p.cloud_cover}% cloud` : `${p.mean.toFixed(3)} (sd ${p.std.toFixed(3)}) · ${p.cloud_cover}% cloud`;
+                    },
+                  },
+                })}
+              />
+            )}
+          </div>
+        </section>
       )}
-    </motion.div>
+
+      {site && (
+        <section className="bg-stone-900 border border-stone-800 rounded-[4px]">
+          <header className="px-5 pt-4 pb-3 border-b border-stone-800">
+            <h2 className="font-serif text-lg text-stone-50">Ground: {gauge?.site_name || site.station_name || 'stream gauge'}</h2>
+            <p className="text-[12.5px] text-stone-400 mt-0.5">
+              {gauge?.source || 'USGS daily mean discharge.'}
+              {site.station_name && /not at|km from/i.test(site.station_name) && (
+                <span className="text-amber-200"> This gauge is not at the site ({site.station_name.replace(/^USGS #\d+ /, '')}), so it describes the wider catchment.</span>
+              )}
+            </p>
+          </header>
+          <div className="h-[220px] px-4 py-3">
+            {gauge === null && <p className="text-stone-500 p-2">Loading gauge record…</p>}
+            {gauge?.status === 'unavailable' && <p className="text-stone-400 p-2">Not available: {gauge.reason}.</p>}
+            {gauge?.status === 'ok' && (
+              <Line
+                data={{ datasets: [{ data: gaugePoints, borderColor: GND, backgroundColor: 'rgba(168,80,30,0.08)', fill: true, pointRadius: 0, borderWidth: 1.2, tension: 0 }] }}
+                options={axisOptions(xMin, xMax, 'Discharge (ft³/s, log)', {
+                  y: { type: 'logarithmic', ticks: { color: '#5d574d', font: { family: 'IBM Plex Mono', size: 11 }, callback: (v) => (Number.isInteger(Math.log10(v)) ? v.toLocaleString() : '') } },
+                  tooltip: { label: (it) => `${it.parsed.y.toLocaleString()} ft³/s` },
+                })}
+              />
+            )}
+          </div>
+        </section>
+      )}
+
+      {site && agreement && (
+        <section className="bg-stone-900 border border-stone-800 rounded-[4px] px-5 py-4">
+          <h2 className="font-serif text-lg text-stone-50">Do they agree?</h2>
+          {agreement.r === null ? (
+            <p className="text-[14px] text-stone-300 mt-1">Only {agreement.n} days have both a satellite scene and a gauge reading, too few to compare.</p>
+          ) : (
+            <p className="text-[14px] text-stone-300 mt-1 leading-relaxed">
+              On the <strong className="text-stone-50">{agreement.n}</strong> days with both a clear scene and a gauge reading, the correlation between
+              the satellite {water ? 'open-water share' : series.index.toUpperCase()} and log discharge is{' '}
+              <strong className="font-mono text-stone-50">r = {agreement.r.toFixed(2)}</strong>
+              {' '}({Math.abs(agreement.r) >= 0.7 ? 'strong' : Math.abs(agreement.r) >= 0.4 ? 'moderate' : 'weak'}).
+              {' '}A weak value does not mean either record is wrong: the box sees an area, the gauge sees one point, and they respond to different processes.
+            </p>
+          )}
+        </section>
+      )}
+    </div>
   );
 }

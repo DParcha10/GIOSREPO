@@ -46,6 +46,27 @@ def get_event_assessment(event_id: str):
         raise HTTPException(status_code=404, detail="Hazard event not found")
     return assess(evt)
 
+@router.get("/{event_id}/timeseries")
+def get_event_timeseries(event_id: str, months: int = 24):
+    """Monthly Sentinel-2 index values over the site's assessment box."""
+    from app.services.site_timeseries import index_timeseries
+    evt = event_service.get_event(event_id)
+    if not evt:
+        raise HTTPException(status_code=404, detail="Hazard event not found")
+    return index_timeseries(evt, max(3, min(months, 36)))
+
+
+@router.get("/{event_id}/gauge")
+def get_event_gauge(event_id: str, days: int = 730):
+    """Daily discharge from the site's USGS stream gauge."""
+    from app.services.site_timeseries import gauge_daily
+    evt = event_service.get_event(event_id)
+    if not evt:
+        raise HTTPException(status_code=404, detail="Hazard event not found")
+    if not evt.get("usgs_station"):
+        return {"status": "unavailable", "reason": "No gauge linked to this site"}
+    return gauge_daily(evt["usgs_station"], max(30, min(days, 1095)))
+
 @router.get("/{event_id}/geojson", response_model=GeoJSONFeature)
 def get_hazard_event_geojson(event_id: str):
     """Returns a specific hazard event formatted as a GeoJSON Feature."""
