@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+*.local
+gios-react
+frontend
+**/__pycache__
+.pytest_cache
+*.db
+data/uploads/*
+results.xml

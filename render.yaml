@@ -1,0 +1,17 @@
+# Render blueprint for the Tiepoint API (free plan; sleeps when idle).
+# In Render: New > Blueprint, pick this repo and branch. You will be asked for
+# GIOS_ADMIN_PASSWORD (12+ characters). Choose it yourself.
+services:
+  - type: web
+    name: tiepoint-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GIOS_ADMIN_PASSWORD
+        sync: false
+      - key: GIOS_COOKIE_SECURE
+        value: "true"

@@ -1,6 +1,8 @@
 {
   "framework": "vite",
   "rewrites": [
+    { "source": "/api/:path*", "destination": "https://tiepoint-api.onrender.com/api/:path*" },
+    { "source": "/health", "destination": "https://tiepoint-api.onrender.com/health" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

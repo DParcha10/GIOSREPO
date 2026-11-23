@@ -2853,7 +2853,7 @@ export const buildAnimationKeyframes = (scenes, z, x, y, options = {}) => {
     if (cm) params.set('colormap', cm);
     if (rescale) params.set('rescale', rescale);
 
-    const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+    const base = (import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : ''));
     const tileUrl = `${base}/api/v1/tiles/${coll}/${scId}/${z}/${x}/${y}.png?${params.toString()}`;
 
     return {
@@ -2896,7 +2896,7 @@ export const buildCompositeTileUrl = (compositeId, z, x, y, options = {}) => {
   if (options.colormap) params.set('colormap', options.colormap);
   if (options.rescale) params.set('rescale', options.rescale);
 
-  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const base = (import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : ''));
   const qs = params.toString() ? `?${params.toString()}` : '';
   return `${base}/api/v1/tiles/composite/${compositeId}/${z}/${x}/${y}.png${qs}`;
 };
@@ -3253,7 +3253,7 @@ export const buildVrtTileUrl = (vrtId, z, x, y, options = {}) => {
   if (options.colormap) params.set('colormap', options.colormap);
   if (options.rescale) params.set('rescale', options.rescale);
 
-  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const base = (import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : ''));
   const qs = params.toString() ? `?${params.toString()}` : '';
   return `${base}/api/v1/tiles/vrt/${vrtId}/${z}/${x}/${y}.png${qs}`;
 };
@@ -3392,7 +3392,7 @@ export const buildDifferenceTileUrl = (collection, preSceneId, postSceneId, metr
   if (options.rescale) params.set('rescale', options.rescale);
   if (options.colormap) params.set('colormap', options.colormap);
 
-  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const base = (import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : ''));
   const qs = params.toString() ? `?${params.toString()}` : '';
   const m = String(metric || 'ndmi_diff').toLowerCase();
   return `${base}/api/v1/tiles/difference/${collection}/${preSceneId}/${postSceneId}/${m}/${z}/${x}/${y}.png${qs}`;

@@ -136,7 +136,10 @@ def _recent_failures(key: str) -> list:
 def login_for_access_token(request: Request, response: Response, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     import time as _time
     key = _login_key(request, form_data.username)
-    if len(_recent_failures(key)) >= LOGIN_MAX_FAILURES:
+    # Second counter per username alone, so changing IP (or a spoofed
+    # X-Forwarded-For behind a proxy) can't get unlimited guesses.
+    user_key = f"*|{(form_data.username or '').lower()}"
+    if len(_recent_failures(key)) >= LOGIN_MAX_FAILURES or len(_recent_failures(user_key)) >= LOGIN_MAX_FAILURES * 4:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many failed sign-in attempts. Try again in 15 minutes.",
@@ -144,12 +147,14 @@ def login_for_access_token(request: Request, response: Response, form_data: OAut
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or is_published_password(form_data.password) or not verify_password(form_data.password, user.hashed_password):
         _login_failures.setdefault(key, []).append(_time.time())
+        _login_failures.setdefault(user_key, []).append(_time.time())
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     _login_failures.pop(key, None)
+    _login_failures.pop(user_key, None)
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username, "role": user.role}, expires_delta=access_token_expires

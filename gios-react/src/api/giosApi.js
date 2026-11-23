@@ -4582,7 +4582,7 @@ const demoAdapter = async (config) => {
 };
 
 export const giosApi = axios.create({
-  baseURL: import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000',
+  baseURL: (import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : '')),
   timeout: 60000,
   headers: {
     'Content-Type': 'application/json',
@@ -4646,7 +4646,7 @@ export const getTileUrl = (collection, itemId, z, x, y, options = {}) => {
   if (options.pre) params.set('pre', options.pre);
   if (options.post) params.set('post', options.post);
   const queryStr = params.toString() ? `?${params.toString()}` : '';
-  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const base = (import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : ''));
   return `${base}/api/v1/tiles/${col}/${itemId}/${z}/${x}/${y}.png${queryStr}`;
 };
 
@@ -4682,7 +4682,7 @@ export const getWildfireDnbrTileUrl = (z, x, y, preDate, postDate, options = {})
   if (options.colormap) params.set('colormap', options.colormap || 'turbo');
   if (options.rescale) params.set('rescale', options.rescale || '-0.2,0.8');
   const queryStr = params.toString() ? `?${params.toString()}` : '';
-  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const base = (import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : ''));
   return `${base}/api/v1/tiles/wildfire/dnbr/${z}/${x}/${y}.png${queryStr}`;
 };
 
@@ -5080,7 +5080,7 @@ export const triggerMockAlert = async () => {
  * @returns {string} Fully qualified stream URL
  */
 export const getAlertStreamUrl = () => {
-  const base = import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const base = (import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : ''));
   return `${base}/api/v1/agent/stream-alerts`;
 };
 

@@ -4394,7 +4394,7 @@ export default function MapExplorer() {
   const activeCollection = selectedEvent?.sensor?.toLowerCase().includes('landsat') ? 'landsat-c2-l2' : 'sentinel-2-l2a';
   const activeItemId = selectedEvent?.scene_id || 'S2A_MSIL2A_20260820_T10SFG';
   const validatedColormap = validateColormap(activeColormap, 'spectral');
-  const apiBase = (import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:8000') + '/api/v1';
+  const apiBase = ((import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : ''))) + '/api/v1';
 
   const isWildfireIndex = activeSpectralIndex === 'dnbr' || activeSpectralIndex === 'rdnbr' || selectedEvent?.category === 'wildfire';
   const dynamicSpectralTileUrl = isWildfireIndex && selectedEvent?.start_date && selectedEvent?.end_date
