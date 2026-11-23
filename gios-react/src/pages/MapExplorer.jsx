@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import TiepointMark from '../components/TiepointMark';
 import { fmtLatLng } from '../utils/coords';
 import MapLegend from '../components/MapLegend';
+import Map3D from '../components/Map3D';
 import ToolBrowser from '../components/ToolBrowser';
 import { useSiteAssessments, AssessmentBadge, AssessmentDetail } from '../components/SiteAssessment';
 import NorthArrow from '../components/NorthArrow';
@@ -582,6 +583,7 @@ export default function MapExplorer() {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'seepage' | 'flood' | 'hab'
   const [baseLayer, setBaseLayer] = useState('dark');
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [view3d, setView3d] = useState(false);
   const toolWallRef = useRef(null);
   useEffect(() => {
     const onKey = (e) => {
@@ -4843,6 +4845,13 @@ export default function MapExplorer() {
                 Cancel
               </button>
             </div>
+          )}
+          {view3d && (
+            <Map3D
+              site={selectedEvent}
+              initialLayer={layerMode === 'spectral' ? activeSpectralIndex : layerMode === 'terrain' ? activeTerrainMetric : layerMode === 'sar' ? activeSarPolarization : 'none'}
+              onClose={() => setView3d(false)}
+            />
           )}
           <MapContainer 
             center={selectedEvent ? [selectedEvent.lat, selectedEvent.lng] : [37.0582, -121.0744]} 
@@ -11857,6 +11866,13 @@ export default function MapExplorer() {
             {/* Top Row: Base Layer & Diagnostic Modes */}
             <div className="flex flex-wrap gap-2 justify-end">
               
+              <button
+                onClick={() => setView3d(true)}
+                title="View the map in 3D on real terrain"
+                className="px-3 py-1.5 text-[13px] font-medium bg-[var(--ink)] text-[var(--paper)] rounded-[3px] hover:opacity-90"
+              >
+                3D
+              </button>
               {/* Base Layer Switcher */}
               <div className="flex glass-panel !rounded-xl overflow-hidden p-1 gap-1">
                 <button 

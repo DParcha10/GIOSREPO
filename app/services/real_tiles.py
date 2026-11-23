@@ -193,6 +193,11 @@ LAYERS = {
         "title": "Hillshade", "unit": "sun azimuth 315°, altitude 45°",
         "low": "Shadow", "high": "Lit", "colormap": "greys", "range": [0, 255],
     },
+    ("terrain", "terrarium"): {
+        # Elevation packed into RGB (Mapzen Terrarium) for the 3D map's terrain mesh.
+        "collection": "cop-dem-glo-30", "params": {"assets": "data", "algorithm": "terrarium"},
+        "title": "Elevation (3D terrain)", "unit": "m", "low": "", "high": "", "colormap": "none",
+    },
     ("terrain", "slope"): {
         "collection": "cop-dem-glo-30",
         "params": {"assets": "data", "algorithm": "slope", "buffer": "3", "rescale": "0,45", "colormap_name": "ylorrd"},
