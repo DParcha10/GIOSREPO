@@ -2,10 +2,11 @@
 .env
 .env.*
 *.local
-gios-react
 frontend
 **/__pycache__
 .pytest_cache
 *.db
 data/uploads/*
 results.xml
+gios-react/node_modules
+gios-react/dist

@@ -1,9 +1,9 @@
-# Render blueprint for the Tiepoint API (free plan; sleeps when idle).
+# Render blueprint: one service runs the Tiepoint API and serves the web app (free plan; sleeps when idle).
 # In Render: New > Blueprint, pick this repo and branch. You will be asked for
 # GIOS_ADMIN_PASSWORD (12+ characters). Choose it yourself.
 services:
   - type: web
-    name: tiepoint-api
+    name: tiepoint
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
