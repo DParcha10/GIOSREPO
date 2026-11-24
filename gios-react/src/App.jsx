@@ -1,4 +1,5 @@
 import React from 'react';
+import { SHOWCASE } from './showcase';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import useAuthStore from './store/authStore';
 import Login from './pages/Login';
@@ -15,7 +16,7 @@ import Layout from './components/Layout';
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated } = useAuthStore();
-  if (!isAuthenticated) {
+  if (!SHOWCASE && !isAuthenticated) { // the showcase is public and read-only
     return <Navigate to="/login" replace />;
   }
   return children;
@@ -23,9 +24,9 @@ const ProtectedRoute = ({ children }) => {
 
 function App() {
   return (
-    <Router>
+    <Router basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={SHOWCASE ? <Navigate to="/map" replace /> : <Login />} />
         
         {/* Geospatial Map Explorer Console */}
         {/* Landing Page */}

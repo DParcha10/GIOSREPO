@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { SHOWCASE } from '../showcase';
 import { 
   X, AlertTriangle, Bell, Radio, ShieldAlert, 
   MapPin, CheckCircle, Send, ArrowRight,
@@ -135,6 +136,7 @@ export default function HazardAlertDrawer({
 
   // Setup SSE stream or simulation listener
   useEffect(() => {
+    if (SHOWCASE) return undefined; // no server stream in the online showcase
     const sseUrl = getHazardAlertStreamUrl();
     try {
       const es = new EventSource(sseUrl, { withCredentials: true });

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import giosApi from '../api/giosApi';
 import { useSiteAssessments, AssessmentBadge } from '../components/SiteAssessment';
+import { SHOWCASE, snapshot } from '../showcase';
 
 const fmtDate = (iso) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—');
 const fmtTime = (ms) => new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -73,7 +74,7 @@ export default function Dashboard() {
       <header>
         <h1 className="font-serif text-3xl text-stone-50">Overview</h1>
         <p className="text-stone-400 mt-1">
-          {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}. Everything on this page comes from live public data.
+          {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}. {SHOWCASE ? `Gauges and earthquakes load live. Site comparisons are a snapshot of the server's output from ${snapshot.generated}.` : 'Everything on this page comes from live public data.'}
         </p>
       </header>
 
@@ -153,7 +154,7 @@ export default function Dashboard() {
 
         <Section title="Data sources" note="What this page reads, and whether it answered just now.">
           <ul>
-            <SourceRow name="Copernicus Sentinel-2 (Planetary Computer)" state={s2State} detail="Surface reflectance for site comparisons and map layers" />
+            <SourceRow name="Copernicus Sentinel-2 (Planetary Computer)" state={s2State} detail={SHOWCASE ? `Map layers load live; site comparisons are a snapshot from ${snapshot.generated}` : 'Surface reflectance for site comparisons and map layers'} />
             <SourceRow name="USGS Water Data (NWIS)" state={sources.usgsWater} detail="Daily stream discharge. USGS retires this service in Feb 2027." />
             <SourceRow name="USGS Earthquake feed" state={sources.usgsQuake} detail="GeoJSON summary feed, refreshed every minute by USGS" />
           </ul>

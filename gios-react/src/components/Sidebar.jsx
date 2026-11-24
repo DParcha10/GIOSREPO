@@ -3,14 +3,15 @@ import { NavLink } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import { getHealthStatus } from '../api/giosApi';
 import TiepointMark from './TiepointMark';
+import { SHOWCASE, snapshot } from '../showcase';
 
 const NAV = [
   { name: 'Overview', path: '/dashboard' },
   { name: 'Map', path: '/map' },
   { name: 'Analysis', path: '/analytics' },
-  { name: 'Assistant', path: '/ai-agent' },
+  { name: 'Assistant', path: '/ai-agent', server: true },
   { name: 'Methods', path: '/methodology' },
-  { name: 'Settings', path: '/settings' },
+  { name: 'Settings', path: '/settings', server: true },
 ];
 
 function ServerLine() {
@@ -47,7 +48,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 px-3 flex flex-col gap-0.5">
-        {NAV.map((item) => (
+        {NAV.filter((item) => !(SHOWCASE && item.server)).map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
@@ -64,6 +65,13 @@ export default function Sidebar() {
         ))}
       </nav>
 
+      {SHOWCASE ? (
+        <div className="px-5 py-5 border-t border-stone-800 text-[12px] leading-snug text-stone-500">
+          <p className="text-stone-300">Online showcase</p>
+          <p className="mt-1">Imagery and gauges load live. Site statistics are a snapshot from {snapshot.generated}.</p>
+          <a href="https://github.com/DParcha10/GIOSREPO" className="inline-block mt-2 underline underline-offset-4 decoration-stone-600 text-stone-300 hover:text-stone-50">Source on GitHub</a>
+        </div>
+      ) : (
       <div className="px-5 py-5 border-t border-stone-800 flex flex-col gap-3">
         <ServerLine />
         {username && (
@@ -81,6 +89,7 @@ export default function Sidebar() {
           Sign out
         </button>
       </div>
+      )}
     </aside>
   );
 }

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { SHOWCASE, showcaseAdapter } from '../showcase';
 import {
   mockEvents,
   mockInfrastructure,
@@ -4587,7 +4588,8 @@ export const giosApi = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  ...(isDemo && { adapter: demoAdapter })
+  ...(isDemo && { adapter: demoAdapter }),
+  ...(SHOWCASE && { adapter: showcaseAdapter })
 });
 
 giosApi.interceptors.request.use((config) => {

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { SHOWCASE } from '../showcase';
 import { postAgentChat, getAlertStreamUrl } from '../api/giosApi';
 
 const STORAGE_KEY_MESSAGES = 'gios_jarvis_messages';
@@ -81,7 +82,7 @@ export const useJarvisStore = create((set, get) => ({
 
   // Initialize Server-Sent Events listener for Proactive Alerts
   initSSE: () => {
-    if (get().sseConnected) return; // already connected
+    if (get().sseConnected || SHOWCASE) return; // already connected, or no server
     const sse = new EventSource(getAlertStreamUrl(), { withCredentials: true });
     
     sse.onmessage = (event) => {

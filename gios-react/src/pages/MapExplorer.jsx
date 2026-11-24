@@ -3,6 +3,7 @@ import TiepointMark from '../components/TiepointMark';
 import { fmtLatLng } from '../utils/coords';
 import MapLegend from '../components/MapLegend';
 import Map3D from '../components/Map3D';
+import { SHOWCASE, tileUrl as showcaseTileUrl } from '../showcase';
 import ToolBrowser from '../components/ToolBrowser';
 import { useSiteAssessments, AssessmentBadge, AssessmentDetail } from '../components/SiteAssessment';
 import NorthArrow from '../components/NorthArrow';
@@ -4428,6 +4429,21 @@ export default function MapExplorer() {
   const validatedColormap = validateColormap(activeColormap, 'spectral');
   const apiBase = ((import.meta?.env?.VITE_API_BASE_URL ?? (import.meta?.env?.DEV ? 'http://localhost:8000' : ''))) + '/api/v1';
 
+  // Online showcase: tiles come straight from Planetary Computer (no server).
+  const [scTiles, setScTiles] = useState({});
+  useEffect(() => {
+    if (!SHOWCASE || !selectedEvent) return undefined;
+    let alive = true;
+    Promise.all([
+      showcaseTileUrl('spectral', activeSpectralIndex, selectedEvent),
+      showcaseTileUrl('terrain', activeTerrainMetric, selectedEvent, { range: terrainRange }),
+      showcaseTileUrl('terrain', 'hillshade', selectedEvent),
+      showcaseTileUrl('sar', activeSarPolarization, selectedEvent),
+    ]).then(([spectral, terrain, shade, sar]) => { if (alive) setScTiles({ spectral, terrain, shade, sar }); });
+    return () => { alive = false; };
+  }, [activeSpectralIndex, activeTerrainMetric, activeSarPolarization, selectedEvent, terrainRange]);
+  const BLANK_TILE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
   const isWildfireIndex = activeSpectralIndex === 'dnbr' || activeSpectralIndex === 'rdnbr' || selectedEvent?.category === 'wildfire';
   const dynamicSpectralTileUrl = isWildfireIndex && selectedEvent?.start_date && selectedEvent?.end_date
     ? buildWildfireTileUrl('{z}', '{x}', '{y}', selectedEvent.start_date, selectedEvent.end_date, {
@@ -4473,10 +4489,12 @@ export default function MapExplorer() {
   // T-45 & T-49: Dynamic Terrain DEM & Sentinel-1 SAR Tile URLs
   // v=: bump when tile content changes so browsers drop old cached tiles.
   const TILE_VERSION = 'm3';
-  const dynamicTerrainTileUrl = buildTerrainTileUrl(activeTerrainMetric, '{z}', '{x}', '{y}')
+  const serverTerrainTileUrl = buildTerrainTileUrl(activeTerrainMetric, '{z}', '{x}', '{y}')
     + `?v=${TILE_VERSION}`
     + (activeTerrainMetric === 'elevation' && terrainRange ? `&rescale=${terrainRange[0]},${terrainRange[1]}` : '');
-  const dynamicSarTileUrl = buildSarTileUrl(activeSarPolarization, '{z}', '{x}', '{y}') + `?v=${TILE_VERSION}`;
+  const serverSarTileUrl = buildSarTileUrl(activeSarPolarization, '{z}', '{x}', '{y}') + `?v=${TILE_VERSION}`;
+  const dynamicTerrainTileUrl = SHOWCASE ? (scTiles.terrain || BLANK_TILE) : serverTerrainTileUrl;
+  const dynamicSarTileUrl = SHOWCASE ? (scTiles.sar || BLANK_TILE) : serverSarTileUrl;
 
   // Multi-Scale Spatial LOD Tier metadata calculation
   const currentLodTierKey = getSpatialLodTier(currentZoom);
@@ -4682,34 +4700,43 @@ export default function MapExplorer() {
           >
             <AlertTriangle className="w-3.5 h-3.5" /> Sites
           </button>
+          {!SHOWCASE && (
           <button 
             className={`h-full px-4 flex items-center gap-2 text-xs uppercase tracking-wider font-semibold border-b-2 transition-all ${activeTab === 'studio' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`} 
             onClick={() => { setActiveTab('studio'); if (!studioResult) handleRunSpectralAnalysis(); }}
           >
             <Settings className="w-3.5 h-3.5" /> Orthomosaic Studio
           </button>
+          )}
+          {!SHOWCASE && (
           <button 
             className={`h-full px-4 flex items-center gap-2 text-xs uppercase tracking-wider font-semibold border-b-2 transition-all ${activeTab === 'drone' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`} 
             onClick={() => setActiveTab('drone')}
           >
             <Radio className="w-3.5 h-3.5 text-purple-400" /> Drone
           </button>
+          )}
+          {!SHOWCASE && (
           <button 
             className={`h-full px-4 flex items-center gap-2 text-xs uppercase tracking-wider font-semibold border-b-2 transition-all ${activeTab === 'catalog' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`} 
             onClick={() => setActiveTab('catalog')}
           >
             <Database className="w-3.5 h-3.5" /> Catalog
           </button>
+          )}
+          {!SHOWCASE && (
           <button 
             className={`h-full px-4 flex items-center gap-2 text-xs uppercase tracking-wider font-semibold border-b-2 transition-all ${activeTab === 'acquisition' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`} 
             onClick={() => setActiveTab('acquisition')}
           >
             <Search className="w-3.5 h-3.5" /> Acquisition
           </button>
+          )}
         </nav>
 
         {/* Global Page Switchers & Controls */}
         <div className="flex items-center gap-3">
+          {!SHOWCASE && (
           <button 
             onClick={handleExportDossier}
             disabled={exporting}
@@ -4718,6 +4745,7 @@ export default function MapExplorer() {
             {exporting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
             <span>{exporting ? 'Generating...' : 'Export Briefing'}</span>
           </button>
+          )}
         </div>
       </header>
 
@@ -4866,8 +4894,8 @@ export default function MapExplorer() {
             {/* 2. T-09: Live Dynamic COG Spectral Tile Layer */}
             {layerMode === 'spectral' && !curtainActive && (
               <TileLayer 
-                key={`spectral-live-${activeSpectralIndex}-${activeColormap}-${rescaleMin}-${rescaleMax}`}
-                url={`${dynamicSpectralTileUrl}${dynamicSpectralTileUrl.includes('?') ? '&' : '?'}v=${TILE_VERSION}`}
+                key={`spectral-live-${activeSpectralIndex}-${activeColormap}-${rescaleMin}-${rescaleMax}-${scTiles.spectral ? 'ready' : 'wait'}`}
+                url={SHOWCASE ? (scTiles.spectral || BLANK_TILE) : `${dynamicSpectralTileUrl}${dynamicSpectralTileUrl.includes('?') ? '&' : '?'}v=${TILE_VERSION}`}
                 opacity={layerOpacity}
                 maxNativeZoom={18}
                 maxZoom={22}
@@ -4882,7 +4910,7 @@ export default function MapExplorer() {
             {/* 2b. T-45 & T-49: Digital Terrain DEM & Morphology Tile Layer */}
             {layerMode === 'terrain' && !curtainActive && (
               <TileLayer 
-                key={`terrain-live-${activeTerrainMetric}-${terrainRange ? terrainRange.join("_") : "auto"}`}
+                key={`terrain-live-${activeTerrainMetric}-${terrainRange ? terrainRange.join("_") : "auto"}-${scTiles.terrain ? "ready" : "wait"}`}
                 url={dynamicTerrainTileUrl}
                 opacity={layerOpacity}
                 maxNativeZoom={18}
@@ -4895,10 +4923,14 @@ export default function MapExplorer() {
               />
             )}
 
+            {SHOWCASE && layerMode === 'terrain' && activeTerrainMetric === 'elevation' && scTiles.shade && !curtainActive && (
+              <TileLayer key={`shade-${scTiles.shade}`} url={scTiles.shade} className="tp-multiply" opacity={0.75} maxNativeZoom={18} maxZoom={22} />
+            )}
+
             {/* 2c. T-45 & T-49: Sentinel-1 SAR Radar Backscatter Tile Layer */}
             {layerMode === 'sar' && !curtainActive && (
               <TileLayer 
-                key={`sar-live-${activeSarPolarization}`}
+                key={`sar-live-${activeSarPolarization}-${scTiles.sar ? 'ready' : 'wait'}`}
                 url={dynamicSarTileUrl}
                 opacity={layerOpacity}
                 maxNativeZoom={18}
@@ -11872,12 +11904,14 @@ export default function MapExplorer() {
                 >
                   <Flame className="w-3 h-3"/> Spectral · {activeSpectralIndex.toUpperCase()}
                 </button>
+                {!SHOWCASE && (
                 <button 
                   onClick={() => { setLayerMode('drone'); setCurtainActive(false); }}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${layerMode === 'drone' ? 'bg-purple-500/20 text-purple-400' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                 >
                   <Radio className="w-3 h-3"/> Drone
                 </button>
+                )}
                 <button 
                   onClick={() => { setLayerMode('terrain'); setCurtainActive(false); }}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${layerMode === 'terrain' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
@@ -11897,7 +11931,7 @@ export default function MapExplorer() {
               {/* Sub-Pill for Terrain Metric Selection */}
               {layerMode === 'terrain' && (
                 <div className="flex glass-panel !rounded-lg p-0.5 gap-1 bg-black/70 border border-emerald-500/30 text-[9px] font-mono">
-                  {Object.values(TERRAIN_METRICS).map(metric => (
+                  {Object.values(TERRAIN_METRICS).filter((m) => m !== 'aspect').map(metric => (
                     <button
                       key={metric}
                       onClick={() => setActiveTerrainMetric(metric)}
@@ -11927,6 +11961,7 @@ export default function MapExplorer() {
             </div>
 
             {/* Second Row: Professional Remote Sensing Diagnostic Tools (T-11, T-12, T-13b, T-14, T-15b, T-45, T-49) */}
+            {!SHOWCASE && (
             <div className="self-end flex gap-2">
             <label className="flex items-center gap-2 px-3 py-1.5 text-sm bg-stone-900 border border-stone-700 rounded-[3px] text-stone-200 cursor-pointer select-none">
               <input type="checkbox" checked={showSimOverlays} onChange={(e) => setShowSimOverlays(e.target.checked)} className="accent-[var(--primary)]" />
@@ -11936,6 +11971,7 @@ export default function MapExplorer() {
               Tools <kbd className="ml-1.5 text-[10px] font-mono text-stone-500 border border-stone-700 rounded px-1">/</kbd>
             </button>
             </div>
+            )}
             {/* The original tool buttons stay mounted (hidden) so every tool keeps its
                 own handler; ToolBrowser lists, groups and searches them. */}
             <div ref={toolWallRef} aria-hidden="true" className="hidden">
@@ -13067,6 +13103,7 @@ export default function MapExplorer() {
           )}
 
           {/* Floating Assistant Interactive Command Bar on Map */}
+          {!SHOWCASE && (
           <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-[900] w-full max-w-lg px-4 pointer-events-auto">
             {jarvisMessages.length > 1 && jarvisMessages[jarvisMessages.length - 1].role === 'assistant' && (
               <div className="mb-2 p-3 glass-panel text-xs text-gray-200 flex items-start gap-2.5 animate-in fade-in slide-in-from-bottom-2">
@@ -13101,6 +13138,7 @@ export default function MapExplorer() {
               </button>
             </form>
           </div>
+          )}
 
           {/* Orthomosaic Studio Sub-Modal (T-14 Integrated) */}
           {activeTab === 'studio' && (
@@ -24059,6 +24097,7 @@ export default function MapExplorer() {
           </div>
         </main>
 
+        {!SHOWCASE && (<>
         {/* Analytics Handle Panel */}
         <div 
           onClick={() => setDrawerOpen(!drawerOpen)}
@@ -24075,6 +24114,7 @@ export default function MapExplorer() {
             </div>
           </div>
         </div>
+        </>)}
 
         {/* Bottom Bar handles (over map and sidebar) */}
         <div className="absolute bottom-0 left-0 right-0 h-9 bg-stone-900 border-t border-stone-800 flex items-center justify-between px-4 z-[1000] text-[12px] text-stone-400">

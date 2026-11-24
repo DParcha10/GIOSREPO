@@ -3,6 +3,7 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import giosApi from '../api/giosApi';
 import MapLegend from './MapLegend';
+import { SHOWCASE, tileUrl as showcaseTileUrl } from '../showcase';
 
 const V = 'm3';
 
@@ -43,6 +44,12 @@ export default function Map3D({ site, initialLayer = 'none', onClose }) {
   const [exaggeration, setExaggeration] = useState(1.5);
   const [opacity, setOpacity] = useState(0.8);
   const [demRange, setDemRange] = useState(null);
+  const [demTiles, setDemTiles] = useState(SHOWCASE ? null : `${window.location.origin}/api/v1/tiles/terrain/terrarium/{z}/{x}/{y}.png?v=${V}`);
+  const [overlayTiles, setOverlayTiles] = useState(null);
+
+  useEffect(() => {
+    if (SHOWCASE) showcaseTileUrl('terrain', 'terrarium').then(setDemTiles);
+  }, []);
   const layer = LAYERS.find((l) => l.id === layerId);
 
   // Elevation colour stretch for this site, so 3D matches the 2D legend.
@@ -53,6 +60,7 @@ export default function Map3D({ site, initialLayer = 'none', onClose }) {
   }, [site]);
 
   useEffect(() => {
+    if (!demTiles) return undefined;
     const token = (() => { try { return localStorage.getItem('gios_token'); } catch { return null; } })();
     const origin = window.location.origin;
     const m = new maplibregl.Map({
@@ -76,12 +84,12 @@ export default function Map3D({ site, initialLayer = 'none', onClose }) {
           },
           dem: {
             type: 'raster-dem', encoding: 'terrarium', tileSize: 256, minzoom: 8, maxzoom: 13,
-            tiles: [`${origin}/api/v1/tiles/terrain/terrarium/{z}/{x}/{y}.png?v=${V}`],
+            tiles: [demTiles],
             attribution: 'Copernicus DEM © DLR, Airbus (EU/ESA)',
           },
           demShade: {
             type: 'raster-dem', encoding: 'terrarium', tileSize: 256, minzoom: 8, maxzoom: 13,
-            tiles: [`${origin}/api/v1/tiles/terrain/terrarium/{z}/{x}/{y}.png?v=${V}`],
+            tiles: [demTiles],
           },
         },
         layers: [
@@ -104,9 +112,16 @@ export default function Map3D({ site, initialLayer = 'none', onClose }) {
       setReady(true);
     });
     map.current = m;
-    return () => { m.remove(); map.current = null; };
+    return () => { m.remove(); map.current = null; setReady(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [demTiles]);
+
+  useEffect(() => {
+    if (!SHOWCASE) return;
+    setOverlayTiles(null);
+    if (!layer || layer.id === 'none') return;
+    showcaseTileUrl(layer.kind, layer.id, site, { range: demRange }).then(setOverlayTiles);
+  }, [layer, site, demRange]);
 
   // Drape the chosen layer.
   useEffect(() => {
@@ -114,13 +129,13 @@ export default function Map3D({ site, initialLayer = 'none', onClose }) {
     if (!m || !ready) return;
     if (m.getLayer('overlay')) m.removeLayer('overlay');
     if (m.getSource('overlay')) m.removeSource('overlay');
-    const url = layer && overlayUrl(layer, site, demRange);
+    const url = SHOWCASE ? overlayTiles : (layer && overlayUrl(layer, site, demRange));
     if (url) {
       m.addSource('overlay', { type: 'raster', tiles: [url], tileSize: 256, minzoom: 8, maxzoom: layer.kind === 'terrain' ? 13 : 15 });
       m.addLayer({ id: 'overlay', type: 'raster', source: 'overlay', paint: { 'raster-opacity': opacity } }, 'shade');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layerId, ready, demRange]);
+  }, [layerId, ready, demRange, overlayTiles]);
 
   useEffect(() => {
     const m = map.current;

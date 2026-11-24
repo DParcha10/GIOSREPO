@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import TiepointMark from '../components/TiepointMark';
+import { SHOWCASE } from '../showcase';
 
 // Hand-drawn style chart: a satellite trend and a ground sensor that drift apart.
 function MismatchSketch() {
@@ -30,11 +31,13 @@ function MismatchSketch() {
 }
 
 const STATUS = [
-  ['USGS stream-gauge readings', 'Live when the USGS service answers; otherwise a labelled placeholder.'],
+  ['USGS stream-gauge readings', 'Live daily values from USGS.'],
   ['Satellite catalogue search (STAC)', 'Live search of public catalogues.'],
-  ['Drone GeoTIFF upload and tiles', 'Real, for files you upload.'],
-  ['Most map layers and tool results', 'Simulated, to show the workflow.'],
-  ['Assistant', 'Needs a language model on the server (Ollama by default).'],
+  ['Drone GeoTIFF upload and tiles', 'Real, for files you upload (server version).'],
+  ['Spectral, elevation, slope and radar map layers', 'Live from Copernicus Sentinel-2, Sentinel-1 and DEM, via Microsoft Planetary Computer.'],
+  ['Site comparisons and time series', 'Measured from real Sentinel-2 scenes.'],
+  ['Most of the ~80 analysis tools', 'Placeholder models, clearly stamped SIMULATED.'],
+  ['Assistant', 'Server version only; needs a language model (Ollama by default).'],
 ];
 
 export default function Landing() {
@@ -48,7 +51,9 @@ export default function Landing() {
         <nav className="flex items-center gap-6 text-[15px]">
           <a href="#how" className="text-stone-400 hover:text-stone-100">How it works</a>
           <a href="#status" className="text-stone-400 hover:text-stone-100 hidden sm:inline">What&rsquo;s real</a>
-          <Link to="/login" className="text-stone-100 underline underline-offset-4 decoration-stone-600">Sign in</Link>
+          {SHOWCASE
+            ? <a href="https://github.com/DParcha10/GIOSREPO" className="text-stone-100 underline underline-offset-4 decoration-stone-600">GitHub</a>
+            : <Link to="/login" className="text-stone-100 underline underline-offset-4 decoration-stone-600">Sign in</Link>}
         </nav>
       </header>
 
@@ -61,8 +66,8 @@ export default function Landing() {
             </h1>
             <p className="text-lg leading-relaxed text-stone-300 mb-8 max-w-xl">
               Satellites see whole regions. Ground sensors see one point very well. When the two
-              disagree, someone loses days working out why. Tiepoint puts both on one map and helps
-              you decide whether the gap is expected, bad data, or something real.
+              disagree, someone loses days working out why. Tiepoint puts both on one map and measures
+              where they agree and where they don&rsquo;t.
             </p>
             <div className="flex flex-wrap gap-3">
               <Link to="/map" className="bg-[var(--ink)] text-[var(--paper)] px-5 py-2.5 rounded-[3px] font-medium hover:opacity-90">
@@ -84,9 +89,9 @@ export default function Landing() {
             <h2 className="font-serif text-3xl text-stone-50 mb-10">How it works</h2>
             <ol className="grid md:grid-cols-3 gap-10">
               {[
-                ['Put them side by side', 'Load satellite layers, gauges, GPS and drone surveys for the same place and time.'],
-                ['Find where they disagree', 'Compare the two scales directly, with units and corrections shown, not hidden.'],
-                ['Decide what to check next', 'Get a short list of likely causes and the cheapest measurement that would settle it.'],
+                ['Put them side by side', 'Sentinel-2, Sentinel-1 and Copernicus elevation layers for the same place as the USGS gauges, in 2D or on 3D terrain.'],
+                ['Measure the change', 'Each site is compared with the same season last year from real scenes, with dates, values and method shown.'],
+                ['See where they disagree', 'The monthly satellite record sits above the gauge record on one time axis, with a measure of how well they agree.'],
               ].map(([t, d], i) => (
                 <li key={t}>
                   <p className="font-mono text-sm text-primary mb-2">{String(i + 1).padStart(2, '0')}</p>

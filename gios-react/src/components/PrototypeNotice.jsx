@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SHOWCASE } from '../showcase';
 
 const KEY = 'tiepoint-notice-dismissed';
 
@@ -12,8 +13,9 @@ export default function PrototypeNotice({ compact = false }) {
     <div className={`flex items-start gap-3 border-b border-amber-700 bg-amber-950 text-amber-100 ${compact ? 'px-3 py-1.5 text-xs' : 'px-6 py-2.5 text-sm'}`}>
       <span className="sim-stamp mt-0.5 shrink-0">Prototype</span>
       <p className="flex-1 leading-snug">
-        Many map layers and tool results here are simulated so the workflow can be shown end to end.
-        Don&rsquo;t use them for safety or engineering decisions.
+        {SHOWCASE
+          ? 'Research prototype. Map layers, gauges and site statistics are real public data; the analysis tools run only on the full server version. Not for safety or engineering decisions.'
+          : 'Many tool results here are simulated so the workflow can be shown end to end. Don\u2019t use them for safety or engineering decisions.'}
       </p>
       <button
         onClick={() => { try { sessionStorage.setItem(KEY, '1'); } catch { /* ignore */ } setHidden(true); }}
