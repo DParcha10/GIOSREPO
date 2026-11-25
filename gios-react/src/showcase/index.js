@@ -152,3 +152,13 @@ export async function showcaseAdapter(config) {
   }
   throw new ShowcaseUnavailable(path);
 }
+
+// Server-only features fail quietly in the showcase: drop only our own
+// "not available in the online showcase" errors from the console, keep the rest.
+if (SHOWCASE && typeof console !== 'undefined') {
+  const original = console.error.bind(console);
+  const ours = (a) => a instanceof ShowcaseUnavailable
+    || (typeof a === 'string' && /online showcase|needs the Tiepoint server/.test(a))
+    || (a && typeof a.message === 'string' && /online showcase/.test(a.message));
+  console.error = (...args) => { if (!args.some(ours)) original(...args); };
+}
