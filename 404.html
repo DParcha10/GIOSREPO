@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/GIOSREPO/tiepoint.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Tiepoint: compare satellite and ground measurements and work out why they disagree." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet" />
+    <title>Tiepoint</title>
+    <script type="module" crossorigin src="/GIOSREPO/assets/index-lE4qEaE4.js"></script>
+    <link rel="stylesheet" crossorigin href="/GIOSREPO/assets/index-CQuyKPcj.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Show crashes as plain text instead of a blank page.
+      function tiepointShowError(msg) {
+        var box = document.getElementById('tiepoint-error');
+        if (!box) {
+          box = document.createElement('pre');
+          box.id = 'tiepoint-error';
+          box.style.cssText = 'position:fixed;left:16px;right:16px;bottom:16px;max-height:40vh;overflow:auto;z-index:99999;margin:0;padding:12px 14px;background:#fbf9f4;color:#a3362c;border:1px solid #a3362c;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap';
+          document.body.appendChild(box);
+        }
+        box.textContent += 'Something broke: ' + msg + '\n';
+      }
+      window.addEventListener('error', function (e) { tiepointShowError(e.message); });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason; tiepointShowError(r && (r.message || String(r)) || 'Promise rejected');
+      });
+    </script>
+  </body>
+</html>
